@@ -1,49 +1,71 @@
 # Agent Caster
 
-Agent OS 的 Executor Caster —— 基于 [pi-mono](https://github.com/nicepkg/pi-mono) 构建的 Agent 执行器，通过 [Rune Runtime](https://github.com/chasey-myagi/rune) 注册为分布式 Caster。
+Agent OS 的 Executor Caster —— 在 microVM 沙箱中安全执行 AI Agent 任务。
 
-接收 Agent 配置 + 用户消息，使用 pi-mono 的 Agent 内核执行 LLM agent loop，返回结果。
+基于 [msb_krun](https://crates.io/crates/msb_krun) (纯 Rust microVM) 构建硬件级隔离沙箱，通过 [Rune Runtime](https://github.com/chasey-myagi/rune) 注册为分布式 Caster。
 
 ## 架构
 
 ```
-Rune Runtime
-    │ gRPC
-    ▼
-Agent Caster (本项目)
-    │
-    ├─ 注册 agents.execute rune
-    ├─ 接收 { config, message }
-    ├─ 构建 pi-mono Agent (LLM + tools)
-    └─ 执行 agent loop → 返回结果
+Rune Runtime (gRPC :50070)
+       │
+       ▼
+Agent Caster (crates/caster)
+  ├─ 注册 agents.execute rune
+  ├─ 接收 { config: AgentConfig, message: string }
+  ├─ 根据 config.tools 生成 ToolPolicy
+  │
+  ▼
+Sandbox (crates/sandbox)
+  ├─ msb_krun VmBuilder → 创建 microVM
+  ├─ 挂载 allowed_paths 为 Volume
+  ├─ AgentRelay ← virtio-console → Guest Agent
+  │
+  ▼
+Guest Agent (crates/guest-agent)        ← 运行在 VM 内部
+  ├─ PID 1 init (mount, network)
+  ├─ 接收 ExecRequest / FsRequest
+  ├─ 执行命令 (白名单校验)
+  └─ 返回结果
+```
+
+## 项目结构
+
+```
+agent-caster/
+├── Cargo.toml                   # Workspace
+├── crates/
+│   ├── caster/                  # Rune Caster 入口
+│   ├── sandbox/                 # Host 端沙箱 SDK (msb_krun)
+│   ├── protocol/                # Host↔Guest 线协议 (CBOR)
+│   ├── guest-agent/             # Guest Agent (VM 内 PID 1)
+│   └── runner/                  # AgentConfig + ToolPolicy
+├── configs/
+│   └── feishu-assistant.yaml    # 示例 Agent 配置
+└── docs/
+    └── scope/
 ```
 
 ## 前置条件
 
-- Node.js >= 20
-- [Rune Runtime](https://github.com/chasey-myagi/rune) 运行中
+- Rust 1.85+
+- [Rune Runtime](https://github.com/chasey-myagi/rune)
+- macOS Apple Silicon 或 Linux (KVM)
 - `ANTHROPIC_API_KEY` 环境变量
 
 ## Quick Start
 
 ```bash
-# 安装依赖
-pnpm install
-
-# 启动（连接本地 Rune Runtime）
-pnpm start --runtime localhost:50070
-
-# 开发模式
-pnpm dev --runtime localhost:50070
+cargo build
+cargo run -p agent-caster -- --runtime localhost:50070
 ```
 
 ## 开发
 
 ```bash
-pnpm install
-pnpm build
-pnpm test
-pnpm lint
+cargo build
+cargo test
+cargo clippy
 ```
 
 详见 [CONTRIBUTING.md](CONTRIBUTING.md)。

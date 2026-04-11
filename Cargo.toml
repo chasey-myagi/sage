@@ -1,0 +1,36 @@
+[workspace]
+members = [
+    "crates/caster",
+    "crates/sandbox",
+    "crates/protocol",
+    "crates/guest-agent",
+    "crates/runner",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/chasey-myagi/agent-caster"
+
+[workspace.dependencies]
+# Shared dependencies
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ciborium = "0.2"              # CBOR encoding for wire protocol
+bytes = "1"
+
+# VMM
+msb_krun = "0.1"
+
+# Internal crates
+agent-protocol = { path = "crates/protocol" }
+agent-sandbox = { path = "crates/sandbox" }
+agent-runner = { path = "crates/runner" }

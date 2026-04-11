@@ -1,10 +1,7 @@
-node_modules/
-dist/
-*.js
-*.d.ts
-*.js.map
-!jest.config.js
-!eslint.config.js
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
 
 # Environment
 .env
@@ -19,9 +16,3 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
-
-# Test
-coverage/
-
-# Build
-*.tsbuildinfo

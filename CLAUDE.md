@@ -1,30 +1,49 @@
 # agent-caster
 
-Agent OS 的 Executor Caster，基于 pi-mono + Rune Runtime。
+Agent OS 的 Executor Caster — Rust workspace，基于 msb_krun microVM 沙箱。
 
 ## 项目结构
 
 ```
-src/
-├── index.ts            # Caster 注册 + 启动
-├── runner.ts           # pi-mono Agent 构建 + 执行
-├── tools.ts            # 工具创建（基于 pi-mono 内置工具）
-└── types.ts            # AgentConfig 类型定义
+crates/
+├── caster/          # Rune Caster 入口 (clap CLI + Rune SDK)
+│   └── src/
+│       ├── main.rs  # CLI 解析 + 启动
+│       └── serve.rs # Rune 注册 + 任务处理
+├── sandbox/         # Host 端沙箱 SDK
+│   └── src/
+│       ├── builder.rs   # SandboxBuilder (VM 配置)
+│       ├── handle.rs    # SandboxHandle (exec/fs 操作)
+│       ├── relay.rs     # AgentRelay (virtio-console 通信)
+│       └── error.rs
+├── protocol/        # Host↔Guest 线协议
+│   └── src/
+│       ├── messages.rs  # HostMessage / GuestMessage
+│       └── wire.rs      # 长度前缀 CBOR 编解码
+├── guest-agent/     # Guest Agent (VM 内 PID 1)
+│   └── src/
+│       ├── main.rs  # init + 主循环
+│       ├── init.rs  # mount filesystems
+│       ├── exec.rs  # 命令执行
+│       └── fs.rs    # 文件操作
+└── runner/          # Agent 配置 + 策略
+    └── src/
+        ├── config.rs    # AgentConfig (YAML 解析)
+        └── tools.rs     # ToolPolicy (白名单校验)
 ```
 
 ## Build & Run
 
 ```bash
-pnpm install
-pnpm build
-pnpm start --runtime localhost:50070
-pnpm dev --runtime localhost:50070
+cargo build
+cargo test
+cargo run -p agent-caster -- --runtime localhost:50070
 ```
 
 ## 依赖
 
-- pi-mono (`@mariozechner/pi-agent-core`, `@mariozechner/pi-ai`, `@mariozechner/pi-coding-agent`)
-- Rune TS SDK (`@rune-framework/caster`)
+- msb_krun — 纯 Rust microVM (libkrun Rust 化)
+- Rune TS/Rust SDK (Phase 2)
 - Rune Runtime 需先启动
 
 ## Git 工作流
@@ -32,4 +51,4 @@ pnpm dev --runtime localhost:50070
 - `dev` — 日常开发
 - `main` — 发版
 - Conventional Commits: `feat(scope): description`
-- scope: `caster`, `runner`, `tools`, `config`
+- scope: `caster`, `sandbox`, `protocol`, `guest`, `runner`

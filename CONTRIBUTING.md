@@ -30,24 +30,27 @@
 | `test` | 测试 |
 | `chore` | 构建、CI、依赖 |
 
-scope: `caster`, `runner`, `tools`, `config`
+scope: `caster`, `sandbox`, `protocol`, `guest`, `runner`
 
 示例：
 ```
-feat(runner): implement agent loop with pi-mono
-fix(tools): enforce bash allowed_binaries whitelist
-chore(ci): add build and test workflow
+feat(sandbox): implement msb_krun VM creation via SandboxBuilder
+feat(guest): add PID 1 init with filesystem mounting
+feat(protocol): CBOR wire protocol with length-prefixed frames
+fix(runner): enforce allowed_binaries whitelist correctly
+chore(ci): add cross-compilation for guest-agent
 ```
 
 ## PR 流程
 
 1. 从 `dev` 创建功能分支
-2. 开发 + 测试通过
+2. 开发 + `cargo test` + `cargo clippy` 通过
 3. PR 到 `dev`
 4. Review 通过后 squash merge
 
 ## 代码规范
 
-- TypeScript strict mode
-- ESLint + Prettier
-- 函数优先于 class（除非有明确状态管理需求）
+- `cargo fmt` — 统一格式
+- `cargo clippy` — lint 必须通过
+- 错误处理用 `thiserror` (库) / `anyhow` (应用)
+- async runtime 统一用 tokio

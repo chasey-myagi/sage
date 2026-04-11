@@ -6,25 +6,30 @@ on:
   pull_request:
     branches: [main, dev]
 
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
 jobs:
-  build:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          version: 9
+          components: rustfmt, clippy
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
+      - uses: Swatinem/rust-cache@v2
 
-      - run: pnpm install --frozen-lockfile
+      - name: Format check
+        run: cargo fmt --all -- --check
 
-      - run: pnpm build
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets
 
-      - run: pnpm lint
+      - name: Build
+        run: cargo build --workspace
 
-      - run: pnpm test
+      - name: Test
+        run: cargo test --workspace

@@ -1,0 +1,17 @@
+[package]
+name = "agent-caster"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agent-sandbox = { workspace = true }
+agent-runner = { workspace = true }
+agent-protocol = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { version = "4", features = ["derive"] }

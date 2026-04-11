@@ -1,0 +1,22 @@
+name: feishu-assistant
+description: "飞书助手"
+
+llm:
+  provider: anthropic
+  model: claude-haiku-4-5-20251001
+  max_tokens: 4096
+
+system_prompt: |
+  你是飞书助手。使用 feishu CLI 完成任务。
+  feishu --help 查看用法。
+  创建日程前先查看是否冲突。
+
+tools:
+  bash:
+    allowed_binaries: [feishu]
+  read:
+    allowed_paths: ["~/Documents/"]
+
+constraints:
+  max_turns: 10
+  timeout_secs: 120
