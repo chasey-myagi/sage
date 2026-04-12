@@ -35,16 +35,12 @@ pub fn parse_sse_chunk(
 
     if let Some(usage) = json.get("usage") {
         if usage.is_object() && empty_choices {
-            let input = usage
+            let prompt_tokens = usage
                 .get("prompt_tokens")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
-            let output = usage
+            let completion_tokens = usage
                 .get("completion_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let total = usage
-                .get("total_tokens")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
             let cache_read = usage
@@ -52,6 +48,18 @@ pub fn parse_sse_chunk(
                 .and_then(|d| d.get("cached_tokens"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
+            // Reasoning tokens from completion_tokens_details (pi-mono: parseChunkUsage)
+            let reasoning_tokens = usage
+                .get("completion_tokens_details")
+                .and_then(|d| d.get("reasoning_tokens"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            // Subtract cached tokens from input (OpenAI includes cached in prompt_tokens)
+            let input = prompt_tokens.saturating_sub(cache_read);
+            // Add reasoning tokens to output (some providers don't include them)
+            let output = completion_tokens + reasoning_tokens;
+            let total = input + output + cache_read;
 
             if input > 0 || output > 0 || total > 0 {
                 return Ok(Some(AssistantMessageEvent::Usage(Usage {
@@ -93,11 +101,16 @@ pub fn parse_sse_chunk(
         _ => return Ok(None),
     };
 
-    // reasoning_content (thinking)
-    if let Some(reasoning) = delta.get("reasoning_content") {
-        if !reasoning.is_null() {
-            let text = reasoning.as_str().unwrap_or("").to_string();
-            return Ok(Some(AssistantMessageEvent::ThinkingDelta(text)));
+    // Reasoning/thinking fields — check in pi-mono priority order:
+    // reasoning_content (DeepSeek), reasoning (generic), reasoning_text (other)
+    for field in &["reasoning_content", "reasoning", "reasoning_text"] {
+        if let Some(val) = delta.get(*field) {
+            if !val.is_null() {
+                let text = val.as_str().unwrap_or("").to_string();
+                if !text.is_empty() {
+                    return Ok(Some(AssistantMessageEvent::ThinkingDelta(text)));
+                }
+            }
         }
     }
 
@@ -293,11 +306,43 @@ mod tests {
         let event = parse_sse_chunk(data).unwrap().unwrap();
         match event {
             AssistantMessageEvent::Usage(u) => {
-                assert_eq!(u.input, 200);
+                // prompt_tokens(200) - cached(50) = 150
+                assert_eq!(u.input, 150);
                 assert_eq!(u.cache_read, 50);
+                assert_eq!(u.output, 80);
             }
             _ => panic!("expected Usage event with cache"),
         }
+    }
+
+    #[test]
+    fn test_parse_usage_with_reasoning_tokens() {
+        let data = r#"{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"completion_tokens_details":{"reasoning_tokens":30}}}"#;
+        let event = parse_sse_chunk(data).unwrap().unwrap();
+        match event {
+            AssistantMessageEvent::Usage(u) => {
+                assert_eq!(u.input, 100);
+                // completion(50) + reasoning(30) = 80
+                assert_eq!(u.output, 80);
+            }
+            _ => panic!("expected Usage event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_reasoning_field_fallback() {
+        // Test "reasoning" field (second priority)
+        let data = r#"{"choices":[{"delta":{"reasoning":"step 1"},"index":0}]}"#;
+        let event = parse_sse_chunk(data).unwrap().unwrap();
+        assert!(matches!(event, AssistantMessageEvent::ThinkingDelta(s) if s == "step 1"));
+    }
+
+    #[test]
+    fn test_parse_reasoning_text_field_fallback() {
+        // Test "reasoning_text" field (third priority)
+        let data = r#"{"choices":[{"delta":{"reasoning_text":"step 2"},"index":0}]}"#;
+        let event = parse_sse_chunk(data).unwrap().unwrap();
+        assert!(matches!(event, AssistantMessageEvent::ThinkingDelta(s) if s == "step 2"));
     }
 
     // ========================================================================
@@ -663,7 +708,7 @@ mod tests {
             r#"{"choices":[{"delta":{"content":"Hello"},"index":0}]}"#,
             r#"{"choices":[{"delta":{"content":" "},"index":0}]}"#,
             r#"{"choices":[{"delta":{"content":"world"},"index":0}]}"#,
-            r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3}}"#,
             r#"{"choices":[{"delta":{},"finish_reason":"stop","index":0}]}"#,
         ];
 

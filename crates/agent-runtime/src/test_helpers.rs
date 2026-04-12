@@ -7,9 +7,13 @@ use crate::llm::types::*;
 pub fn test_model() -> Model {
     Model {
         id: "test-model".into(),
+        name: "Test Model".into(),
+        api: api::OPENAI_COMPLETIONS.into(),
         provider: "test".into(),
         base_url: "http://localhost".into(),
         api_key_env: "TEST_KEY".into(),
+        reasoning: false,
+        input: vec![InputType::Text],
         max_tokens: 4096,
         context_window: 32768,
         cost: ModelCost {
@@ -18,14 +22,8 @@ pub fn test_model() -> Model {
             cache_read_per_million: 0.0,
             cache_write_per_million: 0.0,
         },
-        compat: ProviderCompat {
-            max_tokens_field: MaxTokensField::MaxTokens,
-            supports_reasoning_effort: false,
-            thinking_format: None,
-            requires_tool_result_name: false,
-            requires_assistant_after_tool_result: false,
-            supports_strict_mode: false,
-        },
+        headers: vec![],
+        compat: Some(ProviderCompat::default()),
     }
 }
 

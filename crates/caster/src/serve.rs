@@ -5,7 +5,7 @@ use agent_runtime::event::{AgentEvent, AgentEventSink};
 use agent_runtime::llm::keys;
 use agent_runtime::llm::models;
 use agent_runtime::llm::openai_compat::OpenAiCompatProvider;
-use agent_runtime::llm::types::{MaxTokensField, Model, ModelCost, ProviderCompat};
+use agent_runtime::llm::types::{InputType, Model, ModelCost, ProviderCompat, api};
 use agent_runtime::tools::ToolRegistry;
 use agent_runtime::types::*;
 use anyhow::{Context, Result, bail};
@@ -152,9 +152,13 @@ fn resolve_model_from_config(
 
     Ok(Model {
         id: model_id.into(),
+        name: model_id.into(),
+        api: api::OPENAI_COMPLETIONS.into(),
         provider: provider.into(),
         base_url,
         api_key_env,
+        reasoning: false,
+        input: vec![InputType::Text],
         max_tokens: config.llm.max_tokens,
         context_window: 128000,
         cost: ModelCost {
@@ -163,14 +167,8 @@ fn resolve_model_from_config(
             cache_read_per_million: 0.0,
             cache_write_per_million: 0.0,
         },
-        compat: ProviderCompat {
-            max_tokens_field: MaxTokensField::MaxTokens,
-            supports_reasoning_effort: false,
-            thinking_format: None,
-            requires_tool_result_name: false,
-            requires_assistant_after_tool_result: false,
-            supports_strict_mode: false,
-        },
+        headers: vec![],
+        compat: Some(ProviderCompat::default()),
     })
 }
 

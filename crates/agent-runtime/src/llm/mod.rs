@@ -2,10 +2,13 @@
 pub mod keys;
 pub mod models;
 pub mod openai_compat;
+pub mod providers;
+pub mod registry;
 pub mod stream;
 pub mod transform;
 pub mod types;
 
+use std::sync::Arc;
 use types::*;
 
 /// Trait for LLM providers (OpenAI-compatible API).
@@ -17,6 +20,40 @@ pub trait LlmProvider: Send + Sync {
         context: &LlmContext,
         tools: &[LlmTool],
     ) -> Vec<AssistantMessageEvent>;
+}
+
+// ---------------------------------------------------------------------------
+// Public convenience API (matching pi-mono's index.ts)
+// ---------------------------------------------------------------------------
+
+/// Register all built-in providers.
+pub fn register_builtin_providers() {
+    use providers::*;
+    registry::register_provider(Arc::new(AnthropicProvider::new()));
+    registry::register_provider(Arc::new(OpenAiCompletionsProvider::new()));
+    registry::register_provider(Arc::new(OpenAiResponsesProvider::new()));
+    registry::register_provider(Arc::new(GoogleProvider::new()));
+}
+
+/// Stream a completion using the model's registered API provider.
+pub async fn stream(
+    model: &Model,
+    context: &LlmContext,
+    tools: &[LlmTool],
+    options: &registry::StreamOptions,
+) -> Result<Vec<AssistantMessageEvent>, String> {
+    let provider = registry::resolve_provider(&model.api)?;
+    Ok(provider.stream(model, context, tools, options).await)
+}
+
+/// Complete a request (non-streaming convenience — collects all events).
+pub async fn complete(
+    model: &Model,
+    context: &LlmContext,
+    tools: &[LlmTool],
+    options: &registry::StreamOptions,
+) -> Result<Vec<AssistantMessageEvent>, String> {
+    stream(model, context, tools, options).await
 }
 
 #[cfg(test)]

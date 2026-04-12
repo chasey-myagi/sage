@@ -32,6 +32,12 @@ impl std::error::Error for KeyError {}
 /// Maps a provider name to its API key environment variable name.
 pub fn api_key_env_var(provider: &str) -> String {
     match provider {
+        "anthropic" => "ANTHROPIC_API_KEY".into(),
+        "openai" => "OPENAI_API_KEY".into(),
+        "google" => "GOOGLE_API_KEY".into(),
+        "xai" => "XAI_API_KEY".into(),
+        "groq" => "GROQ_API_KEY".into(),
+        "openrouter" => "OPENROUTER_API_KEY".into(),
         "qwen" => "DASHSCOPE_API_KEY".into(),
         "doubao" => "ARK_API_KEY".into(),
         "kimi" => "MOONSHOT_API_KEY".into(),
@@ -44,7 +50,20 @@ pub fn api_key_env_var(provider: &str) -> String {
 
 /// Resolves the API key for a provider from environment variables.
 pub fn resolve_api_key(provider: &str) -> Result<String, KeyError> {
-    let known = ["qwen", "doubao", "kimi", "minimax", "zai", "deepseek"];
+    let known = [
+        "anthropic",
+        "openai",
+        "google",
+        "xai",
+        "groq",
+        "openrouter",
+        "qwen",
+        "doubao",
+        "kimi",
+        "minimax",
+        "zai",
+        "deepseek",
+    ];
     if !known.contains(&provider) {
         return Err(KeyError::UnknownProvider {
             provider: provider.into(),
@@ -79,6 +98,36 @@ mod tests {
     // ========================================================================
     // api_key_env_var — provider to env var mapping
     // ========================================================================
+
+    #[test]
+    fn test_env_var_anthropic() {
+        assert_eq!(api_key_env_var("anthropic"), "ANTHROPIC_API_KEY");
+    }
+
+    #[test]
+    fn test_env_var_openai() {
+        assert_eq!(api_key_env_var("openai"), "OPENAI_API_KEY");
+    }
+
+    #[test]
+    fn test_env_var_google() {
+        assert_eq!(api_key_env_var("google"), "GOOGLE_API_KEY");
+    }
+
+    #[test]
+    fn test_env_var_xai() {
+        assert_eq!(api_key_env_var("xai"), "XAI_API_KEY");
+    }
+
+    #[test]
+    fn test_env_var_groq() {
+        assert_eq!(api_key_env_var("groq"), "GROQ_API_KEY");
+    }
+
+    #[test]
+    fn test_env_var_openrouter() {
+        assert_eq!(api_key_env_var("openrouter"), "OPENROUTER_API_KEY");
+    }
 
     #[test]
     fn test_env_var_qwen() {
@@ -151,6 +200,89 @@ mod tests {
     fn test_resolve_api_key_unknown_provider() {
         let result = resolve_api_key("unknown_provider");
         assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // resolve_api_key — new providers are recognized (not UnknownProvider)
+    // ========================================================================
+
+    #[test]
+    fn test_resolve_api_key_anthropic_recognized() {
+        // Should return NotFound (missing env var), not UnknownProvider
+        unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
+        let result = resolve_api_key("anthropic");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("ANTHROPIC_API_KEY"),
+            "anthropic should be a known provider, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_api_key_openai_recognized() {
+        unsafe { std::env::remove_var("OPENAI_API_KEY") };
+        let result = resolve_api_key("openai");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("OPENAI_API_KEY"),
+            "openai should be a known provider, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_api_key_google_recognized() {
+        unsafe { std::env::remove_var("GOOGLE_API_KEY") };
+        let result = resolve_api_key("google");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("GOOGLE_API_KEY"),
+            "google should be a known provider, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_api_key_xai_recognized() {
+        unsafe { std::env::remove_var("XAI_API_KEY") };
+        let result = resolve_api_key("xai");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("XAI_API_KEY"),
+            "xai should be a known provider, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_api_key_groq_recognized() {
+        unsafe { std::env::remove_var("GROQ_API_KEY") };
+        let result = resolve_api_key("groq");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("GROQ_API_KEY"),
+            "groq should be a known provider, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_api_key_openrouter_recognized() {
+        unsafe { std::env::remove_var("OPENROUTER_API_KEY") };
+        let result = resolve_api_key("openrouter");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("OPENROUTER_API_KEY"),
+            "openrouter should be a known provider, got: {}",
+            err
+        );
     }
 
     // ========================================================================

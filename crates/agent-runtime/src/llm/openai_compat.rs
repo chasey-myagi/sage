@@ -99,7 +99,8 @@ impl OpenAiCompatProvider {
             }
         }
 
-        let max_tokens_key = match model.compat.max_tokens_field {
+        let compat = model.compat.as_ref().cloned().unwrap_or_default();
+        let max_tokens_key = match compat.max_tokens_field {
             MaxTokensField::MaxTokens => "max_tokens",
             MaxTokensField::MaxCompletionTokens => "max_completion_tokens",
         };
@@ -336,7 +337,10 @@ mod tests {
     #[test]
     fn test_build_request_body_max_completion_tokens() {
         let mut model = test_model();
-        model.compat.max_tokens_field = MaxTokensField::MaxCompletionTokens;
+        model.compat = Some(ProviderCompat {
+            max_tokens_field: MaxTokensField::MaxCompletionTokens,
+            ..ProviderCompat::default()
+        });
         let context = LlmContext {
             messages: vec![],
             system_prompt: "test".into(),

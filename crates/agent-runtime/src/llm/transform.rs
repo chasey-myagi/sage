@@ -142,6 +142,129 @@ pub fn fix_orphaned_tool_results(messages: &mut Vec<LlmMessage>) {
 /// during agent_to_llm_messages conversion. This is a no-op.
 pub fn strip_thinking_blocks(_messages: &mut Vec<LlmMessage>) {}
 
+/// Strip cross-model thinking content from assistant messages.
+///
+/// When replaying a conversation to a different provider/model, thinking blocks
+/// from the original model are invalid (encrypted reasoning, redacted content, etc.).
+/// This function is a placeholder: `LlmMessage::Assistant` currently stores content
+/// as a plain `String`, so there are no thinking blocks to strip. When structured
+/// content blocks (with thinking) are added to `LlmMessage`, this function should
+/// compare `(target_provider, target_model)` against each assistant's originating
+/// provider/model and drop or convert thinking blocks for cross-model turns.
+pub fn strip_cross_model_thinking(
+    _messages: &mut Vec<LlmMessage>,
+    _target_provider: &str,
+    _target_model: &str,
+) {
+    // No-op: LlmMessage::Assistant stores content as String, not blocks.
+    // Will be implemented when thinking blocks are added to LlmMessage.
+}
+
+/// Remove assistant messages that have empty content AND no tool calls.
+///
+/// Ported from pi-mono's `transformMessages()` — empty assistant turns can cause
+/// API errors with some providers and serve no purpose in the conversation.
+pub fn skip_empty_assistant_messages(messages: &mut Vec<LlmMessage>) {
+    messages.retain(|msg| {
+        if let LlmMessage::Assistant {
+            content,
+            tool_calls,
+        } = msg
+        {
+            // Keep if there is any content text or any tool calls
+            !content.is_empty() || !tool_calls.is_empty()
+        } else {
+            true
+        }
+    });
+}
+
+/// Normalize tool-call IDs across all assistant and tool-result messages for
+/// cross-provider compatibility.
+///
+/// OpenAI Responses API generates IDs that are 450+ chars with special characters
+/// like `|`. Anthropic APIs require IDs matching `^[a-zA-Z0-9_-]+$` (max 64 chars).
+///
+/// For each tool-call ID:
+///   1. Replace non-alphanumeric characters (except `_` and `-`) with `_`.
+///   2. Truncate to `max_len`.
+///   3. Apply the same mapping to the corresponding `Tool` message's `tool_call_id`.
+pub fn normalize_tool_call_ids(messages: &mut Vec<LlmMessage>, max_len: usize) {
+    // First pass: build a map of original → normalized IDs from assistant messages.
+    let mut id_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+    for msg in messages.iter() {
+        if let LlmMessage::Assistant { tool_calls, .. } = msg {
+            for tc in tool_calls {
+                let normalized = sanitize_id(&tc.id, max_len);
+                if normalized != tc.id {
+                    id_map.insert(tc.id.clone(), normalized);
+                }
+            }
+        }
+    }
+
+    if id_map.is_empty() {
+        return;
+    }
+
+    // Second pass: apply the mapping.
+    for msg in messages.iter_mut() {
+        match msg {
+            LlmMessage::Assistant { tool_calls, .. } => {
+                for tc in tool_calls.iter_mut() {
+                    if let Some(new_id) = id_map.get(&tc.id) {
+                        tc.id = new_id.clone();
+                    }
+                }
+            }
+            LlmMessage::Tool { tool_call_id, .. } => {
+                if let Some(new_id) = id_map.get(tool_call_id.as_str()) {
+                    *tool_call_id = new_id.clone();
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Sanitize a single ID: replace non-`[a-zA-Z0-9_-]` chars with `_`, then truncate.
+fn sanitize_id(id: &str, max_len: usize) -> String {
+    let sanitized: String = id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.len() > max_len {
+        sanitized[..max_len].to_string()
+    } else {
+        sanitized
+    }
+}
+
+/// Apply all message transforms in the canonical order.
+///
+/// Matches the pipeline from pi-mono's `transformMessages()`:
+///   1. `skip_empty_assistant_messages` — remove empty assistant turns
+///   2. `fix_orphaned_tool_results` — insert stub assistants for orphaned tool results
+///   3. `normalize_tool_call_ids` — sanitize/truncate IDs (max 64 chars)
+///   4. `strip_cross_model_thinking` — strip thinking for cross-model replay
+pub fn transform_messages(
+    messages: &mut Vec<LlmMessage>,
+    target_provider: &str,
+    target_model: &str,
+) {
+    skip_empty_assistant_messages(messages);
+    fix_orphaned_tool_results(messages);
+    normalize_tool_call_ids(messages, 64);
+    strip_cross_model_thinking(messages, target_provider, target_model);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1048,12 +1171,8 @@ mod tests {
         // When compat flag is set, a tool result at the end of messages
         // should trigger insertion of a stub assistant message
         let compat = ProviderCompat {
-            max_tokens_field: MaxTokensField::MaxTokens,
-            supports_reasoning_effort: false,
-            thinking_format: None,
-            requires_tool_result_name: false,
             requires_assistant_after_tool_result: true,
-            supports_strict_mode: false,
+            ..ProviderCompat::default()
         };
 
         let messages = vec![
@@ -1099,12 +1218,8 @@ mod tests {
     #[test]
     fn test_compat_requires_tool_result_name() {
         let compat = ProviderCompat {
-            max_tokens_field: MaxTokensField::MaxTokens,
-            supports_reasoning_effort: false,
-            thinking_format: None,
             requires_tool_result_name: true,
-            requires_assistant_after_tool_result: false,
-            supports_strict_mode: false,
+            ..ProviderCompat::default()
         };
 
         // The compat flag exists and is true
@@ -1158,5 +1273,299 @@ mod tests {
             once, twice,
             "double-normalize should be idempotent for special chars"
         );
+    }
+
+    // ========================================================================
+    // skip_empty_assistant_messages
+    // ========================================================================
+
+    #[test]
+    fn test_skip_empty_assistant_removes_empty() {
+        let mut messages = vec![
+            LlmMessage::User {
+                content: vec![LlmContent::Text("hi".into())],
+            },
+            LlmMessage::Assistant {
+                content: String::new(),
+                tool_calls: vec![],
+            },
+            LlmMessage::Assistant {
+                content: "hello".into(),
+                tool_calls: vec![],
+            },
+        ];
+        skip_empty_assistant_messages(&mut messages);
+        assert_eq!(messages.len(), 2);
+        assert!(matches!(&messages[0], LlmMessage::User { .. }));
+        assert!(
+            matches!(&messages[1], LlmMessage::Assistant { content, .. } if content == "hello")
+        );
+    }
+
+    #[test]
+    fn test_skip_empty_assistant_keeps_tool_calls() {
+        // An assistant with empty content but non-empty tool_calls should be kept
+        let mut messages = vec![LlmMessage::Assistant {
+            content: String::new(),
+            tool_calls: vec![LlmToolCall {
+                id: "call_001".into(),
+                function: LlmFunctionCall {
+                    name: "bash".into(),
+                    arguments: "{}".into(),
+                },
+            }],
+        }];
+        skip_empty_assistant_messages(&mut messages);
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
+    fn test_skip_empty_assistant_all_empty() {
+        let mut messages = vec![
+            LlmMessage::Assistant {
+                content: String::new(),
+                tool_calls: vec![],
+            },
+            LlmMessage::Assistant {
+                content: String::new(),
+                tool_calls: vec![],
+            },
+        ];
+        skip_empty_assistant_messages(&mut messages);
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn test_skip_empty_assistant_no_assistants() {
+        let mut messages = vec![
+            LlmMessage::User {
+                content: vec![LlmContent::Text("hi".into())],
+            },
+            LlmMessage::Tool {
+                tool_call_id: "call_001".into(),
+                content: "ok".into(),
+            },
+        ];
+        let len_before = messages.len();
+        skip_empty_assistant_messages(&mut messages);
+        assert_eq!(messages.len(), len_before);
+    }
+
+    // ========================================================================
+    // normalize_tool_call_ids (batch)
+    // ========================================================================
+
+    #[test]
+    fn test_normalize_tool_call_ids_truncates_long_id() {
+        let long_id = "a".repeat(100);
+        let mut messages = vec![
+            LlmMessage::Assistant {
+                content: "ok".into(),
+                tool_calls: vec![LlmToolCall {
+                    id: long_id.clone(),
+                    function: LlmFunctionCall {
+                        name: "bash".into(),
+                        arguments: "{}".into(),
+                    },
+                }],
+            },
+            LlmMessage::Tool {
+                tool_call_id: long_id,
+                content: "result".into(),
+            },
+        ];
+        normalize_tool_call_ids(&mut messages, 64);
+        // Assistant tool call ID should be truncated
+        if let LlmMessage::Assistant { tool_calls, .. } = &messages[0] {
+            assert_eq!(tool_calls[0].id.len(), 64);
+        } else {
+            panic!("expected Assistant");
+        }
+        // Matching Tool tool_call_id should also be truncated
+        if let LlmMessage::Tool { tool_call_id, .. } = &messages[1] {
+            assert_eq!(tool_call_id.len(), 64);
+        } else {
+            panic!("expected Tool");
+        }
+    }
+
+    #[test]
+    fn test_normalize_tool_call_ids_replaces_special_chars() {
+        let mut messages = vec![
+            LlmMessage::Assistant {
+                content: "ok".into(),
+                tool_calls: vec![LlmToolCall {
+                    id: "call|with|pipes".into(),
+                    function: LlmFunctionCall {
+                        name: "bash".into(),
+                        arguments: "{}".into(),
+                    },
+                }],
+            },
+            LlmMessage::Tool {
+                tool_call_id: "call|with|pipes".into(),
+                content: "result".into(),
+            },
+        ];
+        normalize_tool_call_ids(&mut messages, 64);
+        if let LlmMessage::Assistant { tool_calls, .. } = &messages[0] {
+            assert_eq!(tool_calls[0].id, "call_with_pipes");
+        } else {
+            panic!("expected Assistant");
+        }
+        if let LlmMessage::Tool { tool_call_id, .. } = &messages[1] {
+            assert_eq!(tool_call_id, "call_with_pipes");
+        } else {
+            panic!("expected Tool");
+        }
+    }
+
+    #[test]
+    fn test_normalize_tool_call_ids_no_change_for_clean_ids() {
+        let mut messages = vec![
+            LlmMessage::Assistant {
+                content: "ok".into(),
+                tool_calls: vec![LlmToolCall {
+                    id: "call_abc123".into(),
+                    function: LlmFunctionCall {
+                        name: "bash".into(),
+                        arguments: "{}".into(),
+                    },
+                }],
+            },
+            LlmMessage::Tool {
+                tool_call_id: "call_abc123".into(),
+                content: "result".into(),
+            },
+        ];
+        normalize_tool_call_ids(&mut messages, 64);
+        if let LlmMessage::Assistant { tool_calls, .. } = &messages[0] {
+            assert_eq!(tool_calls[0].id, "call_abc123");
+        } else {
+            panic!("expected Assistant");
+        }
+    }
+
+    #[test]
+    fn test_normalize_tool_call_ids_preserves_hyphens_underscores() {
+        let mut messages = vec![LlmMessage::Assistant {
+            content: "ok".into(),
+            tool_calls: vec![LlmToolCall {
+                id: "call_foo-bar_baz".into(),
+                function: LlmFunctionCall {
+                    name: "bash".into(),
+                    arguments: "{}".into(),
+                },
+            }],
+        }];
+        normalize_tool_call_ids(&mut messages, 64);
+        if let LlmMessage::Assistant { tool_calls, .. } = &messages[0] {
+            assert_eq!(tool_calls[0].id, "call_foo-bar_baz");
+        } else {
+            panic!("expected Assistant");
+        }
+    }
+
+    // ========================================================================
+    // transform_messages (full pipeline)
+    // ========================================================================
+
+    #[test]
+    fn test_transform_messages_removes_empty_and_fixes_orphans() {
+        let mut messages = vec![
+            LlmMessage::User {
+                content: vec![LlmContent::Text("hi".into())],
+            },
+            // Empty assistant — should be removed
+            LlmMessage::Assistant {
+                content: String::new(),
+                tool_calls: vec![],
+            },
+            // Orphaned tool result — should get a stub assistant
+            LlmMessage::Tool {
+                tool_call_id: "call_orphan".into(),
+                content: "result".into(),
+            },
+            LlmMessage::Assistant {
+                content: "done".into(),
+                tool_calls: vec![],
+            },
+        ];
+        transform_messages(&mut messages, "anthropic", "claude-sonnet");
+        // Empty assistant should be gone
+        assert!(!messages.iter().any(|m| matches!(
+            m,
+            LlmMessage::Assistant {
+                content,
+                tool_calls
+            } if content.is_empty() && tool_calls.is_empty()
+        )));
+        // Orphaned tool should now have a preceding assistant with matching tool_call
+        let tool_idx = messages
+            .iter()
+            .position(|m| {
+                matches!(m, LlmMessage::Tool { tool_call_id, .. } if tool_call_id == "call_orphan")
+            })
+            .expect("orphaned Tool should still exist");
+        assert!(tool_idx > 0);
+        let has_stub = matches!(
+            &messages[tool_idx - 1],
+            LlmMessage::Assistant { tool_calls, .. }
+                if tool_calls.iter().any(|tc| tc.id == "call_orphan")
+        );
+        assert!(has_stub, "stub assistant should precede orphaned tool");
+    }
+
+    #[test]
+    fn test_transform_messages_normalizes_ids() {
+        let mut messages = vec![
+            LlmMessage::Assistant {
+                content: "ok".into(),
+                tool_calls: vec![LlmToolCall {
+                    id: "call|special|chars".into(),
+                    function: LlmFunctionCall {
+                        name: "bash".into(),
+                        arguments: "{}".into(),
+                    },
+                }],
+            },
+            LlmMessage::Tool {
+                tool_call_id: "call|special|chars".into(),
+                content: "result".into(),
+            },
+        ];
+        transform_messages(&mut messages, "anthropic", "claude-sonnet");
+        if let LlmMessage::Assistant { tool_calls, .. } = &messages[0] {
+            assert_eq!(tool_calls[0].id, "call_special_chars");
+        } else {
+            panic!("expected Assistant");
+        }
+        if let LlmMessage::Tool { tool_call_id, .. } = &messages[1] {
+            assert_eq!(tool_call_id, "call_special_chars");
+        } else {
+            panic!("expected Tool");
+        }
+    }
+
+    #[test]
+    fn test_transform_messages_empty_input() {
+        let mut messages: Vec<LlmMessage> = vec![];
+        transform_messages(&mut messages, "openai", "gpt-4");
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn test_transform_messages_no_changes_needed() {
+        let mut messages = vec![
+            LlmMessage::User {
+                content: vec![LlmContent::Text("hello".into())],
+            },
+            LlmMessage::Assistant {
+                content: "hi".into(),
+                tool_calls: vec![],
+            },
+        ];
+        transform_messages(&mut messages, "openai", "gpt-4");
+        assert_eq!(messages.len(), 2);
     }
 }
