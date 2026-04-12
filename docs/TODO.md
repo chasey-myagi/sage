@@ -53,6 +53,10 @@
 - [x] ~~RoutingProvider error 缺少 Done 事件~~ (fixed: Error + Done{StopReason::Error})
 - [x] ~~`builtin_tools()` 静默忽略未知 tool name~~ (fixed: tracing::warn)
 - [x] ~~RoutingProvider 路径零测试覆盖~~ (fixed: routing_provider_missing_api_returns_error_and_done)
+- [x] ~~CLI binary 名 sage-caster → sage~~ (fixed: [[bin]] name="sage" + package rename sage-cli)
+- [x] ~~SandboxBuilder guest path agent-guest → sage-guest~~ (fixed)
+- [x] ~~serve.rs 不打印 final assistant reply~~ (fixed: 从 AgentEnd messages 提取并 println)
+- [x] ~~CLAUDE.md 中 `cargo run -p sage` 命令过期~~ (fixed: 更新为 sage-cli)
 - [ ] 无 cancellation 机制（CancellationToken）— v0.1.1
 - [ ] 5 个 Arc newtype wrapper boilerplate — 需改 Agent 接口
 - [ ] test_helpers 对外部 crate 不可见 — 需 feature flag
