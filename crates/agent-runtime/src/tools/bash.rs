@@ -46,16 +46,72 @@ impl super::AgentTool for BashTool {
             }
         };
 
-        let output = tokio::process::Command::new("bash")
-            .arg("-c")
-            .arg(command)
-            .output()
-            .await;
+        let timeout_secs = args
+            .get("timeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(120)
+            .max(1)   // minimum 1 second
+            .min(600); // maximum 10 minutes
 
-        match output {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
+        // Create a new process group (setsid) so we can kill the entire tree on timeout,
+        // not just the parent bash shell.
+        let mut cmd = tokio::process::Command::new("bash");
+        cmd.arg("-c")
+            .arg(command)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        // Create a new process group so we can kill the entire tree on timeout.
+        // process_group(0) sets pgid = child pid.
+        #[cfg(unix)]
+        cmd.process_group(0);
+
+        let mut child = match cmd.spawn()
+        {
+            Ok(child) => child,
+            Err(e) => {
+                return super::ToolOutput {
+                    content: vec![Content::Text {
+                        text: format!("Failed to execute command: {}", e),
+                    }],
+                    is_error: true,
+                }
+            }
+        };
+
+        // Take pipe handles before borrowing child — prevents pipe-buffer deadlock
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+
+        let stdout_reader = tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = stdout_pipe {
+                let _ = pipe.read_to_end(&mut buf).await;
+            }
+            buf
+        });
+        let stderr_reader = tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = stderr_pipe {
+                let _ = pipe.read_to_end(&mut buf).await;
+            }
+            buf
+        });
+
+        // wait() borrows &mut child (not consuming), so child remains killable on timeout
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            child.wait(),
+        )
+        .await
+        {
+            Ok(Ok(status)) => {
+                let stdout_bytes = stdout_reader.await.unwrap_or_default();
+                let stderr_bytes = stderr_reader.await.unwrap_or_default();
+                let stdout = String::from_utf8_lossy(&stdout_bytes);
+                let stderr = String::from_utf8_lossy(&stderr_bytes);
                 let text = if stderr.is_empty() {
                     stdout.to_string()
                 } else if stdout.is_empty() {
@@ -65,15 +121,45 @@ impl super::AgentTool for BashTool {
                 };
                 super::ToolOutput {
                     content: vec![Content::Text { text }],
-                    is_error: !output.status.success(),
+                    is_error: !status.success(),
                 }
             }
-            Err(e) => super::ToolOutput {
-                content: vec![Content::Text {
-                    text: format!("Failed to execute command: {}", e),
-                }],
-                is_error: true,
-            },
+            Ok(Err(e)) => {
+                stdout_reader.abort();
+                stderr_reader.abort();
+                super::ToolOutput {
+                    content: vec![Content::Text {
+                        text: format!("Failed to execute command: {}", e),
+                    }],
+                    is_error: true,
+                }
+            }
+            Err(_) => {
+                // Timeout — kill the entire process group to prevent child leaks.
+                // Falls back to child.kill() if process group kill is unavailable.
+                #[cfg(unix)]
+                {
+                    if let Some(pid) = child.id() {
+                        if let Ok(pgid) = i32::try_from(pid) {
+                            // Negative pid sends signal to entire process group
+                            let ret = unsafe { libc::kill(-pgid, libc::SIGKILL) };
+                            if ret != 0 {
+                                let err = std::io::Error::last_os_error();
+                                tracing::warn!(pgid, %err, "failed to kill process group on timeout");
+                            }
+                        }
+                    }
+                }
+                let _ = child.kill().await; // fallback / reap
+                stdout_reader.abort();
+                stderr_reader.abort();
+                super::ToolOutput {
+                    content: vec![Content::Text {
+                        text: format!("Command timed out after {timeout_secs}s"),
+                    }],
+                    is_error: true,
+                }
+            }
         }
     }
 }
@@ -206,30 +292,31 @@ mod tests {
     // ---------------------------------------------------------------
 
     #[tokio::test]
-    async fn test_timeout_zero() {
+    async fn test_timeout_zero_uses_default() {
         let tool = BashTool;
         let output = tool.execute(json!({"command": "echo hi", "timeout": 0})).await;
-        // timeout=0 is an edge case — should either use default or return an error
-        // Must not panic
-        assert!(!output.content.is_empty());
+        // timeout=0 is not valid u64 for timeout, falls back to default (120s)
+        assert!(!output.is_error, "timeout 0 should fall back to default");
     }
 
     #[tokio::test]
-    async fn test_timeout_negative() {
+    async fn test_timeout_negative_uses_default() {
         let tool = BashTool;
         let output = tool.execute(json!({"command": "echo hi", "timeout": -1})).await;
-        // Negative timeout is invalid — should return an error or use default
-        // Must not panic
-        assert!(!output.content.is_empty());
+        // Negative is not valid u64, falls back to default (120s)
+        assert!(!output.is_error, "negative timeout should fall back to default");
     }
 
     #[tokio::test]
-    async fn test_timeout_very_large() {
+    async fn test_timeout_actually_enforced() {
         let tool = BashTool;
-        let output = tool.execute(json!({"command": "echo hi", "timeout": 999999999})).await;
-        // Very large timeout is valid but impractical — should still be accepted
-        // Must not panic
-        assert!(!output.content.is_empty());
+        let output = tool.execute(json!({"command": "sleep 10", "timeout": 1})).await;
+        assert!(output.is_error, "sleep 10 with timeout 1s must error");
+        let text = match &output.content[0] {
+            crate::types::Content::Text { text } => text.clone(),
+            _ => String::new(),
+        };
+        assert!(text.contains("timed out"), "should mention timeout, got: {text}");
     }
 
     // ---------------------------------------------------------------

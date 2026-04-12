@@ -3,6 +3,7 @@
 
 use crate::llm::types::*;
 use crate::llm::LlmProvider;
+use crate::tools::policy::ToolPolicy;
 use crate::tools::ToolRegistry;
 use crate::types::*;
 use std::collections::VecDeque;
@@ -14,6 +15,9 @@ pub struct AgentLoopConfig {
     pub system_prompt: String,
     pub max_turns: usize,
     pub tool_execution_mode: ToolExecutionMode,
+    /// Optional tool policy for enforcing binary/path whitelists.
+    /// When None, all tool calls are allowed (unrestricted mode).
+    pub tool_policy: Option<ToolPolicy>,
 }
 
 /// Hook called before a tool is executed.
@@ -187,7 +191,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for TestProvider {
-        async fn stream(
+        async fn complete(
             &self,
             _model: &Model,
             _context: &LlmContext,
@@ -199,30 +203,7 @@ mod tests {
         }
     }
 
-    fn test_model() -> Model {
-        Model {
-            id: "test-model".into(),
-            provider: "test".into(),
-            base_url: "http://localhost".into(),
-            api_key_env: "TEST_KEY".into(),
-            max_tokens: 4096,
-            context_window: 8192,
-            cost: ModelCost {
-                input_per_million: 0.0,
-                output_per_million: 0.0,
-                cache_read_per_million: 0.0,
-                cache_write_per_million: 0.0,
-            },
-            compat: ProviderCompat {
-                max_tokens_field: MaxTokensField::MaxTokens,
-                supports_reasoning_effort: false,
-                thinking_format: None,
-                requires_tool_result_name: false,
-                requires_assistant_after_tool_result: false,
-                supports_strict_mode: false,
-            },
-        }
-    }
+    use crate::test_helpers::test_model;
 
     fn test_config() -> AgentLoopConfig {
         AgentLoopConfig {
@@ -230,6 +211,7 @@ mod tests {
             system_prompt: "You are a test agent.".into(),
             max_turns: 10,
             tool_execution_mode: ToolExecutionMode::Parallel,
+            tool_policy: None,
         }
     }
 

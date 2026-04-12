@@ -3,6 +3,9 @@
 use crate::types::Content;
 use std::path::Path;
 
+/// Default recursion depth limit to prevent unbounded filesystem traversal.
+const DEFAULT_MAX_DEPTH: usize = 20;
+
 fn error_output(msg: &str) -> super::ToolOutput {
     super::ToolOutput {
         content: vec![Content::Text {
@@ -12,30 +15,36 @@ fn error_output(msg: &str) -> super::ToolOutput {
     }
 }
 
-fn find_files_recursive(
+/// Async recursive file search using tokio::fs to avoid blocking the runtime.
+async fn find_files_recursive(
     base: &Path,
     pattern: &glob::Pattern,
-    max_depth: Option<usize>,
+    max_depth: usize,
     depth: usize,
 ) -> Vec<String> {
     let mut results = Vec::new();
-    if let Some(max) = max_depth {
-        if depth > max {
-            return results;
-        }
+    if depth > max_depth {
+        return results;
     }
-    let entries = match std::fs::read_dir(base) {
+    let mut entries = match tokio::fs::read_dir(base).await {
         Ok(e) => e,
         Err(_) => return results,
     };
-    for entry in entries.flatten() {
+    while let Ok(Some(entry)) = entries.next_entry().await {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if pattern.matches(&name) {
             results.push(path.to_string_lossy().to_string());
         }
-        if path.is_dir() {
-            results.extend(find_files_recursive(&path, pattern, max_depth, depth + 1));
+        // Use entry.file_type() which avoids an extra stat() on Linux (uses d_type
+        // from getdents64). Returns lstat-equivalent metadata — symlink cycles avoided.
+        let is_dir = match entry.file_type().await {
+            Ok(ft) => ft.is_dir(),
+            Err(_) => false,
+        };
+        if is_dir {
+            let sub = Box::pin(find_files_recursive(&path, pattern, max_depth, depth + 1)).await;
+            results.extend(sub);
         }
     }
     results
@@ -83,15 +92,16 @@ impl super::AgentTool for FindTool {
             .and_then(|v| v.as_str())
             .unwrap_or(".");
         let path = Path::new(base_path);
-        if !path.exists() {
+        if tokio::fs::symlink_metadata(path).await.is_err() {
             return error_output(&format!("Path does not exist: {}", base_path));
         }
 
         let max_depth = args
             .get("depth")
             .and_then(|v| v.as_u64())
-            .map(|d| d as usize);
-        let results = find_files_recursive(path, &pattern, max_depth, 0);
+            .map(|d| d as usize)
+            .unwrap_or(DEFAULT_MAX_DEPTH);
+        let results = find_files_recursive(path, &pattern, max_depth, 0).await;
 
         let text = if results.is_empty() {
             "No matching files found".into()

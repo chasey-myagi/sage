@@ -21,5 +21,8 @@ glob = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }

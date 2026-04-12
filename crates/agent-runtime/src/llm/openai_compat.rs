@@ -113,8 +113,8 @@ impl OpenAiCompatProvider {
             "messages": messages,
             "stream": true,
             "stream_options": { "include_usage": true },
-            max_tokens_key: context.max_tokens,
         });
+        body[max_tokens_key] = json!(context.max_tokens);
 
         if let Some(temp) = context.temperature {
             body["temperature"] = json!(temp);
@@ -141,9 +141,26 @@ impl OpenAiCompatProvider {
     }
 }
 
+/// Process a single SSE line: skip empty/comment lines, strip "data: " prefix, parse chunk.
+fn process_sse_line(line: &str, events: &mut Vec<AssistantMessageEvent>) {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with(':') {
+        return;
+    }
+    if let Some(data) = line.strip_prefix("data: ") {
+        match parse_sse_chunk(data) {
+            Ok(Some(event)) => events.push(event),
+            Ok(None) => {} // [DONE] or empty
+            Err(e) => {
+                tracing::warn!("SSE parse error: {e}, data: {data}");
+            }
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl LlmProvider for OpenAiCompatProvider {
-    async fn stream(
+    async fn complete(
         &self,
         model: &Model,
         context: &LlmContext,
@@ -186,30 +203,44 @@ impl LlmProvider for OpenAiCompatProvider {
             ))];
         }
 
-        // Parse SSE stream
-        let mut events = Vec::new();
-        let full_text = match response.text().await {
-            Ok(t) => t,
-            Err(e) => {
-                return vec![AssistantMessageEvent::Error(format!(
-                    "Failed to read response: {e}"
-                ))];
-            }
-        };
+        // Parse SSE stream chunk-by-chunk (not batching entire response into memory)
+        use futures::StreamExt;
 
-        for line in full_text.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with(':') {
-                continue;
-            }
-            if let Some(data) = line.strip_prefix("data: ") {
-                match parse_sse_chunk(data) {
-                    Ok(Some(event)) => events.push(event),
-                    Ok(None) => {} // [DONE] or empty
-                    Err(e) => {
-                        tracing::warn!("SSE parse error: {e}, data: {data}");
-                    }
+        // Use a byte buffer to avoid corrupting multi-byte UTF-8 sequences
+        // at chunk boundaries. Chunks from bytes_stream() can split anywhere,
+        // including mid-character. We only decode to String after finding a
+        // complete line (delimited by b'\n').
+        let mut events = Vec::new();
+        let mut byte_buf: Vec<u8> = Vec::new();
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = match chunk_result {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    events.push(AssistantMessageEvent::Error(format!(
+                        "Stream read error: {e}"
+                    )));
+                    break;
                 }
+            };
+
+            byte_buf.extend_from_slice(&chunk);
+
+            // Process all complete lines in the buffer
+            while let Some(newline_pos) = byte_buf.iter().position(|&b| b == b'\n') {
+                let line_bytes = byte_buf[..newline_pos].to_vec();
+                byte_buf.drain(..=newline_pos);
+                let line = String::from_utf8_lossy(&line_bytes);
+                process_sse_line(&line, &mut events);
+            }
+        }
+
+        // Flush remaining data after stream ends (final chunk may lack trailing newline)
+        if !byte_buf.is_empty() {
+            let remaining = String::from_utf8_lossy(&byte_buf);
+            for line in remaining.lines() {
+                process_sse_line(line, &mut events);
             }
         }
 
@@ -220,7 +251,6 @@ impl LlmProvider for OpenAiCompatProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{StopReason, Usage};
 
     #[test]
     fn test_build_request_body_basic() {
@@ -321,6 +351,8 @@ mod tests {
         // Should use max_completion_tokens instead of max_tokens
         assert_eq!(body["max_completion_tokens"], 2048);
         assert!(body.get("max_tokens").is_none() || body["max_tokens"].is_null());
+        // Verify the old bug is fixed: no literal "max_tokens_key" field
+        assert!(body.get("max_tokens_key").is_none());
     }
 
     #[test]
@@ -342,28 +374,5 @@ mod tests {
         assert_eq!(messages[0]["role"], "user");
     }
 
-    fn test_model() -> Model {
-        Model {
-            id: "test-model".into(),
-            provider: "test".into(),
-            base_url: "https://api.test.com/v1".into(),
-            api_key_env: "TEST_API_KEY".into(),
-            max_tokens: 4096,
-            context_window: 128000,
-            cost: ModelCost {
-                input_per_million: 1.0,
-                output_per_million: 2.0,
-                cache_read_per_million: 0.5,
-                cache_write_per_million: 0.0,
-            },
-            compat: ProviderCompat {
-                max_tokens_field: MaxTokensField::MaxTokens,
-                supports_reasoning_effort: false,
-                thinking_format: None,
-                requires_tool_result_name: false,
-                requires_assistant_after_tool_result: false,
-                supports_strict_mode: false,
-            },
-        }
-    }
+    use crate::test_helpers::test_model;
 }

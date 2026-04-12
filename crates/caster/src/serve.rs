@@ -84,6 +84,7 @@ async fn handle_execute(
         system_prompt: config.system_prompt.clone(),
         max_turns: config.constraints.max_turns as usize,
         tool_execution_mode: ToolExecutionMode::Parallel,
+        tool_policy: Some(config.tools.to_policy()),
     };
 
     let mut agent = Agent::new(loop_config, Box::new(llm_provider), registry);

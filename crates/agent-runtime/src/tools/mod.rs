@@ -2,6 +2,7 @@
 // AgentTool trait, ToolRegistry, parallel/sequential execution.
 
 pub mod truncate;
+pub mod policy;
 pub mod bash;
 pub mod read;
 pub mod write;

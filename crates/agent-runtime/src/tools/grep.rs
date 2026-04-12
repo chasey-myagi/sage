@@ -108,6 +108,15 @@ impl super::AgentTool for GrepTool {
         }
 
         match cmd.output().await {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return error_output(
+                    "ripgrep (rg) is not installed or not in PATH. \
+                     Install it: https://github.com/BurntSushi/ripgrep#installation",
+                );
+            }
+            Err(e) => {
+                return error_output(&format!("Failed to execute rg: {e}"));
+            }
             Ok(output) => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let matches: Vec<GrepMatch> =
@@ -128,7 +137,6 @@ impl super::AgentTool for GrepTool {
                     }
                 }
             }
-            Err(e) => error_output(&format!("Failed to execute rg: {}", e)),
         }
     }
 }

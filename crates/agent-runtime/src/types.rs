@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -178,24 +177,6 @@ pub enum ToolExecutionMode {
     Parallel,
 }
 
-/// Mutable agent runtime state.
-pub struct AgentState {
-    pub system_prompt: String,
-    pub model: String,
-    pub thinking_level: ThinkingLevel,
-    pub tools: Vec<String>,
-    pub messages: Vec<AgentMessage>,
-    pub is_streaming: bool,
-    pub pending_tool_calls: HashSet<String>,
-    pub error: Option<String>,
-}
-
-/// Immutable context for an LLM call.
-pub struct AgentContext {
-    pub system_prompt: String,
-    pub messages: Vec<AgentMessage>,
-}
-
 /// Context passed to before-tool-call hooks.
 pub struct BeforeToolCallContext {
     pub tool_name: String,
@@ -226,7 +207,7 @@ pub struct AfterToolCallResult {
 pub(crate) fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs()
 }
 
@@ -234,7 +215,6 @@ pub(crate) fn now_secs() -> u64 {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::collections::HashSet;
 
     // ========================================================================
     // Message construction (happy path)
@@ -478,59 +458,6 @@ mod tests {
         assert!(ThinkingLevel::Low < ThinkingLevel::Medium);
         assert!(ThinkingLevel::Medium < ThinkingLevel::High);
         assert!(ThinkingLevel::High < ThinkingLevel::XHigh);
-    }
-
-    // ========================================================================
-    // AgentState
-    // ========================================================================
-
-    #[test]
-    fn test_agent_state_default_construction() {
-        let state = AgentState {
-            system_prompt: "You are a helpful assistant.".into(),
-            model: "claude-opus-4-20250514".into(),
-            thinking_level: ThinkingLevel::Medium,
-            tools: vec!["bash".into(), "read".into()],
-            messages: vec![],
-            is_streaming: false,
-            pending_tool_calls: HashSet::new(),
-            error: None,
-        };
-        assert_eq!(state.model, "claude-opus-4-20250514");
-        assert!(!state.is_streaming);
-        assert!(state.pending_tool_calls.is_empty());
-        assert!(state.error.is_none());
-        assert_eq!(state.tools.len(), 2);
-    }
-
-    #[test]
-    fn test_agent_state_is_streaming_flag() {
-        let state = AgentState {
-            system_prompt: String::new(),
-            model: "test-model".into(),
-            thinking_level: ThinkingLevel::Off,
-            tools: vec![],
-            messages: vec![],
-            is_streaming: true,
-            pending_tool_calls: HashSet::from(["tc_1".into(), "tc_2".into()]),
-            error: None,
-        };
-        assert!(state.is_streaming);
-        assert_eq!(state.pending_tool_calls.len(), 2);
-    }
-
-    // ========================================================================
-    // AgentContext
-    // ========================================================================
-
-    #[test]
-    fn test_agent_context_construction() {
-        let ctx = AgentContext {
-            system_prompt: "system".into(),
-            messages: vec![AgentMessage::User(UserMessage::from_text("hi"))],
-        };
-        assert_eq!(ctx.system_prompt, "system");
-        assert_eq!(ctx.messages.len(), 1);
     }
 
     // ========================================================================
@@ -921,28 +848,6 @@ mod tests {
             cost: Cost::default(),
         };
         assert_eq!(usage.total_tokens, usage.input + usage.output + usage.cache_read + usage.cache_write);
-    }
-
-    // ========================================================================
-    // AgentState with error and messages
-    // ========================================================================
-
-    #[test]
-    fn test_agent_state_with_error_and_messages() {
-        let msg = AgentMessage::User(UserMessage::from_text("hello"));
-        let state = AgentState {
-            system_prompt: "You are helpful".into(),
-            model: "qwen-plus".into(),
-            thinking_level: ThinkingLevel::Medium,
-            tools: vec!["bash".into(), "read".into()],
-            messages: vec![msg],
-            is_streaming: false,
-            pending_tool_calls: HashSet::new(),
-            error: Some("timeout after 300s".into()),
-        };
-        assert_eq!(state.messages.len(), 1);
-        assert_eq!(state.error.as_deref(), Some("timeout after 300s"));
-        assert_eq!(state.tools.len(), 2);
     }
 
     // ========================================================================

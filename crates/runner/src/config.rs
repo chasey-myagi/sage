@@ -1,6 +1,23 @@
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
-use crate::tools::ToolPolicy;
+use agent_runtime::tools::policy::ToolPolicy;
+
+/// Expand a leading `~` in a path string to the user's home directory.
+/// Returns the original string unchanged if it doesn't start with `~` or
+/// if the home directory cannot be determined.
+fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+            return Path::new(&home).join(rest).to_string_lossy().to_string();
+        }
+    } else if path == "~" {
+        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+            return home.to_string_lossy().to_string();
+        }
+    }
+    path.to_string()
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AgentConfig {
@@ -104,15 +121,15 @@ impl ToolsConfig {
         }
 
         if let Some(read) = &self.read {
-            allowed_read_paths.extend(read.allowed_paths.clone());
+            allowed_read_paths.extend(read.allowed_paths.iter().map(|p| expand_tilde(p)));
         }
         if let Some(write) = &self.write {
-            allowed_write_paths.extend(write.allowed_paths.clone());
+            allowed_write_paths.extend(write.allowed_paths.iter().map(|p| expand_tilde(p)));
         }
         if let Some(edit) = &self.edit {
             // edit implies both read and write
-            allowed_read_paths.extend(edit.allowed_paths.clone());
-            allowed_write_paths.extend(edit.allowed_paths.clone());
+            allowed_read_paths.extend(edit.allowed_paths.iter().map(|p| expand_tilde(p)));
+            allowed_write_paths.extend(edit.allowed_paths.iter().map(|p| expand_tilde(p)));
         }
 
         ToolPolicy {
@@ -372,6 +389,61 @@ constraints: { max_turns: 1, timeout_secs: 1 }
         assert!(policy.allowed_binaries.is_empty());
         assert!(policy.allowed_read_paths.is_empty());
         assert!(policy.allowed_write_paths.is_empty());
+    }
+
+    #[test]
+    fn to_policy_expands_tilde_in_paths() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools:
+  read:
+    allowed_paths: ["~/Documents"]
+  write:
+    allowed_paths: ["~/output"]
+constraints: { max_turns: 1, timeout_secs: 1 }
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let policy = config.tools.to_policy();
+        // After expansion, paths should NOT start with "~/"
+        for p in &policy.allowed_read_paths {
+            assert!(
+                !p.starts_with("~/"),
+                "tilde should be expanded, got: {p}"
+            );
+        }
+        for p in &policy.allowed_write_paths {
+            assert!(
+                !p.starts_with("~/"),
+                "tilde should be expanded, got: {p}"
+            );
+        }
+        // Paths should end with the original suffix
+        assert!(
+            policy.allowed_read_paths[0].ends_with("/Documents")
+                || policy.allowed_read_paths[0].ends_with("\\Documents"),
+            "expanded path should end with Documents, got: {}",
+            policy.allowed_read_paths[0]
+        );
+    }
+
+    #[test]
+    fn to_policy_preserves_absolute_paths() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools:
+  read:
+    allowed_paths: ["/workspace/src"]
+constraints: { max_turns: 1, timeout_secs: 1 }
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let policy = config.tools.to_policy();
+        assert_eq!(policy.allowed_read_paths[0], "/workspace/src");
     }
 
     // ========================================================================

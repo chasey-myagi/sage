@@ -1,5 +1,4 @@
 mod config;
-mod tools;
 
 pub use config::AgentConfig;
-pub use tools::ToolPolicy;
+pub use agent_runtime::tools::policy::ToolPolicy;
