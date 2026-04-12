@@ -1,0 +1,30 @@
+name: coding-assistant
+description: "Qwen-based coding assistant"
+llm:
+  provider: qwen
+  model: qwen-plus
+  max_tokens: 8192
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+system_prompt: |
+  你是一个代码助手。帮助用户编写、调试和优化代码。
+  工作目录是 /workspace，请在该目录下操作。
+  使用中文回答。
+tools:
+  bash:
+    allowed_binaries: [python, python3, pip, cargo, rustc, node, npm, git]
+  read:
+    allowed_paths: ["/workspace"]
+  write:
+    allowed_paths: ["/workspace"]
+  edit:
+    allowed_paths: ["/workspace"]
+  grep: {}
+  find: {}
+  ls: {}
+constraints:
+  max_turns: 30
+  timeout_secs: 600
+sandbox:
+  cpus: 2
+  memory_mib: 2048
+  network: true

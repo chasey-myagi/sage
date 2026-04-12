@@ -1,0 +1,28 @@
+name: deepseek-coder
+description: "DeepSeek V3 coding agent"
+llm:
+  provider: deepseek
+  model: deepseek-chat
+  max_tokens: 8192
+system_prompt: |
+  You are a coding assistant powered by DeepSeek.
+  Work in /workspace. Use tools to read, write, and execute code.
+tools:
+  bash:
+    allowed_binaries: [python3, cargo, node, git]
+  read:
+    allowed_paths: ["/workspace"]
+  write:
+    allowed_paths: ["/workspace"]
+  edit:
+    allowed_paths: ["/workspace"]
+  grep: {}
+  find: {}
+  ls: {}
+constraints:
+  max_turns: 25
+  timeout_secs: 300
+sandbox:
+  cpus: 1
+  memory_mib: 1024
+  network: true

@@ -1,5 +1,5 @@
 mod messages;
-mod wire;
+pub mod wire;
 
 pub use messages::*;
 pub use wire::*;

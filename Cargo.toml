@@ -5,6 +5,7 @@ members = [
     "crates/protocol",
     "crates/guest-agent",
     "crates/runner",
+    "crates/agent-runtime",
 ]
 resolver = "2"
 
@@ -24,13 +25,20 @@ anyhow = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-trait = "0.1"
+futures = "0.3"
+glob = "0.3"
+regex = "1"
+reqwest = { version = "0.12", features = ["json", "stream"] }
 ciborium = "0.2"              # CBOR encoding for wire protocol
 bytes = "1"
 
 # VMM
 msb_krun = "0.1"
+libc = "0.2"
 
 # Internal crates
 agent-protocol = { path = "crates/protocol" }
 agent-sandbox = { path = "crates/sandbox" }
 agent-runner = { path = "crates/runner" }
+agent-runtime = { path = "crates/agent-runtime" }
