@@ -63,6 +63,7 @@ impl OpenAiCompatProvider {
                 LlmMessage::Assistant {
                     content,
                     tool_calls,
+                    ..
                 } => {
                     let mut msg = json!({
                         "role": "assistant",
@@ -313,6 +314,7 @@ mod tests {
                             arguments: r#"{"command":"ls"}"#.into(),
                         },
                     }],
+                    thinking_blocks: vec![],
                 },
                 LlmMessage::Tool {
                     tool_call_id: "tc1".into(),

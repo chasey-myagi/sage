@@ -79,6 +79,7 @@ pub fn convert_messages(messages: &[LlmMessage]) -> Vec<Value> {
             LlmMessage::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 // Emit text as a message output item
                 if !content.is_empty() {
@@ -670,6 +671,7 @@ mod tests {
         let messages = vec![LlmMessage::Assistant {
             content: "I can help with that.".into(),
             tool_calls: vec![],
+            thinking_blocks: vec![],
         }];
         let input = convert_messages(&messages);
         assert_eq!(input.len(), 1);
@@ -691,6 +693,7 @@ mod tests {
                     arguments: r#"{"command":"ls"}"#.into(),
                 },
             }],
+            thinking_blocks: vec![],
         }];
         let input = convert_messages(&messages);
         // Text message + function_call
@@ -713,6 +716,7 @@ mod tests {
                     arguments: r#"{"path":"/tmp/file.txt"}"#.into(),
                 },
             }],
+            thinking_blocks: vec![],
         }];
         let input = convert_messages(&messages);
         // Only function_call, no text message since content is empty
@@ -752,6 +756,7 @@ mod tests {
                         arguments: r#"{"command":"ls"}"#.into(),
                     },
                 }],
+                thinking_blocks: vec![],
             },
             LlmMessage::Tool {
                 tool_call_id: "call_010".into(),
@@ -760,6 +765,7 @@ mod tests {
             LlmMessage::Assistant {
                 content: "Here are your files.".into(),
                 tool_calls: vec![],
+                thinking_blocks: vec![],
             },
         ];
         let input = convert_messages(&messages);

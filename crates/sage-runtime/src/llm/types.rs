@@ -67,6 +67,21 @@ pub enum LlmContent {
     Image { url: String },
 }
 
+/// A thinking block preserved for multi-turn conversation roundtrip.
+///
+/// Aligns with pi-mono's `ThinkingContent` type.  Redacted blocks carry an
+/// opaque encrypted signature that must be passed back to the API so the
+/// provider can maintain reasoning continuity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkingBlock {
+    pub thinking: String,
+    /// Opaque signature for redacted blocks (base64-encoded encrypted payload).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    #[serde(default)]
+    pub redacted: bool,
+}
+
 /// Message in the LLM API format (OpenAI-compatible).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LlmMessage {
@@ -79,6 +94,9 @@ pub enum LlmMessage {
     Assistant {
         content: String,
         tool_calls: Vec<LlmToolCall>,
+        /// Thinking blocks from reasoning models (preserved for multi-turn roundtrip).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        thinking_blocks: Vec<ThinkingBlock>,
     },
     Tool {
         tool_call_id: String,
@@ -226,6 +244,11 @@ impl Default for ProviderCompat {
 pub enum AssistantMessageEvent {
     TextDelta(String),
     ThinkingDelta(String),
+    /// Marks the end of a thinking block with its accumulated signature and metadata.
+    ThinkingBlockEnd {
+        signature: String,
+        redacted: bool,
+    },
     ToolCallStart { id: String, name: String },
     ToolCallDelta { id: String, arguments_delta: String },
     ToolCallEnd { id: String },

@@ -112,6 +112,7 @@ impl OpenAiCompletionsProvider {
                 LlmMessage::Assistant {
                     content,
                     tool_calls,
+                    ..
                 } => {
                     let mut msg = json!({
                         "role": "assistant",
@@ -611,6 +612,7 @@ mod tests {
                             arguments: r#"{"command":"ls"}"#.into(),
                         },
                     }],
+                    thinking_blocks: vec![],
                 },
                 LlmMessage::Tool {
                     tool_call_id: "tc1".into(),
@@ -1100,6 +1102,7 @@ mod tests {
                             arguments: "{}".into(),
                         },
                     }],
+                    thinking_blocks: vec![],
                 },
                 LlmMessage::Tool {
                     tool_call_id: "tc1".into(),
