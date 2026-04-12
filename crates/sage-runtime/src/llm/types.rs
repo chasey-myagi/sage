@@ -35,6 +35,7 @@ pub mod provider {
     pub const MINIMAX: &str = "minimax";
     pub const ZAI: &str = "zai";
     pub const OPENROUTER: &str = "openrouter";
+    pub const CEREBRAS: &str = "cerebras";
 }
 
 // ============================================================================
