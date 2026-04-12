@@ -1,10 +1,10 @@
 // LLM module — Phase 2
-pub mod types;
-pub mod models;
 pub mod keys;
-pub mod transform;
-pub mod stream;
+pub mod models;
 pub mod openai_compat;
+pub mod stream;
+pub mod transform;
+pub mod types;
 
 use types::*;
 
@@ -21,10 +21,10 @@ pub trait LlmProvider: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::types::*;
     use super::LlmProvider;
+    use super::types::*;
+    use crate::test_helpers::{test_context, test_model};
     use crate::types::*;
-    use crate::test_helpers::{test_model, test_context};
 
     // ========================================================================
     // LlmProvider trait — mock implementation
@@ -100,7 +100,9 @@ mod tests {
 
         let events = provider.complete(&model, &context, &[]).await;
         assert_eq!(events.len(), 4);
-        assert!(matches!(&events[0], AssistantMessageEvent::ToolCallStart { name, .. } if name == "bash"));
+        assert!(
+            matches!(&events[0], AssistantMessageEvent::ToolCallStart { name, .. } if name == "bash")
+        );
         assert!(matches!(
             &events[3],
             AssistantMessageEvent::Done { stop_reason } if *stop_reason == StopReason::ToolUse
@@ -152,7 +154,9 @@ mod tests {
         let events = provider.complete(&model, &context, &[]).await;
         assert_eq!(events.len(), 2);
         assert!(matches!(&events[0], AssistantMessageEvent::TextDelta(s) if s == "partial output"));
-        assert!(matches!(&events[1], AssistantMessageEvent::Error(s) if s == "internal server error"));
+        assert!(
+            matches!(&events[1], AssistantMessageEvent::Error(s) if s == "internal server error")
+        );
     }
 
     // ========================================================================
@@ -184,9 +188,15 @@ mod tests {
         assert_eq!(events.len(), 5);
         // Verify the sequence: text -> tool_call_start -> tool_call_delta -> tool_call_end -> error
         assert!(matches!(&events[0], AssistantMessageEvent::TextDelta(s) if s == "Let me check."));
-        assert!(matches!(&events[1], AssistantMessageEvent::ToolCallStart { name, .. } if name == "bash"));
-        assert!(matches!(&events[2], AssistantMessageEvent::ToolCallDelta { id, .. } if id == "call_inter_001"));
-        assert!(matches!(&events[3], AssistantMessageEvent::ToolCallEnd { id } if id == "call_inter_001"));
+        assert!(
+            matches!(&events[1], AssistantMessageEvent::ToolCallStart { name, .. } if name == "bash")
+        );
+        assert!(
+            matches!(&events[2], AssistantMessageEvent::ToolCallDelta { id, .. } if id == "call_inter_001")
+        );
+        assert!(
+            matches!(&events[3], AssistantMessageEvent::ToolCallEnd { id } if id == "call_inter_001")
+        );
         assert!(matches!(&events[4], AssistantMessageEvent::Error(s) if s == "connection reset"));
     }
 

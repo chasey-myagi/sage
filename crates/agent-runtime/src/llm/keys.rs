@@ -207,9 +207,7 @@ mod tests {
 
     #[test]
     fn test_api_key_env_var_unknown_provider_returns_value() {
-        let result = std::panic::catch_unwind(|| {
-            api_key_env_var("totally_unknown_provider_xyz")
-        });
+        let result = std::panic::catch_unwind(|| api_key_env_var("totally_unknown_provider_xyz"));
         if let Ok(env_var) = result {
             assert!(!env_var.is_empty());
         }

@@ -64,9 +64,7 @@ mod tests {
         HostMessage,
     };
 
-    fn roundtrip<T: Serialize + for<'de> Deserialize<'de> + PartialEq + std::fmt::Debug>(
-        msg: &T,
-    ) {
+    fn roundtrip<T: Serialize + for<'de> Deserialize<'de> + PartialEq + std::fmt::Debug>(msg: &T) {
         let mut buf = BytesMut::new();
         encode(msg, &mut buf).unwrap();
         let decoded: T = decode(&mut buf).unwrap();

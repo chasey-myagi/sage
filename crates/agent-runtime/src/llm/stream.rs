@@ -155,9 +155,7 @@ pub struct IncrementalJsonParser {
 
 impl IncrementalJsonParser {
     pub fn new() -> Self {
-        Self {
-            buf: String::new(),
-        }
+        Self { buf: String::new() }
     }
 
     pub fn push(&mut self, chunk: &str) {
@@ -527,10 +525,7 @@ mod tests {
             }
             Err(e) => {
                 let err_msg = format!("{}", e);
-                assert!(
-                    !err_msg.is_empty(),
-                    "error should have a message"
-                );
+                assert!(!err_msg.is_empty(), "error should have a message");
             }
             Ok(None) => {
                 // Some implementations might ignore error objects — acceptable

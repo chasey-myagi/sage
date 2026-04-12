@@ -197,7 +197,10 @@ mod tests {
     #[test]
     fn test_format_empty_results() {
         let result = format_grep_results(&[], 500);
-        assert!(result.is_empty(), "empty results should produce empty string");
+        assert!(
+            result.is_empty(),
+            "empty results should produce empty string"
+        );
     }
 
     #[test]
@@ -442,7 +445,10 @@ mod tests {
     async fn test_unmatched_paren_regex_returns_error() {
         let tool = GrepTool;
         let output = tool.execute(json!({"pattern": "((missing)"})).await;
-        assert!(output.is_error, "unmatched paren in regex should return error");
+        assert!(
+            output.is_error,
+            "unmatched paren in regex should return error"
+        );
     }
 
     // ---------------------------------------------------------------

@@ -71,10 +71,8 @@ impl super::AgentTool for ReadTool {
 
         match tokio::fs::read_to_string(file_path).await {
             Ok(content) => {
-                let offset =
-                    args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let limit =
-                    args.get("limit").and_then(|v| v.as_u64()).unwrap_or(2000) as usize;
+                let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(2000) as usize;
 
                 let lines: Vec<&str> = content.lines().collect();
                 let start = offset.min(lines.len());
@@ -261,14 +259,14 @@ mod tests {
         let output = tool
             .execute(json!({"file_path": "/nonexistent_path_12345/no_such_file.txt"}))
             .await;
-        assert!(output.is_error, "reading nonexistent file should return error");
+        assert!(
+            output.is_error,
+            "reading nonexistent file should return error"
+        );
         // Error message should mention the file or "not found"
         match &output.content[0] {
             crate::types::Content::Text { text } => {
-                assert!(
-                    !text.is_empty(),
-                    "error message should not be empty"
-                );
+                assert!(!text.is_empty(), "error message should not be empty");
             }
             _ => panic!("expected Text content in error"),
         }
@@ -312,12 +310,9 @@ mod tests {
     #[tokio::test]
     async fn test_read_real_file_success() {
         let tool = ReadTool;
-        let file_path = std::env::temp_dir().join(format!(
-            "agent_caster_read_test_{}",
-            std::process::id()
-        ));
-        std::fs::write(&file_path, "first line\nsecond line\nthird line\n")
-            .expect("setup write");
+        let file_path =
+            std::env::temp_dir().join(format!("agent_caster_read_test_{}", std::process::id()));
+        std::fs::write(&file_path, "first line\nsecond line\nthird line\n").expect("setup write");
 
         let output = tool
             .execute(json!({"file_path": file_path.to_str().unwrap()}))
@@ -329,8 +324,14 @@ mod tests {
         };
         // Output should have line numbers (cat -n format) and content
         assert!(text.contains("1\t"), "output should contain line number 1");
-        assert!(text.contains("first line"), "output should contain file content");
-        assert!(text.contains("second line"), "output should contain second line");
+        assert!(
+            text.contains("first line"),
+            "output should contain file content"
+        );
+        assert!(
+            text.contains("second line"),
+            "output should contain second line"
+        );
 
         let _ = std::fs::remove_file(&file_path);
     }
@@ -347,11 +348,8 @@ mod tests {
             std::process::id()
         ));
         // Create a 6-line file
-        std::fs::write(
-            &file_path,
-            "line1\nline2\nline3\nline4\nline5\nline6\n",
-        )
-        .expect("setup write");
+        std::fs::write(&file_path, "line1\nline2\nline3\nline4\nline5\nline6\n")
+            .expect("setup write");
 
         let output = tool
             .execute(json!({
@@ -367,9 +365,21 @@ mod tests {
         };
         // offset=2 means skip first 2 lines (line1, line2), start from line3
         // limit=3 means read 3 lines: line3, line4, line5
-        assert!(text.contains("line3"), "should contain line3, got: {}", text);
-        assert!(text.contains("line4"), "should contain line4, got: {}", text);
-        assert!(text.contains("line5"), "should contain line5, got: {}", text);
+        assert!(
+            text.contains("line3"),
+            "should contain line3, got: {}",
+            text
+        );
+        assert!(
+            text.contains("line4"),
+            "should contain line4, got: {}",
+            text
+        );
+        assert!(
+            text.contains("line5"),
+            "should contain line5, got: {}",
+            text
+        );
         assert!(!text.contains("line1"), "should not contain line1");
         assert!(!text.contains("line6"), "should not contain line6");
 
@@ -386,10 +396,24 @@ mod tests {
         let result = add_line_numbers("\n\n\n", 1);
         let lines: Vec<&str> = result.lines().collect();
         // .lines() on "\n\n\n" yields ["", "", ""] = 3 empty lines
-        assert_eq!(lines.len(), 3, "should have 3 numbered empty lines, got: {:?}", lines);
-        assert!(lines[0].contains("1\t"), "first line should start with number 1");
-        assert!(lines[1].contains("2\t"), "second line should start with number 2");
-        assert!(lines[2].contains("3\t"), "third line should start with number 3");
+        assert_eq!(
+            lines.len(),
+            3,
+            "should have 3 numbered empty lines, got: {:?}",
+            lines
+        );
+        assert!(
+            lines[0].contains("1\t"),
+            "first line should start with number 1"
+        );
+        assert!(
+            lines[1].contains("2\t"),
+            "second line should start with number 2"
+        );
+        assert!(
+            lines[2].contains("3\t"),
+            "third line should start with number 3"
+        );
     }
 
     // ---------------------------------------------------------------
@@ -399,10 +423,8 @@ mod tests {
     #[tokio::test]
     async fn test_read_empty_file() {
         let tool = ReadTool;
-        let file_path = std::env::temp_dir().join(format!(
-            "agent_caster_read_empty_{}",
-            std::process::id()
-        ));
+        let file_path =
+            std::env::temp_dir().join(format!("agent_caster_read_empty_{}", std::process::id()));
         std::fs::write(&file_path, "").expect("setup empty file");
 
         let output = tool

@@ -38,7 +38,9 @@ impl SandboxBuilder {
             volumes: Vec::new(),
             env: Vec::new(),
             idle_timeout_secs: 300,
-            guest_agent_path: PathBuf::from("target/aarch64-unknown-linux-musl/release/agent-guest"),
+            guest_agent_path: PathBuf::from(
+                "target/aarch64-unknown-linux-musl/release/agent-guest",
+            ),
             krunfw_path: PathBuf::from(format!("{home}/.microsandbox/lib/libkrunfw.5.dylib")),
             runtime_binary_path: PathBuf::from("target/debug/sandbox-runtime"),
         }
@@ -111,7 +113,10 @@ impl SandboxBuilder {
         //    The guest agent reads/writes /dev/vport0p0 which connects to these pipes
         let mut child = tokio::process::Command::new(&self.runtime_binary_path)
             .env("SANDBOX_ROOTFS", rootfs_path.to_str().unwrap_or_default())
-            .env("SANDBOX_KRUNFW", self.krunfw_path.to_str().unwrap_or_default())
+            .env(
+                "SANDBOX_KRUNFW",
+                self.krunfw_path.to_str().unwrap_or_default(),
+            )
             .env("SANDBOX_VCPUS", self.cpus.to_string())
             .env("SANDBOX_MEMORY_MIB", self.memory_mib.to_string())
             .stdin(std::process::Stdio::piped())

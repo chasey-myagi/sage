@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 
 /// Agent lifecycle events.
@@ -213,7 +213,9 @@ mod tests {
 
         sender.send(AgentEvent::AgentStart).unwrap();
         sender.send(AgentEvent::TurnStart).unwrap();
-        sender.send(AgentEvent::AgentEnd { messages: vec![] }).unwrap();
+        sender
+            .send(AgentEvent::AgentEnd { messages: vec![] })
+            .unwrap();
         sender.end(vec![]);
 
         let e1 = receiver.next().await.unwrap();
@@ -469,7 +471,9 @@ mod tests {
         let tool_result = ToolResultMessage {
             tool_call_id: "tc-42".to_string(),
             tool_name: "bash".to_string(),
-            content: vec![Content::Text { text: "output".into() }],
+            content: vec![Content::Text {
+                text: "output".into(),
+            }],
             is_error: false,
             timestamp: 0,
         };
@@ -822,18 +826,22 @@ mod tests {
         drop(sender);
 
         // send on clone after original dropped
-        sender2.send(AgentEvent::TurnEnd {
-            message: AssistantMessage {
-                content: vec![Content::Text { text: "done".into() }],
-                provider: "test".into(),
-                model: "test".into(),
-                usage: Usage::default(),
-                stop_reason: StopReason::Stop,
-                error_message: None,
-                timestamp: 0,
-            },
-            tool_results: vec![],
-        }).unwrap();
+        sender2
+            .send(AgentEvent::TurnEnd {
+                message: AssistantMessage {
+                    content: vec![Content::Text {
+                        text: "done".into(),
+                    }],
+                    provider: "test".into(),
+                    model: "test".into(),
+                    usage: Usage::default(),
+                    stop_reason: StopReason::Stop,
+                    error_message: None,
+                    timestamp: 0,
+                },
+                tool_results: vec![],
+            })
+            .unwrap();
 
         // end on clone
         sender2.end(vec![]);
@@ -865,7 +873,9 @@ mod tests {
     async fn agent_event_serde_roundtrip_all_variants() {
         let user_msg = AgentMessage::User(UserMessage::from_text("hello"));
         let assistant_msg = AssistantMessage {
-            content: vec![Content::Text { text: "response".into() }],
+            content: vec![Content::Text {
+                text: "response".into(),
+            }],
             provider: "test".into(),
             model: "test-model".into(),
             usage: Usage::default(),
@@ -876,25 +886,33 @@ mod tests {
         let tool_result = ToolResultMessage {
             tool_call_id: "tc_1".into(),
             tool_name: "bash".into(),
-            content: vec![Content::Text { text: "output".into() }],
+            content: vec![Content::Text {
+                text: "output".into(),
+            }],
             is_error: false,
             timestamp: 0,
         };
 
         let events: Vec<AgentEvent> = vec![
             AgentEvent::AgentStart,
-            AgentEvent::AgentEnd { messages: vec![user_msg.clone()] },
+            AgentEvent::AgentEnd {
+                messages: vec![user_msg.clone()],
+            },
             AgentEvent::TurnStart,
             AgentEvent::TurnEnd {
                 message: assistant_msg.clone(),
                 tool_results: vec![tool_result.clone()],
             },
-            AgentEvent::MessageStart { message: user_msg.clone() },
+            AgentEvent::MessageStart {
+                message: user_msg.clone(),
+            },
             AgentEvent::MessageUpdate {
                 message: AgentMessage::Assistant(assistant_msg.clone()),
                 delta: "hello".into(),
             },
-            AgentEvent::MessageEnd { message: user_msg.clone() },
+            AgentEvent::MessageEnd {
+                message: user_msg.clone(),
+            },
             AgentEvent::ToolExecutionStart {
                 tool_call_id: "tc_1".into(),
                 tool_name: "bash".into(),
@@ -914,7 +932,8 @@ mod tests {
 
         for event in &events {
             let json = serde_json::to_string(event).expect("serialize AgentEvent");
-            let deserialized: AgentEvent = serde_json::from_str(&json).expect("deserialize AgentEvent");
+            let deserialized: AgentEvent =
+                serde_json::from_str(&json).expect("deserialize AgentEvent");
             // Re-serialize to verify structural equality
             let json2 = serde_json::to_string(&deserialized).unwrap();
             assert_eq!(json, json2, "roundtrip failed for event: {json}");
@@ -947,7 +966,11 @@ mod tests {
         }
 
         let collected = events.lock().await;
-        assert_eq!(collected.len(), 10, "all concurrent emits should be collected");
+        assert_eq!(
+            collected.len(),
+            10,
+            "all concurrent emits should be collected"
+        );
     }
 
     // ── Backpressure / channel semantics ────────────────────────────
@@ -983,7 +1006,11 @@ mod tests {
         };
 
         match &event {
-            AgentEvent::ToolExecutionEnd { tool_call_id, tool_name, is_error } => {
+            AgentEvent::ToolExecutionEnd {
+                tool_call_id,
+                tool_name,
+                is_error,
+            } => {
                 assert_eq!(tool_call_id, "tc_fail");
                 assert_eq!(tool_name, "bash");
                 assert!(*is_error);
@@ -1013,7 +1040,9 @@ mod tests {
         let error_result = ToolResultMessage {
             tool_call_id: "tc_1".into(),
             tool_name: "bash".into(),
-            content: vec![Content::Text { text: "permission denied".into() }],
+            content: vec![Content::Text {
+                text: "permission denied".into(),
+            }],
             is_error: true,
             timestamp: 0,
         };

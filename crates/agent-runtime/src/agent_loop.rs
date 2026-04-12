@@ -62,10 +62,13 @@ impl MessageAccumulator {
     fn push_event(&mut self, event: &AssistantMessageEvent) {
         match event {
             // After an error, only allow Done/Usage events
-            _ if self.errored && !matches!(
-                event,
-                AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Usage(_) | AssistantMessageEvent::Error(_)
-            ) => {}
+            _ if self.errored
+                && !matches!(
+                    event,
+                    AssistantMessageEvent::Done { .. }
+                        | AssistantMessageEvent::Usage(_)
+                        | AssistantMessageEvent::Error(_)
+                ) => {}
             AssistantMessageEvent::TextDelta(delta) => self.text.push_str(delta),
             AssistantMessageEvent::ThinkingDelta(delta) => self.thinking.push_str(delta),
             AssistantMessageEvent::ToolCallStart { id, name } => {
@@ -260,7 +263,8 @@ async fn prepare_tool_call(
                 serde_json::Value::Null,
                 format!("Invalid tool call arguments: {e}"),
                 emit,
-            ).await);
+            )
+            .await);
         }
     };
 
@@ -487,8 +491,7 @@ pub async fn run_agent_loop(
             has_more_tool_calls = !tool_call_accums.is_empty();
 
             let tool_results = if has_more_tool_calls {
-                let results =
-                    execute_tool_calls(agent, &tool_call_accums, emit).await;
+                let results = execute_tool_calls(agent, &tool_call_accums, emit).await;
                 for r in &results {
                     agent.push_message(AgentMessage::ToolResult(r.clone()));
                     new_messages.push(AgentMessage::ToolResult(r.clone()));
@@ -529,16 +532,16 @@ pub async fn run_agent_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::{Agent, AgentLoopConfig, BeforeToolCallHook, AfterToolCallHook};
+    use crate::agent::{AfterToolCallHook, Agent, AgentLoopConfig, BeforeToolCallHook};
     use crate::event::{AgentEvent, AgentEventSink};
-    use crate::llm::types::*;
     use crate::llm::LlmProvider;
+    use crate::llm::types::*;
     use crate::tools::{AgentTool, ToolOutput, ToolRegistry};
     use crate::types::*;
     use serde_json::json;
     use std::collections::VecDeque;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     // ---------------------------------------------------------------
     // Mock LLM provider — stateful, returns pre-configured sequences
@@ -844,10 +847,7 @@ mod tests {
         events
     }
 
-    fn make_agent(
-        responses: Vec<Vec<AssistantMessageEvent>>,
-        tools: ToolRegistry,
-    ) -> Agent {
+    fn make_agent(responses: Vec<Vec<AssistantMessageEvent>>, tools: ToolRegistry) -> Agent {
         Agent::new(
             test_config(),
             Box::new(StatefulProvider::new(responses)),
@@ -860,11 +860,7 @@ mod tests {
         responses: Vec<Vec<AssistantMessageEvent>>,
         tools: ToolRegistry,
     ) -> Agent {
-        Agent::new(
-            config,
-            Box::new(StatefulProvider::new(responses)),
-            tools,
-        )
+        Agent::new(config, Box::new(StatefulProvider::new(responses)), tools)
     }
 
     fn echo_registry() -> ToolRegistry {
@@ -893,7 +889,11 @@ mod tests {
         let result = run_agent_loop(&mut agent, &sink).await;
         assert!(result.is_ok());
         let messages = result.unwrap();
-        assert!(messages.iter().any(|m| matches!(m, AgentMessage::Assistant(_))));
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, AgentMessage::Assistant(_)))
+        );
     }
 
     #[tokio::test]
@@ -923,7 +923,9 @@ mod tests {
             ]],
             ToolRegistry::new(),
         );
-        agent.steer(AgentMessage::User(UserMessage::from_text("Meaning of life?")));
+        agent.steer(AgentMessage::User(UserMessage::from_text(
+            "Meaning of life?",
+        )));
         let sink = CollectorSink::new();
 
         let result = run_agent_loop(&mut agent, &sink).await;
@@ -961,7 +963,11 @@ mod tests {
         assert!(result.is_ok());
         let messages = result.unwrap();
         // Must contain a ToolResult
-        assert!(messages.iter().any(|m| matches!(m, AgentMessage::ToolResult(_))));
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, AgentMessage::ToolResult(_)))
+        );
         // Must have two assistant messages: one with tool call, one with text
         let assistants: Vec<_> = messages
             .iter()
@@ -1017,7 +1023,10 @@ mod tests {
                 _ => None,
             })
             .expect("should have tool result");
-        assert!(tool_result.is_error, "unknown tool should produce error result");
+        assert!(
+            tool_result.is_error,
+            "unknown tool should produce error result"
+        );
     }
 
     #[tokio::test]
@@ -1236,10 +1245,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_steering_messages_all_drained() {
-        let mut agent = make_agent(
-            vec![text_response("Got all of them.")],
-            ToolRegistry::new(),
-        );
+        let mut agent = make_agent(vec![text_response("Got all of them.")], ToolRegistry::new());
         agent.steer(AgentMessage::User(UserMessage::from_text("Message 1")));
         agent.steer(AgentMessage::User(UserMessage::from_text("Message 2")));
         let sink = CollectorSink::new();
@@ -1325,10 +1331,7 @@ mod tests {
         let mut agent = make_agent_with_config(
             config,
             vec![
-                multi_tool_response(vec![
-                    ("tc1", "tool_a", r#"{}"#),
-                    ("tc2", "tool_b", r#"{}"#),
-                ]),
+                multi_tool_response(vec![("tc1", "tool_a", r#"{}"#), ("tc2", "tool_b", r#"{}"#)]),
                 text_response("Done!"),
             ],
             reg,
@@ -1338,8 +1341,16 @@ mod tests {
 
         let result = run_agent_loop(&mut agent, &sink).await;
         assert!(result.is_ok());
-        assert_eq!(count_a.load(Ordering::SeqCst), 1, "tool_a should be called once");
-        assert_eq!(count_b.load(Ordering::SeqCst), 1, "tool_b should be called once");
+        assert_eq!(
+            count_a.load(Ordering::SeqCst),
+            1,
+            "tool_a should be called once"
+        );
+        assert_eq!(
+            count_b.load(Ordering::SeqCst),
+            1,
+            "tool_b should be called once"
+        );
     }
 
     #[tokio::test]
@@ -1360,10 +1371,7 @@ mod tests {
         let mut agent = make_agent_with_config(
             config,
             vec![
-                multi_tool_response(vec![
-                    ("tc1", "tool_a", r#"{}"#),
-                    ("tc2", "tool_b", r#"{}"#),
-                ]),
+                multi_tool_response(vec![("tc1", "tool_a", r#"{}"#), ("tc2", "tool_b", r#"{}"#)]),
                 text_response("Done!"),
             ],
             reg,
@@ -1387,10 +1395,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl BeforeToolCallHook for BlockEchoHook {
-            async fn before_tool_call(
-                &self,
-                ctx: &BeforeToolCallContext,
-            ) -> BeforeToolCallResult {
+            async fn before_tool_call(&self, ctx: &BeforeToolCallContext) -> BeforeToolCallResult {
                 if ctx.tool_name == "echo" {
                     BeforeToolCallResult {
                         block: true,
@@ -1426,7 +1431,10 @@ mod tests {
                 _ => None,
             })
             .expect("should have tool result");
-        assert!(tool_result.is_error, "blocked tool should produce error result");
+        assert!(
+            tool_result.is_error,
+            "blocked tool should produce error result"
+        );
     }
 
     #[tokio::test]
@@ -1435,10 +1443,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl AfterToolCallHook for ModifyResultHook {
-            async fn after_tool_call(
-                &self,
-                _ctx: &AfterToolCallContext,
-            ) -> AfterToolCallResult {
+            async fn after_tool_call(&self, _ctx: &AfterToolCallContext) -> AfterToolCallResult {
                 AfterToolCallResult {
                     content: Some(vec![Content::Text {
                         text: "modified by hook".into(),
@@ -1512,7 +1517,11 @@ mod tests {
         let events = sink.events().await;
 
         assert!(events.iter().any(|e| matches!(e, AgentEvent::TurnStart)));
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::TurnEnd { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::TurnEnd { .. }))
+        );
     }
 
     #[tokio::test]
@@ -1584,10 +1593,7 @@ mod tests {
             .iter()
             .rposition(|e| matches!(e, AgentEvent::AgentEnd { .. }))
             .expect("AgentEnd must exist");
-        assert!(
-            start_idx < end_idx,
-            "AgentStart must come before AgentEnd"
-        );
+        assert!(start_idx < end_idx, "AgentStart must come before AgentEnd");
 
         // TurnStart/TurnEnd must be between AgentStart and AgentEnd
         if let Some(turn_start_idx) = events
@@ -1619,12 +1625,10 @@ mod tests {
         // with StopReason::Error (or return ProviderError).
         match result {
             Ok(messages) => {
-                let assistant = messages
-                    .iter()
-                    .find_map(|m| match m {
-                        AgentMessage::Assistant(a) => Some(a),
-                        _ => None,
-                    });
+                let assistant = messages.iter().find_map(|m| match m {
+                    AgentMessage::Assistant(a) => Some(a),
+                    _ => None,
+                });
                 if let Some(a) = assistant {
                     assert_eq!(a.stop_reason, StopReason::Error);
                 }
@@ -1641,10 +1645,7 @@ mod tests {
     #[tokio::test]
     async fn test_provider_returns_empty_event_stream() {
         // Provider returns vec![] — no Done event at all
-        let mut agent = make_agent(
-            vec![vec![]],
-            ToolRegistry::new(),
-        );
+        let mut agent = make_agent(vec![vec![]], ToolRegistry::new());
         agent.steer(AgentMessage::User(UserMessage::from_text("test")));
         let sink = CollectorSink::new();
 
@@ -1677,7 +1678,9 @@ mod tests {
             vec![vec![
                 AssistantMessageEvent::Error("something went wrong".into()),
                 AssistantMessageEvent::TextDelta("should be ignored".into()),
-                AssistantMessageEvent::Done { stop_reason: StopReason::Stop },
+                AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Stop,
+                },
             ]],
             ToolRegistry::new(),
         );
@@ -1730,10 +1733,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_messages_pushed_to_agent_history() {
-        let mut agent = make_agent(
-            vec![text_response("Reply.")],
-            ToolRegistry::new(),
-        );
+        let mut agent = make_agent(vec![text_response("Reply.")], ToolRegistry::new());
         agent.steer(AgentMessage::User(UserMessage::from_text("Prompt")));
         let sink = CollectorSink::new();
 
@@ -1779,7 +1779,10 @@ mod tests {
         let sink = CollectorSink::new();
 
         let _ = run_agent_loop(&mut agent, &sink).await;
-        assert!(!agent.is_streaming(), "agent should not be streaming after loop ends");
+        assert!(
+            !agent.is_streaming(),
+            "agent should not be streaming after loop ends"
+        );
     }
 
     #[tokio::test]
@@ -1821,11 +1824,7 @@ mod tests {
         let provider = ContextCapturingProvider::new(vec![text_response("Hi")]);
         let captured = std::sync::Arc::clone(&provider.captured);
 
-        let mut agent = Agent::new(
-            test_config(),
-            Box::new(provider),
-            ToolRegistry::new(),
-        );
+        let mut agent = Agent::new(test_config(), Box::new(provider), ToolRegistry::new());
         agent.steer(AgentMessage::User(UserMessage::from_text("Hello")));
         let sink = CollectorSink::new();
 
@@ -1841,11 +1840,7 @@ mod tests {
         let provider = ContextCapturingProvider::new(vec![text_response("Reply")]);
         let captured = std::sync::Arc::clone(&provider.captured);
 
-        let mut agent = Agent::new(
-            test_config(),
-            Box::new(provider),
-            ToolRegistry::new(),
-        );
+        let mut agent = Agent::new(test_config(), Box::new(provider), ToolRegistry::new());
         agent.steer(AgentMessage::User(UserMessage::from_text("What is 2+2?")));
         let sink = CollectorSink::new();
 
@@ -1870,11 +1865,7 @@ mod tests {
         ]);
         let captured = std::sync::Arc::clone(&provider.captured);
 
-        let mut agent = Agent::new(
-            test_config(),
-            Box::new(provider),
-            echo_registry(),
-        );
+        let mut agent = Agent::new(test_config(), Box::new(provider), echo_registry());
         agent.steer(AgentMessage::User(UserMessage::from_text("Go")));
         let sink = CollectorSink::new();
 
@@ -1897,11 +1888,7 @@ mod tests {
         let provider = ToolCapturingProvider::new(vec![text_response("Hi")]);
         let captured_tools = std::sync::Arc::clone(&provider.captured_tools);
 
-        let mut agent = Agent::new(
-            test_config(),
-            Box::new(provider),
-            echo_registry(),
-        );
+        let mut agent = Agent::new(test_config(), Box::new(provider), echo_registry());
         agent.steer(AgentMessage::User(UserMessage::from_text("Hello")));
         let sink = CollectorSink::new();
 
@@ -2019,7 +2006,10 @@ mod tests {
                     .iter()
                     .filter(|m| matches!(m, AgentMessage::Assistant(_)))
                     .count();
-                assert!(assistant_count <= 1, "max_turns=1 limits to at most 1 LLM call");
+                assert!(
+                    assistant_count <= 1,
+                    "max_turns=1 limits to at most 1 LLM call"
+                );
             }
             Err(e) => {
                 assert!(matches!(e, AgentLoopError::MaxTurnsReached));
@@ -2048,7 +2038,10 @@ mod tests {
 
         let contexts = captured.lock().await;
         assert!(!contexts.is_empty());
-        assert_eq!(contexts[0].system_prompt, "", "empty system prompt should be passed through");
+        assert_eq!(
+            contexts[0].system_prompt, "",
+            "empty system prompt should be passed through"
+        );
     }
 
     #[tokio::test]
@@ -2081,14 +2074,18 @@ mod tests {
         assert!(result.is_ok());
         let messages = result.unwrap();
         // Tool result should exist and be an error (malformed args)
-        let tool_result = messages
-            .iter()
-            .find_map(|m| match m {
-                AgentMessage::ToolResult(tr) => Some(tr),
-                _ => None,
-            });
-        assert!(tool_result.is_some(), "should have tool result for malformed args");
-        assert!(tool_result.unwrap().is_error, "malformed args should produce error result");
+        let tool_result = messages.iter().find_map(|m| match m {
+            AgentMessage::ToolResult(tr) => Some(tr),
+            _ => None,
+        });
+        assert!(
+            tool_result.is_some(),
+            "should have tool result for malformed args"
+        );
+        assert!(
+            tool_result.unwrap().is_error,
+            "malformed args should produce error result"
+        );
     }
 
     #[tokio::test]
@@ -2135,7 +2132,10 @@ mod tests {
                 _ => None,
             })
             .expect("should have tool result");
-        assert!(!tool_result.is_error, "multi-delta args should be assembled correctly");
+        assert!(
+            !tool_result.is_error,
+            "multi-delta args should be assembled correctly"
+        );
         // The echo tool should have received "hello"
         match &tool_result.content[0] {
             Content::Text { text } => assert_eq!(text, "hello"),
@@ -2247,7 +2247,11 @@ mod tests {
             .iter()
             .filter(|m| matches!(m, AgentMessage::Assistant(_)))
             .collect();
-        assert_eq!(assistants.len(), 4, "4 assistant messages: tool+text per round");
+        assert_eq!(
+            assistants.len(),
+            4,
+            "4 assistant messages: tool+text per round"
+        );
     }
 
     #[tokio::test]
@@ -2337,11 +2341,7 @@ mod tests {
             text_response("First run."),
             text_response("Second run."),
         ]);
-        let mut agent = Agent::new(
-            test_config(),
-            Box::new(provider),
-            ToolRegistry::new(),
-        );
+        let mut agent = Agent::new(test_config(), Box::new(provider), ToolRegistry::new());
         let sink = CollectorSink::new();
 
         // First run
@@ -2372,10 +2372,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl BeforeToolCallHook for BlockAllHook {
-            async fn before_tool_call(
-                &self,
-                _ctx: &BeforeToolCallContext,
-            ) -> BeforeToolCallResult {
+            async fn before_tool_call(&self, _ctx: &BeforeToolCallContext) -> BeforeToolCallResult {
                 BeforeToolCallResult {
                     block: true,
                     reason: Some("all blocked".into()),
@@ -2470,10 +2467,8 @@ mod tests {
         };
 
         let counter = std::sync::Arc::new(AtomicUsize::new(0));
-        let (tool_a, order_a) =
-            OrderRecordingTool::new("tool_a", std::sync::Arc::clone(&counter));
-        let (tool_b, order_b) =
-            OrderRecordingTool::new("tool_b", std::sync::Arc::clone(&counter));
+        let (tool_a, order_a) = OrderRecordingTool::new("tool_a", std::sync::Arc::clone(&counter));
+        let (tool_b, order_b) = OrderRecordingTool::new("tool_b", std::sync::Arc::clone(&counter));
 
         let mut reg = ToolRegistry::new();
         reg.register(Box::new(tool_a));
@@ -2482,22 +2477,29 @@ mod tests {
         let mut agent = make_agent_with_config(
             config,
             vec![
-                multi_tool_response(vec![
-                    ("tc1", "tool_a", r#"{}"#),
-                    ("tc2", "tool_b", r#"{}"#),
-                ]),
+                multi_tool_response(vec![("tc1", "tool_a", r#"{}"#), ("tc2", "tool_b", r#"{}"#)]),
                 text_response("Done!"),
             ],
             reg,
         );
-        agent.steer(AgentMessage::User(UserMessage::from_text("sequential order")));
+        agent.steer(AgentMessage::User(UserMessage::from_text(
+            "sequential order",
+        )));
         let sink = CollectorSink::new();
 
         let _ = run_agent_loop(&mut agent, &sink).await;
 
         // In sequential mode, tool_a (tc1) should execute before tool_b (tc2)
-        assert_eq!(order_a.load(Ordering::SeqCst), 0, "tool_a should execute first");
-        assert_eq!(order_b.load(Ordering::SeqCst), 1, "tool_b should execute second");
+        assert_eq!(
+            order_a.load(Ordering::SeqCst),
+            0,
+            "tool_a should execute first"
+        );
+        assert_eq!(
+            order_b.load(Ordering::SeqCst),
+            1,
+            "tool_b should execute second"
+        );
     }
 
     // ===============================================================
@@ -2560,15 +2562,15 @@ mod tests {
         let (id, name, is_err) = tool_end.unwrap();
         assert_eq!(id, "tc1");
         assert_eq!(name, "fail");
-        assert!(is_err, "ToolExecutionEnd should reflect error from FailTool");
+        assert!(
+            is_err,
+            "ToolExecutionEnd should reflect error from FailTool"
+        );
     }
 
     #[tokio::test]
     async fn test_agent_end_event_carries_all_messages() {
-        let mut agent = make_agent(
-            vec![text_response("Final answer.")],
-            ToolRegistry::new(),
-        );
+        let mut agent = make_agent(vec![text_response("Final answer.")], ToolRegistry::new());
         agent.steer(AgentMessage::User(UserMessage::from_text("Question")));
         let sink = CollectorSink::new();
 
@@ -2616,7 +2618,13 @@ mod tests {
             .count();
 
         // Two turns: first with tool call, second with text response
-        assert!(turn_start_count >= 2, "should have at least 2 TurnStart events");
-        assert_eq!(turn_start_count, turn_end_count, "TurnStart and TurnEnd should be balanced");
+        assert!(
+            turn_start_count >= 2,
+            "should have at least 2 TurnStart events"
+        );
+        assert_eq!(
+            turn_start_count, turn_end_count,
+            "TurnStart and TurnEnd should be balanced"
+        );
     }
 }

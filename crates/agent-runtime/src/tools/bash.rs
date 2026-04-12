@@ -34,7 +34,7 @@ impl super::AgentTool for BashTool {
                         text: "command is empty".into(),
                     }],
                     is_error: true,
-                }
+                };
             }
             None => {
                 return super::ToolOutput {
@@ -42,7 +42,7 @@ impl super::AgentTool for BashTool {
                         text: "missing required parameter: command".into(),
                     }],
                     is_error: true,
-                }
+                };
             }
         };
 
@@ -50,7 +50,7 @@ impl super::AgentTool for BashTool {
             .get("timeout")
             .and_then(|v| v.as_u64())
             .unwrap_or(120)
-            .max(1)   // minimum 1 second
+            .max(1) // minimum 1 second
             .min(600); // maximum 10 minutes
 
         // Create a new process group (setsid) so we can kill the entire tree on timeout,
@@ -66,8 +66,7 @@ impl super::AgentTool for BashTool {
         #[cfg(unix)]
         cmd.process_group(0);
 
-        let mut child = match cmd.spawn()
-        {
+        let mut child = match cmd.spawn() {
             Ok(child) => child,
             Err(e) => {
                 return super::ToolOutput {
@@ -75,7 +74,7 @@ impl super::AgentTool for BashTool {
                         text: format!("Failed to execute command: {}", e),
                     }],
                     is_error: true,
-                }
+                };
             }
         };
 
@@ -101,11 +100,7 @@ impl super::AgentTool for BashTool {
         });
 
         // wait() borrows &mut child (not consuming), so child remains killable on timeout
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            child.wait(),
-        )
-        .await
+        match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), child.wait()).await
         {
             Ok(Ok(status)) => {
                 let stdout_bytes = stdout_reader.await.unwrap_or_default();
@@ -194,8 +189,13 @@ mod tests {
     fn test_schema_has_command_property() {
         let tool = BashTool;
         let schema = tool.parameters_schema();
-        let props = schema.get("properties").expect("schema must have properties");
-        assert!(props.get("command").is_some(), "schema must include 'command'");
+        let props = schema
+            .get("properties")
+            .expect("schema must have properties");
+        assert!(
+            props.get("command").is_some(),
+            "schema must include 'command'"
+        );
     }
 
     #[test]
@@ -213,8 +213,13 @@ mod tests {
     fn test_schema_has_timeout_property() {
         let tool = BashTool;
         let schema = tool.parameters_schema();
-        let props = schema.get("properties").expect("schema must have properties");
-        assert!(props.get("timeout").is_some(), "schema must include 'timeout'");
+        let props = schema
+            .get("properties")
+            .expect("schema must have properties");
+        assert!(
+            props.get("timeout").is_some(),
+            "schema must include 'timeout'"
+        );
     }
 
     #[test]
@@ -294,7 +299,9 @@ mod tests {
     #[tokio::test]
     async fn test_timeout_zero_uses_default() {
         let tool = BashTool;
-        let output = tool.execute(json!({"command": "echo hi", "timeout": 0})).await;
+        let output = tool
+            .execute(json!({"command": "echo hi", "timeout": 0}))
+            .await;
         // timeout=0 is not valid u64 for timeout, falls back to default (120s)
         assert!(!output.is_error, "timeout 0 should fall back to default");
     }
@@ -302,21 +309,31 @@ mod tests {
     #[tokio::test]
     async fn test_timeout_negative_uses_default() {
         let tool = BashTool;
-        let output = tool.execute(json!({"command": "echo hi", "timeout": -1})).await;
+        let output = tool
+            .execute(json!({"command": "echo hi", "timeout": -1}))
+            .await;
         // Negative is not valid u64, falls back to default (120s)
-        assert!(!output.is_error, "negative timeout should fall back to default");
+        assert!(
+            !output.is_error,
+            "negative timeout should fall back to default"
+        );
     }
 
     #[tokio::test]
     async fn test_timeout_actually_enforced() {
         let tool = BashTool;
-        let output = tool.execute(json!({"command": "sleep 10", "timeout": 1})).await;
+        let output = tool
+            .execute(json!({"command": "sleep 10", "timeout": 1}))
+            .await;
         assert!(output.is_error, "sleep 10 with timeout 1s must error");
         let text = match &output.content[0] {
             crate::types::Content::Text { text } => text.clone(),
             _ => String::new(),
         };
-        assert!(text.contains("timed out"), "should mention timeout, got: {text}");
+        assert!(
+            text.contains("timed out"),
+            "should mention timeout, got: {text}"
+        );
     }
 
     // ---------------------------------------------------------------
@@ -359,9 +376,7 @@ mod tests {
     #[tokio::test]
     async fn test_stderr_captured_in_output() {
         let tool = BashTool;
-        let output = tool
-            .execute(json!({"command": "echo err_msg >&2"}))
-            .await;
+        let output = tool.execute(json!({"command": "echo err_msg >&2"})).await;
         let text = match &output.content[0] {
             crate::types::Content::Text { text } => text.clone(),
             _ => String::new(),
@@ -402,9 +417,7 @@ mod tests {
     #[tokio::test]
     async fn test_command_with_unicode_output() {
         let tool = BashTool;
-        let output = tool
-            .execute(json!({"command": "echo '你好世界'"}))
-            .await;
+        let output = tool.execute(json!({"command": "echo '你好世界'"})).await;
         let text = match &output.content[0] {
             crate::types::Content::Text { text } => text.clone(),
             _ => String::new(),
@@ -425,14 +438,15 @@ mod tests {
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         // May have "cwd", "working_directory", or similar
-        let has_cwd = props.get("cwd").is_some()
-            || props.get("working_directory").is_some();
+        let has_cwd = props.get("cwd").is_some() || props.get("working_directory").is_some();
         // Not all implementations have this — but if present, it should be optional
         if has_cwd {
             let required = schema.get("required").unwrap().as_array().unwrap();
-            assert!(!required.iter().any(|v| {
-                v.as_str() == Some("cwd") || v.as_str() == Some("working_directory")
-            }));
+            assert!(
+                !required.iter().any(|v| {
+                    v.as_str() == Some("cwd") || v.as_str() == Some("working_directory")
+                })
+            );
         }
     }
 
@@ -542,6 +556,9 @@ mod tests {
     async fn test_bash_integer_command_param() {
         let tool = BashTool;
         let output = tool.execute(json!({"command": 123})).await;
-        assert!(output.is_error, "integer command should produce is_error=true");
+        assert!(
+            output.is_error,
+            "integer command should produce is_error=true"
+        );
     }
 }

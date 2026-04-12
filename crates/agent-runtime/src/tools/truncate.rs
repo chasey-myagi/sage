@@ -532,7 +532,10 @@ mod tests {
         let r = truncate_head("hello", 0, 1024);
         // 0 lines means nothing should be kept
         assert_eq!(r.kept_lines, 0, "max_lines=0 should keep 0 lines");
-        assert!(r.content.is_empty(), "content should be empty with max_lines=0");
+        assert!(
+            r.content.is_empty(),
+            "content should be empty with max_lines=0"
+        );
         assert!(r.truncated, "should be marked as truncated");
     }
 
@@ -544,7 +547,10 @@ mod tests {
     fn test_head_max_bytes_zero() {
         let r = truncate_head("hello", 100, 0);
         // 0 bytes means nothing can fit
-        assert!(r.content.is_empty(), "content should be empty with max_bytes=0");
+        assert!(
+            r.content.is_empty(),
+            "content should be empty with max_bytes=0"
+        );
         assert!(r.truncated, "should be marked as truncated");
         assert_eq!(r.kept_lines, 0, "should keep 0 lines with max_bytes=0");
     }
@@ -594,19 +600,13 @@ mod tests {
     fn test_tail_max_bytes_zero() {
         let result = truncate_tail("hello\nworld\n", 100, 0);
         // 0 bytes allowed = everything truncated
-        assert!(
-            result.truncated,
-            "max_bytes=0 should mark as truncated"
-        );
+        assert!(result.truncated, "max_bytes=0 should mark as truncated");
         assert!(
             result.content.is_empty(),
             "max_bytes=0 should produce empty content, got: {:?}",
             result.content
         );
-        assert_eq!(
-            result.kept_lines, 0,
-            "max_bytes=0 should keep 0 lines"
-        );
+        assert_eq!(result.kept_lines, 0, "max_bytes=0 should keep 0 lines");
     }
 
     // ---------------------------------------------------------------

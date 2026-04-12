@@ -1,15 +1,15 @@
 // Tools module — Phase 3
 // AgentTool trait, ToolRegistry, parallel/sequential execution.
 
-pub mod truncate;
-pub mod policy;
 pub mod bash;
-pub mod read;
-pub mod write;
 pub mod edit;
-pub mod grep;
 pub mod find;
+pub mod grep;
 pub mod ls;
+pub mod policy;
+pub mod read;
+pub mod truncate;
+pub mod write;
 
 use crate::types::Content;
 
@@ -195,9 +195,7 @@ mod tests {
     #[test]
     fn test_tool_output_success() {
         let output = ToolOutput {
-            content: vec![Content::Text {
-                text: "ok".into(),
-            }],
+            content: vec![Content::Text { text: "ok".into() }],
             is_error: false,
         };
         assert!(!output.is_error);
@@ -631,10 +629,7 @@ mod tests {
         assert_eq!(write_results.len(), 1);
         assert!(!write_results[0].is_error, "write should succeed");
 
-        let read_call = (
-            "read".to_string(),
-            json!({"file_path": path_str}),
-        );
+        let read_call = ("read".to_string(), json!({"file_path": path_str}));
         let read_results = execute_parallel(&registry, vec![read_call]).await;
         assert_eq!(read_results.len(), 1);
         assert!(!read_results[0].is_error, "read should succeed");
@@ -683,7 +678,8 @@ mod tests {
         let mut registry = ToolRegistry::new();
         let tool_names = ["bash", "read", "write", "edit", "grep", "find", "ls"];
         for name in &tool_names {
-            let tool = super::create_tool(name).expect(&format!("create_tool({}) should succeed", name));
+            let tool =
+                super::create_tool(name).expect(&format!("create_tool({}) should succeed", name));
             registry.register(tool);
         }
 
@@ -720,10 +716,7 @@ mod tests {
         registry.register(Box::new(super::read::ReadTool));
 
         let dir = std::env::temp_dir();
-        let file_path = dir.join(format!(
-            "agent_caster_seq_workflow_{}",
-            std::process::id()
-        ));
+        let file_path = dir.join(format!("agent_caster_seq_workflow_{}", std::process::id()));
         let path_str = file_path.to_str().unwrap().to_string();
 
         // 1. Write file with "hello world"
@@ -742,29 +735,17 @@ mod tests {
                     "new_text": "goodbye"
                 }),
             ),
-            (
-                "read".to_string(),
-                json!({"file_path": path_str}),
-            ),
+            ("read".to_string(), json!({"file_path": path_str})),
         ];
         let results = execute_sequential(&registry, calls).await;
         assert_eq!(results.len(), 3);
 
         // Write should succeed
-        assert!(
-            !results[0].is_error,
-            "write step should succeed"
-        );
+        assert!(!results[0].is_error, "write step should succeed");
         // Edit should succeed
-        assert!(
-            !results[1].is_error,
-            "edit step should succeed"
-        );
+        assert!(!results[1].is_error, "edit step should succeed");
         // Read should succeed and contain "goodbye world"
-        assert!(
-            !results[2].is_error,
-            "read step should succeed"
-        );
+        assert!(!results[2].is_error, "read step should succeed");
         match &results[2].content[0] {
             Content::Text { text } => {
                 assert!(
@@ -789,10 +770,8 @@ mod tests {
         registry.register(Box::new(super::find::FindTool));
         registry.register(Box::new(super::read::ReadTool));
 
-        let dir = std::env::temp_dir().join(format!(
-            "agent_caster_find_read_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("agent_caster_find_read_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("target.dat"), "secret payload").expect("setup file");
@@ -816,10 +795,7 @@ mod tests {
         );
 
         // Step 2: Read the found file
-        let read_calls = vec![(
-            "read".to_string(),
-            json!({"file_path": found_path}),
-        )];
+        let read_calls = vec![("read".to_string(), json!({"file_path": found_path}))];
         let read_results = execute_sequential(&registry, read_calls).await;
         assert!(!read_results[0].is_error, "read should succeed");
         match &read_results[0].content[0] {

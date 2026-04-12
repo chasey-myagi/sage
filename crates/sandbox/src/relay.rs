@@ -1,11 +1,11 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use agent_protocol::{wire, GuestMessage, HostMessage};
+use agent_protocol::{GuestMessage, HostMessage, wire};
 use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::error::SandboxError;
@@ -58,11 +58,7 @@ impl AgentRelay {
             pending.insert(0, tx);
         }
 
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            rx,
-        )
-        .await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), rx).await;
 
         match result {
             Ok(Ok(GuestMessage::Ready)) => {

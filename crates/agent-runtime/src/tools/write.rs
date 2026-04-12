@@ -138,7 +138,9 @@ mod tests {
     #[tokio::test]
     async fn test_empty_file_path_returns_error() {
         let tool = WriteTool;
-        let output = tool.execute(json!({"file_path": "", "content": "hello"})).await;
+        let output = tool
+            .execute(json!({"file_path": "", "content": "hello"}))
+            .await;
         assert!(output.is_error, "empty file_path should return error");
     }
 
@@ -149,7 +151,9 @@ mod tests {
     #[tokio::test]
     async fn test_empty_content_is_valid_argument() {
         let tool = WriteTool;
-        let output = tool.execute(json!({"file_path": "/tmp/test_empty.txt", "content": ""})).await;
+        let output = tool
+            .execute(json!({"file_path": "/tmp/test_empty.txt", "content": ""}))
+            .await;
         // Empty content should pass argument validation — any error would be from
         // filesystem/sandbox, not from the content being empty.
         // Check that if there IS an error, it's not about "content" being invalid
@@ -252,10 +256,8 @@ mod tests {
     #[tokio::test]
     async fn test_write_unicode_content_roundtrip() {
         let tool = WriteTool;
-        let test_path = std::env::temp_dir().join(format!(
-            "agent_caster_write_unicode_{}",
-            std::process::id()
-        ));
+        let test_path =
+            std::env::temp_dir().join(format!("agent_caster_write_unicode_{}", std::process::id()));
         let path_str = test_path.to_str().unwrap();
         let unicode_content = "你好世界 🌍🚀\nEmoji: 😀💻\n日本語テスト\n";
 
@@ -283,10 +285,8 @@ mod tests {
     #[tokio::test]
     async fn test_write_large_content() {
         let tool = WriteTool;
-        let test_path = std::env::temp_dir().join(format!(
-            "agent_caster_write_large_{}",
-            std::process::id()
-        ));
+        let test_path =
+            std::env::temp_dir().join(format!("agent_caster_write_large_{}", std::process::id()));
         let path_str = test_path.to_str().unwrap();
         let large_content = "x".repeat(1024 * 1024); // 1MB
 
@@ -311,10 +311,8 @@ mod tests {
     #[tokio::test]
     async fn test_write_success_output_message() {
         let tool = WriteTool;
-        let test_path = std::env::temp_dir().join(format!(
-            "agent_caster_write_msg_{}",
-            std::process::id()
-        ));
+        let test_path =
+            std::env::temp_dir().join(format!("agent_caster_write_msg_{}", std::process::id()));
         let path_str = test_path.to_str().unwrap();
 
         let output = tool

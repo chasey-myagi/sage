@@ -73,11 +73,7 @@ pub fn fuzzy_find(content: &str, needle: &str) -> Option<FuzzyMatch> {
 }
 
 /// Apply a text replacement, returning error if not found or ambiguous.
-pub fn apply_edit(
-    content: &str,
-    old_text: &str,
-    new_text: &str,
-) -> Result<EditResult, EditError> {
+pub fn apply_edit(content: &str, old_text: &str, new_text: &str) -> Result<EditResult, EditError> {
     if old_text.is_empty() {
         return Err(EditError::NotFound);
     }
@@ -272,20 +268,13 @@ impl super::AgentTool for EditTool {
                     return error_output(&format!("Failed to write {}: {}", file_path, e));
                 }
                 super::ToolOutput {
-                    content: vec![Content::Text {
-                        text: result.diff,
-                    }],
+                    content: vec![Content::Text { text: result.diff }],
                     is_error: false,
                 }
             }
-            Err(EditError::NotFound) => {
-                error_output("old_text not found in file")
-            }
+            Err(EditError::NotFound) => error_output("old_text not found in file"),
             Err(EditError::MultipleMatches(n)) => {
-                error_output(&format!(
-                    "old_text found {} times — must be unique",
-                    n
-                ))
+                error_output(&format!("old_text found {} times — must be unique", n))
             }
         }
     }
@@ -398,7 +387,7 @@ mod tests {
         assert!(result.is_some());
         match result.unwrap() {
             FuzzyMatch::Normalized(_) => {} // expected
-            FuzzyMatch::Exact(_) => {} // also acceptable if impl normalizes content first
+            FuzzyMatch::Exact(_) => {}      // also acceptable if impl normalizes content first
             other => panic!("expected Normalized or Exact, got {:?}", other),
         }
     }
@@ -715,7 +704,10 @@ mod tests {
     fn test_apply_preserves_surrounding_content() {
         let content = "line 1\nline 2 TARGET line 2 end\nline 3\n";
         let result = apply_edit(content, "TARGET", "REPLACED").unwrap();
-        assert_eq!(result.new_content, "line 1\nline 2 REPLACED line 2 end\nline 3\n");
+        assert_eq!(
+            result.new_content,
+            "line 1\nline 2 REPLACED line 2 end\nline 3\n"
+        );
         // Verify line 1 and line 3 are untouched
         assert!(result.new_content.starts_with("line 1\n"));
         assert!(result.new_content.ends_with("line 3\n"));
@@ -755,7 +747,10 @@ mod tests {
                 "new_string": "bar"
             }))
             .await;
-        assert!(output.is_error, "editing nonexistent file must return is_error=true");
+        assert!(
+            output.is_error,
+            "editing nonexistent file must return is_error=true"
+        );
     }
 
     #[tokio::test]

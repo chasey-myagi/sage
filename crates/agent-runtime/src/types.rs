@@ -847,7 +847,10 @@ mod tests {
             total_tokens: 1800,
             cost: Cost::default(),
         };
-        assert_eq!(usage.total_tokens, usage.input + usage.output + usage.cache_read + usage.cache_write);
+        assert_eq!(
+            usage.total_tokens,
+            usage.input + usage.output + usage.cache_read + usage.cache_write
+        );
     }
 
     // ========================================================================
@@ -904,7 +907,9 @@ mod tests {
 
     #[test]
     fn test_content_text_empty_string() {
-        let content = Content::Text { text: String::new() };
+        let content = Content::Text {
+            text: String::new(),
+        };
         match &content {
             Content::Text { text } => assert!(text.is_empty()),
             _ => panic!("wrong variant"),
@@ -932,7 +937,11 @@ mod tests {
         let json = serde_json::to_string(&content).unwrap();
         let rt: Content = serde_json::from_str(&json).unwrap();
         match rt {
-            Content::Thinking { thinking, signature, redacted } => {
+            Content::Thinking {
+                thinking,
+                signature,
+                redacted,
+            } => {
                 assert!(thinking.is_empty());
                 assert_eq!(signature.as_deref(), Some("encrypted-sig"));
                 assert!(redacted);
@@ -948,7 +957,9 @@ mod tests {
     #[test]
     fn test_user_message_timestamp_zero() {
         let msg = UserMessage {
-            content: vec![Content::Text { text: "hello".into() }],
+            content: vec![Content::Text {
+                text: "hello".into(),
+            }],
             timestamp: 0,
         };
         let json = serde_json::to_string(&AgentMessage::User(msg)).unwrap();
@@ -987,7 +998,11 @@ mod tests {
         let json = serde_json::to_string(&content).unwrap();
         let back: Content = serde_json::from_str(&json).unwrap();
         match back {
-            Content::ToolCall { id, name, arguments } => {
+            Content::ToolCall {
+                id,
+                name,
+                arguments,
+            } => {
                 assert!(id.is_empty());
                 assert!(name.is_empty());
                 assert_eq!(arguments, json!({}));
@@ -1034,7 +1049,10 @@ mod tests {
         let json = serde_json::to_string(&cost).unwrap();
         // null cannot be deserialized back to f64 — roundtrip fails
         let result = serde_json::from_str::<Cost>(&json);
-        assert!(result.is_err(), "non-finite f64 should not roundtrip through JSON");
+        assert!(
+            result.is_err(),
+            "non-finite f64 should not roundtrip through JSON"
+        );
     }
 
     #[test]
@@ -1190,8 +1208,12 @@ mod tests {
     fn test_assistant_message_text_concatenation_no_separator() {
         let msg = AssistantMessage {
             content: vec![
-                Content::Text { text: "Hello".into() },
-                Content::Text { text: "World".into() },
+                Content::Text {
+                    text: "Hello".into(),
+                },
+                Content::Text {
+                    text: "World".into(),
+                },
             ],
             provider: "test".into(),
             model: "test".into(),
@@ -1213,9 +1235,9 @@ mod tests {
         let msg = ToolResultMessage {
             tool_call_id: "tc_ok".into(),
             tool_name: "bash".into(),
-            content: vec![
-                Content::Text { text: "file1.txt\nfile2.txt\n".into() },
-            ],
+            content: vec![Content::Text {
+                text: "file1.txt\nfile2.txt\n".into(),
+            }],
             is_error: false,
             timestamp: 1700000010,
         };

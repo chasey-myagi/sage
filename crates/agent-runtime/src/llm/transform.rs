@@ -81,11 +81,7 @@ pub fn agent_to_llm_messages(messages: &[AgentMessage]) -> Vec<LlmMessage> {
 }
 
 /// Converts an agent tool definition to LLM format.
-pub fn agent_tool_to_llm(
-    name: &str,
-    description: &str,
-    parameters: serde_json::Value,
-) -> LlmTool {
+pub fn agent_tool_to_llm(name: &str, description: &str, parameters: serde_json::Value) -> LlmTool {
     LlmTool {
         name: name.to_string(),
         description: description.to_string(),
@@ -406,9 +402,7 @@ mod tests {
                 is_error: false,
                 timestamp: 0,
             }),
-            AgentMessage::Assistant(AssistantMessage::new(
-                "I found 2 files.".into(),
-            )),
+            AgentMessage::Assistant(AssistantMessage::new("I found 2 files.".into())),
         ];
         let llm = agent_to_llm_messages(&messages);
         assert_eq!(llm.len(), 4);
@@ -539,9 +533,7 @@ mod tests {
     fn test_strip_thinking_blocks_removes_thinking() {
         // Thinking content in User messages should be stripped if present
         let mut messages = vec![LlmMessage::User {
-            content: vec![
-                LlmContent::Text("hello".into()),
-            ],
+            content: vec![LlmContent::Text("hello".into())],
         }];
         strip_thinking_blocks(&mut messages);
         // Text should remain
@@ -606,12 +598,10 @@ mod tests {
         // strip_thinking_blocks should also strip thinking from LlmMessage::Assistant
         // (though assistant doesn't have LlmContent blocks, it has a content string)
         // The function should handle both User and Assistant messages gracefully
-        let mut messages = vec![
-            LlmMessage::Assistant {
-                content: "The answer is 42.".into(),
-                tool_calls: vec![],
-            },
-        ];
+        let mut messages = vec![LlmMessage::Assistant {
+            content: "The answer is 42.".into(),
+            tool_calls: vec![],
+        }];
         strip_thinking_blocks(&mut messages);
         // Text content should remain intact
         match &messages[0] {
@@ -692,7 +682,9 @@ mod tests {
         // After fix, "call_B" should now have a preceding Assistant with matching tool_call
         let b_idx = messages
             .iter()
-            .position(|m| matches!(m, LlmMessage::Tool { tool_call_id, .. } if tool_call_id == "call_B"))
+            .position(
+                |m| matches!(m, LlmMessage::Tool { tool_call_id, .. } if tool_call_id == "call_B"),
+            )
             .expect("call_B Tool should still exist");
         let has_matching_assistant = messages[..b_idx].iter().any(|prev| {
             matches!(prev, LlmMessage::Assistant { tool_calls, .. }
@@ -755,7 +747,10 @@ mod tests {
         // A normal ID should pass through identically on repeated calls
         let first = normalize_tool_call_id("call_abc123");
         let second = normalize_tool_call_id("call_abc123");
-        assert_eq!(first, second, "normalizing a normal ID should be idempotent");
+        assert_eq!(
+            first, second,
+            "normalizing a normal ID should be idempotent"
+        );
     }
 
     // ========================================================================
@@ -776,7 +771,10 @@ mod tests {
         let llm = agent_to_llm_messages(&messages);
         assert_eq!(llm.len(), 1);
         match &llm[0] {
-            LlmMessage::Tool { content, tool_call_id } => {
+            LlmMessage::Tool {
+                content,
+                tool_call_id,
+            } => {
                 assert_eq!(tool_call_id, "tc_err_001");
                 assert!(
                     content.contains("permission denied"),
@@ -943,7 +941,9 @@ mod tests {
             AgentMessage::ToolResult(ToolResultMessage {
                 tool_call_id: "tc_r1".into(),
                 tool_name: "bash".into(),
-                content: vec![Content::Text { text: "file1".into() }],
+                content: vec![Content::Text {
+                    text: "file1".into(),
+                }],
                 is_error: false,
                 timestamp: 0,
             }),
@@ -964,7 +964,9 @@ mod tests {
             AgentMessage::ToolResult(ToolResultMessage {
                 tool_call_id: "tc_r2".into(),
                 tool_name: "read".into(),
-                content: vec![Content::Text { text: "contents".into() }],
+                content: vec![Content::Text {
+                    text: "contents".into(),
+                }],
                 is_error: false,
                 timestamp: 0,
             }),
@@ -974,11 +976,21 @@ mod tests {
         let llm = agent_to_llm_messages(&messages);
         assert_eq!(llm.len(), 6);
         assert!(matches!(&llm[0], LlmMessage::User { .. }));
-        assert!(matches!(&llm[1], LlmMessage::Assistant { tool_calls, .. } if tool_calls.len() == 1));
-        assert!(matches!(&llm[2], LlmMessage::Tool { tool_call_id, .. } if tool_call_id == "tc_r1"));
-        assert!(matches!(&llm[3], LlmMessage::Assistant { tool_calls, .. } if tool_calls.len() == 1));
-        assert!(matches!(&llm[4], LlmMessage::Tool { tool_call_id, .. } if tool_call_id == "tc_r2"));
-        assert!(matches!(&llm[5], LlmMessage::Assistant { tool_calls, .. } if tool_calls.is_empty()));
+        assert!(
+            matches!(&llm[1], LlmMessage::Assistant { tool_calls, .. } if tool_calls.len() == 1)
+        );
+        assert!(
+            matches!(&llm[2], LlmMessage::Tool { tool_call_id, .. } if tool_call_id == "tc_r1")
+        );
+        assert!(
+            matches!(&llm[3], LlmMessage::Assistant { tool_calls, .. } if tool_calls.len() == 1)
+        );
+        assert!(
+            matches!(&llm[4], LlmMessage::Tool { tool_call_id, .. } if tool_call_id == "tc_r2")
+        );
+        assert!(
+            matches!(&llm[5], LlmMessage::Assistant { tool_calls, .. } if tool_calls.is_empty())
+        );
     }
 
     // ========================================================================
@@ -990,9 +1002,7 @@ mod tests {
         // Messages with both orphaned tool result AND thinking content
         let mut messages = vec![
             LlmMessage::User {
-                content: vec![
-                    LlmContent::Text("hi".into()),
-                ],
+                content: vec![LlmContent::Text("hi".into())],
             },
             // Orphaned tool result (no preceding assistant)
             LlmMessage::Tool {
@@ -1015,10 +1025,7 @@ mod tests {
             .iter()
             .position(|m| matches!(m, LlmMessage::Tool { tool_call_id, .. } if tool_call_id == "call_combo"))
             .expect("Tool message should exist");
-        assert!(
-            tool_idx > 0,
-            "Tool should not be first message"
-        );
+        assert!(tool_idx > 0, "Tool should not be first message");
         let has_stub = matches!(
             &messages[tool_idx - 1],
             LlmMessage::Assistant { tool_calls, .. } if tool_calls.iter().any(|tc| tc.id == "call_combo")
@@ -1026,7 +1033,9 @@ mod tests {
         assert!(has_stub, "stub assistant should precede orphaned tool");
 
         // Final assistant content should remain
-        let last_assistant = messages.iter().rev().find(|m| matches!(m, LlmMessage::Assistant { tool_calls, .. } if tool_calls.is_empty()));
+        let last_assistant = messages.iter().rev().find(
+            |m| matches!(m, LlmMessage::Assistant { tool_calls, .. } if tool_calls.is_empty()),
+        );
         assert!(last_assistant.is_some(), "final assistant should remain");
     }
 
@@ -1105,7 +1114,9 @@ mod tests {
         let messages = vec![AgentMessage::ToolResult(ToolResultMessage {
             tool_call_id: "tc_name".into(),
             tool_name: "bash".into(),
-            content: vec![Content::Text { text: "output".into() }],
+            content: vec![Content::Text {
+                text: "output".into(),
+            }],
             is_error: false,
             timestamp: 0,
         })];
@@ -1113,7 +1124,10 @@ mod tests {
         assert_eq!(llm.len(), 1);
         // The conversion should preserve the tool_call_id
         match &llm[0] {
-            LlmMessage::Tool { tool_call_id, content } => {
+            LlmMessage::Tool {
+                tool_call_id,
+                content,
+            } => {
                 assert_eq!(tool_call_id, "tc_name");
                 assert!(content.contains("output"));
             }
@@ -1130,13 +1144,19 @@ mod tests {
         // For any valid ID, normalizing twice should give the same result as once
         let once = normalize_tool_call_id("call_abc123");
         let twice = normalize_tool_call_id(&once);
-        assert_eq!(once, twice, "normalize(normalize(x)) should equal normalize(x)");
+        assert_eq!(
+            once, twice,
+            "normalize(normalize(x)) should equal normalize(x)"
+        );
     }
 
     #[test]
     fn test_normalize_tool_call_id_double_normalize_special() {
         let once = normalize_tool_call_id("call-with-dashes");
         let twice = normalize_tool_call_id(&once);
-        assert_eq!(once, twice, "double-normalize should be idempotent for special chars");
+        assert_eq!(
+            once, twice,
+            "double-normalize should be idempotent for special chars"
+        );
     }
 }

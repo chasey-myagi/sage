@@ -1,10 +1,10 @@
 // Agent — Phase 4
 // Agent struct with state management, steering/follow-up queues, and hooks.
 
-use crate::llm::types::*;
 use crate::llm::LlmProvider;
-use crate::tools::policy::ToolPolicy;
+use crate::llm::types::*;
 use crate::tools::ToolRegistry;
+use crate::tools::policy::ToolPolicy;
 use crate::types::*;
 use std::collections::VecDeque;
 
@@ -23,19 +23,13 @@ pub struct AgentLoopConfig {
 /// Hook called before a tool is executed.
 #[async_trait::async_trait]
 pub trait BeforeToolCallHook: Send + Sync {
-    async fn before_tool_call(
-        &self,
-        ctx: &BeforeToolCallContext,
-    ) -> BeforeToolCallResult;
+    async fn before_tool_call(&self, ctx: &BeforeToolCallContext) -> BeforeToolCallResult;
 }
 
 /// Hook called after a tool is executed.
 #[async_trait::async_trait]
 pub trait AfterToolCallHook: Send + Sync {
-    async fn after_tool_call(
-        &self,
-        ctx: &AfterToolCallContext,
-    ) -> AfterToolCallResult;
+    async fn after_tool_call(&self, ctx: &AfterToolCallContext) -> AfterToolCallResult;
 }
 
 /// The Agent — owns config, provider, tools, message history, queues, and hooks.
@@ -140,10 +134,7 @@ impl Agent {
         self.after_hook.is_some()
     }
 
-    pub async fn call_before_tool_call(
-        &self,
-        ctx: &BeforeToolCallContext,
-    ) -> BeforeToolCallResult {
+    pub async fn call_before_tool_call(&self, ctx: &BeforeToolCallContext) -> BeforeToolCallResult {
         match &self.before_hook {
             Some(hook) => hook.before_tool_call(ctx).await,
             None => BeforeToolCallResult {
@@ -153,10 +144,7 @@ impl Agent {
         }
     }
 
-    pub async fn call_after_tool_call(
-        &self,
-        ctx: &AfterToolCallContext,
-    ) -> AfterToolCallResult {
+    pub async fn call_after_tool_call(&self, ctx: &AfterToolCallContext) -> AfterToolCallResult {
         match &self.after_hook {
             Some(hook) => hook.after_tool_call(ctx).await,
             None => AfterToolCallResult {
@@ -177,8 +165,8 @@ impl AssistantMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::types::*;
     use crate::llm::LlmProvider;
+    use crate::llm::types::*;
     use crate::tools::{AgentTool, ToolOutput, ToolRegistry};
     use crate::types::*;
     use serde_json::json;
@@ -216,11 +204,7 @@ mod tests {
     }
 
     fn test_agent() -> Agent {
-        Agent::new(
-            test_config(),
-            Box::new(TestProvider),
-            ToolRegistry::new(),
-        )
+        Agent::new(test_config(), Box::new(TestProvider), ToolRegistry::new())
     }
 
     // ===============================================================
@@ -294,7 +278,12 @@ mod tests {
         assert_eq!(drained.len(), 1);
         match &drained[0] {
             AgentMessage::User(u) => {
-                assert_eq!(u.content[0], Content::Text { text: "hello".into() });
+                assert_eq!(
+                    u.content[0],
+                    Content::Text {
+                        text: "hello".into()
+                    }
+                );
             }
             _ => panic!("expected User message"),
         }
@@ -433,10 +422,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl BeforeToolCallHook for BlockAllHook {
-        async fn before_tool_call(
-            &self,
-            _ctx: &BeforeToolCallContext,
-        ) -> BeforeToolCallResult {
+        async fn before_tool_call(&self, _ctx: &BeforeToolCallContext) -> BeforeToolCallResult {
             BeforeToolCallResult {
                 block: true,
                 reason: Some("blocked by test".into()),
@@ -448,10 +434,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl AfterToolCallHook for NoopAfterHook {
-        async fn after_tool_call(
-            &self,
-            _ctx: &AfterToolCallContext,
-        ) -> AfterToolCallResult {
+        async fn after_tool_call(&self, _ctx: &AfterToolCallContext) -> AfterToolCallResult {
             AfterToolCallResult {
                 content: None,
                 is_error: None,
@@ -598,10 +581,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl BeforeToolCallHook for AllowAllHook {
-            async fn before_tool_call(
-                &self,
-                _ctx: &BeforeToolCallContext,
-            ) -> BeforeToolCallResult {
+            async fn before_tool_call(&self, _ctx: &BeforeToolCallContext) -> BeforeToolCallResult {
                 BeforeToolCallResult {
                     block: false,
                     reason: None,
@@ -630,10 +610,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl AfterToolCallHook for ContentHook {
-            async fn after_tool_call(
-                &self,
-                _ctx: &AfterToolCallContext,
-            ) -> AfterToolCallResult {
+            async fn after_tool_call(&self, _ctx: &AfterToolCallContext) -> AfterToolCallResult {
                 AfterToolCallResult {
                     content: Some(vec![Content::Text {
                         text: "replaced".into(),
@@ -654,7 +631,10 @@ mod tests {
             is_error: false,
         };
         let result = agent.call_after_tool_call(&ctx).await;
-        assert!(result.content.is_some(), "second hook should replace the first");
+        assert!(
+            result.content.is_some(),
+            "second hook should replace the first"
+        );
     }
 
     // ===============================================================
@@ -703,9 +683,9 @@ mod tests {
     fn test_steer_large_batch_does_not_panic() {
         let mut agent = test_agent();
         for i in 0..200 {
-            agent.steer(AgentMessage::User(UserMessage::from_text(
-                &format!("msg-{i}"),
-            )));
+            agent.steer(AgentMessage::User(UserMessage::from_text(&format!(
+                "msg-{i}"
+            ))));
         }
         let drained = agent.drain_steering();
         assert_eq!(drained.len(), 200);

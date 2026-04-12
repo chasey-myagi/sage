@@ -4,7 +4,10 @@ use clap::Parser;
 mod serve;
 
 #[derive(Parser)]
-#[command(name = "agent-caster", about = "Agent Caster — sandbox-isolated agent executor")]
+#[command(
+    name = "agent-caster",
+    about = "Agent Caster — sandbox-isolated agent executor"
+)]
 struct Cli {
     /// Rune Runtime gRPC address
     #[arg(long, default_value = "localhost:50070")]
@@ -42,7 +45,9 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter("agent_caster=debug,agent_sandbox=debug,agent_runner=debug,agent_runtime=debug")
+        .with_env_filter(
+            "agent_caster=debug,agent_sandbox=debug,agent_runner=debug,agent_runtime=debug",
+        )
         .init();
 
     let cli = Cli::parse();

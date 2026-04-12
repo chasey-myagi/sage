@@ -1,12 +1,12 @@
 // OpenAI-Compatible Provider — Phase 5
 // Makes HTTP calls to OpenAI-compatible LLM APIs with SSE streaming.
 
+use crate::llm::LlmProvider;
 use crate::llm::keys;
 use crate::llm::stream::parse_sse_chunk;
 use crate::llm::types::*;
-use crate::llm::LlmProvider;
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Provider that calls any OpenAI-compatible chat completions API.
 pub struct OpenAiCompatProvider {
@@ -21,11 +21,7 @@ impl OpenAiCompatProvider {
     }
 
     /// Build the JSON request body for the chat completions API.
-    fn build_request_body(
-        model: &Model,
-        context: &LlmContext,
-        tools: &[LlmTool],
-    ) -> Value {
+    fn build_request_body(model: &Model, context: &LlmContext, tools: &[LlmTool]) -> Value {
         let mut messages = Vec::new();
 
         // System prompt
@@ -169,9 +165,7 @@ impl LlmProvider for OpenAiCompatProvider {
         let api_key = match keys::resolve_api_key_from_env(&model.api_key_env) {
             Ok(key) => key,
             Err(e) => {
-                return vec![AssistantMessageEvent::Error(format!(
-                    "API key error: {e}"
-                ))];
+                return vec![AssistantMessageEvent::Error(format!("API key error: {e}"))];
             }
         };
 
@@ -295,7 +289,10 @@ mod tests {
         let tool_array = body["tools"].as_array().unwrap();
         assert_eq!(tool_array.len(), 1);
         assert_eq!(tool_array[0]["function"]["name"], "bash");
-        assert!(body["temperature"].as_f64().unwrap() > 0.69 && body["temperature"].as_f64().unwrap() < 0.71);
+        assert!(
+            body["temperature"].as_f64().unwrap() > 0.69
+                && body["temperature"].as_f64().unwrap() < 0.71
+        );
     }
 
     #[test]

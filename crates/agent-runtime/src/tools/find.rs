@@ -87,10 +87,7 @@ impl super::AgentTool for FindTool {
             Err(e) => return error_output(&format!("Invalid glob pattern: {}", e)),
         };
 
-        let base_path = args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".");
+        let base_path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         let path = Path::new(base_path);
         if tokio::fs::symlink_metadata(path).await.is_err() {
             return error_output(&format!("Path does not exist: {}", base_path));
@@ -197,7 +194,10 @@ mod tests {
         let props = schema.get("properties").unwrap();
         // "type" or "file_type" should exist as optional filter
         let has_type = props.get("type").is_some() || props.get("file_type").is_some();
-        assert!(has_type, "schema should include a type/file_type filter parameter");
+        assert!(
+            has_type,
+            "schema should include a type/file_type filter parameter"
+        );
     }
 
     #[test]
@@ -207,7 +207,10 @@ mod tests {
         let props = schema.get("properties").unwrap();
         // "depth" or "max_depth" should exist as optional
         let has_depth = props.get("depth").is_some() || props.get("max_depth").is_some();
-        assert!(has_depth, "schema should include a depth/max_depth parameter");
+        assert!(
+            has_depth,
+            "schema should include a depth/max_depth parameter"
+        );
     }
 
     #[test]
@@ -216,13 +219,15 @@ mod tests {
         let schema = tool.parameters_schema();
         let required = schema.get("required").unwrap().as_array().unwrap();
         assert!(
-            !required.iter().any(|v| v.as_str() == Some("type")
-                || v.as_str() == Some("file_type")),
+            !required
+                .iter()
+                .any(|v| v.as_str() == Some("type") || v.as_str() == Some("file_type")),
             "type should not be required"
         );
         assert!(
-            !required.iter().any(|v| v.as_str() == Some("depth")
-                || v.as_str() == Some("max_depth")),
+            !required
+                .iter()
+                .any(|v| v.as_str() == Some("depth") || v.as_str() == Some("max_depth")),
             "depth should not be required"
         );
     }
@@ -292,10 +297,8 @@ mod tests {
     #[tokio::test]
     async fn test_find_success_returns_file_list() {
         let tool = FindTool;
-        let dir = std::env::temp_dir().join(format!(
-            "agent_caster_find_test_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("agent_caster_find_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("alpha.txt"), "a").expect("setup");
         std::fs::write(dir.join("beta.txt"), "b").expect("setup");
@@ -379,10 +382,8 @@ mod tests {
     #[tokio::test]
     async fn test_find_depth_one_limits_recursion() {
         let tool = FindTool;
-        let dir = std::env::temp_dir().join(format!(
-            "agent_caster_find_depth1_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("agent_caster_find_depth1_{}", std::process::id()));
         let sub = dir.join("sub");
         let deep = sub.join("deep");
         let _ = std::fs::remove_dir_all(&dir);

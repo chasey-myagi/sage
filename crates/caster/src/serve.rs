@@ -38,7 +38,13 @@ pub async fn run_local_test(
     tracing::info!(agent = %config.name, "loaded config");
 
     // 2. Execute via agent loop
-    let result = handle_execute(config, message.to_string(), provider_override, model_override).await?;
+    let result = handle_execute(
+        config,
+        message.to_string(),
+        provider_override,
+        model_override,
+    )
+    .await?;
 
     // 3. Print result
     println!("{result}");
@@ -185,17 +191,22 @@ impl AgentEventSink for TerminalEventSink {
                 eprintln!("  [turn]");
             }
             AgentEvent::TurnEnd { .. } => {}
-            AgentEvent::MessageStart { message } => {
-                match message {
-                    AgentMessage::User(u) => {
-                        eprintln!("  > User: {}", u.content.iter().filter_map(|c| match c {
-                            Content::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        }).collect::<Vec<_>>().join(""));
-                    }
-                    _ => {}
+            AgentEvent::MessageStart { message } => match message {
+                AgentMessage::User(u) => {
+                    eprintln!(
+                        "  > User: {}",
+                        u.content
+                            .iter()
+                            .filter_map(|c| match c {
+                                Content::Text { text } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("")
+                    );
                 }
-            }
+                _ => {}
+            },
             AgentEvent::MessageUpdate { delta, .. } => {
                 eprint!("{delta}");
             }
@@ -208,7 +219,11 @@ impl AgentEventSink for TerminalEventSink {
             AgentEvent::ToolExecutionUpdate { partial_result, .. } => {
                 eprint!("{partial_result}");
             }
-            AgentEvent::ToolExecutionEnd { tool_name, is_error, .. } => {
+            AgentEvent::ToolExecutionEnd {
+                tool_name,
+                is_error,
+                ..
+            } => {
                 if *is_error {
                     eprintln!("  [tool: {tool_name} — ERROR]");
                 }

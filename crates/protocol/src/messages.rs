@@ -14,14 +14,41 @@ pub enum HostMessage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GuestMessage {
     Ready,
-    ExecStarted { request_id: u64, pid: u32 },
-    ExecStdout { request_id: u64, data: Vec<u8> },
-    ExecStderr { request_id: u64, data: Vec<u8> },
-    ExecExited { request_id: u64, exit_code: i32, stdout: Vec<u8>, stderr: Vec<u8> },
-    FsData { request_id: u64, data: Vec<u8> },
-    FsResult { request_id: u64, success: bool, error: String },
-    FsEntries { request_id: u64, entries: Vec<FsEntry> },
-    Error { request_id: u64, message: String },
+    ExecStarted {
+        request_id: u64,
+        pid: u32,
+    },
+    ExecStdout {
+        request_id: u64,
+        data: Vec<u8>,
+    },
+    ExecStderr {
+        request_id: u64,
+        data: Vec<u8>,
+    },
+    ExecExited {
+        request_id: u64,
+        exit_code: i32,
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+    },
+    FsData {
+        request_id: u64,
+        data: Vec<u8>,
+    },
+    FsResult {
+        request_id: u64,
+        success: bool,
+        error: String,
+    },
+    FsEntries {
+        request_id: u64,
+        entries: Vec<FsEntry>,
+    },
+    Error {
+        request_id: u64,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

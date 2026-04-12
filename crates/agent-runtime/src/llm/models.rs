@@ -355,7 +355,10 @@ mod tests {
     #[test]
     fn test_list_models_not_empty() {
         let models = list_models();
-        assert!(models.len() >= 10, "should have at least 10 built-in models");
+        assert!(
+            models.len() >= 10,
+            "should have at least 10 built-in models"
+        );
     }
 
     #[test]
@@ -363,11 +366,7 @@ mod tests {
         let providers = list_providers();
         let expected = ["qwen", "doubao", "kimi", "minimax", "zai", "deepseek"];
         for p in &expected {
-            assert!(
-                providers.contains(p),
-                "missing provider: {}",
-                p
-            );
+            assert!(providers.contains(p), "missing provider: {}", p);
         }
     }
 
@@ -376,11 +375,7 @@ mod tests {
         let providers = list_providers();
         for p in &providers {
             let models: Vec<_> = list_models().iter().filter(|m| m.provider == *p).collect();
-            assert!(
-                !models.is_empty(),
-                "provider {} has no models",
-                p
-            );
+            assert!(!models.is_empty(), "provider {} has no models", p);
         }
     }
 
@@ -435,7 +430,10 @@ mod tests {
         let model = resolve_model("deepseek", "deepseek-reasoner").unwrap();
         // deepseek-reasoner should use MaxCompletionTokens and have a thinking_format
         assert!(
-            matches!(model.compat.max_tokens_field, MaxTokensField::MaxCompletionTokens),
+            matches!(
+                model.compat.max_tokens_field,
+                MaxTokensField::MaxCompletionTokens
+            ),
             "deepseek-reasoner should use max_completion_tokens"
         );
         assert!(

@@ -7,7 +7,7 @@ use anyhow::Result;
 pub fn mount_filesystems() -> Result<()> {
     #[cfg(target_os = "linux")]
     {
-        use nix::mount::{mount, MsFlags};
+        use nix::mount::{MsFlags, mount};
         let none: Option<&str> = None;
 
         mount(

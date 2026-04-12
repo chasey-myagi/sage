@@ -409,16 +409,10 @@ constraints: { max_turns: 1, timeout_secs: 1 }
         let policy = config.tools.to_policy();
         // After expansion, paths should NOT start with "~/"
         for p in &policy.allowed_read_paths {
-            assert!(
-                !p.starts_with("~/"),
-                "tilde should be expanded, got: {p}"
-            );
+            assert!(!p.starts_with("~/"), "tilde should be expanded, got: {p}");
         }
         for p in &policy.allowed_write_paths {
-            assert!(
-                !p.starts_with("~/"),
-                "tilde should be expanded, got: {p}"
-            );
+            assert!(!p.starts_with("~/"), "tilde should be expanded, got: {p}");
         }
         // Paths should end with the original suffix
         assert!(
@@ -466,7 +460,10 @@ tools: {}
 constraints: { max_turns: 10, timeout_secs: 120 }
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.llm.base_url.as_deref(), Some("https://custom.api.example.com/v1"));
+        assert_eq!(
+            config.llm.base_url.as_deref(),
+            Some("https://custom.api.example.com/v1")
+        );
         assert_eq!(config.llm.api_key_env.as_deref(), Some("MY_CUSTOM_KEY"));
     }
 
@@ -670,7 +667,10 @@ sandbox:
         assert_eq!(config.llm.provider, "qwen");
         assert_eq!(config.llm.model, "qwen-plus");
         assert_eq!(config.llm.max_tokens, 8192);
-        assert_eq!(config.llm.base_url.as_deref(), Some("https://dashscope.aliyuncs.com/compatible-mode/v1"));
+        assert_eq!(
+            config.llm.base_url.as_deref(),
+            Some("https://dashscope.aliyuncs.com/compatible-mode/v1")
+        );
         assert!(config.llm.api_key_env.is_none()); // uses default DASHSCOPE_API_KEY
         let sb = config.sandbox.unwrap();
         assert_eq!(sb.cpus, 2);

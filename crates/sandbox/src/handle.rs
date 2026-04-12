@@ -24,11 +24,7 @@ pub struct ExecOutput {
 
 impl SandboxHandle {
     pub(crate) fn new(name: String, relay: Arc<AgentRelay>, child: tokio::process::Child) -> Self {
-        Self {
-            name,
-            relay,
-            child,
-        }
+        Self { name, relay, child }
     }
 
     /// Execute a command inside the sandbox.
@@ -71,7 +67,11 @@ impl SandboxHandle {
     }
 
     /// Execute a shell command inside the sandbox.
-    pub async fn shell(&self, command: &str, timeout_secs: u32) -> Result<ExecOutput, SandboxError> {
+    pub async fn shell(
+        &self,
+        command: &str,
+        timeout_secs: u32,
+    ) -> Result<ExecOutput, SandboxError> {
         self.exec("sh", &["-c", command], timeout_secs).await
     }
 

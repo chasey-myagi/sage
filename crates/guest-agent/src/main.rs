@@ -90,7 +90,10 @@ async fn run_main_loop() -> Result<()> {
 }
 
 /// Dispatch a single host message to the appropriate handler.
-async fn handle_message<W>(msg: HostMessage, writer: &std::sync::Arc<tokio::sync::Mutex<W>>) -> Result<()>
+async fn handle_message<W>(
+    msg: HostMessage,
+    writer: &std::sync::Arc<tokio::sync::Mutex<W>>,
+) -> Result<()>
 where
     W: AsyncWriteExt + Unpin,
 {
@@ -170,7 +173,10 @@ where
 }
 
 /// Encode and send a GuestMessage over the console.
-async fn send_message<W>(writer: &std::sync::Arc<tokio::sync::Mutex<W>>, msg: &GuestMessage) -> Result<()>
+async fn send_message<W>(
+    writer: &std::sync::Arc<tokio::sync::Mutex<W>>,
+    msg: &GuestMessage,
+) -> Result<()>
 where
     W: AsyncWriteExt + Unpin,
 {
@@ -201,9 +207,9 @@ async fn open_console() -> Result<tokio::fs::File> {
 #[cfg(target_os = "linux")]
 fn start_reaper() {
     tokio::spawn(async {
-        use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+        use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
         use nix::unistd::Pid;
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
 
         let mut sigchld = match signal(SignalKind::child()) {
             Ok(s) => s,

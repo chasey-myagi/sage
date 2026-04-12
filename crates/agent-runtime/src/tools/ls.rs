@@ -235,18 +235,14 @@ mod tests {
     #[tokio::test]
     async fn test_ls_output_format_with_known_files() {
         let tool = LsTool;
-        let dir = std::env::temp_dir().join(format!(
-            "agent_caster_ls_format_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("agent_caster_ls_format_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("aaa.txt"), "a").expect("setup");
         std::fs::write(dir.join("bbb.txt"), "b").expect("setup");
         std::fs::write(dir.join("ccc.rs"), "c").expect("setup");
 
-        let output = tool
-            .execute(json!({"path": dir.to_str().unwrap()}))
-            .await;
+        let output = tool.execute(json!({"path": dir.to_str().unwrap()})).await;
         assert!(!output.is_error, "ls should succeed");
         let text = match &output.content[0] {
             crate::types::Content::Text { text } => text.clone(),
@@ -277,10 +273,7 @@ mod tests {
             crate::types::Content::Text { text } => text.clone(),
             _ => panic!("expected Text content"),
         };
-        assert!(
-            !text.is_empty(),
-            "error message should not be empty"
-        );
+        assert!(!text.is_empty(), "error message should not be empty");
     }
 
     // ---------------------------------------------------------------
@@ -290,26 +283,26 @@ mod tests {
     #[tokio::test]
     async fn test_ls_output_sorted() {
         let tool = LsTool;
-        let dir = std::env::temp_dir().join(format!(
-            "agent_caster_ls_sorted_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("agent_caster_ls_sorted_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("c.txt"), "c").expect("setup");
         std::fs::write(dir.join("a.txt"), "a").expect("setup");
         std::fs::write(dir.join("b.txt"), "b").expect("setup");
 
-        let output = tool
-            .execute(json!({"path": dir.to_str().unwrap()}))
-            .await;
+        let output = tool.execute(json!({"path": dir.to_str().unwrap()})).await;
         assert!(!output.is_error, "ls should succeed");
         let text = match &output.content[0] {
             crate::types::Content::Text { text } => text.clone(),
             _ => panic!("expected Text content"),
         };
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines, vec!["a.txt", "b.txt", "c.txt"], "output should be alphabetically sorted");
+        assert_eq!(
+            lines,
+            vec!["a.txt", "b.txt", "c.txt"],
+            "output should be alphabetically sorted"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -321,18 +314,14 @@ mod tests {
     #[tokio::test]
     async fn test_ls_includes_subdirectories() {
         let tool = LsTool;
-        let dir = std::env::temp_dir().join(format!(
-            "agent_caster_ls_subdir_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("agent_caster_ls_subdir_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::create_dir_all(dir.join("my_subdir"));
         std::fs::write(dir.join("file.txt"), "f").expect("setup");
 
-        let output = tool
-            .execute(json!({"path": dir.to_str().unwrap()}))
-            .await;
+        let output = tool.execute(json!({"path": dir.to_str().unwrap()})).await;
         assert!(!output.is_error, "ls should succeed");
         let text = match &output.content[0] {
             crate::types::Content::Text { text } => text.clone(),

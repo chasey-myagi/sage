@@ -14,10 +14,20 @@ pub enum LlmContent {
 /// Message in the LLM API format (OpenAI-compatible).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LlmMessage {
-    System { content: String },
-    User { content: Vec<LlmContent> },
-    Assistant { content: String, tool_calls: Vec<LlmToolCall> },
-    Tool { tool_call_id: String, content: String },
+    System {
+        content: String,
+    },
+    User {
+        content: Vec<LlmContent>,
+    },
+    Assistant {
+        content: String,
+        tool_calls: Vec<LlmToolCall>,
+    },
+    Tool {
+        tool_call_id: String,
+        content: String,
+    },
 }
 
 /// A tool call within an assistant message.
@@ -457,7 +467,10 @@ mod tests {
             supports_strict_mode: true,
         };
         assert!(compat.supports_reasoning_effort);
-        assert!(matches!(compat.thinking_format, Some(ThinkingFormat::OpenAI)));
+        assert!(matches!(
+            compat.thinking_format,
+            Some(ThinkingFormat::OpenAI)
+        ));
         assert!(compat.supports_strict_mode);
     }
 
@@ -499,7 +512,11 @@ mod tests {
 
     #[test]
     fn test_thinking_format_all_variants() {
-        let formats = [ThinkingFormat::OpenAI, ThinkingFormat::Qwen, ThinkingFormat::Zai];
+        let formats = [
+            ThinkingFormat::OpenAI,
+            ThinkingFormat::Qwen,
+            ThinkingFormat::Zai,
+        ];
         assert_eq!(formats.len(), 3);
         assert!(matches!(formats[0], ThinkingFormat::OpenAI));
         assert!(matches!(formats[1], ThinkingFormat::Qwen));
@@ -519,7 +536,9 @@ mod tests {
     #[test]
     fn test_event_thinking_delta() {
         let event = AssistantMessageEvent::ThinkingDelta("reasoning step...".into());
-        assert!(matches!(event, AssistantMessageEvent::ThinkingDelta(s) if s == "reasoning step..."));
+        assert!(
+            matches!(event, AssistantMessageEvent::ThinkingDelta(s) if s == "reasoning step...")
+        );
     }
 
     #[test]
@@ -607,9 +626,7 @@ mod tests {
     #[test]
     fn test_event_error() {
         let event = AssistantMessageEvent::Error("rate limit exceeded".into());
-        assert!(
-            matches!(event, AssistantMessageEvent::Error(s) if s == "rate limit exceeded")
-        );
+        assert!(matches!(event, AssistantMessageEvent::Error(s) if s == "rate limit exceeded"));
     }
 
     #[test]
@@ -638,9 +655,7 @@ mod tests {
 
     #[test]
     fn test_llm_content_image_empty_url() {
-        let content = LlmContent::Image {
-            url: String::new(),
-        };
+        let content = LlmContent::Image { url: String::new() };
         match &content {
             LlmContent::Image { url } => assert!(url.is_empty()),
             _ => panic!("expected Image variant"),
@@ -653,9 +668,7 @@ mod tests {
 
     #[test]
     fn test_llm_message_user_empty_content_serde_roundtrip() {
-        let msg = LlmMessage::User {
-            content: vec![],
-        };
+        let msg = LlmMessage::User { content: vec![] };
         let json = serde_json::to_string(&msg).unwrap();
         let back: LlmMessage = serde_json::from_str(&json).unwrap();
         match back {
@@ -745,8 +758,6 @@ mod tests {
         let event = AssistantMessageEvent::Error("rate limit exceeded".into());
         let json = serde_json::to_string(&event).unwrap();
         let back: AssistantMessageEvent = serde_json::from_str(&json).unwrap();
-        assert!(
-            matches!(back, AssistantMessageEvent::Error(s) if s == "rate limit exceeded")
-        );
+        assert!(matches!(back, AssistantMessageEvent::Error(s) if s == "rate limit exceeded"));
     }
 }
