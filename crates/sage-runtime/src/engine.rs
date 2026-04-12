@@ -128,10 +128,15 @@ impl LlmProvider for RoutingProvider {
                 provider.stream(model, context, tools, &options).await
             }
             None => {
-                vec![AssistantMessageEvent::Error(format!(
-                    "No provider registered for API: {}",
-                    model.api
-                ))]
+                vec![
+                    AssistantMessageEvent::Error(format!(
+                        "No provider registered for API: {}",
+                        model.api
+                    )),
+                    AssistantMessageEvent::Done {
+                        stop_reason: StopReason::Error,
+                    },
+                ]
             }
         }
     }
@@ -259,8 +264,9 @@ impl SageEngine {
                     self.base_url.as_deref(),
                     self.api_key_env.as_deref(),
                 )?;
-                // Ensure builtin ApiProviders are registered
-                llm::register_builtin_providers();
+                // Register builtin ApiProviders once per process
+                static PROVIDERS_INIT: std::sync::Once = std::sync::Once::new();
+                PROVIDERS_INIT.call_once(llm::register_builtin_providers);
                 (model, Arc::new(RoutingProvider))
             }
         };
@@ -270,6 +276,8 @@ impl SageEngine {
         for name in &self.builtin_tool_names {
             if let Some(tool) = tools::create_tool(name) {
                 registry.register(tool);
+            } else {
+                tracing::warn!(tool_name = %name, "unknown builtin tool name — skipped");
             }
         }
         for tool in &self.extra_tools {
@@ -1033,5 +1041,49 @@ mod tests {
             "error should mention base_url: {}",
             err
         );
+    }
+
+    // =================================================================
+    // RoutingProvider tests
+    // =================================================================
+
+    #[tokio::test]
+    async fn routing_provider_missing_api_returns_error_and_done() {
+        let provider = RoutingProvider;
+        let model = custom_model("fake", "fake-model", 4096, None, None);
+        let context = LlmContext {
+            messages: vec![],
+            system_prompt: "test".into(),
+            max_tokens: 4096,
+            temperature: None,
+        };
+        // RoutingProvider should fail because no ApiProvider is registered for
+        // the model's api ("openai-completions" from custom_model default).
+        // We clear first to ensure a clean slate, then verify error + Done.
+        llm::registry::clear_providers();
+        let events = provider.complete(&model, &context, &[]).await;
+
+        assert!(
+            events.len() >= 2,
+            "should have Error + Done events, got {:?}",
+            events
+        );
+        assert!(
+            matches!(&events[0], AssistantMessageEvent::Error(msg) if msg.contains("No provider registered")),
+            "first event should be Error: {:?}",
+            events[0]
+        );
+        assert!(
+            matches!(
+                &events[1],
+                AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Error
+                }
+            ),
+            "second event should be Done with Error stop_reason: {:?}",
+            events[1]
+        );
+        // Re-register so other tests aren't affected
+        llm::register_builtin_providers();
     }
 }
