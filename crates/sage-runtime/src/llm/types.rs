@@ -101,6 +101,9 @@ pub enum LlmMessage {
     Tool {
         tool_call_id: String,
         content: String,
+        /// Tool name for providers that require it in tool results (pi-mono: toolName).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_name: Option<String>,
     },
 }
 

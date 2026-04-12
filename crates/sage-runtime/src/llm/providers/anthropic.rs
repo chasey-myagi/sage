@@ -427,6 +427,7 @@ fn convert_messages(messages: &[LlmMessage]) -> Vec<Value> {
             LlmMessage::Tool {
                 tool_call_id,
                 content,
+                ..
             } => {
                 // Merge consecutive Tool messages into a single user message
                 // (required for z.ai Anthropic endpoint compatibility).
@@ -441,6 +442,7 @@ fn convert_messages(messages: &[LlmMessage]) -> Vec<Value> {
                     if let LlmMessage::Tool {
                         tool_call_id: next_id,
                         content: next_content,
+                        ..
                     } = &messages[i + 1]
                     {
                         tool_results.push(json!({
@@ -917,6 +919,7 @@ mod tests {
         let messages = vec![LlmMessage::Tool {
             tool_call_id: "call_001".into(),
             content: "file1.txt\nfile2.txt".into(),
+            tool_name: None,
         }];
         let result = convert_messages(&messages);
 
@@ -966,6 +969,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "tc1".into(),
                 content: "file1.txt".into(),
+                tool_name: None,
             },
         ];
         let result = convert_messages(&messages);
@@ -1003,10 +1007,12 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_a".into(),
                 content: "file1.txt".into(),
+                tool_name: None,
             },
             LlmMessage::Tool {
                 tool_call_id: "call_b".into(),
                 content: "contents here".into(),
+                tool_name: None,
             },
         ];
         let result = convert_messages(&messages);
@@ -1030,6 +1036,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_a".into(),
                 content: "result_a".into(),
+                tool_name: None,
             },
             LlmMessage::User {
                 content: vec![LlmContent::Text("Continue".into())],
@@ -1037,6 +1044,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_b".into(),
                 content: "result_b".into(),
+                tool_name: None,
             },
         ];
         let result = convert_messages(&messages);
