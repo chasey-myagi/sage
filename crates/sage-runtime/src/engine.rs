@@ -6,7 +6,7 @@ use crate::agent_loop::{AgentLoopError, run_agent_loop};
 use crate::event::{AgentEvent, AgentEventSink, EventReceiver, EventSender, EventStream};
 use crate::llm::types::*;
 use crate::llm::{self, LlmProvider};
-use crate::tools::backend::LocalBackend;
+use crate::tools::backend::{LocalBackend, ToolBackend};
 use crate::tools::policy::ToolPolicy;
 use crate::tools::{self, AgentTool, ToolRegistry};
 use crate::types::*;
@@ -190,6 +190,7 @@ pub struct SageEngine {
     // Tools
     builtin_tool_names: Vec<String>,
     extra_tools: Vec<Arc<dyn AgentTool>>,
+    backend: Option<Arc<dyn ToolBackend>>,
 
     // LLM
     provider_name: String,
@@ -225,6 +226,7 @@ impl SageEngine {
             tool_policy: None,
             builtin_tool_names: Vec::new(),
             extra_tools: Vec::new(),
+            backend: None,
             provider_name: None,
             model_id: None,
             max_tokens: None,
@@ -273,7 +275,8 @@ impl SageEngine {
         };
 
         // 2. Build ToolRegistry
-        let backend = LocalBackend::new();
+        let backend: Arc<dyn ToolBackend> =
+            self.backend.clone().unwrap_or_else(|| LocalBackend::new());
         let mut registry = ToolRegistry::new();
         for name in &self.builtin_tool_names {
             if let Some(tool) = tools::create_tool(name, backend.clone()) {
@@ -377,6 +380,7 @@ pub struct SageEngineBuilder {
     tool_policy: Option<ToolPolicy>,
     builtin_tool_names: Vec<String>,
     extra_tools: Vec<Arc<dyn AgentTool>>,
+    backend: Option<Arc<dyn ToolBackend>>,
     provider_name: Option<String>,
     model_id: Option<String>,
     max_tokens: Option<u32>,
@@ -419,6 +423,16 @@ impl SageEngineBuilder {
 
     pub fn register_tool(mut self, tool: impl AgentTool + 'static) -> Self {
         self.extra_tools.push(Arc::new(tool));
+        self
+    }
+
+    /// Set a custom `ToolBackend` for tool I/O operations.
+    ///
+    /// When set, all builtin tools delegate I/O to this backend instead of
+    /// the default `LocalBackend`. Use `SandboxBackend::new(handle)` to
+    /// execute tools inside a microVM.
+    pub fn backend(mut self, backend: Arc<dyn ToolBackend>) -> Self {
+        self.backend = Some(backend);
         self
     }
 
@@ -480,6 +494,16 @@ impl SageEngineBuilder {
             return Err(SageError::MissingField("provider+model or llm_provider"));
         }
 
+        // Extract provider_name before moving self.custom_llm_provider into the struct,
+        // so the logic doesn't depend on field initialization order.
+        let provider_name = self.provider_name.unwrap_or_else(|| {
+            if self.custom_llm_provider.is_some() {
+                "custom".into()
+            } else {
+                String::new()
+            }
+        });
+
         Ok(SageEngine {
             system_prompt,
             max_turns: self.max_turns.unwrap_or(10),
@@ -489,13 +513,8 @@ impl SageEngineBuilder {
             tool_policy: self.tool_policy,
             builtin_tool_names: self.builtin_tool_names,
             extra_tools: self.extra_tools,
-            provider_name: self.provider_name.unwrap_or_else(|| {
-                if self.custom_llm_provider.is_some() {
-                    "custom".into()
-                } else {
-                    String::new()
-                }
-            }),
+            backend: self.backend,
+            provider_name,
             model_id: self.model_id.unwrap_or_else(|| "custom".to_string()),
             max_tokens: self.max_tokens.unwrap_or(4096),
             base_url: self.base_url,
@@ -1333,5 +1352,325 @@ mod tests {
         );
         // Re-register so other tests aren't affected
         llm::register_builtin_providers();
+    }
+
+    // =================================================================
+    // Backend injection tests
+    // =================================================================
+
+    /// A mock ToolBackend that records all method calls for verification.
+    struct TrackingBackend {
+        calls: tokio::sync::Mutex<Vec<(String, String)>>,
+    }
+
+    impl TrackingBackend {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                calls: tokio::sync::Mutex::new(Vec::new()),
+            })
+        }
+
+        async fn get_calls(&self) -> Vec<(String, String)> {
+            self.calls.lock().await.clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::tools::backend::ToolBackend for TrackingBackend {
+        async fn shell(
+            &self,
+            command: &str,
+            _timeout_secs: u64,
+        ) -> Result<crate::tools::backend::ShellOutput, String> {
+            self.calls
+                .lock()
+                .await
+                .push(("shell".into(), command.into()));
+            Ok(crate::tools::backend::ShellOutput {
+                stdout: "tracked-output\n".into(),
+                stderr: String::new(),
+                success: true,
+            })
+        }
+
+        async fn read_file(&self, path: &str) -> Result<Vec<u8>, String> {
+            self.calls
+                .lock()
+                .await
+                .push(("read_file".into(), path.into()));
+            Ok(b"tracked-content".to_vec())
+        }
+
+        async fn write_file(&self, path: &str, _data: &[u8]) -> Result<(), String> {
+            self.calls
+                .lock()
+                .await
+                .push(("write_file".into(), path.into()));
+            Ok(())
+        }
+
+        async fn list_dir(
+            &self,
+            path: &str,
+        ) -> Result<Vec<crate::tools::backend::DirEntry>, String> {
+            self.calls
+                .lock()
+                .await
+                .push(("list_dir".into(), path.into()));
+            Ok(vec![crate::tools::backend::DirEntry {
+                name: "mock.txt".into(),
+                is_dir: false,
+                size: 42,
+            }])
+        }
+    }
+
+    #[test]
+    fn builder_default_has_no_backend() {
+        let b = SageEngine::builder();
+        assert!(
+            b.backend.is_none(),
+            "default builder should have no backend"
+        );
+    }
+
+    #[test]
+    fn builder_with_custom_backend() {
+        let tracking = TrackingBackend::new();
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .provider("test")
+            .model("test-model")
+            .backend(tracking as Arc<dyn crate::tools::backend::ToolBackend>)
+            .build()
+            .unwrap();
+        assert!(
+            engine.backend.is_some(),
+            "engine should store the custom backend"
+        );
+    }
+
+    #[test]
+    fn builder_without_backend_uses_default() {
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .provider("test")
+            .model("test-model")
+            .build()
+            .unwrap();
+        assert!(
+            engine.backend.is_none(),
+            "engine without .backend() should have None"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_with_custom_backend_builtin_tool_uses_it() {
+        // Provider calls "bash" tool with a command. The TrackingBackend should
+        // capture the shell() call instead of executing on the host.
+        let tracking = TrackingBackend::new();
+        let tracking_ref = Arc::clone(&tracking);
+
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .llm_provider(tool_call_provider(
+                "bash",
+                r#"{"command":"echo hello","timeout":10}"#,
+            ))
+            .builtin_tools(&["bash"])
+            .backend(tracking as Arc<dyn crate::tools::backend::ToolBackend>)
+            .build()
+            .unwrap();
+
+        let mut rx = engine.run("hi").await.unwrap();
+        while let Some(_) = rx.next().await {}
+
+        let calls = tracking_ref.get_calls().await;
+        assert!(
+            calls.iter().any(|(method, _)| method == "shell"),
+            "TrackingBackend.shell() should have been called, got: {:?}",
+            calls
+        );
+        let shell_call = calls.iter().find(|(m, _)| m == "shell").unwrap();
+        assert!(
+            shell_call.1.contains("echo hello"),
+            "shell command should contain 'echo hello', got: {}",
+            shell_call.1
+        );
+    }
+
+    #[tokio::test]
+    async fn run_with_custom_backend_read_tool_uses_it() {
+        let tracking = TrackingBackend::new();
+        let tracking_ref = Arc::clone(&tracking);
+
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .llm_provider(tool_call_provider(
+                "read",
+                r#"{"file_path":"/test/file.txt"}"#,
+            ))
+            .builtin_tools(&["read"])
+            .backend(tracking as Arc<dyn crate::tools::backend::ToolBackend>)
+            .build()
+            .unwrap();
+
+        let mut rx = engine.run("hi").await.unwrap();
+        while let Some(_) = rx.next().await {}
+
+        let calls = tracking_ref.get_calls().await;
+        assert!(
+            calls.iter().any(|(method, _)| method == "read_file"),
+            "TrackingBackend.read_file() should have been called, got: {:?}",
+            calls
+        );
+    }
+
+    #[tokio::test]
+    async fn run_with_custom_backend_write_tool_uses_it() {
+        let tracking = TrackingBackend::new();
+        let tracking_ref = Arc::clone(&tracking);
+
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .llm_provider(tool_call_provider(
+                "write",
+                r#"{"file_path":"/test/out.txt","content":"hello"}"#,
+            ))
+            .builtin_tools(&["write"])
+            .backend(tracking as Arc<dyn crate::tools::backend::ToolBackend>)
+            .build()
+            .unwrap();
+
+        let mut rx = engine.run("hi").await.unwrap();
+        while let Some(_) = rx.next().await {}
+
+        let calls = tracking_ref.get_calls().await;
+        assert!(
+            calls.iter().any(|(method, _)| method == "write_file"),
+            "TrackingBackend.write_file() should have been called, got: {:?}",
+            calls
+        );
+    }
+
+    #[tokio::test]
+    async fn run_with_custom_backend_ls_tool_uses_it() {
+        let tracking = TrackingBackend::new();
+        let tracking_ref = Arc::clone(&tracking);
+
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .llm_provider(tool_call_provider("ls", r#"{"path":"/tmp"}"#))
+            .builtin_tools(&["ls"])
+            .backend(tracking as Arc<dyn crate::tools::backend::ToolBackend>)
+            .build()
+            .unwrap();
+
+        let mut rx = engine.run("hi").await.unwrap();
+        while let Some(_) = rx.next().await {}
+
+        let calls = tracking_ref.get_calls().await;
+        assert!(
+            calls.iter().any(|(method, _)| method == "list_dir"),
+            "TrackingBackend.list_dir() should have been called, got: {:?}",
+            calls
+        );
+    }
+
+    #[tokio::test]
+    async fn run_without_backend_uses_local() {
+        // Without .backend(), engine should use LocalBackend (host execution).
+        // We verify by running a real bash command that writes to a temp file.
+        let test_path =
+            std::env::temp_dir().join(format!("sage_local_backend_test_{}", std::process::id()));
+        let test_path_str = test_path.to_str().unwrap().to_string();
+
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .llm_provider(tool_call_provider(
+                "bash",
+                &format!(
+                    r#"{{"command":"echo localtest > {}","timeout":10}}"#,
+                    test_path_str
+                ),
+            ))
+            .builtin_tools(&["bash"])
+            .build()
+            .unwrap();
+
+        let mut rx = engine.run("hi").await.unwrap();
+        while let Some(_) = rx.next().await {}
+
+        // The file should exist on the host because LocalBackend ran the command
+        let content = std::fs::read_to_string(&test_path);
+        assert!(
+            content.is_ok(),
+            "file should exist on host via LocalBackend: {:?}",
+            content
+        );
+        assert_eq!(content.unwrap().trim(), "localtest");
+        let _ = std::fs::remove_file(&test_path);
+    }
+
+    /// A ToolBackend that always returns errors, for testing error propagation.
+    struct FailingBackend;
+
+    #[async_trait::async_trait]
+    impl crate::tools::backend::ToolBackend for FailingBackend {
+        async fn shell(
+            &self,
+            _command: &str,
+            _timeout_secs: u64,
+        ) -> Result<crate::tools::backend::ShellOutput, String> {
+            Err("sandbox unavailable".into())
+        }
+        async fn read_file(&self, _path: &str) -> Result<Vec<u8>, String> {
+            Err("sandbox unavailable".into())
+        }
+        async fn write_file(&self, _path: &str, _data: &[u8]) -> Result<(), String> {
+            Err("sandbox unavailable".into())
+        }
+        async fn list_dir(
+            &self,
+            _path: &str,
+        ) -> Result<Vec<crate::tools::backend::DirEntry>, String> {
+            Err("sandbox unavailable".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn run_with_failing_backend_propagates_error_in_events() {
+        let backend: Arc<dyn crate::tools::backend::ToolBackend> = Arc::new(FailingBackend);
+
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .llm_provider(tool_call_provider(
+                "bash",
+                r#"{"command":"echo hi","timeout":10}"#,
+            ))
+            .builtin_tools(&["bash"])
+            .backend(backend)
+            .build()
+            .unwrap();
+
+        let mut rx = engine.run("hi").await.unwrap();
+        let mut events = Vec::new();
+        while let Some(event) = rx.next().await {
+            events.push(event);
+        }
+
+        // The agent loop should complete (not panic). The ToolExecutionEnd
+        // event should have is_error=true when the backend returns Err.
+        let tool_end = events
+            .iter()
+            .find(|e| matches!(e, AgentEvent::ToolExecutionEnd { is_error: true, .. }));
+        assert!(
+            tool_end.is_some(),
+            "should emit ToolExecutionEnd with is_error=true when backend fails, events: {:?}",
+            events
+                .iter()
+                .map(|e| std::mem::discriminant(e))
+                .collect::<Vec<_>>()
+        );
     }
 }
