@@ -1992,6 +1992,16 @@ mod tests {
         assert_eq!(groq_models.len(), 15);
     }
 
+    #[test]
+    fn test_groq_models_invariants() {
+        for m in list_models().iter().filter(|m| m.provider == "groq") {
+            assert_eq!(m.base_url, "https://api.groq.com/openai/v1", "bad base_url for {}", m.id);
+            assert_eq!(m.api_key_env, "GROQ_API_KEY", "bad api_key_env for {}", m.id);
+            assert_eq!(m.api, api::OPENAI_COMPLETIONS, "bad api for {}", m.id);
+            assert!(m.compat.is_none(), "unexpected compat for {}", m.id);
+        }
+    }
+
     // ========================================================================
     // resolve_model — xAI (Grok) models
     // ========================================================================
@@ -2067,6 +2077,16 @@ mod tests {
             .filter(|m| m.provider == "xai")
             .collect();
         assert_eq!(xai_models.len(), 24);
+    }
+
+    #[test]
+    fn test_xai_models_invariants() {
+        for m in list_models().iter().filter(|m| m.provider == "xai") {
+            assert_eq!(m.base_url, "https://api.x.ai/v1", "bad base_url for {}", m.id);
+            assert_eq!(m.api_key_env, "XAI_API_KEY", "bad api_key_env for {}", m.id);
+            assert_eq!(m.api, api::OPENAI_COMPLETIONS, "bad api for {}", m.id);
+            assert!(m.compat.is_none(), "unexpected compat for {}", m.id);
+        }
     }
 
     // ========================================================================
