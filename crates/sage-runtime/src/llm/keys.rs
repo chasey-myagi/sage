@@ -44,6 +44,8 @@ pub fn api_key_env_var(provider: &str) -> String {
         "minimax" => "MINIMAX_API_KEY".into(),
         "zai" => "ZHIPU_API_KEY".into(),
         "deepseek" => "DEEPSEEK_API_KEY".into(),
+        "mistral" => "MISTRAL_API_KEY".into(),
+        "cerebras" => "CEREBRAS_API_KEY".into(),
         other => format!("{}_API_KEY", other.to_uppercase()),
     }
 }
@@ -63,6 +65,8 @@ pub fn resolve_api_key(provider: &str) -> Result<String, KeyError> {
         "minimax",
         "zai",
         "deepseek",
+        "mistral",
+        "cerebras",
     ];
     if !known.contains(&provider) {
         return Err(KeyError::UnknownProvider {
@@ -157,6 +161,46 @@ mod tests {
     #[test]
     fn test_env_var_deepseek() {
         assert_eq!(api_key_env_var("deepseek"), "DEEPSEEK_API_KEY");
+    }
+
+    #[test]
+    fn test_env_var_mistral() {
+        assert_eq!(api_key_env_var("mistral"), "MISTRAL_API_KEY");
+    }
+
+    #[test]
+    fn test_env_var_cerebras() {
+        assert_eq!(api_key_env_var("cerebras"), "CEREBRAS_API_KEY");
+    }
+
+    // ========================================================================
+    // resolve_api_key — mistral and cerebras recognized
+    // ========================================================================
+
+    #[test]
+    fn test_resolve_api_key_mistral_recognized() {
+        unsafe { std::env::remove_var("MISTRAL_API_KEY") };
+        let result = resolve_api_key("mistral");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("MISTRAL_API_KEY"),
+            "mistral should be a known provider, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_api_key_cerebras_recognized() {
+        unsafe { std::env::remove_var("CEREBRAS_API_KEY") };
+        let result = resolve_api_key("cerebras");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("CEREBRAS_API_KEY"),
+            "cerebras should be a known provider, got: {}",
+            err
+        );
     }
 
     // ========================================================================
