@@ -129,7 +129,8 @@ sage run --config configs/coding-assistant.yaml \
 - [x] DeepSeek — pi-mono 无独立 provider，模型通过 OpenRouter/Groq/Bedrock 提供
 - [ ] Ollama / LM Studio / vLLM（本地模型）
 - [ ] GitHub Copilot
-- [ ] Together / Fireworks / SambaNova / Cerebras
+- [ ] Together / Fireworks / SambaNova
+- [x] Cerebras（4 models, detect_compat handles as is_non_standard）
 
 **基础设施：**
 
