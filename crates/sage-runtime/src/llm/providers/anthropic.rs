@@ -370,8 +370,32 @@ fn convert_messages(messages: &[LlmMessage]) -> Vec<Value> {
             LlmMessage::Assistant {
                 content,
                 tool_calls,
+                thinking_blocks,
             } => {
                 let mut blocks = Vec::new();
+
+                // Thinking blocks go BEFORE text content
+                for tb in thinking_blocks {
+                    if tb.redacted {
+                        // Redacted thinking: pass back the encrypted signature
+                        if let Some(ref sig) = tb.signature {
+                            blocks.push(json!({
+                                "type": "redacted_thinking",
+                                "data": sig,
+                            }));
+                        }
+                    } else {
+                        // Normal thinking block
+                        let mut block = json!({
+                            "type": "thinking",
+                            "thinking": tb.thinking,
+                        });
+                        if let Some(ref sig) = tb.signature {
+                            block["signature"] = json!(sig);
+                        }
+                        blocks.push(block);
+                    }
+                }
 
                 // Text content
                 if !content.is_empty() {
@@ -720,8 +744,24 @@ fn process_sse_line(
 
             if let Some(pos) = active_blocks.iter().position(|b| b.index == index) {
                 let block = active_blocks.remove(pos);
-                if let BlockType::ToolUse { id, .. } = block.block_type {
-                    events.push(AssistantMessageEvent::ToolCallEnd { id });
+                match block.block_type {
+                    BlockType::ToolUse { id, .. } => {
+                        events.push(AssistantMessageEvent::ToolCallEnd { id });
+                    }
+                    BlockType::Thinking => {
+                        events.push(AssistantMessageEvent::ThinkingBlockEnd {
+                            signature: block.signature,
+                            redacted: false,
+                        });
+                    }
+                    BlockType::RedactedThinking { data } => {
+                        // For redacted blocks, the "signature" is the opaque data payload
+                        events.push(AssistantMessageEvent::ThinkingBlockEnd {
+                            signature: data,
+                            redacted: true,
+                        });
+                    }
+                    BlockType::Text => {}
                 }
             }
         }
@@ -834,6 +874,7 @@ mod tests {
                     arguments: r#"{"command":"ls"}"#.into(),
                 },
             }],
+            thinking_blocks: vec![],
         }];
         let result = convert_messages(&messages);
 
@@ -860,6 +901,7 @@ mod tests {
                     arguments: r#"{"path":"/tmp/a.txt"}"#.into(),
                 },
             }],
+            thinking_blocks: vec![],
         }];
         let result = convert_messages(&messages);
 
@@ -919,6 +961,7 @@ mod tests {
                         arguments: r#"{"command":"ls"}"#.into(),
                     },
                 }],
+                thinking_blocks: vec![],
             },
             LlmMessage::Tool {
                 tool_call_id: "tc1".into(),
@@ -955,6 +998,7 @@ mod tests {
                         },
                     },
                 ],
+                thinking_blocks: vec![],
             },
             LlmMessage::Tool {
                 tool_call_id: "call_a".into(),
@@ -1090,6 +1134,163 @@ mod tests {
     #[test]
     fn test_map_stop_reason_unknown() {
         assert_eq!(map_stop_reason("something_unexpected"), StopReason::Error);
+    }
+
+    // -----------------------------------------------------------------------
+    // Thinking block serialization in convert_messages (P4-B)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_convert_assistant_with_normal_thinking_block() {
+        let messages = vec![LlmMessage::Assistant {
+            content: "The answer is 42.".into(),
+            tool_calls: vec![],
+            thinking_blocks: vec![ThinkingBlock {
+                thinking: "Let me reason step by step...".into(),
+                signature: Some("sig_abc".into()),
+                redacted: false,
+            }],
+        }];
+        let result = convert_messages(&messages);
+
+        assert_eq!(result.len(), 1);
+        let blocks = result[0]["content"].as_array().unwrap();
+        // thinking block comes BEFORE text
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "thinking");
+        assert_eq!(blocks[0]["thinking"], "Let me reason step by step...");
+        assert_eq!(blocks[0]["signature"], "sig_abc");
+        assert_eq!(blocks[1]["type"], "text");
+        assert_eq!(blocks[1]["text"], "The answer is 42.");
+    }
+
+    #[test]
+    fn test_convert_assistant_with_redacted_thinking_block() {
+        let messages = vec![LlmMessage::Assistant {
+            content: "result".into(),
+            tool_calls: vec![],
+            thinking_blocks: vec![ThinkingBlock {
+                thinking: String::new(),
+                signature: Some("opaque_encrypted_payload".into()),
+                redacted: true,
+            }],
+        }];
+        let result = convert_messages(&messages);
+
+        let blocks = result[0]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "redacted_thinking");
+        assert_eq!(blocks[0]["data"], "opaque_encrypted_payload");
+        // redacted_thinking should NOT have "thinking" key
+        assert!(blocks[0].get("thinking").is_none());
+        assert_eq!(blocks[1]["type"], "text");
+    }
+
+    #[test]
+    fn test_convert_assistant_with_mixed_thinking_blocks() {
+        let messages = vec![LlmMessage::Assistant {
+            content: "final answer".into(),
+            tool_calls: vec![],
+            thinking_blocks: vec![
+                ThinkingBlock {
+                    thinking: "step 1 reasoning".into(),
+                    signature: Some("sig_1".into()),
+                    redacted: false,
+                },
+                ThinkingBlock {
+                    thinking: String::new(),
+                    signature: Some("redacted_data".into()),
+                    redacted: true,
+                },
+                ThinkingBlock {
+                    thinking: "step 2 reasoning".into(),
+                    signature: None,
+                    redacted: false,
+                },
+            ],
+        }];
+        let result = convert_messages(&messages);
+
+        let blocks = result[0]["content"].as_array().unwrap();
+        // 3 thinking + 1 text
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks[0]["type"], "thinking");
+        assert_eq!(blocks[0]["thinking"], "step 1 reasoning");
+        assert_eq!(blocks[0]["signature"], "sig_1");
+        assert_eq!(blocks[1]["type"], "redacted_thinking");
+        assert_eq!(blocks[1]["data"], "redacted_data");
+        assert_eq!(blocks[2]["type"], "thinking");
+        assert_eq!(blocks[2]["thinking"], "step 2 reasoning");
+        assert!(
+            blocks[2].get("signature").is_none()
+                || blocks[2]["signature"].is_null(),
+            "thinking block without signature should omit signature key"
+        );
+        assert_eq!(blocks[3]["type"], "text");
+    }
+
+    #[test]
+    fn test_convert_assistant_thinking_blocks_before_tool_use() {
+        let messages = vec![LlmMessage::Assistant {
+            content: String::new(),
+            tool_calls: vec![LlmToolCall {
+                id: "call_001".into(),
+                function: LlmFunctionCall {
+                    name: "bash".into(),
+                    arguments: r#"{"command":"ls"}"#.into(),
+                },
+            }],
+            thinking_blocks: vec![ThinkingBlock {
+                thinking: "I should list files".into(),
+                signature: None,
+                redacted: false,
+            }],
+        }];
+        let result = convert_messages(&messages);
+
+        let blocks = result[0]["content"].as_array().unwrap();
+        // thinking + tool_use (no text block since content is empty)
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "thinking");
+        assert_eq!(blocks[0]["thinking"], "I should list files");
+        assert_eq!(blocks[1]["type"], "tool_use");
+        assert_eq!(blocks[1]["name"], "bash");
+    }
+
+    #[test]
+    fn test_convert_assistant_no_thinking_blocks_unchanged() {
+        // Verify that messages without thinking blocks still serialize correctly
+        let messages = vec![LlmMessage::Assistant {
+            content: "hello".into(),
+            tool_calls: vec![],
+            thinking_blocks: vec![],
+        }];
+        let result = convert_messages(&messages);
+
+        let blocks = result[0]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[0]["text"], "hello");
+    }
+
+    #[test]
+    fn test_convert_assistant_redacted_without_signature_skipped() {
+        // Redacted block without signature should be skipped (nothing to pass back)
+        let messages = vec![LlmMessage::Assistant {
+            content: "result".into(),
+            tool_calls: vec![],
+            thinking_blocks: vec![ThinkingBlock {
+                thinking: String::new(),
+                signature: None,
+                redacted: true,
+            }],
+        }];
+        let result = convert_messages(&messages);
+
+        let blocks = result[0]["content"].as_array().unwrap();
+        // Only text block — redacted without signature is skipped
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "text");
     }
 
     // -----------------------------------------------------------------------
@@ -1573,6 +1774,7 @@ mod tests {
                 LlmMessage::Assistant {
                     content: "ok".into(),
                     tool_calls: vec![],
+                    thinking_blocks: vec![],
                 },
                 LlmMessage::User {
                     content: vec![LlmContent::Text("second".into())],
@@ -1748,6 +1950,79 @@ mod tests {
             }
             other => panic!("expected RedactedThinking, got: {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // content_block_stop emits ThinkingBlockEnd (P4-B)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_sse_thinking_block_stop_emits_signature() {
+        let mut events = Vec::new();
+        let mut blocks = vec![BlockState {
+            index: 0,
+            block_type: BlockType::Thinking,
+            signature: "sig_accumulated".into(),
+        }];
+        let line =
+            r#"data: {"type":"content_block_stop","index":0}"#;
+        process_sse_line(line, &mut events, &mut blocks);
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::ThinkingBlockEnd {
+                signature,
+                redacted,
+            } => {
+                assert_eq!(signature, "sig_accumulated");
+                assert!(!redacted);
+            }
+            other => panic!("expected ThinkingBlockEnd, got: {other:?}"),
+        }
+        assert!(blocks.is_empty(), "block should be removed");
+    }
+
+    #[test]
+    fn test_sse_redacted_thinking_block_stop_emits_data() {
+        let mut events = Vec::new();
+        let mut blocks = vec![BlockState {
+            index: 0,
+            block_type: BlockType::RedactedThinking {
+                data: "opaque_encrypted_payload".into(),
+            },
+            signature: String::new(),
+        }];
+        let line =
+            r#"data: {"type":"content_block_stop","index":0}"#;
+        process_sse_line(line, &mut events, &mut blocks);
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::ThinkingBlockEnd {
+                signature,
+                redacted,
+            } => {
+                assert_eq!(signature, "opaque_encrypted_payload");
+                assert!(redacted);
+            }
+            other => panic!("expected ThinkingBlockEnd, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_sse_text_block_stop_no_event() {
+        let mut events = Vec::new();
+        let mut blocks = vec![BlockState {
+            index: 0,
+            block_type: BlockType::Text,
+            signature: String::new(),
+        }];
+        let line =
+            r#"data: {"type":"content_block_stop","index":0}"#;
+        process_sse_line(line, &mut events, &mut blocks);
+
+        assert!(events.is_empty(), "text block stop should not emit events");
+        assert!(blocks.is_empty());
     }
 
     // -----------------------------------------------------------------------

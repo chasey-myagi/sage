@@ -86,6 +86,7 @@ fn convert_messages(messages: &[LlmMessage]) -> Vec<Value> {
             LlmMessage::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 // Flush pending tool results first
                 flush_tool_parts(&mut pending_tool_parts, &mut contents);
@@ -622,6 +623,7 @@ mod tests {
         let messages = vec![LlmMessage::Assistant {
             content: "Sure!".into(),
             tool_calls: vec![],
+            thinking_blocks: vec![],
         }];
         let contents = convert_messages(&messages);
         assert_eq!(contents.len(), 1);
@@ -640,6 +642,7 @@ mod tests {
                     arguments: r#"{"command":"ls"}"#.into(),
                 },
             }],
+            thinking_blocks: vec![],
         }];
         let contents = convert_messages(&messages);
         assert_eq!(contents.len(), 1);
@@ -690,6 +693,7 @@ mod tests {
                         },
                     },
                 ],
+                thinking_blocks: vec![],
             },
             LlmMessage::Tool {
                 tool_call_id: "call_a".into(),
@@ -732,6 +736,7 @@ mod tests {
                         arguments: "{}".into(),
                     },
                 }],
+                thinking_blocks: vec![],
             },
             LlmMessage::Tool {
                 tool_call_id: "call_x".into(),

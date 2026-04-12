@@ -7,6 +7,25 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TOOL_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Extract thinking blocks from a Content slice into ThinkingBlock vec.
+pub fn extract_thinking_blocks(content: &[Content]) -> Vec<ThinkingBlock> {
+    content
+        .iter()
+        .filter_map(|c| match c {
+            Content::Thinking {
+                thinking,
+                signature,
+                redacted,
+            } => Some(ThinkingBlock {
+                thinking: thinking.clone(),
+                signature: signature.clone(),
+                redacted: *redacted,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Converts agent messages to LLM API format.
 pub fn agent_to_llm_messages(messages: &[AgentMessage]) -> Vec<LlmMessage> {
     messages
@@ -56,9 +75,12 @@ pub fn agent_to_llm_messages(messages: &[AgentMessage]) -> Vec<LlmMessage> {
                     })
                     .collect();
 
+                let thinking_blocks = extract_thinking_blocks(&assistant.content);
+
                 LlmMessage::Assistant {
                     content: text,
                     tool_calls,
+                    thinking_blocks,
                 }
             }
             AgentMessage::ToolResult(result) => {
@@ -123,6 +145,7 @@ pub fn fix_orphaned_tool_results(messages: &mut Vec<LlmMessage>) {
                                 arguments: "{}".into(),
                             },
                         }],
+                        thinking_blocks: vec![],
                     });
                     available_ids.insert(tool_call_id.clone());
                 }
@@ -146,18 +169,17 @@ pub fn strip_thinking_blocks(_messages: &mut Vec<LlmMessage>) {}
 ///
 /// When replaying a conversation to a different provider/model, thinking blocks
 /// from the original model are invalid (encrypted reasoning, redacted content, etc.).
-/// This function is a placeholder: `LlmMessage::Assistant` currently stores content
-/// as a plain `String`, so there are no thinking blocks to strip. When structured
-/// content blocks (with thinking) are added to `LlmMessage`, this function should
-/// compare `(target_provider, target_model)` against each assistant's originating
-/// provider/model and drop or convert thinking blocks for cross-model turns.
+/// Currently a no-op: we don't yet track which provider/model produced each assistant
+/// message, so we can't determine which thinking blocks are cross-model. When
+/// per-message provenance is added, this should compare the originating provider
+/// against `target_provider` and clear `thinking_blocks` for mismatched turns.
 pub fn strip_cross_model_thinking(
     _messages: &mut Vec<LlmMessage>,
     _target_provider: &str,
     _target_model: &str,
 ) {
-    // No-op: LlmMessage::Assistant stores content as String, not blocks.
-    // Will be implemented when thinking blocks are added to LlmMessage.
+    // TODO: Clear thinking_blocks on assistant messages whose originating
+    // provider differs from target_provider. Requires per-message provenance tracking.
 }
 
 /// Remove assistant messages that have empty content AND no tool calls.
@@ -169,10 +191,11 @@ pub fn skip_empty_assistant_messages(messages: &mut Vec<LlmMessage>) {
         if let LlmMessage::Assistant {
             content,
             tool_calls,
+            thinking_blocks,
         } = msg
         {
-            // Keep if there is any content text or any tool calls
-            !content.is_empty() || !tool_calls.is_empty()
+            // Keep if there is any content text, tool calls, or thinking blocks
+            !content.is_empty() || !tool_calls.is_empty() || !thinking_blocks.is_empty()
         } else {
             true
         }
@@ -347,6 +370,7 @@ mod tests {
             LlmMessage::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 assert_eq!(content, "I can help");
                 assert!(tool_calls.is_empty());
@@ -381,6 +405,7 @@ mod tests {
             LlmMessage::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 assert_eq!(content, "Let me check.");
                 assert_eq!(tool_calls.len(), 1);
@@ -607,6 +632,7 @@ mod tests {
                         arguments: "{}".into(),
                     },
                 }],
+                thinking_blocks: vec![],
             },
             LlmMessage::Tool {
                 tool_call_id: "call_001".into(),
@@ -668,26 +694,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_strip_thinking_blocks_empty_messages() {
-        let mut messages: Vec<LlmMessage> = vec![];
-        strip_thinking_blocks(&mut messages);
-        assert!(messages.is_empty());
-    }
-
     // ========================================================================
-    // Thinking content in assistant messages should be stripped
+    // Thinking block preservation (P4-B)
     // ========================================================================
 
     #[test]
-    fn test_assistant_thinking_content_stripped() {
-        // When an AgentMessage::Assistant has Thinking content blocks,
-        // they should not appear in the LlmMessage conversion
+    fn test_agent_to_llm_preserves_thinking_blocks() {
         let messages = vec![AgentMessage::Assistant(AssistantMessage {
             content: vec![
                 Content::Thinking {
                     thinking: "Let me think...".into(),
-                    signature: None,
+                    signature: Some("sig123".into()),
                     redacted: false,
                 },
                 Content::Text {
@@ -704,35 +721,271 @@ mod tests {
         let llm = agent_to_llm_messages(&messages);
         assert_eq!(llm.len(), 1);
         match &llm[0] {
-            LlmMessage::Assistant { content, .. } => {
-                // The text content should be present, thinking should be stripped
+            LlmMessage::Assistant {
+                content,
+                thinking_blocks,
+                ..
+            } => {
                 assert!(content.contains("The answer is 42."));
+                assert_eq!(thinking_blocks.len(), 1);
+                assert_eq!(thinking_blocks[0].thinking, "Let me think...");
+                assert_eq!(thinking_blocks[0].signature.as_deref(), Some("sig123"));
+                assert!(!thinking_blocks[0].redacted);
             }
             _ => panic!("expected Assistant LlmMessage"),
         }
     }
 
+    #[test]
+    fn test_agent_to_llm_preserves_redacted_thinking() {
+        let messages = vec![AgentMessage::Assistant(AssistantMessage {
+            content: vec![
+                Content::Thinking {
+                    thinking: String::new(),
+                    signature: Some("opaque_encrypted_payload".into()),
+                    redacted: true,
+                },
+                Content::Text {
+                    text: "result".into(),
+                },
+            ],
+            provider: "anthropic".into(),
+            model: "claude-opus-4-6".into(),
+            usage: Usage::default(),
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+        })];
+        let llm = agent_to_llm_messages(&messages);
+        match &llm[0] {
+            LlmMessage::Assistant {
+                thinking_blocks, ..
+            } => {
+                assert_eq!(thinking_blocks.len(), 1);
+                assert!(thinking_blocks[0].redacted);
+                assert_eq!(
+                    thinking_blocks[0].signature.as_deref(),
+                    Some("opaque_encrypted_payload")
+                );
+            }
+            _ => panic!("expected Assistant"),
+        }
+    }
+
+    #[test]
+    fn test_agent_to_llm_multiple_thinking_blocks() {
+        let messages = vec![AgentMessage::Assistant(AssistantMessage {
+            content: vec![
+                Content::Thinking {
+                    thinking: "step 1".into(),
+                    signature: Some("sig_a".into()),
+                    redacted: false,
+                },
+                Content::Thinking {
+                    thinking: String::new(),
+                    signature: Some("redacted_data".into()),
+                    redacted: true,
+                },
+                Content::Thinking {
+                    thinking: "step 2".into(),
+                    signature: None,
+                    redacted: false,
+                },
+                Content::Text {
+                    text: "done".into(),
+                },
+            ],
+            provider: "anthropic".into(),
+            model: "test".into(),
+            usage: Usage::default(),
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+        })];
+        let llm = agent_to_llm_messages(&messages);
+        match &llm[0] {
+            LlmMessage::Assistant {
+                thinking_blocks, ..
+            } => {
+                assert_eq!(thinking_blocks.len(), 3);
+                assert_eq!(thinking_blocks[0].thinking, "step 1");
+                assert!(!thinking_blocks[0].redacted);
+                assert!(thinking_blocks[1].redacted);
+                assert_eq!(thinking_blocks[2].thinking, "step 2");
+                assert!(thinking_blocks[2].signature.is_none());
+            }
+            _ => panic!("expected Assistant"),
+        }
+    }
+
+    #[test]
+    fn test_agent_to_llm_no_thinking_yields_empty_vec() {
+        let messages = vec![AgentMessage::Assistant(AssistantMessage {
+            content: vec![Content::Text {
+                text: "hello".into(),
+            }],
+            provider: "test".into(),
+            model: "test".into(),
+            usage: Usage::default(),
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+        })];
+        let llm = agent_to_llm_messages(&messages);
+        match &llm[0] {
+            LlmMessage::Assistant {
+                thinking_blocks, ..
+            } => {
+                assert!(thinking_blocks.is_empty());
+            }
+            _ => panic!("expected Assistant"),
+        }
+    }
+
     // ========================================================================
-    // strip_thinking_blocks — from Assistant messages
+    // skip_empty_assistant_messages retains thinking-only messages
     // ========================================================================
 
     #[test]
-    fn test_strip_thinking_blocks_from_assistant() {
-        // strip_thinking_blocks should also strip thinking from LlmMessage::Assistant
-        // (though assistant doesn't have LlmContent blocks, it has a content string)
-        // The function should handle both User and Assistant messages gracefully
+    fn test_skip_empty_retains_thinking_only_assistant() {
+        let mut messages = vec![LlmMessage::Assistant {
+            content: String::new(),
+            tool_calls: vec![],
+            thinking_blocks: vec![ThinkingBlock {
+                thinking: "reasoning...".into(),
+                signature: None,
+                redacted: false,
+            }],
+        }];
+        skip_empty_assistant_messages(&mut messages);
+        assert_eq!(messages.len(), 1, "thinking-only assistant must be retained");
+    }
+
+    #[test]
+    fn test_skip_empty_removes_truly_empty_assistant() {
+        let mut messages = vec![LlmMessage::Assistant {
+            content: String::new(),
+            tool_calls: vec![],
+            thinking_blocks: vec![],
+        }];
+        skip_empty_assistant_messages(&mut messages);
+        assert!(messages.is_empty());
+    }
+
+    // ========================================================================
+    // ThinkingBlock serde roundtrip
+    // ========================================================================
+
+    #[test]
+    fn test_thinking_block_serde_roundtrip() {
+        let block = ThinkingBlock {
+            thinking: "Let me reason about this...".into(),
+            signature: Some("base64sig".into()),
+            redacted: false,
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        let deserialized: ThinkingBlock = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.thinking, block.thinking);
+        assert_eq!(deserialized.signature, block.signature);
+        assert_eq!(deserialized.redacted, block.redacted);
+    }
+
+    #[test]
+    fn test_thinking_block_serde_omits_none_signature() {
+        let block = ThinkingBlock {
+            thinking: "reasoning".into(),
+            signature: None,
+            redacted: false,
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        assert!(!json.contains("signature"));
+    }
+
+    #[test]
+    fn test_thinking_block_serde_defaults_missing_fields() {
+        // Simulate JSON missing optional fields
+        let json = r#"{"thinking":"hello"}"#;
+        let block: ThinkingBlock = serde_json::from_str(json).unwrap();
+        assert_eq!(block.thinking, "hello");
+        assert!(block.signature.is_none());
+        assert!(!block.redacted);
+    }
+
+    #[test]
+    fn test_llm_message_assistant_thinking_blocks_skip_serializing_if_empty() {
+        let msg = LlmMessage::Assistant {
+            content: "hi".into(),
+            tool_calls: vec![],
+            thinking_blocks: vec![],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            !json.contains("thinking_blocks"),
+            "empty thinking_blocks should be omitted"
+        );
+    }
+
+    #[test]
+    fn test_llm_message_assistant_thinking_blocks_present_when_nonempty() {
+        let msg = LlmMessage::Assistant {
+            content: "hi".into(),
+            tool_calls: vec![],
+            thinking_blocks: vec![ThinkingBlock {
+                thinking: "reasoning".into(),
+                signature: None,
+                redacted: false,
+            }],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("thinking_blocks"));
+        // Roundtrip
+        let deserialized: LlmMessage = serde_json::from_str(&json).unwrap();
+        if let LlmMessage::Assistant {
+            thinking_blocks, ..
+        } = deserialized
+        {
+            assert_eq!(thinking_blocks.len(), 1);
+            assert_eq!(thinking_blocks[0].thinking, "reasoning");
+        } else {
+            panic!("expected Assistant variant");
+        }
+    }
+
+    // ========================================================================
+    // strip_thinking_blocks — no-op (blocks live in thinking_blocks field)
+    // ========================================================================
+
+    #[test]
+    fn test_strip_thinking_blocks_is_noop() {
         let mut messages = vec![LlmMessage::Assistant {
             content: "The answer is 42.".into(),
             tool_calls: vec![],
+            thinking_blocks: vec![ThinkingBlock {
+                thinking: "I reasoned about this".into(),
+                signature: None,
+                redacted: false,
+            }],
         }];
         strip_thinking_blocks(&mut messages);
-        // Text content should remain intact
+        // Function is a no-op; thinking_blocks still present
         match &messages[0] {
-            LlmMessage::Assistant { content, .. } => {
+            LlmMessage::Assistant {
+                content,
+                thinking_blocks,
+                ..
+            } => {
                 assert_eq!(content, "The answer is 42.");
+                assert_eq!(thinking_blocks.len(), 1);
             }
             _ => panic!("expected Assistant message to remain"),
         }
+    }
+
+    #[test]
+    fn test_strip_thinking_blocks_empty_messages() {
+        let mut messages: Vec<LlmMessage> = vec![];
+        strip_thinking_blocks(&mut messages);
+        assert!(messages.is_empty());
     }
 
     // ========================================================================
@@ -791,6 +1044,7 @@ mod tests {
                         arguments: "{}".into(),
                     },
                 }],
+                thinking_blocks: vec![],
             },
             LlmMessage::Tool {
                 tool_call_id: "call_A".into(),
@@ -841,6 +1095,7 @@ mod tests {
             LlmMessage::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 // Content text should be empty or absent
                 assert!(content.is_empty());
@@ -1136,6 +1391,7 @@ mod tests {
             LlmMessage::Assistant {
                 content: "The answer is 42.".into(),
                 tool_calls: vec![],
+                thinking_blocks: vec![],
             },
         ];
 
@@ -1288,10 +1544,12 @@ mod tests {
             LlmMessage::Assistant {
                 content: String::new(),
                 tool_calls: vec![],
+                thinking_blocks: vec![],
             },
             LlmMessage::Assistant {
                 content: "hello".into(),
                 tool_calls: vec![],
+                thinking_blocks: vec![],
             },
         ];
         skip_empty_assistant_messages(&mut messages);
@@ -1314,6 +1572,7 @@ mod tests {
                     arguments: "{}".into(),
                 },
             }],
+            thinking_blocks: vec![],
         }];
         skip_empty_assistant_messages(&mut messages);
         assert_eq!(messages.len(), 1);
@@ -1325,10 +1584,12 @@ mod tests {
             LlmMessage::Assistant {
                 content: String::new(),
                 tool_calls: vec![],
+                thinking_blocks: vec![],
             },
             LlmMessage::Assistant {
                 content: String::new(),
                 tool_calls: vec![],
+                thinking_blocks: vec![],
             },
         ];
         skip_empty_assistant_messages(&mut messages);
@@ -1368,6 +1629,7 @@ mod tests {
                         arguments: "{}".into(),
                     },
                 }],
+                thinking_blocks: vec![],
             },
             LlmMessage::Tool {
                 tool_call_id: long_id,
@@ -1401,6 +1663,7 @@ mod tests {
                         arguments: "{}".into(),
                     },
                 }],
+                thinking_blocks: vec![],
             },
             LlmMessage::Tool {
                 tool_call_id: "call|with|pipes".into(),
@@ -1432,6 +1695,7 @@ mod tests {
                         arguments: "{}".into(),
                     },
                 }],
+                thinking_blocks: vec![],
             },
             LlmMessage::Tool {
                 tool_call_id: "call_abc123".into(),
@@ -1457,6 +1721,7 @@ mod tests {
                     arguments: "{}".into(),
                 },
             }],
+            thinking_blocks: vec![],
         }];
         normalize_tool_call_ids(&mut messages, 64);
         if let LlmMessage::Assistant { tool_calls, .. } = &messages[0] {
@@ -1480,6 +1745,7 @@ mod tests {
             LlmMessage::Assistant {
                 content: String::new(),
                 tool_calls: vec![],
+                thinking_blocks: vec![],
             },
             // Orphaned tool result — should get a stub assistant
             LlmMessage::Tool {
@@ -1489,6 +1755,7 @@ mod tests {
             LlmMessage::Assistant {
                 content: "done".into(),
                 tool_calls: vec![],
+                thinking_blocks: vec![],
             },
         ];
         transform_messages(&mut messages, "anthropic", "claude-sonnet");
@@ -1497,7 +1764,8 @@ mod tests {
             m,
             LlmMessage::Assistant {
                 content,
-                tool_calls
+                tool_calls,
+                ..
             } if content.is_empty() && tool_calls.is_empty()
         )));
         // Orphaned tool should now have a preceding assistant with matching tool_call
@@ -1528,6 +1796,7 @@ mod tests {
                         arguments: "{}".into(),
                     },
                 }],
+                thinking_blocks: vec![],
             },
             LlmMessage::Tool {
                 tool_call_id: "call|special|chars".into(),
@@ -1563,6 +1832,7 @@ mod tests {
             LlmMessage::Assistant {
                 content: "hi".into(),
                 tool_calls: vec![],
+                thinking_blocks: vec![],
             },
         ];
         transform_messages(&mut messages, "openai", "gpt-4");

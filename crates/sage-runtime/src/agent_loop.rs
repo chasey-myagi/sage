@@ -32,12 +32,21 @@ impl std::error::Error for AgentLoopError {}
 /// Accumulates streaming events into an AssistantMessage.
 struct MessageAccumulator {
     text: String,
-    thinking: String,
+    /// Per-block thinking accumulation (preserves block boundaries, signatures, redacted state).
+    thinking_blocks: Vec<ThinkingBlockAccum>,
+    /// Current thinking block text being accumulated (flushed on ThinkingBlockEnd).
+    current_thinking: String,
     tool_calls: Vec<ToolCallAccum>,
     usage: Usage,
     stop_reason: StopReason,
     error_message: Option<String>,
     errored: bool,
+}
+
+struct ThinkingBlockAccum {
+    thinking: String,
+    signature: Option<String>,
+    redacted: bool,
 }
 
 struct ToolCallAccum {
@@ -50,7 +59,8 @@ impl MessageAccumulator {
     fn new() -> Self {
         Self {
             text: String::new(),
-            thinking: String::new(),
+            thinking_blocks: Vec::new(),
+            current_thinking: String::new(),
             tool_calls: Vec::new(),
             usage: Usage::default(),
             stop_reason: StopReason::Stop,
@@ -70,7 +80,25 @@ impl MessageAccumulator {
                         | AssistantMessageEvent::Error(_)
                 ) => {}
             AssistantMessageEvent::TextDelta(delta) => self.text.push_str(delta),
-            AssistantMessageEvent::ThinkingDelta(delta) => self.thinking.push_str(delta),
+            AssistantMessageEvent::ThinkingDelta(delta) => {
+                self.current_thinking.push_str(delta);
+            }
+            AssistantMessageEvent::ThinkingBlockEnd {
+                signature,
+                redacted,
+            } => {
+                let thinking = std::mem::take(&mut self.current_thinking);
+                let sig = if signature.is_empty() {
+                    None
+                } else {
+                    Some(signature.clone())
+                };
+                self.thinking_blocks.push(ThinkingBlockAccum {
+                    thinking,
+                    signature: sig,
+                    redacted: *redacted,
+                });
+            }
             AssistantMessageEvent::ToolCallStart { id, name } => {
                 self.tool_calls.push(ToolCallAccum {
                     id: id.clone(),
@@ -101,13 +129,27 @@ impl MessageAccumulator {
 
     fn build(self, model: &Model) -> (AssistantMessage, Vec<ToolCallAccum>) {
         let mut content = Vec::new();
-        if !self.thinking.is_empty() {
-            content.push(Content::Thinking {
-                thinking: self.thinking,
+
+        // Flush any remaining thinking text (providers without ThinkingBlockEnd)
+        let mut thinking_blocks = self.thinking_blocks;
+        if !self.current_thinking.is_empty() {
+            thinking_blocks.push(ThinkingBlockAccum {
+                thinking: self.current_thinking,
                 signature: None,
                 redacted: false,
             });
         }
+
+        for tb in thinking_blocks {
+            if !tb.thinking.is_empty() || tb.redacted {
+                content.push(Content::Thinking {
+                    thinking: tb.thinking,
+                    signature: tb.signature,
+                    redacted: tb.redacted,
+                });
+            }
+        }
+
         if !self.text.is_empty() {
             content.push(Content::Text { text: self.text });
         }
@@ -173,9 +215,12 @@ fn build_llm_context(agent: &Agent) -> LlmContext {
                         _ => None,
                     })
                     .collect();
+                let thinking_blocks =
+                    crate::llm::transform::extract_thinking_blocks(&a.content);
                 messages.push(LlmMessage::Assistant {
                     content: text,
                     tool_calls,
+                    thinking_blocks,
                 });
             }
             AgentMessage::ToolResult(tr) => {
@@ -2587,5 +2632,242 @@ mod tests {
             turn_start_count, turn_end_count,
             "TurnStart and TurnEnd should be balanced"
         );
+    }
+
+    // -------------------------------------------------------------------
+    // Thinking blocks roundtrip through build_llm_context (P4-B)
+    // -------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_thinking_blocks_roundtrip_in_context() {
+        // Turn 1: LLM responds with thinking + ThinkingBlockEnd + text
+        // Turn 2: We capture the context to verify thinking blocks survived
+        let turn1 = vec![
+            AssistantMessageEvent::ThinkingDelta("I need to reason...".into()),
+            AssistantMessageEvent::ThinkingBlockEnd {
+                signature: "sig_from_api".into(),
+                redacted: false,
+            },
+            AssistantMessageEvent::TextDelta("Here's my answer.".into()),
+            AssistantMessageEvent::ToolCallStart {
+                id: "tc1".into(),
+                name: "echo".into(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                id: "tc1".into(),
+                arguments_delta: r#"{"input":"test"}"#.into(),
+            },
+            AssistantMessageEvent::ToolCallEnd { id: "tc1".into() },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::ToolUse,
+            },
+        ];
+        let turn2 = text_response("Final answer.");
+
+        let provider = ContextCapturingProvider::new(vec![turn1, turn2]);
+        let captured = provider.captured.clone();
+        let mut agent = Agent::new(
+            test_config(),
+            Box::new(provider),
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("Hello")));
+        let sink = CollectorSink::new();
+        let _ = run_agent_loop(&mut agent, &sink).await;
+
+        // Turn 2 context should contain the assistant message from turn 1
+        let contexts = captured.lock().await;
+        assert!(contexts.len() >= 2, "should have at least 2 LLM calls");
+        let turn2_ctx = &contexts[1];
+        let assistant_msg = turn2_ctx
+            .messages
+            .iter()
+            .find(|m| matches!(m, LlmMessage::Assistant { .. }))
+            .expect("should have an assistant message in turn 2 context");
+
+        if let LlmMessage::Assistant {
+            thinking_blocks, ..
+        } = assistant_msg
+        {
+            assert_eq!(
+                thinking_blocks.len(),
+                1,
+                "thinking block should survive roundtrip"
+            );
+            assert_eq!(thinking_blocks[0].thinking, "I need to reason...");
+            assert_eq!(
+                thinking_blocks[0].signature.as_deref(),
+                Some("sig_from_api")
+            );
+            assert!(!thinking_blocks[0].redacted);
+        } else {
+            panic!("expected Assistant message");
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // MessageAccumulator per-block thinking tests (P4-B)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_accumulator_thinking_block_with_signature() {
+        let model = test_model();
+        let mut acc = MessageAccumulator::new();
+        acc.push_event(&AssistantMessageEvent::ThinkingDelta(
+            "Let me think...".into(),
+        ));
+        acc.push_event(&AssistantMessageEvent::ThinkingBlockEnd {
+            signature: "sig_abc123".into(),
+            redacted: false,
+        });
+        acc.push_event(&AssistantMessageEvent::TextDelta("The answer.".into()));
+        acc.push_event(&AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+        });
+
+        let (msg, _) = acc.build(&model);
+        assert_eq!(msg.content.len(), 2);
+        match &msg.content[0] {
+            Content::Thinking {
+                thinking,
+                signature,
+                redacted,
+            } => {
+                assert_eq!(thinking, "Let me think...");
+                assert_eq!(signature.as_deref(), Some("sig_abc123"));
+                assert!(!redacted);
+            }
+            other => panic!("expected Thinking, got: {other:?}"),
+        }
+        assert!(matches!(&msg.content[1], Content::Text { text } if text == "The answer."));
+    }
+
+    #[test]
+    fn test_accumulator_redacted_thinking_block() {
+        let model = test_model();
+        let mut acc = MessageAccumulator::new();
+        // Redacted thinking emits a placeholder ThinkingDelta then ThinkingBlockEnd
+        acc.push_event(&AssistantMessageEvent::ThinkingDelta(
+            "[Reasoning redacted]".into(),
+        ));
+        acc.push_event(&AssistantMessageEvent::ThinkingBlockEnd {
+            signature: "opaque_encrypted_data".into(),
+            redacted: true,
+        });
+        acc.push_event(&AssistantMessageEvent::TextDelta("Result.".into()));
+        acc.push_event(&AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+        });
+
+        let (msg, _) = acc.build(&model);
+        assert_eq!(msg.content.len(), 2);
+        match &msg.content[0] {
+            Content::Thinking {
+                thinking,
+                signature,
+                redacted,
+            } => {
+                assert_eq!(thinking, "[Reasoning redacted]");
+                assert_eq!(signature.as_deref(), Some("opaque_encrypted_data"));
+                assert!(redacted);
+            }
+            other => panic!("expected Thinking, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_accumulator_multiple_thinking_blocks() {
+        let model = test_model();
+        let mut acc = MessageAccumulator::new();
+        // Block 1: normal thinking
+        acc.push_event(&AssistantMessageEvent::ThinkingDelta("step 1".into()));
+        acc.push_event(&AssistantMessageEvent::ThinkingBlockEnd {
+            signature: "sig_1".into(),
+            redacted: false,
+        });
+        // Block 2: redacted
+        acc.push_event(&AssistantMessageEvent::ThinkingDelta(
+            "[Reasoning redacted]".into(),
+        ));
+        acc.push_event(&AssistantMessageEvent::ThinkingBlockEnd {
+            signature: "redacted_data".into(),
+            redacted: true,
+        });
+        // Block 3: normal thinking without signature
+        acc.push_event(&AssistantMessageEvent::ThinkingDelta("step 2".into()));
+        acc.push_event(&AssistantMessageEvent::ThinkingBlockEnd {
+            signature: String::new(),
+            redacted: false,
+        });
+        acc.push_event(&AssistantMessageEvent::TextDelta("done".into()));
+        acc.push_event(&AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+        });
+
+        let (msg, _) = acc.build(&model);
+        // 3 thinking + 1 text
+        assert_eq!(msg.content.len(), 4);
+        match &msg.content[0] {
+            Content::Thinking {
+                thinking,
+                signature,
+                redacted,
+            } => {
+                assert_eq!(thinking, "step 1");
+                assert_eq!(signature.as_deref(), Some("sig_1"));
+                assert!(!redacted);
+            }
+            other => panic!("expected Thinking block 1, got: {other:?}"),
+        }
+        match &msg.content[1] {
+            Content::Thinking {
+                redacted,
+                signature,
+                ..
+            } => {
+                assert!(redacted);
+                assert_eq!(signature.as_deref(), Some("redacted_data"));
+            }
+            other => panic!("expected Thinking block 2 (redacted), got: {other:?}"),
+        }
+        match &msg.content[2] {
+            Content::Thinking {
+                thinking,
+                signature,
+                ..
+            } => {
+                assert_eq!(thinking, "step 2");
+                assert!(signature.is_none());
+            }
+            other => panic!("expected Thinking block 3, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_accumulator_thinking_without_block_end_flushed() {
+        // Providers without ThinkingBlockEnd (e.g., OpenAI) just send ThinkingDelta
+        let model = test_model();
+        let mut acc = MessageAccumulator::new();
+        acc.push_event(&AssistantMessageEvent::ThinkingDelta("reasoning".into()));
+        acc.push_event(&AssistantMessageEvent::TextDelta("answer".into()));
+        acc.push_event(&AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+        });
+
+        let (msg, _) = acc.build(&model);
+        assert_eq!(msg.content.len(), 2);
+        // Flushed as a single block with no signature
+        match &msg.content[0] {
+            Content::Thinking {
+                thinking,
+                signature,
+                redacted,
+            } => {
+                assert_eq!(thinking, "reasoning");
+                assert!(signature.is_none());
+                assert!(!redacted);
+            }
+            other => panic!("expected Thinking, got: {other:?}"),
+        }
     }
 }
