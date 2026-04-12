@@ -125,8 +125,8 @@ sage run --config configs/coding-assistant.yaml \
 
 - [x] Groq（15 models, detect_compat handles compat dynamically）
 - [ ] Mistral
-- [ ] xAI (Grok) — 已通过 detect_compat 支持，评估是否需独立
-- [ ] DeepSeek — 同上
+- [x] xAI (Grok)（24 models, detect_compat handles compat dynamically）
+- [x] DeepSeek — pi-mono 无独立 provider，模型通过 OpenRouter/Groq/Bedrock 提供
 - [ ] Ollama / LM Studio / vLLM（本地模型）
 - [ ] GitHub Copilot
 - [ ] Together / Fireworks / SambaNova / Cerebras

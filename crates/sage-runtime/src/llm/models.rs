@@ -1354,6 +1354,89 @@ static MODEL_CATALOG: LazyLock<Vec<Model>> = LazyLock::new(|| {
             headers: vec![],
             compat: None,
         },
+        // ── Cerebras ──
+        // Cerebras compat handled by detect_compat() (is_non_standard).
+        // Cerebras does not support prompt caching; cache costs are 0.
+        Model {
+            id: "gpt-oss-120b".into(),
+            name: "GPT OSS 120B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::CEREBRAS.into(),
+            base_url: "https://api.cerebras.ai/v1".into(),
+            api_key_env: "CEREBRAS_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 32768,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.25,
+                output_per_million: 0.69,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "llama3.1-8b".into(),
+            name: "Llama 3.1 8B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::CEREBRAS.into(),
+            base_url: "https://api.cerebras.ai/v1".into(),
+            api_key_env: "CEREBRAS_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8000,
+            context_window: 32000,
+            cost: ModelCost {
+                input_per_million: 0.1,
+                output_per_million: 0.1,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "qwen-3-235b-a22b-instruct-2507".into(),
+            name: "Qwen 3 235B Instruct".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::CEREBRAS.into(),
+            base_url: "https://api.cerebras.ai/v1".into(),
+            api_key_env: "CEREBRAS_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 32000,
+            context_window: 131000,
+            cost: ModelCost {
+                input_per_million: 0.6,
+                output_per_million: 1.2,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "zai-glm-4.7".into(),
+            name: "Z.AI GLM-4.7".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::CEREBRAS.into(),
+            base_url: "https://api.cerebras.ai/v1".into(),
+            api_key_env: "CEREBRAS_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 40000,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 2.25,
+                output_per_million: 2.75,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
     ]
 });
 
@@ -1382,6 +1465,7 @@ pub fn list_providers() -> Vec<&'static str> {
         "google",
         "groq",
         "xai",
+        "cerebras",
         "qwen",
         "doubao",
         "kimi",
@@ -1992,6 +2076,16 @@ mod tests {
         assert_eq!(groq_models.len(), 15);
     }
 
+    #[test]
+    fn test_groq_models_invariants() {
+        for m in list_models().iter().filter(|m| m.provider == "groq") {
+            assert_eq!(m.base_url, "https://api.groq.com/openai/v1", "bad base_url for {}", m.id);
+            assert_eq!(m.api_key_env, "GROQ_API_KEY", "bad api_key_env for {}", m.id);
+            assert_eq!(m.api, api::OPENAI_COMPLETIONS, "bad api for {}", m.id);
+            assert!(m.compat.is_none(), "unexpected compat for {}", m.id);
+        }
+    }
+
     // ========================================================================
     // resolve_model — xAI (Grok) models
     // ========================================================================
@@ -2067,6 +2161,73 @@ mod tests {
             .filter(|m| m.provider == "xai")
             .collect();
         assert_eq!(xai_models.len(), 24);
+    }
+
+    #[test]
+    fn test_xai_models_invariants() {
+        for m in list_models().iter().filter(|m| m.provider == "xai") {
+            assert_eq!(m.base_url, "https://api.x.ai/v1", "bad base_url for {}", m.id);
+            assert_eq!(m.api_key_env, "XAI_API_KEY", "bad api_key_env for {}", m.id);
+            assert_eq!(m.api, api::OPENAI_COMPLETIONS, "bad api for {}", m.id);
+            assert!(m.compat.is_none(), "unexpected compat for {}", m.id);
+        }
+    }
+
+    // ========================================================================
+    // resolve_model — Cerebras models
+    // ========================================================================
+
+    #[test]
+    fn test_resolve_cerebras_gpt_oss_120b() {
+        let model = resolve_model("cerebras", "gpt-oss-120b").unwrap();
+        assert_eq!(model.id, "gpt-oss-120b");
+        assert_eq!(model.name, "GPT OSS 120B");
+        assert_eq!(model.provider, "cerebras");
+        assert_eq!(model.api, api::OPENAI_COMPLETIONS);
+        assert_eq!(model.base_url, "https://api.cerebras.ai/v1");
+        assert!(model.reasoning);
+        assert_eq!(model.max_tokens, 32768);
+        assert_eq!(model.context_window, 131072);
+    }
+
+    #[test]
+    fn test_resolve_cerebras_llama31_8b() {
+        let model = resolve_model("cerebras", "llama3.1-8b").unwrap();
+        assert!(!model.reasoning);
+        assert_eq!(model.max_tokens, 8000);
+        assert_eq!(model.context_window, 32000);
+    }
+
+    #[test]
+    fn test_resolve_cerebras_zai_glm() {
+        let model = resolve_model("cerebras", "zai-glm-4.7").unwrap();
+        assert_eq!(model.cost.input_per_million, 2.25);
+        assert_eq!(model.cost.output_per_million, 2.75);
+    }
+
+    #[test]
+    fn test_cerebras_in_list_providers() {
+        let providers = list_providers();
+        assert!(providers.contains(&"cerebras"));
+    }
+
+    #[test]
+    fn test_cerebras_model_count() {
+        let models: Vec<_> = list_models()
+            .iter()
+            .filter(|m| m.provider == "cerebras")
+            .collect();
+        assert_eq!(models.len(), 4);
+    }
+
+    #[test]
+    fn test_cerebras_models_invariants() {
+        for m in list_models().iter().filter(|m| m.provider == "cerebras") {
+            assert_eq!(m.base_url, "https://api.cerebras.ai/v1", "bad base_url for {}", m.id);
+            assert_eq!(m.api_key_env, "CEREBRAS_API_KEY", "bad api_key_env for {}", m.id);
+            assert_eq!(m.api, api::OPENAI_COMPLETIONS, "bad api for {}", m.id);
+            assert!(m.compat.is_none(), "unexpected compat for {}", m.id);
+        }
     }
 
     // ========================================================================
