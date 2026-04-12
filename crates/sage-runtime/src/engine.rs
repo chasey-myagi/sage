@@ -9,7 +9,7 @@ use crate::llm::{self, LlmProvider};
 use crate::tools::policy::ToolPolicy;
 use crate::tools::{self, AgentTool, ToolRegistry};
 use crate::types::*;
-use std::sync::{Arc, Once};
+use std::sync::Arc;
 
 // ── Error type ────────────────────────────────────────────────────────
 
@@ -56,15 +56,39 @@ pub fn resolve_or_construct_model(
         ))
     })?;
 
-    Ok(Model {
-        id: model_id.into(),
-        name: model_id.into(),
+    let mut model = custom_model(provider, model_id, max_tokens, Some(url), api_key_env);
+    if model.api_key_env.is_empty() {
+        model.api_key_env = llm::keys::api_key_env_var(provider);
+    }
+    Ok(model)
+}
+
+/// Construct a minimal Model for custom/injected providers.
+/// Shares defaults with `resolve_or_construct_model`'s catalog-miss path.
+fn custom_model(
+    provider: &str,
+    model_id: &str,
+    max_tokens: u32,
+    base_url: Option<&str>,
+    api_key_env: Option<&str>,
+) -> Model {
+    let id = if model_id.is_empty() {
+        "custom"
+    } else {
+        model_id
+    };
+    let prov = if provider.is_empty() {
+        "custom"
+    } else {
+        provider
+    };
+    Model {
+        id: id.into(),
+        name: id.into(),
         api: api::OPENAI_COMPLETIONS.into(),
-        provider: provider.into(),
-        base_url: url.to_string(),
-        api_key_env: api_key_env
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| llm::keys::api_key_env_var(provider)),
+        provider: prov.into(),
+        base_url: base_url.unwrap_or_default().to_string(),
+        api_key_env: api_key_env.unwrap_or_default().to_string(),
         reasoning: false,
         input: vec![InputType::Text],
         max_tokens,
@@ -77,14 +101,13 @@ pub fn resolve_or_construct_model(
         },
         headers: vec![],
         compat: Some(ProviderCompat::default()),
-    })
+    }
 }
 
 // ── RoutingProvider ───────────────────────────────────────────────────
 
 /// Routes to the correct `ApiProvider` based on `model.api` field.
 /// Uses the global `llm::registry` to resolve Anthropic, Google, OpenAI, etc.
-/// Falls back to `OpenAiCompatProvider` for unregistered APIs.
 struct RoutingProvider;
 
 #[async_trait::async_trait]
@@ -95,20 +118,22 @@ impl LlmProvider for RoutingProvider {
         context: &LlmContext,
         tools: &[LlmTool],
     ) -> Vec<AssistantMessageEvent> {
-        // Try ApiProvider registry (anthropic-messages, google-generative-ai, etc.)
-        if let Some(provider) = llm::registry::get_provider(&model.api) {
-            let options = llm::registry::StreamOptions {
-                max_tokens: Some(context.max_tokens),
-                temperature: context.temperature,
-                ..Default::default()
-            };
-            return provider.stream(model, context, tools, &options).await;
+        match llm::registry::get_provider(&model.api) {
+            Some(provider) => {
+                let options = llm::registry::StreamOptions {
+                    max_tokens: Some(context.max_tokens),
+                    temperature: context.temperature,
+                    ..Default::default()
+                };
+                provider.stream(model, context, tools, &options).await
+            }
+            None => {
+                vec![AssistantMessageEvent::Error(format!(
+                    "No provider registered for API: {}",
+                    model.api
+                ))]
+            }
         }
-
-        // Fallback: OpenAI-compatible chat completions
-        llm::openai_compat::OpenAiCompatProvider::new()
-            .complete(model, context, tools)
-            .await
     }
 }
 
@@ -139,7 +164,9 @@ struct ChannelSink {
 #[async_trait::async_trait]
 impl AgentEventSink for ChannelSink {
     async fn emit(&self, event: AgentEvent) {
-        let _ = self.sender.send(event);
+        if self.sender.send(event).is_err() {
+            tracing::debug!("event channel closed — receiver dropped");
+        }
     }
 }
 
@@ -204,28 +231,37 @@ impl SageEngine {
     }
 
     /// Execute the agent loop, returning an event receiver.
-    /// Each call creates a fresh Agent, Provider, and ToolRegistry.
+    ///
+    /// Each call creates a fresh Agent and ToolRegistry. The LLM provider
+    /// is shared via `Arc` when injected with `.llm_provider()`, or a new
+    /// `RoutingProvider` is created for catalog/constructed models.
     pub async fn run(
         &self,
         message: &str,
     ) -> Result<EventReceiver<AgentEvent, Vec<AgentMessage>>, SageError> {
-        // 1. Create LLM provider
-        let provider: Arc<dyn LlmProvider> = match &self.custom_llm_provider {
-            Some(p) => Arc::clone(p),
+        // 1. Resolve model + provider (single pass, no double-resolve)
+        let (model, provider): (Model, Arc<dyn LlmProvider>) = match &self.custom_llm_provider {
+            Some(p) => {
+                let model = custom_model(
+                    &self.provider_name,
+                    &self.model_id,
+                    self.max_tokens,
+                    self.base_url.as_deref(),
+                    self.api_key_env.as_deref(),
+                );
+                (model, Arc::clone(p))
+            }
             None => {
-                // Validate model exists before creating provider
-                let _model = resolve_or_construct_model(
+                let model = resolve_or_construct_model(
                     &self.provider_name,
                     &self.model_id,
                     self.max_tokens,
                     self.base_url.as_deref(),
                     self.api_key_env.as_deref(),
                 )?;
-                // Ensure builtin ApiProviders are registered once
-                static INIT: Once = Once::new();
-                INIT.call_once(llm::register_builtin_providers);
-                // RoutingProvider dispatches by model.api → correct ApiProvider
-                Arc::new(RoutingProvider)
+                // Ensure builtin ApiProviders are registered
+                llm::register_builtin_providers();
+                (model, Arc::new(RoutingProvider))
             }
         };
 
@@ -240,53 +276,7 @@ impl SageEngine {
             registry.register(Box::new(ArcTool(Arc::clone(tool))));
         }
 
-        // 3. Resolve model for AgentLoopConfig
-        let model = match &self.custom_llm_provider {
-            Some(_) => {
-                // Custom provider — build a minimal model struct
-                Model {
-                    id: if self.model_id.is_empty() {
-                        "custom".into()
-                    } else {
-                        self.model_id.clone()
-                    },
-                    name: if self.model_id.is_empty() {
-                        "custom".into()
-                    } else {
-                        self.model_id.clone()
-                    },
-                    api: api::OPENAI_COMPLETIONS.into(),
-                    provider: if self.provider_name.is_empty() {
-                        "custom".into()
-                    } else {
-                        self.provider_name.clone()
-                    },
-                    base_url: self.base_url.clone().unwrap_or_default(),
-                    api_key_env: self.api_key_env.clone().unwrap_or_default(),
-                    reasoning: false,
-                    input: vec![InputType::Text],
-                    max_tokens: self.max_tokens,
-                    context_window: 128000,
-                    cost: ModelCost {
-                        input_per_million: 0.0,
-                        output_per_million: 0.0,
-                        cache_read_per_million: 0.0,
-                        cache_write_per_million: 0.0,
-                    },
-                    headers: vec![],
-                    compat: Some(ProviderCompat::default()),
-                }
-            }
-            None => resolve_or_construct_model(
-                &self.provider_name,
-                &self.model_id,
-                self.max_tokens,
-                self.base_url.as_deref(),
-                self.api_key_env.as_deref(),
-            )?,
-        };
-
-        // 4. AgentLoopConfig
+        // 3. AgentLoopConfig
         let loop_config = AgentLoopConfig {
             model,
             system_prompt: self.system_prompt.clone(),
@@ -295,10 +285,10 @@ impl SageEngine {
             tool_policy: self.tool_policy.clone(),
         };
 
-        // 5. Create Agent
+        // 4. Create Agent
         let mut agent = Agent::new(loop_config, Box::new(ArcProvider(provider)), registry);
 
-        // 6. Set hooks
+        // 5. Set hooks
         if let Some(ref hook) = self.before_hook {
             agent.set_before_tool_call(Box::new(ArcBeforeHook(Arc::clone(hook))));
         }
@@ -306,13 +296,11 @@ impl SageEngine {
             agent.set_after_tool_call(Box::new(ArcAfterHook(Arc::clone(hook))));
         }
 
-        // 7. Steer initial message
+        // 6. Steer initial message
         agent.steer(AgentMessage::User(UserMessage::from_text(message)));
 
-        // 8. Create EventStream
+        // 7. Create EventStream + spawn agent loop
         let (sender, receiver) = EventStream::<AgentEvent, Vec<AgentMessage>>::new();
-
-        // 9. Spawn agent loop
         let sink = ChannelSink {
             sender: sender.clone(),
         };
@@ -322,15 +310,11 @@ impl SageEngine {
                 Ok(messages) => sender.end(messages),
                 Err(e) => {
                     tracing::error!(error = %e, "agent loop failed");
-                    // Emit AgentEnd with empty messages so the consumer sees the stream end.
-                    // The error is logged; consumers can detect failure via empty result.
-                    let _ = sink.emit(AgentEvent::AgentEnd { messages: vec![] }).await;
                     sender.end(vec![]);
                 }
             }
         });
 
-        // 10. Return receiver
         Ok(receiver)
     }
 }
@@ -495,7 +479,13 @@ impl SageEngineBuilder {
             tool_policy: self.tool_policy,
             builtin_tool_names: self.builtin_tool_names,
             extra_tools: self.extra_tools,
-            provider_name: self.provider_name.unwrap_or_default(),
+            provider_name: self.provider_name.unwrap_or_else(|| {
+                if self.custom_llm_provider.is_some() {
+                    "custom".into()
+                } else {
+                    String::new()
+                }
+            }),
             model_id: self.model_id.unwrap_or_else(|| "custom".to_string()),
             max_tokens: self.max_tokens.unwrap_or(4096),
             base_url: self.base_url,
