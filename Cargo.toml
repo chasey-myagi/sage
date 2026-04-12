@@ -1,11 +1,11 @@
 [workspace]
 members = [
-    "crates/caster",
-    "crates/sandbox",
-    "crates/protocol",
-    "crates/guest-agent",
-    "crates/runner",
-    "crates/agent-runtime",
+    "crates/sage-cli",
+    "crates/sage-sandbox",
+    "crates/sage-protocol",
+    "crates/sage-guest",
+    "crates/sage-runner",
+    "crates/sage-runtime",
 ]
 resolver = "2"
 
@@ -13,7 +13,7 @@ resolver = "2"
 version = "0.0.1"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/chasey-myagi/agent-caster"
+repository = "https://github.com/chasey-myagi/sage"
 
 [workspace.dependencies]
 # Shared dependencies
@@ -39,7 +39,7 @@ msb_krun = "0.1"
 libc = "0.2"
 
 # Internal crates
-agent-protocol = { path = "crates/protocol" }
-agent-sandbox = { path = "crates/sandbox" }
-agent-runner = { path = "crates/runner" }
-agent-runtime = { path = "crates/agent-runtime" }
+sage-protocol = { path = "crates/sage-protocol" }
+sage-sandbox = { path = "crates/sage-sandbox" }
+sage-runner = { path = "crates/sage-runner" }
+sage-runtime = { path = "crates/sage-runtime" }
