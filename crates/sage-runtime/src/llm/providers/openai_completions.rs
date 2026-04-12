@@ -4,6 +4,8 @@
 // Covers: OpenAI, DeepSeek, Qwen, Doubao, Kimi, MiniMax, ZAI (Zhipu),
 // xAI (Grok), Groq, OpenRouter, and any OpenAI-compatible endpoint.
 
+use std::collections::HashMap;
+
 use crate::llm::keys;
 use crate::llm::registry::{ApiProvider, StreamOptions};
 use crate::llm::stream::parse_sse_chunk;
@@ -187,8 +189,10 @@ impl OpenAiCompletionsProvider {
                 }
                 ThinkingFormat::OpenRouter if model.reasoning => {
                     if has_reasoning_effort {
-                        let effort_str =
-                            map_reasoning_effort(options.reasoning.unwrap_or(ReasoningLevel::High));
+                        let effort_str = map_reasoning_effort(
+                            options.reasoning.unwrap_or(ReasoningLevel::High),
+                            &compat.reasoning_effort_map,
+                        );
                         body["reasoning"] = json!({ "effort": effort_str });
                     } else {
                         body["reasoning"] = json!({ "effort": "none" });
@@ -199,8 +203,10 @@ impl OpenAiCompletionsProvider {
                         && model.reasoning
                         && compat.supports_reasoning_effort =>
                 {
-                    let effort_str =
-                        map_reasoning_effort(options.reasoning.unwrap_or(ReasoningLevel::High));
+                    let effort_str = map_reasoning_effort(
+                        options.reasoning.unwrap_or(ReasoningLevel::High),
+                        &compat.reasoning_effort_map,
+                    );
                     body["reasoning_effort"] = json!(effort_str);
                 }
                 _ => {}
@@ -276,6 +282,23 @@ fn detect_compat(model: &Model) -> ProviderCompat {
     };
 
     let is_grok = is_xai; // xAI Grok models
+    let is_groq = provider == provider::GROQ || base_url.contains("groq.com");
+
+    // pi-mono: Groq Qwen3-32b needs all reasoning levels remapped to "default"
+    let reasoning_effort_map = if is_groq && model.id == "qwen/qwen3-32b" {
+        [
+            ReasoningLevel::Minimal,
+            ReasoningLevel::Low,
+            ReasoningLevel::Medium,
+            ReasoningLevel::High,
+            ReasoningLevel::XHigh,
+        ]
+        .into_iter()
+        .map(|l| (l, "default".into()))
+        .collect()
+    } else {
+        HashMap::new()
+    };
 
     let thinking_format = if is_zai {
         Some(ThinkingFormat::Zai)
@@ -296,6 +319,7 @@ fn detect_compat(model: &Model) -> ProviderCompat {
         supports_strict_mode: true,
         supports_store: !is_non_standard,
         supports_developer_role: !is_non_standard,
+        reasoning_effort_map,
     }
 }
 
@@ -343,14 +367,26 @@ fn sanitize_id(id: &str, max_len: usize) -> String {
 // ---------------------------------------------------------------------------
 
 /// Map our ReasoningLevel to the string expected by the provider.
-fn map_reasoning_effort(level: ReasoningLevel) -> &'static str {
+///
+/// If the `reasoning_effort_map` contains an override for this level, use it.
+/// Otherwise falls back to the level's own string representation
+/// (pi-mono: `reasoningEffortMap[effort] ?? effort`).
+fn map_reasoning_effort(
+    level: ReasoningLevel,
+    reasoning_effort_map: &HashMap<ReasoningLevel, String>,
+) -> String {
+    if let Some(override_val) = reasoning_effort_map.get(&level) {
+        return override_val.clone();
+    }
+    // pi-mono fallback: return the effort string itself (not a compressed mapping)
     match level {
-        ReasoningLevel::Minimal => "low",
+        ReasoningLevel::Minimal => "minimal",
         ReasoningLevel::Low => "low",
         ReasoningLevel::Medium => "medium",
         ReasoningLevel::High => "high",
-        ReasoningLevel::XHigh => "high",
+        ReasoningLevel::XHigh => "xhigh",
     }
+    .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -1197,5 +1233,164 @@ mod tests {
         );
         let tool_arr = body["tools"].as_array().unwrap();
         assert_eq!(tool_arr[0]["function"]["strict"], true);
+    }
+
+    // ========================================================================
+    // detect_compat — Groq provider
+    // ========================================================================
+
+    #[test]
+    fn test_detect_compat_groq_provider_name() {
+        let mut model = test_model();
+        model.compat = None;
+        model.provider = provider::GROQ.into();
+        model.base_url = "https://api.groq.com/openai/v1".into();
+        model.id = "llama-3-70b".into();
+        let compat = detect_compat(&model);
+        // pi-mono: Groq is NOT excluded from supportsReasoningEffort
+        assert!(compat.supports_reasoning_effort);
+        // Groq is not non-standard — supports store/developer
+        assert!(compat.supports_store);
+        assert!(compat.supports_developer_role);
+    }
+
+    #[test]
+    fn test_detect_compat_groq_by_url() {
+        let mut model = test_model();
+        model.compat = None;
+        model.provider = "custom".into();
+        model.base_url = "https://api.groq.com/openai/v1".into();
+        model.id = "some-model".into();
+        let compat = detect_compat(&model);
+        // pi-mono: Groq supports reasoning effort (not excluded like Grok/ZAI)
+        assert!(compat.supports_reasoning_effort);
+    }
+
+    #[test]
+    fn test_detect_compat_groq_qwen3_32b_has_reasoning_map() {
+        let mut model = test_model();
+        model.compat = None;
+        model.provider = provider::GROQ.into();
+        model.base_url = "https://api.groq.com/openai/v1".into();
+        model.id = "qwen/qwen3-32b".into();
+        let compat = detect_compat(&model);
+        // All 5 reasoning levels should map to "default"
+        assert_eq!(compat.reasoning_effort_map.len(), 5);
+        assert_eq!(
+            compat.reasoning_effort_map[&ReasoningLevel::Minimal],
+            "default"
+        );
+        assert_eq!(
+            compat.reasoning_effort_map[&ReasoningLevel::Low],
+            "default"
+        );
+        assert_eq!(
+            compat.reasoning_effort_map[&ReasoningLevel::Medium],
+            "default"
+        );
+        assert_eq!(
+            compat.reasoning_effort_map[&ReasoningLevel::High],
+            "default"
+        );
+        assert_eq!(
+            compat.reasoning_effort_map[&ReasoningLevel::XHigh],
+            "default"
+        );
+    }
+
+    #[test]
+    fn test_detect_compat_groq_other_model_empty_reasoning_map() {
+        let mut model = test_model();
+        model.compat = None;
+        model.provider = provider::GROQ.into();
+        model.base_url = "https://api.groq.com/openai/v1".into();
+        model.id = "llama-3-70b".into();
+        let compat = detect_compat(&model);
+        assert!(compat.reasoning_effort_map.is_empty());
+    }
+
+    // ========================================================================
+    // map_reasoning_effort — with reasoning_effort_map
+    // ========================================================================
+
+    #[test]
+    fn test_map_reasoning_effort_uses_map_when_present() {
+        let mut map = HashMap::new();
+        map.insert(ReasoningLevel::High, "default".into());
+        let result = map_reasoning_effort(ReasoningLevel::High, &map);
+        assert_eq!(result, "default");
+    }
+
+    #[test]
+    fn test_map_reasoning_effort_falls_back_when_map_empty() {
+        let map = HashMap::new();
+        // Empty map → return level's own string (pi-mono: effort ?? effort)
+        assert_eq!(map_reasoning_effort(ReasoningLevel::Minimal, &map), "minimal");
+        assert_eq!(map_reasoning_effort(ReasoningLevel::Low, &map), "low");
+        assert_eq!(map_reasoning_effort(ReasoningLevel::Medium, &map), "medium");
+        assert_eq!(map_reasoning_effort(ReasoningLevel::High, &map), "high");
+        assert_eq!(map_reasoning_effort(ReasoningLevel::XHigh, &map), "xhigh");
+    }
+
+    #[test]
+    fn test_map_reasoning_effort_falls_back_for_missing_key() {
+        let mut map = HashMap::new();
+        map.insert(ReasoningLevel::High, "custom".into());
+        // Low is not in map → return level's own string "low"
+        let result = map_reasoning_effort(ReasoningLevel::Low, &map);
+        assert_eq!(result, "low");
+    }
+
+    // ========================================================================
+    // build_request_body — Groq Qwen3-32b reasoning remap integration
+    // ========================================================================
+
+    #[test]
+    fn test_build_request_body_groq_qwen3_reasoning_remapped_to_default() {
+        let mut model = test_model();
+        model.compat = None;
+        model.provider = provider::GROQ.into();
+        model.base_url = "https://api.groq.com/openai/v1".into();
+        model.id = "qwen/qwen3-32b".into();
+        model.reasoning = true;
+        let context = LlmContext {
+            messages: vec![],
+            system_prompt: "test".into(),
+            max_tokens: 1024,
+            temperature: None,
+        };
+        let options = StreamOptions {
+            reasoning: Some(ReasoningLevel::High),
+            ..StreamOptions::default()
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(&model, &context, &[], &options);
+        // pi-mono: Groq supports reasoning_effort, and qwen3-32b's map
+        // remaps all levels to "default". The request body should contain
+        // reasoning_effort = "default" (not "high").
+        assert_eq!(body["reasoning_effort"], "default");
+    }
+
+    #[test]
+    fn test_build_request_body_groq_non_qwen_reasoning_passes_through() {
+        let mut model = test_model();
+        model.compat = None;
+        model.provider = provider::GROQ.into();
+        model.base_url = "https://api.groq.com/openai/v1".into();
+        model.id = "llama-3-70b".into();
+        model.reasoning = true;
+        let context = LlmContext {
+            messages: vec![],
+            system_prompt: "test".into(),
+            max_tokens: 1024,
+            temperature: None,
+        };
+        let options = StreamOptions {
+            reasoning: Some(ReasoningLevel::High),
+            ..StreamOptions::default()
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(&model, &context, &[], &options);
+        // Non-qwen model on Groq: empty reasoning_effort_map, falls back to
+        // level's own string "high" (pi-mono: effort ?? effort)
+        assert_eq!(body["reasoning_effort"], "high");
     }
 }

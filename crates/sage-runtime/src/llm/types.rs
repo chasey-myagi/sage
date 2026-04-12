@@ -1,6 +1,8 @@
 // LLM-side types — Phase 2
 // Defines types needed for LLM API calls, enriched for multi-provider support.
 
+use std::collections::HashMap;
+
 use crate::types::{StopReason, Usage};
 use serde::{Deserialize, Serialize};
 
@@ -169,7 +171,7 @@ pub enum ThinkingFormat {
 }
 
 /// Reasoning effort level (unified across providers).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReasoningLevel {
     Minimal,
     Low,
@@ -190,6 +192,12 @@ pub struct ProviderCompat {
     pub supports_strict_mode: bool,
     pub supports_store: bool,
     pub supports_developer_role: bool,
+    /// Per-level reasoning effort overrides (pi-mono: reasoningEffortMap).
+    ///
+    /// When a key is present, its value replaces the default mapping for that
+    /// reasoning level.  Used by Groq Qwen3-32b to remap all levels to "default".
+    #[serde(default)]
+    pub reasoning_effort_map: HashMap<ReasoningLevel, String>,
 }
 
 impl Default for ProviderCompat {
@@ -204,6 +212,7 @@ impl Default for ProviderCompat {
             supports_strict_mode: false,
             supports_store: true,
             supports_developer_role: true,
+            reasoning_effort_map: HashMap::new(),
         }
     }
 }
@@ -274,6 +283,38 @@ mod tests {
         let compat = ProviderCompat::default();
         assert!(matches!(compat.max_tokens_field, MaxTokensField::MaxTokens));
         assert!(!compat.supports_reasoning_effort);
+    }
+
+    #[test]
+    fn test_provider_compat_default_has_empty_reasoning_effort_map() {
+        let compat = ProviderCompat::default();
+        assert!(compat.reasoning_effort_map.is_empty());
+    }
+
+    #[test]
+    fn test_provider_compat_reasoning_effort_map_serde_roundtrip() {
+        let mut map = HashMap::new();
+        map.insert(ReasoningLevel::Minimal, "default".into());
+        map.insert(ReasoningLevel::High, "default".into());
+        let compat = ProviderCompat {
+            reasoning_effort_map: map,
+            ..ProviderCompat::default()
+        };
+        let json = serde_json::to_string(&compat).unwrap();
+        let back: ProviderCompat = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.reasoning_effort_map.len(), 2);
+        assert_eq!(
+            back.reasoning_effort_map[&ReasoningLevel::Minimal],
+            "default"
+        );
+    }
+
+    #[test]
+    fn test_reasoning_level_hash_equality() {
+        let mut map = HashMap::new();
+        map.insert(ReasoningLevel::Low, "low_val".to_string());
+        assert_eq!(map.get(&ReasoningLevel::Low).unwrap(), "low_val");
+        assert!(map.get(&ReasoningLevel::High).is_none());
     }
 
     #[test]
