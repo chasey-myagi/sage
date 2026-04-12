@@ -46,6 +46,7 @@ pub fn api_key_env_var(provider: &str) -> String {
         "deepseek" => "DEEPSEEK_API_KEY".into(),
         "mistral" => "MISTRAL_API_KEY".into(),
         "cerebras" => "CEREBRAS_API_KEY".into(),
+        "github-copilot" => "COPILOT_GITHUB_TOKEN".into(),
         other => format!("{}_API_KEY", other.to_uppercase()),
     }
 }
@@ -67,6 +68,7 @@ pub fn resolve_api_key(provider: &str) -> Result<String, KeyError> {
         "deepseek",
         "mistral",
         "cerebras",
+        "github-copilot",
     ];
     if !known.contains(&provider) {
         return Err(KeyError::UnknownProvider {
@@ -199,6 +201,24 @@ mod tests {
         assert!(
             err.contains("CEREBRAS_API_KEY"),
             "cerebras should be a known provider, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_env_var_github_copilot() {
+        assert_eq!(api_key_env_var("github-copilot"), "COPILOT_GITHUB_TOKEN");
+    }
+
+    #[test]
+    fn test_resolve_api_key_github_copilot_recognized() {
+        unsafe { std::env::remove_var("COPILOT_GITHUB_TOKEN") };
+        let result = resolve_api_key("github-copilot");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("COPILOT_GITHUB_TOKEN"),
+            "github-copilot should be a known provider, got: {}",
             err
         );
     }

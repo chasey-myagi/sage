@@ -1945,8 +1945,519 @@ static MODEL_CATALOG: LazyLock<Vec<Model>> = LazyLock::new(|| {
             headers: vec![],
             compat: None,
         },
+        // ====================================================================
+        // GitHub Copilot — https://api.individual.githubcopilot.com
+        // All costs are 0 (Copilot is a paid subscription, not per-token).
+        // Models span three API types: anthropic-messages, openai-completions,
+        // openai-responses. The openai-completions models carry explicit compat
+        // (supportsStore/DeveloperRole/ReasoningEffort = false) per pi-mono.
+        // ====================================================================
+        Model {
+            id: "claude-haiku-4.5".into(),
+            name: "Claude Haiku 4.5".into(),
+            api: api::ANTHROPIC_MESSAGES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 32000,
+            context_window: 144000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "claude-opus-4.5".into(),
+            name: "Claude Opus 4.5".into(),
+            api: api::ANTHROPIC_MESSAGES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 32000,
+            context_window: 160000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "claude-opus-4.6".into(),
+            name: "Claude Opus 4.6".into(),
+            api: api::ANTHROPIC_MESSAGES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 64000,
+            context_window: 1000000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "claude-sonnet-4".into(),
+            name: "Claude Sonnet 4".into(),
+            api: api::ANTHROPIC_MESSAGES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 16000,
+            context_window: 216000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "claude-sonnet-4.5".into(),
+            name: "Claude Sonnet 4.5".into(),
+            api: api::ANTHROPIC_MESSAGES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 32000,
+            context_window: 144000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "claude-sonnet-4.6".into(),
+            name: "Claude Sonnet 4.6".into(),
+            api: api::ANTHROPIC_MESSAGES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 32000,
+            context_window: 1000000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        // openai-completions models — explicit compat per pi-mono:
+        // supportsStore=false, supportsDeveloperRole=false, supportsReasoningEffort=false
+        Model {
+            id: "gemini-2.5-pro".into(),
+            name: "Gemini 2.5 Pro".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 64000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: Some(copilot_completions_compat()),
+        },
+        Model {
+            id: "gemini-3-flash-preview".into(),
+            name: "Gemini 3 Flash".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 64000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: Some(copilot_completions_compat()),
+        },
+        Model {
+            id: "gemini-3-pro-preview".into(),
+            name: "Gemini 3 Pro Preview".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 64000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: Some(copilot_completions_compat()),
+        },
+        Model {
+            id: "gemini-3.1-pro-preview".into(),
+            name: "Gemini 3.1 Pro Preview".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 64000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: Some(copilot_completions_compat()),
+        },
+        Model {
+            id: "gpt-4.1".into(),
+            name: "GPT-4.1".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 16384,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: Some(copilot_completions_compat()),
+        },
+        Model {
+            id: "gpt-4o".into(),
+            name: "GPT-4o".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 4096,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: Some(copilot_completions_compat()),
+        },
+        Model {
+            id: "grok-code-fast-1".into(),
+            name: "Grok Code Fast 1".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 64000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: Some(copilot_completions_compat()),
+        },
+        // openai-responses models
+        Model {
+            id: "gpt-5".into(),
+            name: "GPT-5".into(),
+            api: api::OPENAI_RESPONSES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 128000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "gpt-5-mini".into(),
+            name: "GPT-5-mini".into(),
+            api: api::OPENAI_RESPONSES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 64000,
+            context_window: 264000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "gpt-5.1".into(),
+            name: "GPT-5.1".into(),
+            api: api::OPENAI_RESPONSES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 64000,
+            context_window: 264000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "gpt-5.1-codex".into(),
+            name: "GPT-5.1-Codex".into(),
+            api: api::OPENAI_RESPONSES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 128000,
+            context_window: 400000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "gpt-5.1-codex-max".into(),
+            name: "GPT-5.1-Codex-max".into(),
+            api: api::OPENAI_RESPONSES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 128000,
+            context_window: 400000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "gpt-5.1-codex-mini".into(),
+            name: "GPT-5.1-Codex-mini".into(),
+            api: api::OPENAI_RESPONSES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 128000,
+            context_window: 400000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "gpt-5.2".into(),
+            name: "GPT-5.2".into(),
+            api: api::OPENAI_RESPONSES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 64000,
+            context_window: 264000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "gpt-5.2-codex".into(),
+            name: "GPT-5.2-Codex".into(),
+            api: api::OPENAI_RESPONSES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 128000,
+            context_window: 400000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "gpt-5.3-codex".into(),
+            name: "GPT-5.3-Codex".into(),
+            api: api::OPENAI_RESPONSES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 128000,
+            context_window: 400000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "gpt-5.4".into(),
+            name: "GPT-5.4".into(),
+            api: api::OPENAI_RESPONSES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 128000,
+            context_window: 400000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
+        Model {
+            id: "gpt-5.4-mini".into(),
+            name: "GPT-5.4 mini".into(),
+            api: api::OPENAI_RESPONSES.into(),
+            provider: provider::GITHUB_COPILOT.into(),
+            base_url: "https://api.individual.githubcopilot.com".into(),
+            api_key_env: "COPILOT_GITHUB_TOKEN".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 128000,
+            context_window: 400000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: copilot_headers(),
+            compat: None,
+        },
     ]
 });
+
+fn copilot_headers() -> Vec<(String, String)> {
+    vec![
+        ("User-Agent".into(), "GitHubCopilotChat/0.35.0".into()),
+        ("Editor-Version".into(), "vscode/1.107.0".into()),
+        ("Editor-Plugin-Version".into(), "copilot-chat/0.35.0".into()),
+        ("Copilot-Integration-Id".into(), "vscode-chat".into()),
+    ]
+}
+
+/// Compat flags for GitHub Copilot openai-completions models.
+/// Pi-mono sets supportsStore=false, supportsDeveloperRole=false,
+/// supportsReasoningEffort=false for these models.
+fn copilot_completions_compat() -> ProviderCompat {
+    ProviderCompat {
+        supports_store: false,
+        supports_developer_role: false,
+        supports_reasoning_effort: false,
+        ..ProviderCompat::default()
+    }
+}
 
 fn default_compat() -> Option<ProviderCompat> {
     Some(ProviderCompat::default())
@@ -1981,6 +2492,7 @@ pub fn list_providers() -> Vec<&'static str> {
         "zai",
         "deepseek",
         "mistral",
+        "github-copilot",
     ]
 }
 
@@ -2226,6 +2738,7 @@ mod tests {
             "zai",
             "deepseek",
             "mistral",
+            "github-copilot",
         ];
         for p in &expected {
             assert!(providers.contains(p), "missing provider: {}", p);
@@ -2328,14 +2841,15 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_list_models_no_duplicate_ids() {
+    fn test_list_models_no_duplicate_provider_id_pairs() {
         let models = list_models();
         let mut seen = std::collections::HashSet::new();
         for model in models {
+            let key = format!("{}:{}", model.provider, model.id);
             assert!(
-                seen.insert(&model.id),
-                "duplicate model id found: {}",
-                model.id
+                seen.insert(key.clone()),
+                "duplicate (provider, id) pair found: {}",
+                key
             );
         }
     }
@@ -2829,6 +3343,161 @@ mod tests {
             assert_eq!(m.api_key_env, "MISTRAL_API_KEY", "bad api_key_env for {}", m.id);
             assert_eq!(m.api, api::OPENAI_COMPLETIONS, "bad api for {}", m.id);
             assert!(m.compat.is_none(), "unexpected compat for {}", m.id);
+        }
+    }
+
+    // ========================================================================
+    // resolve_model — GitHub Copilot models
+    // ========================================================================
+
+    #[test]
+    fn test_resolve_copilot_claude_opus46() {
+        let model = resolve_model("github-copilot", "claude-opus-4.6").unwrap();
+        assert_eq!(model.id, "claude-opus-4.6");
+        assert_eq!(model.name, "Claude Opus 4.6");
+        assert_eq!(model.provider, "github-copilot");
+        assert_eq!(model.api, api::ANTHROPIC_MESSAGES);
+        assert_eq!(model.base_url, "https://api.individual.githubcopilot.com");
+        assert_eq!(model.api_key_env, "COPILOT_GITHUB_TOKEN");
+        assert!(model.reasoning);
+        assert!(model.input.contains(&InputType::Image));
+        assert_eq!(model.max_tokens, 64000);
+        assert_eq!(model.context_window, 1000000);
+    }
+
+    #[test]
+    fn test_resolve_copilot_gpt5() {
+        let model = resolve_model("github-copilot", "gpt-5").unwrap();
+        assert_eq!(model.api, api::OPENAI_RESPONSES);
+        assert!(model.reasoning);
+        assert_eq!(model.max_tokens, 128000);
+    }
+
+    #[test]
+    fn test_resolve_copilot_gpt51_codex() {
+        let model = resolve_model("github-copilot", "gpt-5.1-codex").unwrap();
+        assert_eq!(model.api, api::OPENAI_RESPONSES);
+        assert_eq!(model.context_window, 400000);
+    }
+
+    #[test]
+    fn test_resolve_copilot_gemini_25_pro() {
+        let model = resolve_model("github-copilot", "gemini-2.5-pro").unwrap();
+        assert_eq!(model.api, api::OPENAI_COMPLETIONS);
+        assert!(!model.reasoning);
+    }
+
+    #[test]
+    fn test_resolve_copilot_gpt4o() {
+        let model = resolve_model("github-copilot", "gpt-4o").unwrap();
+        assert_eq!(model.api, api::OPENAI_COMPLETIONS);
+        assert!(!model.reasoning);
+        assert_eq!(model.max_tokens, 4096);
+    }
+
+    #[test]
+    fn test_resolve_copilot_grok_code_fast() {
+        let model = resolve_model("github-copilot", "grok-code-fast-1").unwrap();
+        assert_eq!(model.api, api::OPENAI_COMPLETIONS);
+        assert!(model.reasoning);
+        // grok-code-fast-1 is text-only on Copilot
+        assert!(!model.input.contains(&InputType::Image));
+    }
+
+    #[test]
+    fn test_copilot_in_list_providers() {
+        let providers = list_providers();
+        assert!(providers.contains(&"github-copilot"));
+    }
+
+    #[test]
+    fn test_copilot_model_count() {
+        let models: Vec<_> = list_models()
+            .iter()
+            .filter(|m| m.provider == "github-copilot")
+            .collect();
+        assert_eq!(models.len(), 24);
+    }
+
+    #[test]
+    fn test_copilot_models_invariants() {
+        for m in list_models().iter().filter(|m| m.provider == "github-copilot") {
+            assert_eq!(m.base_url, "https://api.individual.githubcopilot.com", "bad base_url for {}", m.id);
+            assert_eq!(m.api_key_env, "COPILOT_GITHUB_TOKEN", "bad api_key_env for {}", m.id);
+            // openai-completions models have explicit compat; others have None
+            if m.api == api::OPENAI_COMPLETIONS {
+                assert!(m.compat.is_some(), "completions model {} must have compat", m.id);
+            } else {
+                assert!(m.compat.is_none(), "non-completions model {} should have compat: None", m.id);
+            }
+            // All copilot models have zero cost
+            assert_eq!(m.cost.input_per_million, 0.0, "bad cost for {}", m.id);
+            assert_eq!(m.cost.output_per_million, 0.0, "bad cost for {}", m.id);
+            // All copilot models carry static headers
+            assert!(!m.headers.is_empty(), "missing headers for {}", m.id);
+            assert!(
+                m.headers.iter().any(|(k, _)| k == "Copilot-Integration-Id"),
+                "missing Copilot-Integration-Id header for {}",
+                m.id
+            );
+        }
+    }
+
+    #[test]
+    fn test_copilot_api_types_distribution() {
+        let copilot: Vec<_> = list_models()
+            .iter()
+            .filter(|m| m.provider == "github-copilot")
+            .cloned()
+            .collect();
+        let anthropic_count = copilot.iter().filter(|m| m.api == api::ANTHROPIC_MESSAGES).count();
+        let completions_count = copilot.iter().filter(|m| m.api == api::OPENAI_COMPLETIONS).count();
+        let responses_count = copilot.iter().filter(|m| m.api == api::OPENAI_RESPONSES).count();
+        assert_eq!(anthropic_count, 6, "expected 6 anthropic-messages models");
+        assert_eq!(completions_count, 7, "expected 7 openai-completions models");
+        assert_eq!(responses_count, 11, "expected 11 openai-responses models");
+    }
+
+    #[test]
+    fn test_copilot_completions_models_have_compat() {
+        let completions: Vec<_> = list_models()
+            .iter()
+            .filter(|m| m.provider == "github-copilot" && m.api == api::OPENAI_COMPLETIONS)
+            .cloned()
+            .collect();
+        assert_eq!(completions.len(), 7);
+        for m in &completions {
+            let compat = m.compat.as_ref().unwrap_or_else(|| {
+                panic!("copilot openai-completions model '{}' must have compat", m.id)
+            });
+            assert!(!compat.supports_store, "{}: supports_store should be false", m.id);
+            assert!(
+                !compat.supports_developer_role,
+                "{}: supports_developer_role should be false",
+                m.id
+            );
+            assert!(
+                !compat.supports_reasoning_effort,
+                "{}: supports_reasoning_effort should be false",
+                m.id
+            );
+        }
+    }
+
+    #[test]
+    fn test_copilot_non_completions_models_no_compat() {
+        let non_completions: Vec<_> = list_models()
+            .iter()
+            .filter(|m| m.provider == "github-copilot" && m.api != api::OPENAI_COMPLETIONS)
+            .cloned()
+            .collect();
+        assert_eq!(non_completions.len(), 17); // 6 anthropic + 11 responses
+        for m in &non_completions {
+            assert!(
+                m.compat.is_none(),
+                "copilot non-completions model '{}' should have compat: None",
+                m.id
+            );
         }
     }
 

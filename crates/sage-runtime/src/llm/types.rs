@@ -36,6 +36,8 @@ pub mod provider {
     pub const ZAI: &str = "zai";
     pub const OPENROUTER: &str = "openrouter";
     pub const CEREBRAS: &str = "cerebras";
+    pub const MISTRAL: &str = "mistral";
+    pub const GITHUB_COPILOT: &str = "github-copilot";
 }
 
 // ============================================================================
