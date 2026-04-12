@@ -1,7 +1,12 @@
 // Shared test helpers — reusable Model/LlmContext constructors for tests.
 // Only compiled in test builds.
 
+use crate::llm::LlmProvider;
 use crate::llm::types::*;
+use crate::types::StopReason;
+use std::collections::VecDeque;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Standard test model with sensible defaults.
 pub fn test_model() -> Model {
@@ -24,6 +29,43 @@ pub fn test_model() -> Model {
         },
         headers: vec![],
         compat: Some(ProviderCompat::default()),
+    }
+}
+
+/// Mock LLM provider — stateful, returns pre-configured response sequences.
+pub struct StatefulProvider {
+    responses: Mutex<VecDeque<Vec<AssistantMessageEvent>>>,
+    call_count: AtomicUsize,
+}
+
+impl StatefulProvider {
+    pub fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
+        Self {
+            responses: Mutex::new(VecDeque::from(responses)),
+            call_count: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn call_count(&self) -> usize {
+        self.call_count.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for StatefulProvider {
+    async fn complete(
+        &self,
+        _model: &Model,
+        _context: &LlmContext,
+        _tools: &[LlmTool],
+    ) -> Vec<AssistantMessageEvent> {
+        self.call_count.fetch_add(1, Ordering::SeqCst);
+        let mut queue = self.responses.lock().unwrap();
+        queue.pop_front().unwrap_or_else(|| {
+            vec![AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+            }]
+        })
     }
 }
 
