@@ -869,6 +869,491 @@ static MODEL_CATALOG: LazyLock<Vec<Model>> = LazyLock::new(|| {
             headers: vec![],
             compat: None,
         },
+        // ── xAI (Grok) ──
+        // xAI compat flags are handled dynamically by detect_compat() in
+        // openai_completions.rs (is_xai / is_grok detection, max_completion_tokens,
+        // is_non_standard). Model entries use compat: None.
+        // xAI supports prompt caching (cacheRead > 0 for most models).
+        Model {
+            id: "grok-2".into(),
+            name: "Grok 2".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 2.0,
+                output_per_million: 10.0,
+                cache_read_per_million: 2.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-2-1212".into(),
+            name: "Grok 2 (1212)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 2.0,
+                output_per_million: 10.0,
+                cache_read_per_million: 2.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-2-latest".into(),
+            name: "Grok 2 Latest".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 2.0,
+                output_per_million: 10.0,
+                cache_read_per_million: 2.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-2-vision".into(),
+            name: "Grok 2 Vision".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 4096,
+            context_window: 8192,
+            cost: ModelCost {
+                input_per_million: 2.0,
+                output_per_million: 10.0,
+                cache_read_per_million: 2.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-2-vision-1212".into(),
+            name: "Grok 2 Vision (1212)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 4096,
+            context_window: 8192,
+            cost: ModelCost {
+                input_per_million: 2.0,
+                output_per_million: 10.0,
+                cache_read_per_million: 2.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-2-vision-latest".into(),
+            name: "Grok 2 Vision Latest".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 4096,
+            context_window: 8192,
+            cost: ModelCost {
+                input_per_million: 2.0,
+                output_per_million: 10.0,
+                cache_read_per_million: 2.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-3".into(),
+            name: "Grok 3".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 3.0,
+                output_per_million: 15.0,
+                cache_read_per_million: 0.75,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-3-fast".into(),
+            name: "Grok 3 Fast".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 5.0,
+                output_per_million: 25.0,
+                cache_read_per_million: 1.25,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-3-fast-latest".into(),
+            name: "Grok 3 Fast Latest".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 5.0,
+                output_per_million: 25.0,
+                cache_read_per_million: 1.25,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-3-latest".into(),
+            name: "Grok 3 Latest".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 3.0,
+                output_per_million: 15.0,
+                cache_read_per_million: 0.75,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-3-mini".into(),
+            name: "Grok 3 Mini".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.3,
+                output_per_million: 0.5,
+                cache_read_per_million: 0.075,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-3-mini-fast".into(),
+            name: "Grok 3 Mini Fast".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.6,
+                output_per_million: 4.0,
+                cache_read_per_million: 0.15,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-3-mini-fast-latest".into(),
+            name: "Grok 3 Mini Fast Latest".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.6,
+                output_per_million: 4.0,
+                cache_read_per_million: 0.15,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-3-mini-latest".into(),
+            name: "Grok 3 Mini Latest".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.3,
+                output_per_million: 0.5,
+                cache_read_per_million: 0.075,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-4".into(),
+            name: "Grok 4".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 64000,
+            context_window: 256000,
+            cost: ModelCost {
+                input_per_million: 3.0,
+                output_per_million: 15.0,
+                cache_read_per_million: 0.75,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-4-1-fast".into(),
+            name: "Grok 4.1 Fast".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 30000,
+            context_window: 2000000,
+            cost: ModelCost {
+                input_per_million: 0.2,
+                output_per_million: 0.5,
+                cache_read_per_million: 0.05,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-4-1-fast-non-reasoning".into(),
+            name: "Grok 4.1 Fast (Non-Reasoning)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 30000,
+            context_window: 2000000,
+            cost: ModelCost {
+                input_per_million: 0.2,
+                output_per_million: 0.5,
+                cache_read_per_million: 0.05,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-4-fast".into(),
+            name: "Grok 4 Fast".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 30000,
+            context_window: 2000000,
+            cost: ModelCost {
+                input_per_million: 0.2,
+                output_per_million: 0.5,
+                cache_read_per_million: 0.05,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-4-fast-non-reasoning".into(),
+            name: "Grok 4 Fast (Non-Reasoning)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 30000,
+            context_window: 2000000,
+            cost: ModelCost {
+                input_per_million: 0.2,
+                output_per_million: 0.5,
+                cache_read_per_million: 0.05,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-4.20-0309-non-reasoning".into(),
+            name: "Grok 4.20 (Non-Reasoning)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 30000,
+            context_window: 2000000,
+            cost: ModelCost {
+                input_per_million: 2.0,
+                output_per_million: 6.0,
+                cache_read_per_million: 0.2,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-4.20-0309-reasoning".into(),
+            name: "Grok 4.20 (Reasoning)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 30000,
+            context_window: 2000000,
+            cost: ModelCost {
+                input_per_million: 2.0,
+                output_per_million: 6.0,
+                cache_read_per_million: 0.2,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-beta".into(),
+            name: "Grok Beta".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 4096,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 5.0,
+                output_per_million: 15.0,
+                cache_read_per_million: 5.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-code-fast-1".into(),
+            name: "Grok Code Fast 1".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 10000,
+            context_window: 256000,
+            cost: ModelCost {
+                input_per_million: 0.2,
+                output_per_million: 1.5,
+                cache_read_per_million: 0.02,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "grok-vision-beta".into(),
+            name: "Grok Vision Beta".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::XAI.into(),
+            base_url: "https://api.x.ai/v1".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 4096,
+            context_window: 8192,
+            cost: ModelCost {
+                input_per_million: 5.0,
+                output_per_million: 15.0,
+                cache_read_per_million: 5.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
     ]
 });
 
@@ -896,6 +1381,7 @@ pub fn list_providers() -> Vec<&'static str> {
         "openai",
         "google",
         "groq",
+        "xai",
         "qwen",
         "doubao",
         "kimi",
@@ -1504,6 +1990,83 @@ mod tests {
             .filter(|m| m.provider == "groq")
             .collect();
         assert_eq!(groq_models.len(), 15);
+    }
+
+    // ========================================================================
+    // resolve_model — xAI (Grok) models
+    // ========================================================================
+
+    #[test]
+    fn test_resolve_xai_grok4() {
+        let model = resolve_model("xai", "grok-4").unwrap();
+        assert_eq!(model.id, "grok-4");
+        assert_eq!(model.name, "Grok 4");
+        assert_eq!(model.provider, "xai");
+        assert_eq!(model.api, api::OPENAI_COMPLETIONS);
+        assert_eq!(model.api_key_env, "XAI_API_KEY");
+        assert_eq!(model.base_url, "https://api.x.ai/v1");
+        assert!(model.reasoning);
+        assert_eq!(model.max_tokens, 64000);
+        assert_eq!(model.context_window, 256000);
+        assert!(model.compat.is_none());
+    }
+
+    #[test]
+    fn test_resolve_xai_grok4_fast() {
+        let model = resolve_model("xai", "grok-4-fast").unwrap();
+        assert_eq!(model.name, "Grok 4 Fast");
+        assert!(model.reasoning);
+        assert!(model.input.contains(&InputType::Image));
+        assert_eq!(model.max_tokens, 30000);
+        assert_eq!(model.context_window, 2000000);
+    }
+
+    #[test]
+    fn test_resolve_xai_grok3_mini() {
+        let model = resolve_model("xai", "grok-3-mini").unwrap();
+        assert!(model.reasoning);
+        assert_eq!(model.cost.input_per_million, 0.3);
+        assert_eq!(model.cost.cache_read_per_million, 0.075);
+    }
+
+    #[test]
+    fn test_resolve_xai_grok2_vision() {
+        let model = resolve_model("xai", "grok-2-vision").unwrap();
+        assert!(!model.reasoning);
+        assert!(model.input.contains(&InputType::Image));
+        assert_eq!(model.context_window, 8192);
+    }
+
+    #[test]
+    fn test_resolve_xai_grok4_non_reasoning() {
+        let model = resolve_model("xai", "grok-4-fast-non-reasoning").unwrap();
+        assert!(!model.reasoning);
+        assert!(model.input.contains(&InputType::Image));
+        assert_eq!(model.context_window, 2000000);
+    }
+
+    #[test]
+    fn test_resolve_xai_grok_code_fast() {
+        let model = resolve_model("xai", "grok-code-fast-1").unwrap();
+        assert!(model.reasoning);
+        assert_eq!(model.max_tokens, 10000);
+        assert_eq!(model.context_window, 256000);
+        assert_eq!(model.cost.cache_read_per_million, 0.02);
+    }
+
+    #[test]
+    fn test_xai_in_list_providers() {
+        let providers = list_providers();
+        assert!(providers.contains(&"xai"));
+    }
+
+    #[test]
+    fn test_xai_model_count() {
+        let xai_models: Vec<_> = list_models()
+            .iter()
+            .filter(|m| m.provider == "xai")
+            .collect();
+        assert_eq!(xai_models.len(), 24);
     }
 
     // ========================================================================
