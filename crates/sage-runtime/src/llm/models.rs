@@ -1437,6 +1437,514 @@ static MODEL_CATALOG: LazyLock<Vec<Model>> = LazyLock::new(|| {
             headers: vec![],
             compat: None,
         },
+        // ====================================================================
+        // Mistral — https://api.mistral.ai/v1
+        // Mistral does not support prompt caching; cache costs are 0.
+        // Pi-mono uses api: "mistral-conversations" with Mistral SDK;
+        // we use openai-completions since Mistral HTTP API is OpenAI-compatible.
+        // compat: None — standard OpenAI chat completions format, no special flags needed.
+        // ====================================================================
+        Model {
+            id: "codestral-latest".into(),
+            name: "Codestral (latest)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 4096,
+            context_window: 256000,
+            cost: ModelCost {
+                input_per_million: 0.3,
+                output_per_million: 0.9,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "devstral-2512".into(),
+            name: "Devstral 2".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 262144,
+            context_window: 262144,
+            cost: ModelCost {
+                input_per_million: 0.4,
+                output_per_million: 2.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "devstral-medium-2507".into(),
+            name: "Devstral Medium".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 128000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.4,
+                output_per_million: 2.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "devstral-medium-latest".into(),
+            name: "Devstral 2 (latest)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 262144,
+            context_window: 262144,
+            cost: ModelCost {
+                input_per_million: 0.4,
+                output_per_million: 2.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "devstral-small-2505".into(),
+            name: "Devstral Small 2505".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 128000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.1,
+                output_per_million: 0.3,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "devstral-small-2507".into(),
+            name: "Devstral Small".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 128000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.1,
+                output_per_million: 0.3,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        // labs-* models are experimental and free (cost 0.0 per pi-mono).
+        Model {
+            id: "labs-devstral-small-2512".into(),
+            name: "Devstral Small 2".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 256000,
+            context_window: 256000,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "magistral-medium-latest".into(),
+            name: "Magistral Medium (latest)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 16384,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 2.0,
+                output_per_million: 5.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "magistral-small".into(),
+            name: "Magistral Small".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 128000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.5,
+                output_per_million: 1.5,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "ministral-3b-latest".into(),
+            name: "Ministral 3B (latest)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 128000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.04,
+                output_per_million: 0.04,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "ministral-8b-latest".into(),
+            name: "Ministral 8B (latest)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 128000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.1,
+                output_per_million: 0.1,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "mistral-large-2411".into(),
+            name: "Mistral Large 2.1".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 16384,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 2.0,
+                output_per_million: 6.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "mistral-large-2512".into(),
+            name: "Mistral Large 3".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 262144,
+            context_window: 262144,
+            cost: ModelCost {
+                input_per_million: 0.5,
+                output_per_million: 1.5,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "mistral-large-latest".into(),
+            name: "Mistral Large (latest)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 262144,
+            context_window: 262144,
+            cost: ModelCost {
+                input_per_million: 0.5,
+                output_per_million: 1.5,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "mistral-medium-2505".into(),
+            name: "Mistral Medium 3".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 131072,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.4,
+                output_per_million: 2.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "mistral-medium-2508".into(),
+            name: "Mistral Medium 3.1".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 262144,
+            context_window: 262144,
+            cost: ModelCost {
+                input_per_million: 0.4,
+                output_per_million: 2.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "mistral-medium-latest".into(),
+            name: "Mistral Medium (latest)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 16384,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.4,
+                output_per_million: 2.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "mistral-nemo".into(),
+            name: "Mistral Nemo".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 128000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.15,
+                output_per_million: 0.15,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "mistral-small-2506".into(),
+            name: "Mistral Small 3.2".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 16384,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.1,
+                output_per_million: 0.3,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "mistral-small-latest".into(),
+            name: "Mistral Small (latest)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 16384,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.1,
+                output_per_million: 0.3,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "open-mistral-7b".into(),
+            name: "Mistral 7B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8000,
+            context_window: 8000,
+            cost: ModelCost {
+                input_per_million: 0.25,
+                output_per_million: 0.25,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "open-mixtral-8x22b".into(),
+            name: "Mixtral 8x22B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 64000,
+            context_window: 64000,
+            cost: ModelCost {
+                input_per_million: 2.0,
+                output_per_million: 6.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "open-mixtral-8x7b".into(),
+            name: "Mixtral 8x7B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 32000,
+            context_window: 32000,
+            cost: ModelCost {
+                input_per_million: 0.7,
+                output_per_million: 0.7,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "pixtral-12b".into(),
+            name: "Pixtral 12B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 128000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 0.15,
+                output_per_million: 0.15,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "pixtral-large-latest".into(),
+            name: "Pixtral Large (latest)".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::MISTRAL.into(),
+            base_url: "https://api.mistral.ai/v1".into(),
+            api_key_env: "MISTRAL_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 128000,
+            context_window: 128000,
+            cost: ModelCost {
+                input_per_million: 2.0,
+                output_per_million: 6.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
     ]
 });
 
@@ -1472,6 +1980,7 @@ pub fn list_providers() -> Vec<&'static str> {
         "minimax",
         "zai",
         "deepseek",
+        "mistral",
     ]
 }
 
@@ -1701,18 +2210,22 @@ mod tests {
     }
 
     #[test]
-    fn test_list_providers_all_nine() {
+    fn test_list_providers_contains_all() {
         let providers = list_providers();
         let expected = [
             "anthropic",
             "openai",
             "google",
+            "groq",
+            "xai",
+            "cerebras",
             "qwen",
             "doubao",
             "kimi",
             "minimax",
             "zai",
             "deepseek",
+            "mistral",
         ];
         for p in &expected {
             assert!(providers.contains(p), "missing provider: {}", p);
@@ -2225,6 +2738,95 @@ mod tests {
         for m in list_models().iter().filter(|m| m.provider == "cerebras") {
             assert_eq!(m.base_url, "https://api.cerebras.ai/v1", "bad base_url for {}", m.id);
             assert_eq!(m.api_key_env, "CEREBRAS_API_KEY", "bad api_key_env for {}", m.id);
+            assert_eq!(m.api, api::OPENAI_COMPLETIONS, "bad api for {}", m.id);
+            assert!(m.compat.is_none(), "unexpected compat for {}", m.id);
+        }
+    }
+
+    // ========================================================================
+    // resolve_model — Mistral models
+    // ========================================================================
+
+    #[test]
+    fn test_resolve_mistral_codestral_latest() {
+        let model = resolve_model("mistral", "codestral-latest").unwrap();
+        assert_eq!(model.id, "codestral-latest");
+        assert_eq!(model.name, "Codestral (latest)");
+        assert_eq!(model.provider, "mistral");
+        assert_eq!(model.api, api::OPENAI_COMPLETIONS);
+        assert_eq!(model.base_url, "https://api.mistral.ai/v1");
+        assert_eq!(model.api_key_env, "MISTRAL_API_KEY");
+        assert!(!model.reasoning);
+        assert_eq!(model.context_window, 256000);
+    }
+
+    #[test]
+    fn test_resolve_mistral_magistral_medium() {
+        let model = resolve_model("mistral", "magistral-medium-latest").unwrap();
+        assert_eq!(model.name, "Magistral Medium (latest)");
+        assert!(model.reasoning);
+        assert_eq!(model.cost.input_per_million, 2.0);
+        assert_eq!(model.cost.output_per_million, 5.0);
+    }
+
+    #[test]
+    fn test_resolve_mistral_magistral_small() {
+        let model = resolve_model("mistral", "magistral-small").unwrap();
+        assert!(model.reasoning);
+        assert_eq!(model.max_tokens, 128000);
+    }
+
+    #[test]
+    fn test_resolve_mistral_large_latest() {
+        let model = resolve_model("mistral", "mistral-large-latest").unwrap();
+        assert!(!model.reasoning);
+        assert!(model.input.contains(&InputType::Image));
+        assert_eq!(model.context_window, 262144);
+    }
+
+    #[test]
+    fn test_resolve_mistral_pixtral_12b() {
+        let model = resolve_model("mistral", "pixtral-12b").unwrap();
+        assert!(model.input.contains(&InputType::Image));
+        assert_eq!(model.cost.input_per_million, 0.15);
+    }
+
+    #[test]
+    fn test_resolve_mistral_nemo() {
+        let model = resolve_model("mistral", "mistral-nemo").unwrap();
+        assert!(!model.reasoning);
+        assert_eq!(model.cost.input_per_million, 0.15);
+        assert_eq!(model.cost.output_per_million, 0.15);
+    }
+
+    #[test]
+    fn test_resolve_mistral_open_mixtral_8x22b() {
+        let model = resolve_model("mistral", "open-mixtral-8x22b").unwrap();
+        assert_eq!(model.name, "Mixtral 8x22B");
+        assert_eq!(model.cost.input_per_million, 2.0);
+        assert_eq!(model.context_window, 64000);
+    }
+
+    #[test]
+    fn test_mistral_in_list_providers() {
+        let providers = list_providers();
+        assert!(providers.contains(&"mistral"));
+    }
+
+    #[test]
+    fn test_mistral_model_count() {
+        let models: Vec<_> = list_models()
+            .iter()
+            .filter(|m| m.provider == "mistral")
+            .collect();
+        assert_eq!(models.len(), 25);
+    }
+
+    #[test]
+    fn test_mistral_models_invariants() {
+        for m in list_models().iter().filter(|m| m.provider == "mistral") {
+            assert_eq!(m.base_url, "https://api.mistral.ai/v1", "bad base_url for {}", m.id);
+            assert_eq!(m.api_key_env, "MISTRAL_API_KEY", "bad api_key_env for {}", m.id);
             assert_eq!(m.api, api::OPENAI_COMPLETIONS, "bad api for {}", m.id);
             assert!(m.compat.is_none(), "unexpected compat for {}", m.id);
         }
