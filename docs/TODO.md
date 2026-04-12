@@ -135,7 +135,12 @@ sage run --config configs/coding-assistant.yaml \
 
 - [ ] openai_compat.rs 通用 OpenAI 兼容 provider 对齐 pi-mono
 - [ ] 模型自动发现（`/v1/models` 端点探测）
-- [ ] redacted_thinking 往返（LlmMessage 增加 thinking variant）
+- [x] redacted_thinking 往返（LlmMessage 增加 thinking variant）
+  - ThinkingBlock struct + thinking_blocks field on LlmMessage::Assistant
+  - ThinkingBlockEnd event + per-block accumulator
+  - Anthropic serialize/deserialize for thinking/redacted_thinking
+  - Full roundtrip chain: SSE → accumulator → Content → LlmMessage → API
+  - 24 new tests, code review 8.90/10 (85b4009)
 
 ### v0.3.0 验收
 
