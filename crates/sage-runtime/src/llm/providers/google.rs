@@ -112,6 +112,7 @@ fn convert_messages(messages: &[LlmMessage]) -> Vec<Value> {
             LlmMessage::Tool {
                 tool_call_id: _,
                 content,
+                ..
             } => {
                 // Find the tool name from preceding assistant message's tool_calls.
                 // We search backwards through the messages for the matching call.
@@ -698,10 +699,12 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_a".into(),
                 content: "file1.txt".into(),
+                tool_name: None,
             },
             LlmMessage::Tool {
                 tool_call_id: "call_b".into(),
                 content: "contents".into(),
+                tool_name: None,
             },
         ];
         let contents = convert_messages(&messages);
@@ -741,6 +744,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_x".into(),
                 content: "file contents".into(),
+                tool_name: None,
             },
         ];
         let contents = convert_messages(&messages);

@@ -109,6 +109,7 @@ pub fn convert_messages(messages: &[LlmMessage]) -> Vec<Value> {
             LlmMessage::Tool {
                 tool_call_id,
                 content,
+                ..
             } => {
                 input.push(json!({
                     "type": "function_call_output",
@@ -730,6 +731,7 @@ mod tests {
         let messages = vec![LlmMessage::Tool {
             tool_call_id: "call_001".into(),
             content: "file1.txt\nfile2.txt".into(),
+            tool_name: None,
         }];
         let input = convert_messages(&messages);
         assert_eq!(input.len(), 1);
@@ -761,6 +763,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_010".into(),
                 content: "README.md\nsrc/".into(),
+                tool_name: None,
             },
             LlmMessage::Assistant {
                 content: "Here are your files.".into(),
