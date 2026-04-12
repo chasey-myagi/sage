@@ -6,11 +6,36 @@ use crate::agent_loop::{AgentLoopError, run_agent_loop};
 use crate::event::{AgentEvent, AgentEventSink, EventReceiver, EventSender, EventStream};
 use crate::llm::types::*;
 use crate::llm::{self, LlmProvider};
-use crate::tools::backend::{LocalBackend, ToolBackend};
+use crate::tools::backend::{LocalBackend, SandboxBackend, ToolBackend};
 use crate::tools::policy::ToolPolicy;
 use crate::tools::{self, AgentTool, ToolRegistry};
 use crate::types::*;
 use std::sync::Arc;
+
+// ── SandboxSettings ──────────────────────────────────────────────────
+
+/// Sandbox VM configuration for automatic lifecycle management.
+///
+/// When set via `SageEngineBuilder::sandbox()`, each `run()` call will:
+/// 1. Create a sandbox VM with these settings
+/// 2. Use `SandboxBackend` for all tool I/O
+/// 3. Stop the VM when the agent loop completes
+#[derive(Debug, Clone)]
+pub struct SandboxSettings {
+    pub cpus: u32,
+    pub memory_mib: u32,
+    pub volumes: Vec<sage_sandbox::VolumeMount>,
+}
+
+impl Default for SandboxSettings {
+    fn default() -> Self {
+        Self {
+            cpus: 1,
+            memory_mib: 512,
+            volumes: Vec::new(),
+        }
+    }
+}
 
 // ── Error type ────────────────────────────────────────────────────────
 
@@ -24,6 +49,9 @@ pub enum SageError {
 
     #[error("agent loop error: {0}")]
     AgentLoop(#[from] AgentLoopError),
+
+    #[error("sandbox error: {0}")]
+    Sandbox(String),
 }
 
 // ── resolve_or_construct_model ────────────────────────────────────────
@@ -200,6 +228,9 @@ pub struct SageEngine {
     api_key_env: Option<String>,
     custom_llm_provider: Option<Arc<dyn LlmProvider>>,
 
+    // Sandbox
+    sandbox_settings: Option<SandboxSettings>,
+
     // Hooks
     before_hook: Option<Arc<dyn BeforeToolCallHook>>,
     after_hook: Option<Arc<dyn AfterToolCallHook>>,
@@ -227,6 +258,7 @@ impl SageEngine {
             builtin_tool_names: Vec::new(),
             extra_tools: Vec::new(),
             backend: None,
+            sandbox_settings: None,
             provider_name: None,
             model_id: None,
             max_tokens: None,
@@ -274,9 +306,30 @@ impl SageEngine {
             }
         };
 
-        // 2. Build ToolRegistry
-        let backend: Arc<dyn ToolBackend> =
-            self.backend.clone().unwrap_or_else(|| LocalBackend::new());
+        // 2. Resolve backend — sandbox (auto-lifecycle) > explicit backend > local
+        let sandbox_handle: Option<Arc<sage_sandbox::SandboxHandle>> = if let Some(ref settings) =
+            self.sandbox_settings
+        {
+            let mut sb = sage_sandbox::SandboxBuilder::new(format!("sage-{}", std::process::id()))
+                .cpus(settings.cpus)
+                .memory_mib(settings.memory_mib);
+            for vol in &settings.volumes {
+                sb = sb.mount(&vol.host_path, &vol.guest_path, vol.read_only);
+            }
+            let handle = sb
+                .create()
+                .await
+                .map_err(|e| SageError::Sandbox(e.to_string()))?;
+            Some(Arc::new(handle))
+        } else {
+            None
+        };
+
+        let backend: Arc<dyn ToolBackend> = if let Some(ref handle) = sandbox_handle {
+            SandboxBackend::new(Arc::clone(handle))
+        } else {
+            self.backend.clone().unwrap_or_else(|| LocalBackend::new())
+        };
         let mut registry = ToolRegistry::new();
         for name in &self.builtin_tool_names {
             if let Some(tool) = tools::create_tool(name, backend.clone()) {
@@ -319,6 +372,12 @@ impl SageEngine {
         };
         tokio::spawn(async move {
             let result = run_agent_loop(&mut agent, &sink).await;
+            // Stop sandbox VM if one was created for this run
+            if let Some(handle) = sandbox_handle {
+                if let Err(e) = handle.stop().await {
+                    tracing::error!(error = %e, "failed to stop sandbox");
+                }
+            }
             match result {
                 Ok(messages) => sender.end(messages),
                 Err(e) => {
@@ -381,6 +440,7 @@ pub struct SageEngineBuilder {
     builtin_tool_names: Vec<String>,
     extra_tools: Vec<Arc<dyn AgentTool>>,
     backend: Option<Arc<dyn ToolBackend>>,
+    sandbox_settings: Option<SandboxSettings>,
     provider_name: Option<String>,
     model_id: Option<String>,
     max_tokens: Option<u32>,
@@ -433,6 +493,19 @@ impl SageEngineBuilder {
     /// execute tools inside a microVM.
     pub fn backend(mut self, backend: Arc<dyn ToolBackend>) -> Self {
         self.backend = Some(backend);
+        self
+    }
+
+    /// Enable sandbox mode with automatic VM lifecycle management.
+    ///
+    /// When set, each `run()` call creates a sandbox VM and uses
+    /// `SandboxBackend` for all tool I/O.  The VM is stopped when the
+    /// agent loop completes.
+    ///
+    /// This is mutually exclusive with `.backend()` — if both are set,
+    /// `.sandbox()` takes precedence.
+    pub fn sandbox(mut self, settings: SandboxSettings) -> Self {
+        self.sandbox_settings = Some(settings);
         self
     }
 
@@ -514,6 +587,7 @@ impl SageEngineBuilder {
             builtin_tool_names: self.builtin_tool_names,
             extra_tools: self.extra_tools,
             backend: self.backend,
+            sandbox_settings: self.sandbox_settings,
             provider_name,
             model_id: self.model_id.unwrap_or_else(|| "custom".to_string()),
             max_tokens: self.max_tokens.unwrap_or(4096),
@@ -650,6 +724,7 @@ mod tests {
         assert!(b.tool_policy.is_none());
         assert!(b.builtin_tool_names.is_empty());
         assert!(b.extra_tools.is_empty());
+        assert!(b.sandbox_settings.is_none());
         assert!(b.provider_name.is_none());
         assert!(b.model_id.is_none());
         assert!(b.max_tokens.is_none());
@@ -1352,6 +1427,85 @@ mod tests {
         );
         // Re-register so other tests aren't affected
         llm::register_builtin_providers();
+    }
+
+    // =================================================================
+    // Sandbox settings tests
+    // =================================================================
+
+    #[test]
+    fn sandbox_settings_default() {
+        let s = SandboxSettings::default();
+        assert_eq!(s.cpus, 1);
+        assert_eq!(s.memory_mib, 512);
+        assert!(s.volumes.is_empty());
+    }
+
+    #[test]
+    fn builder_sandbox_sets_settings() {
+        let settings = SandboxSettings {
+            cpus: 2,
+            memory_mib: 2048,
+            volumes: vec![sage_sandbox::VolumeMount {
+                host_path: "/host/ws".into(),
+                guest_path: "/workspace".into(),
+                read_only: false,
+            }],
+        };
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .provider("test")
+            .model("test-model")
+            .sandbox(settings)
+            .build()
+            .unwrap();
+        let ss = engine.sandbox_settings.as_ref().unwrap();
+        assert_eq!(ss.cpus, 2);
+        assert_eq!(ss.memory_mib, 2048);
+        assert_eq!(ss.volumes.len(), 1);
+        assert_eq!(ss.volumes[0].host_path, "/host/ws");
+    }
+
+    #[test]
+    fn builder_without_sandbox_has_none() {
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .provider("test")
+            .model("test-model")
+            .build()
+            .unwrap();
+        assert!(engine.sandbox_settings.is_none());
+    }
+
+    #[test]
+    fn sandbox_settings_with_multiple_volumes() {
+        let settings = SandboxSettings {
+            cpus: 4,
+            memory_mib: 4096,
+            volumes: vec![
+                sage_sandbox::VolumeMount {
+                    host_path: "/host/ws".into(),
+                    guest_path: "/workspace".into(),
+                    read_only: false,
+                },
+                sage_sandbox::VolumeMount {
+                    host_path: "/host/data".into(),
+                    guest_path: "/data".into(),
+                    read_only: true,
+                },
+            ],
+        };
+        assert_eq!(settings.volumes.len(), 2);
+        assert!(settings.volumes[1].read_only);
+    }
+
+    #[test]
+    fn sandbox_settings_debug_impl() {
+        let settings = SandboxSettings::default();
+        // Debug trait must be derived for logging
+        let debug = format!("{settings:?}");
+        assert!(debug.contains("SandboxSettings"));
+        assert!(debug.contains("cpus"));
     }
 
     // =================================================================
