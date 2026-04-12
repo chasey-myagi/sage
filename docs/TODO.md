@@ -76,24 +76,28 @@ sage run --config configs/coding-assistant.yaml \
 
 > 工具执行从本地进程切换到 microVM。Sage 区别于普通 Agent 框架的核心。
 
-### P3: Sandbox 对接 msb_krun
+### P3: Sandbox 对接 msb_krun ✅
 
-- [ ] msb_krun 编译验证（macOS HVF / Linux KVM）
-- [ ] 最小 rootfs 构建
-  - sage-guest 交叉编译 aarch64-unknown-linux-musl
+- [x] msb_krun 编译验证（macOS HVF / Linux KVM）
+- [x] 最小 rootfs 构建
+  - sage-guest 交叉编译 aarch64-unknown-linux-musl (static ELF)
   - rootfs = sage-guest binary + busybox
-  - 构建脚本自动化
-- [ ] VM 启动链路
+  - 构建脚本自动化 (`scripts/build-sandbox.sh`)
+- [x] VM 启动链路 (P3-A)
   - SandboxBuilder::create() → VM 启动 → Guest Agent PID 1
   - Host ↔ Guest virtio-console CBOR 通信验证
-- [ ] 7 个工具通过 sandbox 执行
+- [x] 7 个工具通过 sandbox 执行 (P3-B)
+  - ToolBackend trait 抽象 (LocalBackend / SandboxBackend)
   - bash → `sandbox.shell()` → stdout
   - read/write/edit → `sandbox.fs_read/fs_write`
   - grep/find/ls → VM 内执行
-- [ ] Volume mount（只读 / 读写）
-- [ ] VM 生命周期管理
+- [x] Volume mount（只读 / 读写）(P3-C)
+  - VolumeMount serde → SANDBOX_VOLUMES → virtiofs → SAGE_VOLUMES → guest mount
+  - Path traversal 防护, MS_NOEXEC 默认 flag
+- [x] VM 生命周期管理 (P3-D)
+  - SandboxSettings + SageEngineBuilder::sandbox()
   - 任务开始 → 创建 VM / 任务结束 → stop + 清理
-  - timeout → SIGKILL
+  - Drop 兜底 SIGKILL
 
 ### v0.2.0 验收
 
