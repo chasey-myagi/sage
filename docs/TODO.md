@@ -123,7 +123,7 @@ sage run --config configs/coding-assistant.yaml \
 
 **Tier 2（独立 Provider 或通过 OpenAI Compat）：**
 
-- [ ] Groq（需 reasoningEffortMap for Qwen3-32b — is_groq 目前 dead code）
+- [x] Groq（15 models, detect_compat handles compat dynamically）
 - [ ] Mistral
 - [ ] xAI (Grok) — 已通过 detect_compat 支持，评估是否需独立
 - [ ] DeepSeek — 同上
