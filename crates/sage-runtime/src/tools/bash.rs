@@ -1,8 +1,12 @@
-// BashTool — shell command execution via sandbox.
+// BashTool — shell command execution via ToolBackend.
+
+use std::sync::Arc;
 
 use crate::types::Content;
 
-pub struct BashTool;
+use super::backend::ToolBackend;
+
+pub struct BashTool(pub Arc<dyn ToolBackend>);
 
 #[async_trait::async_trait]
 impl super::AgentTool for BashTool {
@@ -53,108 +57,26 @@ impl super::AgentTool for BashTool {
             .max(1) // minimum 1 second
             .min(600); // maximum 10 minutes
 
-        // Create a new process group (setsid) so we can kill the entire tree on timeout,
-        // not just the parent bash shell.
-        let mut cmd = tokio::process::Command::new("bash");
-        cmd.arg("-c")
-            .arg(command)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-
-        // Create a new process group so we can kill the entire tree on timeout.
-        // process_group(0) sets pgid = child pid.
-        #[cfg(unix)]
-        cmd.process_group(0);
-
-        let mut child = match cmd.spawn() {
-            Ok(child) => child,
-            Err(e) => {
-                return super::ToolOutput {
-                    content: vec![Content::Text {
-                        text: format!("Failed to execute command: {}", e),
-                    }],
-                    is_error: true,
-                };
-            }
-        };
-
-        // Take pipe handles before borrowing child — prevents pipe-buffer deadlock
-        let stdout_pipe = child.stdout.take();
-        let stderr_pipe = child.stderr.take();
-
-        let stdout_reader = tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            let mut buf = Vec::new();
-            if let Some(mut pipe) = stdout_pipe {
-                let _ = pipe.read_to_end(&mut buf).await;
-            }
-            buf
-        });
-        let stderr_reader = tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            let mut buf = Vec::new();
-            if let Some(mut pipe) = stderr_pipe {
-                let _ = pipe.read_to_end(&mut buf).await;
-            }
-            buf
-        });
-
-        // wait() borrows &mut child (not consuming), so child remains killable on timeout
-        match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), child.wait()).await
-        {
-            Ok(Ok(status)) => {
-                let stdout_bytes = stdout_reader.await.unwrap_or_default();
-                let stderr_bytes = stderr_reader.await.unwrap_or_default();
-                let stdout = String::from_utf8_lossy(&stdout_bytes);
-                let stderr = String::from_utf8_lossy(&stderr_bytes);
-                let text = if stderr.is_empty() {
-                    stdout.to_string()
-                } else if stdout.is_empty() {
-                    stderr.to_string()
+        match self.0.shell(command, timeout_secs).await {
+            Ok(output) => {
+                let text = if output.stderr.is_empty() {
+                    output.stdout
+                } else if output.stdout.is_empty() {
+                    output.stderr
                 } else {
-                    format!("{}\n{}", stdout, stderr)
+                    format!("{}\n{}", output.stdout, output.stderr)
                 };
                 super::ToolOutput {
                     content: vec![Content::Text { text }],
-                    is_error: !status.success(),
+                    is_error: !output.success,
                 }
             }
-            Ok(Err(e)) => {
-                stdout_reader.abort();
-                stderr_reader.abort();
-                super::ToolOutput {
-                    content: vec![Content::Text {
-                        text: format!("Failed to execute command: {}", e),
-                    }],
-                    is_error: true,
-                }
-            }
-            Err(_) => {
-                // Timeout — kill the entire process group to prevent child leaks.
-                // Falls back to child.kill() if process group kill is unavailable.
-                #[cfg(unix)]
-                {
-                    if let Some(pid) = child.id() {
-                        if let Ok(pgid) = i32::try_from(pid) {
-                            // Negative pid sends signal to entire process group
-                            let ret = unsafe { libc::kill(-pgid, libc::SIGKILL) };
-                            if ret != 0 {
-                                let err = std::io::Error::last_os_error();
-                                tracing::warn!(pgid, %err, "failed to kill process group on timeout");
-                            }
-                        }
-                    }
-                }
-                let _ = child.kill().await; // fallback / reap
-                stdout_reader.abort();
-                stderr_reader.abort();
-                super::ToolOutput {
-                    content: vec![Content::Text {
-                        text: format!("Command timed out after {timeout_secs}s"),
-                    }],
-                    is_error: true,
-                }
-            }
+            Err(e) => super::ToolOutput {
+                content: vec![Content::Text {
+                    text: format!("Command timed out after {timeout_secs}s: {e}"),
+                }],
+                is_error: true,
+            },
         }
     }
 }
@@ -163,7 +85,12 @@ impl super::AgentTool for BashTool {
 mod tests {
     use super::*;
     use crate::tools::AgentTool;
+    use crate::tools::backend::LocalBackend;
     use serde_json::json;
+
+    fn bash() -> BashTool {
+        BashTool(LocalBackend::new())
+    }
 
     // ---------------------------------------------------------------
     // Metadata
@@ -171,13 +98,13 @@ mod tests {
 
     #[test]
     fn test_name() {
-        let tool = BashTool;
+        let tool = bash();
         assert_eq!(tool.name(), "bash");
     }
 
     #[test]
     fn test_description_not_empty() {
-        let tool = BashTool;
+        let tool = bash();
         assert!(!tool.description().is_empty());
     }
 
@@ -187,7 +114,7 @@ mod tests {
 
     #[test]
     fn test_schema_has_command_property() {
-        let tool = BashTool;
+        let tool = bash();
         let schema = tool.parameters_schema();
         let props = schema
             .get("properties")
@@ -200,7 +127,7 @@ mod tests {
 
     #[test]
     fn test_schema_command_is_required() {
-        let tool = BashTool;
+        let tool = bash();
         let schema = tool.parameters_schema();
         let required = schema
             .get("required")
@@ -211,7 +138,7 @@ mod tests {
 
     #[test]
     fn test_schema_has_timeout_property() {
-        let tool = BashTool;
+        let tool = bash();
         let schema = tool.parameters_schema();
         let props = schema
             .get("properties")
@@ -224,7 +151,7 @@ mod tests {
 
     #[test]
     fn test_schema_timeout_is_optional() {
-        let tool = BashTool;
+        let tool = bash();
         let schema = tool.parameters_schema();
         let required = schema
             .get("required")
@@ -242,14 +169,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_command_returns_error() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool.execute(json!({})).await;
         assert!(output.is_error, "missing 'command' must return error");
     }
 
     #[tokio::test]
     async fn test_empty_command_returns_error() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool.execute(json!({"command": ""})).await;
         assert!(output.is_error, "empty command must return error");
     }
@@ -261,7 +188,7 @@ mod tests {
     #[test]
     fn test_schema_accepts_long_command() {
         // A very long command string should be accepted by the schema
-        let tool = BashTool;
+        let tool = bash();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         let cmd_schema = props.get("command").unwrap();
@@ -281,7 +208,7 @@ mod tests {
     #[tokio::test]
     async fn test_command_with_special_characters() {
         // Command contains quotes, pipes, semicolons — should not cause arg parsing to fail
-        let tool = BashTool;
+        let tool = bash();
         let cmd = r#"echo "hello 'world'" | cat; echo done"#;
         let output = tool.execute(json!({"command": cmd})).await;
         // The command should succeed (valid shell syntax)
@@ -298,7 +225,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_timeout_zero_uses_default() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool
             .execute(json!({"command": "echo hi", "timeout": 0}))
             .await;
@@ -308,7 +235,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_timeout_negative_uses_default() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool
             .execute(json!({"command": "echo hi", "timeout": -1}))
             .await;
@@ -321,7 +248,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_timeout_actually_enforced() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool
             .execute(json!({"command": "sleep 10", "timeout": 1}))
             .await;
@@ -342,7 +269,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_nonzero_exit_code_is_error() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool.execute(json!({"command": "exit 1"})).await;
         // Non-zero exit code MUST set is_error=true
         assert!(output.is_error, "exit 1 must produce is_error=true");
@@ -350,7 +277,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exit_code_preserves_stdout() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool
             .execute(json!({"command": "echo hello && exit 42"}))
             .await;
@@ -375,7 +302,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stderr_captured_in_output() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool.execute(json!({"command": "echo err_msg >&2"})).await;
         let text = match &output.content[0] {
             crate::types::Content::Text { text } => text.clone(),
@@ -391,7 +318,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stdout_and_stderr_mixed() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool
             .execute(json!({"command": "echo out && echo err >&2"}))
             .await;
@@ -416,7 +343,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_with_unicode_output() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool.execute(json!({"command": "echo '你好世界'"})).await;
         let text = match &output.content[0] {
             crate::types::Content::Text { text } => text.clone(),
@@ -434,7 +361,7 @@ mod tests {
 
     #[test]
     fn test_schema_has_optional_cwd() {
-        let tool = BashTool;
+        let tool = bash();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         // May have "cwd", "working_directory", or similar
@@ -456,7 +383,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_echo_hello_success_path() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool.execute(json!({"command": "echo hello"})).await;
         assert!(!output.is_error, "echo hello should succeed");
         let text = match &output.content[0] {
@@ -476,7 +403,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiline_output_captured() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool
             .execute(json!({"command": "echo -e 'line1\nline2'"}))
             .await;
@@ -498,7 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_with_backticks_and_dollar() {
-        let tool = BashTool;
+        let tool = bash();
         // This command uses backticks and $() — it should execute or fail gracefully
         let output = tool
             .execute(json!({"command": "echo \"$(echo nested)\""}))
@@ -522,7 +449,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_not_found() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool
             .execute(json!({"command": "nonexistent_command_xyz_12345"}))
             .await;
@@ -547,14 +474,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_bash_null_command_param() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool.execute(json!({"command": null})).await;
         assert!(output.is_error, "null command should produce is_error=true");
     }
 
     #[tokio::test]
     async fn test_bash_integer_command_param() {
-        let tool = BashTool;
+        let tool = bash();
         let output = tool.execute(json!({"command": 123})).await;
         assert!(
             output.is_error,

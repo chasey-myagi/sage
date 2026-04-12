@@ -1,6 +1,10 @@
 // GrepTool — full-text search via ripgrep JSON output.
 
+use std::sync::Arc;
+
 use crate::types::Content;
+
+use super::backend::ToolBackend;
 
 /// A single grep match result.
 pub struct GrepMatch {
@@ -57,7 +61,12 @@ fn error_output(msg: &str) -> super::ToolOutput {
     }
 }
 
-pub struct GrepTool;
+/// Shell-escape a string using single quotes (POSIX).
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+pub struct GrepTool(pub Arc<dyn ToolBackend>);
 
 #[async_trait::async_trait]
 impl super::AgentTool for GrepTool {
@@ -94,33 +103,36 @@ impl super::AgentTool for GrepTool {
             return error_output(&format!("Invalid regex pattern: {}", pattern));
         }
 
-        let mut cmd = tokio::process::Command::new("rg");
-        cmd.arg("--json").arg(&pattern);
+        let mut cmd = format!("rg --json {}", shell_escape(&pattern));
 
         if let Some(true) = args.get("ignore_case").and_then(|v| v.as_bool()) {
-            cmd.arg("-i");
+            cmd.push_str(" -i");
         }
         if let Some(glob_pat) = args.get("glob").and_then(|v| v.as_str()) {
-            cmd.arg("--glob").arg(glob_pat);
+            cmd.push_str(&format!(" --glob {}", shell_escape(glob_pat)));
         }
         if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
-            cmd.arg(path);
+            cmd.push_str(&format!(" {}", shell_escape(path)));
         }
 
-        match cmd.output().await {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return error_output(
-                    "ripgrep (rg) is not installed or not in PATH. \
-                     Install it: https://github.com/BurntSushi/ripgrep#installation",
-                );
-            }
-            Err(e) => {
-                return error_output(&format!("Failed to execute rg: {e}"));
-            }
+        match self.0.shell(&cmd, 120).await {
+            Err(e) => error_output(&format!("Failed to execute rg: {e}")),
             Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let matches: Vec<GrepMatch> =
-                    stdout.lines().filter_map(parse_rg_json_line).collect();
+                // rg not found: bash reports "command not found" on stderr
+                if !output.success
+                    && output.stdout.is_empty()
+                    && output.stderr.contains("not found")
+                {
+                    return error_output(
+                        "ripgrep (rg) is not installed or not in PATH. \
+                         Install it: https://github.com/BurntSushi/ripgrep#installation",
+                    );
+                }
+                let matches: Vec<GrepMatch> = output
+                    .stdout
+                    .lines()
+                    .filter_map(parse_rg_json_line)
+                    .collect();
                 let formatted =
                     format_grep_results(&matches, super::truncate::GREP_MAX_LINE_LENGTH);
                 if formatted.is_empty() {
@@ -145,7 +157,12 @@ impl super::AgentTool for GrepTool {
 mod tests {
     use super::*;
     use crate::tools::AgentTool;
+    use crate::tools::backend::LocalBackend;
     use serde_json::json;
+
+    fn grep_tool() -> GrepTool {
+        GrepTool(LocalBackend::new())
+    }
 
     // ---------------------------------------------------------------
     // parse_rg_json_line
@@ -240,19 +257,19 @@ mod tests {
 
     #[test]
     fn test_name() {
-        let tool = GrepTool;
+        let tool = grep_tool();
         assert_eq!(tool.name(), "grep");
     }
 
     #[test]
     fn test_description_not_empty() {
-        let tool = GrepTool;
+        let tool = grep_tool();
         assert!(!tool.description().is_empty());
     }
 
     #[test]
     fn test_schema_has_pattern() {
-        let tool = GrepTool;
+        let tool = grep_tool();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         assert!(props.get("pattern").is_some());
@@ -263,7 +280,7 @@ mod tests {
 
     #[test]
     fn test_schema_has_optional_params() {
-        let tool = GrepTool;
+        let tool = grep_tool();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         assert!(props.get("path").is_some());
@@ -278,7 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_pattern_returns_error() {
-        let tool = GrepTool;
+        let tool = grep_tool();
         let output = tool.execute(json!({})).await;
         assert!(output.is_error);
     }
@@ -392,7 +409,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_pattern_returns_error() {
-        let tool = GrepTool;
+        let tool = grep_tool();
         let output = tool.execute(json!({"pattern": ""})).await;
         assert!(output.is_error, "empty pattern should return error");
     }
@@ -403,7 +420,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_regex_special_chars_in_pattern() {
-        let tool = GrepTool;
+        let tool = grep_tool();
         // Pattern with regex metacharacters — should be accepted
         let output = tool.execute(json!({"pattern": "fn\\s+\\w+\\("})).await;
         // Whether it finds matches depends on context, but should not panic
@@ -412,7 +429,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_literal_brackets_in_pattern() {
-        let tool = GrepTool;
+        let tool = grep_tool();
         let output = tool.execute(json!({"pattern": "interface\\{\\}"})).await;
         assert!(!output.content.is_empty());
     }
@@ -423,7 +440,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ignore_case_flag() {
-        let tool = GrepTool;
+        let tool = grep_tool();
         let output = tool
             .execute(json!({"pattern": "test", "ignore_case": true}))
             .await;
@@ -436,14 +453,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_regex_returns_error() {
-        let tool = GrepTool;
+        let tool = grep_tool();
         let output = tool.execute(json!({"pattern": "[unclosed"})).await;
         assert!(output.is_error, "invalid regex should return error");
     }
 
     #[tokio::test]
     async fn test_unmatched_paren_regex_returns_error() {
-        let tool = GrepTool;
+        let tool = grep_tool();
         let output = tool.execute(json!({"pattern": "((missing)"})).await;
         assert!(
             output.is_error,
@@ -457,7 +474,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_grep_nonexistent_directory() {
-        let tool = GrepTool;
+        let tool = grep_tool();
         let output = tool
             .execute(json!({"pattern": "foo", "path": "/nonexistent_dir_12345"}))
             .await;
