@@ -84,12 +84,13 @@ pub fn parse_sse_chunk(
     if let Some(finish_reason) = choice.get("finish_reason") {
         if !finish_reason.is_null() {
             let reason_str = finish_reason.as_str().unwrap_or("");
+            // pi-mono: mapStopReason — map finish_reason to StopReason
             let stop_reason = match reason_str {
-                "stop" => StopReason::Stop,
+                "stop" | "end" => StopReason::Stop,
                 "length" => StopReason::Length,
-                "tool_calls" => StopReason::ToolUse,
-                "content_filter" => StopReason::Error,
-                _ => StopReason::Stop,
+                "function_call" | "tool_calls" => StopReason::ToolUse,
+                "content_filter" | "network_error" => StopReason::Error,
+                _ => StopReason::Error,
             };
             return Ok(Some(AssistantMessageEvent::Done { stop_reason }));
         }
@@ -682,6 +683,51 @@ mod tests {
     // ========================================================================
     // 错误: 未知 finish_reason
     // ========================================================================
+
+    // ========================================================================
+    // parse_sse_chunk — finish_reason: "end" (pi-mono maps to Stop)
+    // ========================================================================
+
+    #[test]
+    fn test_parse_finish_reason_end() {
+        let data = r#"{"choices":[{"delta":{},"finish_reason":"end","index":0}]}"#;
+        let event = parse_sse_chunk(data).unwrap().unwrap();
+        assert!(
+            matches!(event, AssistantMessageEvent::Done { stop_reason } if stop_reason == StopReason::Stop)
+        );
+    }
+
+    // ========================================================================
+    // parse_sse_chunk — finish_reason: "function_call" (pi-mono maps to ToolUse)
+    // ========================================================================
+
+    #[test]
+    fn test_parse_finish_reason_function_call() {
+        let data = r#"{"choices":[{"delta":{},"finish_reason":"function_call","index":0}]}"#;
+        let event = parse_sse_chunk(data).unwrap().unwrap();
+        assert!(
+            matches!(event, AssistantMessageEvent::Done { stop_reason } if stop_reason == StopReason::ToolUse)
+        );
+    }
+
+    // ========================================================================
+    // parse_sse_chunk — finish_reason: "network_error" (pi-mono maps to Error)
+    // ========================================================================
+
+    #[test]
+    fn test_parse_finish_reason_network_error() {
+        let data = r#"{"choices":[{"delta":{},"finish_reason":"network_error","index":0}]}"#;
+        let event = parse_sse_chunk(data).unwrap().unwrap();
+        match event {
+            AssistantMessageEvent::Done { stop_reason } => {
+                assert_eq!(stop_reason, StopReason::Error);
+            }
+            AssistantMessageEvent::Error(msg) => {
+                assert!(msg.contains("network_error"));
+            }
+            _ => panic!("network_error should map to Error"),
+        }
+    }
 
     #[test]
     fn test_parse_unknown_finish_reason() {

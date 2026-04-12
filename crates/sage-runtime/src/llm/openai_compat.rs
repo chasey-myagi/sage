@@ -90,6 +90,7 @@ impl OpenAiCompatProvider {
                 LlmMessage::Tool {
                     tool_call_id,
                     content,
+                    ..
                 } => {
                     messages.push(json!({
                         "role": "tool",
@@ -319,6 +320,7 @@ mod tests {
                 LlmMessage::Tool {
                     tool_call_id: "tc1".into(),
                     content: "file1.txt\nfile2.txt".into(),
+                    tool_name: None,
                 },
             ],
             system_prompt: "test".into(),

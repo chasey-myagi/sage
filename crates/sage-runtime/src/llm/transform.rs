@@ -96,6 +96,7 @@ pub fn agent_to_llm_messages(messages: &[AgentMessage]) -> Vec<LlmMessage> {
                 LlmMessage::Tool {
                     tool_call_id: result.tool_call_id.clone(),
                     content,
+                    tool_name: None,
                 }
             }
         })
@@ -469,6 +470,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id,
                 content,
+                ..
             } => {
                 assert_eq!(tool_call_id, "tc_001");
                 assert!(content.contains("output here"));
@@ -637,6 +639,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_001".into(),
                 content: "ok".into(),
+                tool_name: None,
             },
         ];
         let len_before = messages.len();
@@ -654,6 +657,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_orphan".into(),
                 content: "orphaned result".into(),
+                tool_name: None,
             },
         ];
         fix_orphaned_tool_results(&mut messages);
@@ -1002,10 +1006,12 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_orphan_1".into(),
                 content: "result 1".into(),
+                tool_name: None,
             },
             LlmMessage::Tool {
                 tool_call_id: "call_orphan_2".into(),
                 content: "result 2".into(),
+                tool_name: None,
             },
         ];
         fix_orphaned_tool_results(&mut messages);
@@ -1049,10 +1055,12 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_A".into(),
                 content: "result A".into(),
+                tool_name: None,
             },
             LlmMessage::Tool {
                 tool_call_id: "call_B".into(),
                 content: "result B — orphaned".into(),
+                tool_name: None,
             },
         ];
         fix_orphaned_tool_results(&mut messages);
@@ -1152,6 +1160,7 @@ mod tests {
             LlmMessage::Tool {
                 content,
                 tool_call_id,
+                ..
             } => {
                 assert_eq!(tool_call_id, "tc_err_001");
                 assert!(
@@ -1386,6 +1395,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_combo".into(),
                 content: "result".into(),
+                tool_name: None,
             },
             // Assistant with thinking (to be stripped)
             LlmMessage::Assistant {
@@ -1498,6 +1508,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id,
                 content,
+                ..
             } => {
                 assert_eq!(tool_call_id, "tc_name");
                 assert!(content.contains("output"));
@@ -1605,6 +1616,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_001".into(),
                 content: "ok".into(),
+                tool_name: None,
             },
         ];
         let len_before = messages.len();
@@ -1634,6 +1646,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: long_id,
                 content: "result".into(),
+                tool_name: None,
             },
         ];
         normalize_tool_call_ids(&mut messages, 64);
@@ -1668,6 +1681,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call|with|pipes".into(),
                 content: "result".into(),
+                tool_name: None,
             },
         ];
         normalize_tool_call_ids(&mut messages, 64);
@@ -1700,6 +1714,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_abc123".into(),
                 content: "result".into(),
+                tool_name: None,
             },
         ];
         normalize_tool_call_ids(&mut messages, 64);
@@ -1751,6 +1766,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call_orphan".into(),
                 content: "result".into(),
+                tool_name: None,
             },
             LlmMessage::Assistant {
                 content: "done".into(),
@@ -1801,6 +1817,7 @@ mod tests {
             LlmMessage::Tool {
                 tool_call_id: "call|special|chars".into(),
                 content: "result".into(),
+                tool_name: None,
             },
         ];
         transform_messages(&mut messages, "anthropic", "claude-sonnet");

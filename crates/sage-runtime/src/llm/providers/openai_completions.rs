@@ -112,13 +112,66 @@ impl OpenAiCompletionsProvider {
                 LlmMessage::Assistant {
                     content,
                     tool_calls,
-                    ..
+                    thinking_blocks,
                 } => {
+                    // pi-mono: skip assistant messages with no content and no tool_calls.
+                    // Some providers reject empty assistant messages.
+                    let has_content = !content.is_empty();
+                    let has_tools = !tool_calls.is_empty();
+                    if !has_content && !has_tools {
+                        continue;
+                    }
+
                     let mut msg = json!({
                         "role": "assistant",
-                        "content": content,
                     });
-                    if !tool_calls.is_empty() {
+
+                    // pi-mono: handle thinking blocks on assistant messages.
+                    // Filter out empty and redacted blocks.
+                    let non_empty_thinking: Vec<&ThinkingBlock> = thinking_blocks
+                        .iter()
+                        .filter(|b| !b.redacted && !b.thinking.trim().is_empty())
+                        .collect();
+
+                    if !non_empty_thinking.is_empty() {
+                        if compat.requires_thinking_as_text {
+                            // pi-mono: requiresThinkingAsText → prepend thinking as plain text.
+                            // We concatenate as a single plain string (not content-part array)
+                            // to avoid DeepSeek V3.2's nesting bug (see pi-mono comment).
+                            let thinking_text: String = non_empty_thinking
+                                .iter()
+                                .map(|b| b.thinking.as_str())
+                                .collect::<Vec<_>>()
+                                .join("\n\n");
+                            let combined = if has_content {
+                                format!("{thinking_text}\n\n{content}")
+                            } else {
+                                thinking_text
+                            };
+                            msg["content"] = json!(combined);
+                        } else {
+                            // pi-mono: use thinkingSignature as the field name on the
+                            // assistant message. The signature carries the original SSE
+                            // reasoning field name (e.g., "reasoning_content", "reasoning").
+                            // If no signature is present, skip — pi-mono doesn't write a
+                            // reasoning field when thinkingSignature is empty.
+                            if let Some(field_name) =
+                                non_empty_thinking[0].signature.as_deref()
+                            {
+                                let reasoning: String = non_empty_thinking
+                                    .iter()
+                                    .map(|b| b.thinking.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                msg[field_name] = json!(reasoning);
+                            }
+                            msg["content"] = json!(content);
+                        }
+                    } else {
+                        msg["content"] = json!(content);
+                    }
+
+                    if has_tools {
                         let tcs: Vec<Value> = tool_calls
                             .iter()
                             .map(|tc| {
@@ -141,13 +194,21 @@ impl OpenAiCompletionsProvider {
                 LlmMessage::Tool {
                     tool_call_id,
                     content,
+                    tool_name,
                 } => {
                     let id = normalize_tool_call_id(tool_call_id, model);
-                    messages.push(json!({
+                    let mut tool_msg = json!({
                         "role": "tool",
                         "tool_call_id": id,
                         "content": content,
-                    }));
+                    });
+                    // pi-mono: requiresToolResultName — add "name" field when provider needs it.
+                    if compat.requires_tool_result_name {
+                        if let Some(name) = tool_name {
+                            tool_msg["name"] = json!(name);
+                        }
+                    }
+                    messages.push(tool_msg);
                     last_role = "tool";
                 }
             }
@@ -232,17 +293,40 @@ impl OpenAiCompletionsProvider {
                             "parameters": t.parameters,
                         },
                     });
+                    // pi-mono: only include strict field when provider supports it.
+                    // Some providers reject unknown fields. Value is false (not true).
                     if compat.supports_strict_mode {
-                        def["function"]["strict"] = json!(true);
+                        def["function"]["strict"] = json!(false);
                     }
                     def
                 })
                 .collect();
             body["tools"] = json!(tool_defs);
+        } else if has_tool_history(&context.messages) {
+            // pi-mono: hasToolHistory — send empty tools array when conversation
+            // has tool_calls/tool_results but no tools param. Required by some
+            // providers (e.g. Anthropic via LiteLLM/proxy).
+            body["tools"] = json!([]);
         }
 
         body
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tool history detection (pi-mono: hasToolHistory)
+// ---------------------------------------------------------------------------
+
+/// Check if conversation messages contain tool calls or tool results.
+///
+/// Needed because some providers (e.g. Anthropic via proxy) require the tools
+/// param to be present when messages include tool_calls or tool role messages.
+fn has_tool_history(messages: &[LlmMessage]) -> bool {
+    messages.iter().any(|msg| match msg {
+        LlmMessage::Tool { .. } => true,
+        LlmMessage::Assistant { tool_calls, .. } => !tool_calls.is_empty(),
+        _ => false,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -617,6 +701,7 @@ mod tests {
                 LlmMessage::Tool {
                     tool_call_id: "tc1".into(),
                     content: "file1.txt\nfile2.txt".into(),
+                    tool_name: None,
                 },
             ],
             system_prompt: "test".into(),
@@ -1107,6 +1192,7 @@ mod tests {
                 LlmMessage::Tool {
                     tool_call_id: "tc1".into(),
                     content: "done".into(),
+                    tool_name: None,
                 },
                 LlmMessage::User {
                     content: vec![LlmContent::Text("next".into())],
@@ -1235,7 +1321,9 @@ mod tests {
             &default_options(),
         );
         let tool_arr = body["tools"].as_array().unwrap();
-        assert_eq!(tool_arr[0]["function"]["strict"], true);
+        // pi-mono: strict is false, not true. Some providers need the field present
+        // but OpenAI's strict JSON schema validation is NOT enabled.
+        assert_eq!(tool_arr[0]["function"]["strict"], false);
     }
 
     // ========================================================================
@@ -1371,6 +1459,521 @@ mod tests {
         // remaps all levels to "default". The request body should contain
         // reasoning_effort = "default" (not "high").
         assert_eq!(body["reasoning_effort"], "default");
+    }
+
+    // ========================================================================
+    // build_request_body — thinking blocks roundtrip on assistant messages
+    // ========================================================================
+
+    #[test]
+    fn test_build_request_body_thinking_blocks_as_reasoning_content() {
+        // pi-mono: when signature is present, it's used as the field name
+        let model = test_model();
+        let context = LlmContext {
+            messages: vec![LlmMessage::Assistant {
+                content: "I analyzed the code.".into(),
+                tool_calls: vec![],
+                thinking_blocks: vec![ThinkingBlock {
+                    thinking: "Let me think about this problem step by step.".into(),
+                    signature: Some("reasoning_content".into()),
+                    redacted: false,
+                }],
+            }],
+            system_prompt: "test".into(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[],
+            &default_options(),
+        );
+        let messages = body["messages"].as_array().unwrap();
+        // system + assistant = 2
+        let assistant = &messages[1];
+        assert_eq!(assistant["role"], "assistant");
+        // Thinking should be serialized as reasoning_content field
+        assert_eq!(
+            assistant["reasoning_content"],
+            "Let me think about this problem step by step."
+        );
+        // Text content should still be present
+        assert_eq!(assistant["content"], "I analyzed the code.");
+    }
+
+    #[test]
+    fn test_build_request_body_thinking_blocks_no_signature_skips_reasoning() {
+        // pi-mono: when thinkingSignature is absent, don't write reasoning field
+        let model = test_model();
+        let context = LlmContext {
+            messages: vec![LlmMessage::Assistant {
+                content: "I analyzed the code.".into(),
+                tool_calls: vec![],
+                thinking_blocks: vec![ThinkingBlock {
+                    thinking: "Internal reasoning.".into(),
+                    signature: None,
+                    redacted: false,
+                }],
+            }],
+            system_prompt: String::new(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[],
+            &default_options(),
+        );
+        let messages = body["messages"].as_array().unwrap();
+        let assistant = &messages[0];
+        assert_eq!(assistant["role"], "assistant");
+        // No reasoning field should be written when signature is None
+        assert!(
+            assistant.get("reasoning_content").is_none()
+                || assistant["reasoning_content"].is_null()
+        );
+        assert_eq!(assistant["content"], "I analyzed the code.");
+    }
+
+    #[test]
+    fn test_build_request_body_thinking_blocks_custom_signature_field() {
+        // pi-mono: thinkingSignature carries the SSE field name (e.g., "reasoning")
+        // and is used as the field name on the assistant message
+        let model = test_model();
+        let context = LlmContext {
+            messages: vec![LlmMessage::Assistant {
+                content: "Answer.".into(),
+                tool_calls: vec![],
+                thinking_blocks: vec![ThinkingBlock {
+                    thinking: "Reasoning via custom field.".into(),
+                    signature: Some("reasoning".into()), // llama.cpp uses "reasoning"
+                    redacted: false,
+                }],
+            }],
+            system_prompt: String::new(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[],
+            &default_options(),
+        );
+        let messages = body["messages"].as_array().unwrap();
+        let assistant = &messages[0];
+        // Should use the custom field name from signature, not "reasoning_content"
+        assert_eq!(assistant["reasoning"], "Reasoning via custom field.");
+        assert!(
+            assistant.get("reasoning_content").is_none()
+                || assistant["reasoning_content"].is_null()
+        );
+    }
+
+    #[test]
+    fn test_build_request_body_thinking_blocks_multiple_joined() {
+        // pi-mono: multiple thinking blocks are joined with "\n", field name from first block's signature
+        let model = test_model();
+        let context = LlmContext {
+            messages: vec![LlmMessage::Assistant {
+                content: "Done.".into(),
+                tool_calls: vec![],
+                thinking_blocks: vec![
+                    ThinkingBlock {
+                        thinking: "Step 1: analyze".into(),
+                        signature: Some("reasoning_content".into()),
+                        redacted: false,
+                    },
+                    ThinkingBlock {
+                        thinking: "Step 2: implement".into(),
+                        signature: Some("reasoning_content".into()),
+                        redacted: false,
+                    },
+                ],
+            }],
+            system_prompt: String::new(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[],
+            &default_options(),
+        );
+        let messages = body["messages"].as_array().unwrap();
+        let assistant = &messages[0];
+        assert_eq!(assistant["reasoning_content"], "Step 1: analyze\nStep 2: implement");
+    }
+
+    #[test]
+    fn test_build_request_body_thinking_blocks_empty_filtered() {
+        // pi-mono: empty thinking blocks are filtered out
+        let model = test_model();
+        let context = LlmContext {
+            messages: vec![LlmMessage::Assistant {
+                content: "Result.".into(),
+                tool_calls: vec![],
+                thinking_blocks: vec![
+                    ThinkingBlock {
+                        thinking: String::new(),
+                        signature: None,
+                        redacted: false,
+                    },
+                    ThinkingBlock {
+                        thinking: "   ".into(), // whitespace only
+                        signature: None,
+                        redacted: false,
+                    },
+                ],
+            }],
+            system_prompt: String::new(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[],
+            &default_options(),
+        );
+        let messages = body["messages"].as_array().unwrap();
+        let assistant = &messages[0];
+        // No reasoning_content when all blocks are empty
+        assert!(
+            assistant.get("reasoning_content").is_none()
+                || assistant["reasoning_content"].is_null()
+        );
+    }
+
+    #[test]
+    fn test_build_request_body_thinking_blocks_requires_thinking_as_text() {
+        // pi-mono: requiresThinkingAsText → prepend thinking as plain text
+        let mut model = test_model();
+        model.compat = Some(ProviderCompat {
+            requires_thinking_as_text: true,
+            ..ProviderCompat::default()
+        });
+        let context = LlmContext {
+            messages: vec![LlmMessage::Assistant {
+                content: "The answer is 42.".into(),
+                tool_calls: vec![],
+                thinking_blocks: vec![ThinkingBlock {
+                    thinking: "Let me calculate...".into(),
+                    signature: None,
+                    redacted: false,
+                }],
+            }],
+            system_prompt: String::new(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[],
+            &default_options(),
+        );
+        let messages = body["messages"].as_array().unwrap();
+        let assistant = &messages[0];
+        // Thinking prepended to content as plain text
+        let content = assistant["content"].as_str().unwrap();
+        assert!(content.contains("Let me calculate..."));
+        assert!(content.contains("The answer is 42."));
+        // No separate reasoning_content field
+        assert!(
+            assistant.get("reasoning_content").is_none()
+                || assistant["reasoning_content"].is_null()
+        );
+    }
+
+    #[test]
+    fn test_build_request_body_thinking_blocks_redacted_skipped() {
+        // Redacted thinking blocks should not be serialized back for OpenAI-compat
+        // (they are Anthropic-specific opaque payloads)
+        let model = test_model();
+        let context = LlmContext {
+            messages: vec![LlmMessage::Assistant {
+                content: "Result.".into(),
+                tool_calls: vec![],
+                thinking_blocks: vec![ThinkingBlock {
+                    thinking: String::new(),
+                    signature: Some("encrypted_payload_xyz".into()),
+                    redacted: true,
+                }],
+            }],
+            system_prompt: String::new(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[],
+            &default_options(),
+        );
+        let messages = body["messages"].as_array().unwrap();
+        let assistant = &messages[0];
+        // Redacted blocks should not produce reasoning_content
+        assert!(
+            assistant.get("reasoning_content").is_none()
+                || assistant["reasoning_content"].is_null()
+        );
+    }
+
+    // ========================================================================
+    // build_request_body — skip empty assistant messages
+    // ========================================================================
+
+    #[test]
+    fn test_build_request_body_skips_empty_assistant_no_content_no_tools() {
+        // pi-mono: skip assistant messages with no content and no tool_calls
+        let model = test_model();
+        let context = LlmContext {
+            messages: vec![
+                LlmMessage::User {
+                    content: vec![LlmContent::Text("hello".into())],
+                },
+                LlmMessage::Assistant {
+                    content: String::new(),
+                    tool_calls: vec![],
+                    thinking_blocks: vec![],
+                },
+                LlmMessage::User {
+                    content: vec![LlmContent::Text("world".into())],
+                },
+            ],
+            system_prompt: String::new(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[],
+            &default_options(),
+        );
+        let messages = body["messages"].as_array().unwrap();
+        // Empty assistant should be skipped: user + user = 2
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "user");
+    }
+
+    #[test]
+    fn test_build_request_body_keeps_assistant_with_tool_calls() {
+        // Assistant with tool_calls but empty content should NOT be skipped
+        let model = test_model();
+        let context = LlmContext {
+            messages: vec![LlmMessage::Assistant {
+                content: String::new(),
+                tool_calls: vec![LlmToolCall {
+                    id: "tc1".into(),
+                    function: LlmFunctionCall {
+                        name: "bash".into(),
+                        arguments: "{}".into(),
+                    },
+                }],
+                thinking_blocks: vec![],
+            }],
+            system_prompt: String::new(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[],
+            &default_options(),
+        );
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "assistant");
+    }
+
+    #[test]
+    fn test_build_request_body_keeps_assistant_with_content() {
+        // Assistant with text content but no tool_calls should NOT be skipped
+        let model = test_model();
+        let context = LlmContext {
+            messages: vec![LlmMessage::Assistant {
+                content: "I have an answer.".into(),
+                tool_calls: vec![],
+                thinking_blocks: vec![],
+            }],
+            system_prompt: String::new(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[],
+            &default_options(),
+        );
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["content"], "I have an answer.");
+    }
+
+    // ========================================================================
+    // build_request_body — requiresToolResultName
+    // ========================================================================
+
+    #[test]
+    fn test_build_request_body_tool_result_name_when_required() {
+        // pi-mono: add "name" field to tool results when requiresToolResultName is true
+        let mut model = test_model();
+        model.compat = Some(ProviderCompat {
+            requires_tool_result_name: true,
+            ..ProviderCompat::default()
+        });
+        let context = LlmContext {
+            messages: vec![
+                LlmMessage::Assistant {
+                    content: String::new(),
+                    tool_calls: vec![LlmToolCall {
+                        id: "tc1".into(),
+                        function: LlmFunctionCall {
+                            name: "bash".into(),
+                            arguments: "{}".into(),
+                        },
+                    }],
+                    thinking_blocks: vec![],
+                },
+                LlmMessage::Tool {
+                    tool_call_id: "tc1".into(),
+                    content: "output".into(),
+                    tool_name: Some("bash".into()),
+                },
+            ],
+            system_prompt: String::new(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[],
+            &default_options(),
+        );
+        let messages = body["messages"].as_array().unwrap();
+        let tool_msg = &messages[1];
+        assert_eq!(tool_msg["role"], "tool");
+        assert_eq!(tool_msg["name"], "bash");
+    }
+
+    #[test]
+    fn test_build_request_body_tool_result_no_name_when_not_required() {
+        // Default: no name field on tool results
+        let model = test_model();
+        let context = LlmContext {
+            messages: vec![
+                LlmMessage::Assistant {
+                    content: String::new(),
+                    tool_calls: vec![LlmToolCall {
+                        id: "tc1".into(),
+                        function: LlmFunctionCall {
+                            name: "bash".into(),
+                            arguments: "{}".into(),
+                        },
+                    }],
+                    thinking_blocks: vec![],
+                },
+                LlmMessage::Tool {
+                    tool_call_id: "tc1".into(),
+                    content: "output".into(),
+                    tool_name: Some("bash".into()),
+                },
+            ],
+            system_prompt: String::new(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[],
+            &default_options(),
+        );
+        let messages = body["messages"].as_array().unwrap();
+        let tool_msg = &messages[1];
+        assert_eq!(tool_msg["role"], "tool");
+        // name should NOT be present when requires_tool_result_name is false
+        assert!(tool_msg.get("name").is_none() || tool_msg["name"].is_null());
+    }
+
+    // ========================================================================
+    // build_request_body — hasToolHistory sends empty tools array
+    // ========================================================================
+
+    #[test]
+    fn test_build_request_body_empty_tools_when_history_has_tool_calls() {
+        // pi-mono: send tools:[] when conversation has tool history but no tools param
+        let model = test_model();
+        let context = LlmContext {
+            messages: vec![
+                LlmMessage::User {
+                    content: vec![LlmContent::Text("go".into())],
+                },
+                LlmMessage::Assistant {
+                    content: String::new(),
+                    tool_calls: vec![LlmToolCall {
+                        id: "tc1".into(),
+                        function: LlmFunctionCall {
+                            name: "bash".into(),
+                            arguments: "{}".into(),
+                        },
+                    }],
+                    thinking_blocks: vec![],
+                },
+                LlmMessage::Tool {
+                    tool_call_id: "tc1".into(),
+                    content: "done".into(),
+                    tool_name: None,
+                },
+            ],
+            system_prompt: String::new(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        // No tools passed but history has tool calls
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[], // empty tools
+            &default_options(),
+        );
+        // Should have tools: [] in the body
+        let tools = body.get("tools");
+        assert!(tools.is_some(), "tools field should be present");
+        assert!(tools.unwrap().as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_build_request_body_no_tools_when_no_history() {
+        // No tool history and no tools → no tools field
+        let model = test_model();
+        let context = LlmContext {
+            messages: vec![LlmMessage::User {
+                content: vec![LlmContent::Text("hello".into())],
+            }],
+            system_prompt: String::new(),
+            max_tokens: 512,
+            temperature: None,
+        };
+        let body = OpenAiCompletionsProvider::build_request_body(
+            &model,
+            &context,
+            &[],
+            &default_options(),
+        );
+        assert!(
+            body.get("tools").is_none() || body["tools"].is_null(),
+            "tools field should not be present when no tools and no history"
+        );
     }
 
     #[test]

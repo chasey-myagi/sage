@@ -236,6 +236,7 @@ fn build_llm_context(agent: &Agent) -> LlmContext {
                 messages.push(LlmMessage::Tool {
                     tool_call_id: tr.tool_call_id.clone(),
                     content: text,
+                    tool_name: None,
                 });
             }
         }
