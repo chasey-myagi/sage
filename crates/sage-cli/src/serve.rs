@@ -70,7 +70,18 @@ fn print_event(event: &AgentEvent) {
             eprintln!("--- Agent started ---");
         }
         AgentEvent::AgentEnd { messages } => {
-            eprintln!("--- Agent finished ({} messages) ---", messages.len());
+            // Print the final assistant reply — MessageUpdate may not be
+            // emitted by the current agent loop, so extract text here.
+            for msg in messages {
+                if let AgentMessage::Assistant(a) = msg {
+                    for c in &a.content {
+                        if let Content::Text { text } = c {
+                            println!("{text}");
+                        }
+                    }
+                }
+            }
+            eprintln!("--- Agent finished ---");
         }
         AgentEvent::TurnStart => {
             eprintln!("  [turn]");

@@ -38,9 +38,7 @@ impl SandboxBuilder {
             volumes: Vec::new(),
             env: Vec::new(),
             idle_timeout_secs: 300,
-            guest_agent_path: PathBuf::from(
-                "target/aarch64-unknown-linux-musl/release/agent-guest",
-            ),
+            guest_agent_path: PathBuf::from("target/aarch64-unknown-linux-musl/release/sage-guest"),
             krunfw_path: PathBuf::from(format!("{home}/.microsandbox/lib/libkrunfw.5.dylib")),
             runtime_binary_path: PathBuf::from("target/debug/sandbox-runtime"),
         }

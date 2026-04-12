@@ -1,7 +1,11 @@
 [package]
-name = "sage-caster"
+name = "sage-cli"
 version.workspace = true
 edition.workspace = true
+
+[[bin]]
+name = "sage"
+path = "src/main.rs"
 
 [dependencies]
 sage-sandbox = { workspace = true }

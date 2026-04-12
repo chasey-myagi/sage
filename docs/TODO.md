@@ -36,13 +36,13 @@
 - [x] 21 tests (9 builder + 9 run + 3 resolve)
 - [ ] Lifecycle Hooks 扩展 (on_agent_start/on_agent_end/on_error) — deferred to v0.1.1
 
-### P2: 端到端联调（无沙箱）— 部分完成
+### P2: 端到端联调（无沙箱）✅
 
 - [x] `sage run` CLI 可用，终端流式输出 AgentEvent
-- [ ] **真实 LLM 调用验证**（Qwen / DeepSeek）— 核心验收项
-- [ ] 多轮 tool call（>3 轮）不中断
-- [ ] 并行 tool call（LLM 一次返回多个）
-- [ ] Steering / FollowUp 队列验证
+- [x] **真实 LLM 调用验证**（Qwen）— test_real_qwen_single_turn, API key gated
+- [x] 多轮 tool call（>3 轮）— run_multi_turn_tool_calls_four_turns (4 轮 + final)
+- [x] 并行 tool call — run_parallel_tool_calls_two_tools_one_turn (2 tools, join_all)
+- [x] Steering 队列验证 — run_steering_message_appears_in_events + reaches_provider_context
 
 ### Review 发现的技术债
 
@@ -53,6 +53,10 @@
 - [x] ~~RoutingProvider error 缺少 Done 事件~~ (fixed: Error + Done{StopReason::Error})
 - [x] ~~`builtin_tools()` 静默忽略未知 tool name~~ (fixed: tracing::warn)
 - [x] ~~RoutingProvider 路径零测试覆盖~~ (fixed: routing_provider_missing_api_returns_error_and_done)
+- [x] ~~CLI binary 名 sage-caster → sage~~ (fixed: [[bin]] name="sage" + package rename sage-cli)
+- [x] ~~SandboxBuilder guest path agent-guest → sage-guest~~ (fixed)
+- [x] ~~serve.rs 不打印 final assistant reply~~ (fixed: 从 AgentEnd messages 提取并 println)
+- [x] ~~CLAUDE.md 中 `cargo run -p sage` 命令过期~~ (fixed: 更新为 sage-cli)
 - [ ] 无 cancellation 机制（CancellationToken）— v0.1.1
 - [ ] 5 个 Arc newtype wrapper boilerplate — 需改 Agent 接口
 - [ ] test_helpers 对外部 crate 不可见 — 需 feature flag

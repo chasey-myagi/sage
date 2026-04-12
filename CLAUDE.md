@@ -37,7 +37,8 @@ crates/
 ```bash
 cargo build
 cargo test
-cargo run -p sage -- --runtime localhost:50070
+cargo run -p sage-cli -- run --config configs/coding-assistant.yaml --message "hello"
+cargo run -p sage-cli -- serve --runtime localhost:50070
 ```
 
 ## 依赖
