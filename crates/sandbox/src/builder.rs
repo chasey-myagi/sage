@@ -144,7 +144,7 @@ impl SandboxBuilder {
     ///
     /// Creates: /init (guest-agent), /bin/busybox + symlinks, /proc, /sys, /dev, /tmp
     async fn prepare_rootfs(&self) -> Result<PathBuf, SandboxError> {
-        let rootfs = std::env::temp_dir().join(format!("agent-sandbox-{}", uuid_v4()));
+        let rootfs = std::env::temp_dir().join(format!("agent-sandbox-{}", unique_suffix()));
 
         // Create directory structure
         for dir in &["bin", "proc", "sys", "dev", "tmp"] {
@@ -194,8 +194,8 @@ impl SandboxBuilder {
     }
 }
 
-/// Generate a simple UUID v4 for temp directory names.
-fn uuid_v4() -> String {
+/// Generate a unique suffix for temp directory names (timestamp + pid).
+fn unique_suffix() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let t = SystemTime::now()
         .duration_since(UNIX_EPOCH)

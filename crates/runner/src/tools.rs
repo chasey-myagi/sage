@@ -1,8 +1,18 @@
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
-/// Sandbox enforcement policy derived from AgentConfig.tools.
+/// Sandbox enforcement policy derived from AgentConfig.tools (YAML configuration layer).
 ///
-/// This is mapped to:
+/// This struct represents the *config representation* of tool policies, parsed from
+/// agent YAML files. It is converted to `agent_runtime::tools::policy::ToolPolicy`
+/// for actual runtime enforcement in the agent loop.
+///
+/// **Important**: This struct only provides primitive checks (`is_binary_allowed`,
+/// `is_read_allowed`, `is_write_allowed`). For integrated tool-call enforcement
+/// (bash binary extraction, grep/find path checks, etc.), use
+/// `agent_runtime::tools::policy::ToolPolicy::check_tool_call` at runtime.
+///
+/// Mapped to:
 /// - Guest-side: Landlock/seccomp rules (Phase 2+)
 /// - Host-side: Volume mounts + binary whitelist pre-check
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,35 +22,61 @@ pub struct ToolPolicy {
     pub allowed_write_paths: Vec<String>,
 }
 
+/// Non-interactive utilities always permitted (aligned with agent-runtime).
+/// sh/bash are excluded to prevent binary whitelist bypass via `sh -c "..."`.
+const ALWAYS_ALLOWED_BINARIES: &[&str] = &[
+    "echo", "cat", "head", "tail", "wc", "sort", "uniq", "tr", "true", "false",
+    "test", "printf",
+];
+
+/// Normalize a path by resolving `.` and `..` components lexically (without touching
+/// the filesystem). Prevents path-traversal attacks like `/allowed/../secret`.
+fn normalize_path(path: &Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut result = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => { result.pop(); }
+            Component::CurDir => {}
+            other => result.push(other),
+        }
+    }
+    result
+}
+
 impl ToolPolicy {
     /// Check if a binary is allowed by this policy.
     pub fn is_binary_allowed(&self, binary: &str) -> bool {
-        // Always allow basic shell utilities
-        let always_allowed = ["sh", "echo", "cat", "head", "tail", "wc", "sort", "uniq", "tr"];
-        if always_allowed.contains(&binary) {
+        if ALWAYS_ALLOWED_BINARIES.contains(&binary) {
             return true;
         }
-        self.allowed_binaries.iter().any(|b| b == binary)
+        self.allowed_binaries.iter().any(|b| b == "*" || b == binary)
     }
 
     /// Check if a path is allowed for reading.
+    /// Default-deny: returns false when no read paths are configured.
+    /// Normalizes target path to prevent `/../` traversal escapes.
     pub fn is_read_allowed(&self, path: &str) -> bool {
         if self.allowed_read_paths.is_empty() {
-            return true; // no restriction
+            return false;
         }
+        let target = normalize_path(Path::new(path));
         self.allowed_read_paths
             .iter()
-            .any(|p| path.starts_with(p))
+            .any(|p| target.starts_with(Path::new(p)))
     }
 
     /// Check if a path is allowed for writing.
+    /// Default-deny: returns false when no write paths are configured.
+    /// Normalizes target path to prevent `/../` traversal escapes.
     pub fn is_write_allowed(&self, path: &str) -> bool {
         if self.allowed_write_paths.is_empty() {
-            return true;
+            return false;
         }
+        let target = normalize_path(Path::new(path));
         self.allowed_write_paths
             .iter()
-            .any(|p| path.starts_with(p))
+            .any(|p| target.starts_with(Path::new(p)))
     }
 }
 
@@ -69,9 +105,12 @@ mod tests {
     #[test]
     fn always_allowed_binaries() {
         let policy = policy_with_binaries(&[]);
-        for bin in ["sh", "echo", "cat", "head", "tail", "wc", "sort", "uniq", "tr"] {
+        for bin in ALWAYS_ALLOWED_BINARIES {
             assert!(policy.is_binary_allowed(bin), "{bin} should always be allowed");
         }
+        // sh/bash must NOT be always-allowed (would bypass binary whitelist)
+        assert!(!policy.is_binary_allowed("sh"));
+        assert!(!policy.is_binary_allowed("bash"));
     }
 
     #[test]
@@ -92,10 +131,10 @@ mod tests {
     // --- Read path whitelist ---
 
     #[test]
-    fn read_allowed_no_restriction() {
+    fn read_denied_when_empty_default_deny() {
         let policy = policy_with_paths(&[], &[]);
-        assert!(policy.is_read_allowed("/any/path"));
-        assert!(policy.is_read_allowed("/etc/passwd"));
+        assert!(!policy.is_read_allowed("/any/path"));
+        assert!(!policy.is_read_allowed("/etc/passwd"));
     }
 
     #[test]
@@ -112,12 +151,20 @@ mod tests {
         assert!(!policy.is_read_allowed("/home/user/other"));
     }
 
+    #[test]
+    fn read_denied_prefix_attack() {
+        // "/home/user" must NOT match "/home/user-evil/secrets"
+        let policy = policy_with_paths(&["/home/user"], &[]);
+        assert!(!policy.is_read_allowed("/home/user-evil/secrets"));
+        assert!(policy.is_read_allowed("/home/user/safe.txt"));
+    }
+
     // --- Write path whitelist ---
 
     #[test]
-    fn write_allowed_no_restriction() {
+    fn write_denied_when_empty_default_deny() {
         let policy = policy_with_paths(&[], &[]);
-        assert!(policy.is_write_allowed("/any/path"));
+        assert!(!policy.is_write_allowed("/any/path"));
     }
 
     #[test]
@@ -132,6 +179,27 @@ mod tests {
         let policy = policy_with_paths(&[], &["/tmp"]);
         assert!(!policy.is_write_allowed("/etc/hosts"));
         assert!(!policy.is_write_allowed("/home/user/src/main.rs"));
+    }
+
+    #[test]
+    fn write_denied_prefix_attack() {
+        let policy = policy_with_paths(&[], &["/tmp"]);
+        assert!(!policy.is_write_allowed("/tmp-evil/payload"));
+        assert!(policy.is_write_allowed("/tmp/safe.txt"));
+    }
+
+    #[test]
+    fn write_denied_traversal_attack() {
+        let policy = policy_with_paths(&[], &["/tmp"]);
+        assert!(!policy.is_write_allowed("/tmp/../etc/hosts"));
+        assert!(policy.is_write_allowed("/tmp/safe.txt"));
+    }
+
+    #[test]
+    fn read_denied_traversal_attack() {
+        let policy = policy_with_paths(&["/home/user/docs"], &[]);
+        assert!(!policy.is_read_allowed("/home/user/docs/../../../etc/passwd"));
+        assert!(policy.is_read_allowed("/home/user/docs/./readme.md"));
     }
 
     #[test]

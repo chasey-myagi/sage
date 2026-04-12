@@ -217,6 +217,141 @@ fn build_llm_tools(agent: &Agent) -> Vec<LlmTool> {
         .collect()
 }
 
+/// Emit start+end events and build an error ToolResultMessage for a blocked/failed tool call.
+async fn emit_blocked(
+    tc: &ToolCallAccum,
+    args: serde_json::Value,
+    reason: String,
+    emit: &dyn AgentEventSink,
+) -> ToolResultMessage {
+    emit.emit(AgentEvent::ToolExecutionStart {
+        tool_call_id: tc.id.clone(),
+        tool_name: tc.name.clone(),
+        args,
+    })
+    .await;
+    emit.emit(AgentEvent::ToolExecutionEnd {
+        tool_call_id: tc.id.clone(),
+        tool_name: tc.name.clone(),
+        is_error: true,
+    })
+    .await;
+    ToolResultMessage {
+        tool_call_id: tc.id.clone(),
+        tool_name: tc.name.clone(),
+        content: vec![Content::Text { text: reason }],
+        is_error: true,
+        timestamp: now_secs(),
+    }
+}
+
+/// Prepare a tool call: parse args, emit start, run before hook.
+/// Returns Ok(args) if ready to execute, or Err(result) if blocked/invalid.
+async fn prepare_tool_call(
+    agent: &Agent,
+    tc: &ToolCallAccum,
+    emit: &dyn AgentEventSink,
+) -> Result<serde_json::Value, ToolResultMessage> {
+    let args: serde_json::Value = match serde_json::from_str(&tc.arguments) {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(emit_blocked(
+                tc,
+                serde_json::Value::Null,
+                format!("Invalid tool call arguments: {e}"),
+                emit,
+            ).await);
+        }
+    };
+
+    // Enforce tool policy before any execution
+    if let Some(policy) = &agent.config().tool_policy {
+        if let Err(reason) = policy.check_tool_call(&tc.name, &args) {
+            return Err(emit_blocked(tc, args, reason, emit).await);
+        }
+    }
+
+    emit.emit(AgentEvent::ToolExecutionStart {
+        tool_call_id: tc.id.clone(),
+        tool_name: tc.name.clone(),
+        args: args.clone(),
+    })
+    .await;
+
+    let before_ctx = BeforeToolCallContext {
+        tool_name: tc.name.clone(),
+        tool_call_id: tc.id.clone(),
+        args: args.clone(),
+    };
+    let before_result = agent.call_before_tool_call(&before_ctx).await;
+    if before_result.block {
+        let reason = before_result
+            .reason
+            .unwrap_or_else(|| "blocked by hook".into());
+        emit.emit(AgentEvent::ToolExecutionEnd {
+            tool_call_id: tc.id.clone(),
+            tool_name: tc.name.clone(),
+            is_error: true,
+        })
+        .await;
+        return Err(ToolResultMessage {
+            tool_call_id: tc.id.clone(),
+            tool_name: tc.name.clone(),
+            content: vec![Content::Text { text: reason }],
+            is_error: true,
+            timestamp: now_secs(),
+        });
+    }
+
+    Ok(args)
+}
+
+/// Finalize a tool call: run after hook, emit end, build result.
+async fn finalize_tool_call(
+    agent: &Agent,
+    tc: &ToolCallAccum,
+    output: ToolOutput,
+    emit: &dyn AgentEventSink,
+) -> ToolResultMessage {
+    let after_ctx = AfterToolCallContext {
+        tool_name: tc.name.clone(),
+        tool_call_id: tc.id.clone(),
+        args: serde_json::from_str(&tc.arguments).unwrap_or_default(),
+        is_error: output.is_error,
+    };
+    let after_result = agent.call_after_tool_call(&after_ctx).await;
+    let content = after_result.content.unwrap_or(output.content);
+    let is_error = after_result.is_error.unwrap_or(output.is_error);
+
+    emit.emit(AgentEvent::ToolExecutionEnd {
+        tool_call_id: tc.id.clone(),
+        tool_name: tc.name.clone(),
+        is_error,
+    })
+    .await;
+
+    ToolResultMessage {
+        tool_call_id: tc.id.clone(),
+        tool_name: tc.name.clone(),
+        content,
+        is_error,
+        timestamp: now_secs(),
+    }
+}
+
+/// Execute a single tool call against the registry.
+async fn run_tool(agent: &Agent, name: &str, args: serde_json::Value) -> ToolOutput {
+    match agent.tools().get(name) {
+        Some(tool) => tool.execute(args).await,
+        None => ToolOutput {
+            content: vec![Content::Text {
+                text: format!("Unknown tool: {name}"),
+            }],
+            is_error: true,
+        },
+    }
+}
+
 /// Execute tool calls — parallel or sequential based on config.
 async fn execute_tool_calls(
     agent: &Agent,
@@ -224,225 +359,38 @@ async fn execute_tool_calls(
     emit: &dyn AgentEventSink,
 ) -> Vec<ToolResultMessage> {
     let mut results = Vec::new();
-    let config = agent.config();
 
-    match config.tool_execution_mode {
+    match agent.config().tool_execution_mode {
         ToolExecutionMode::Parallel => {
-            // Phase 1: prepare (before hooks, emit start) — sequential
             let mut prepared = Vec::new();
             for tc in tool_calls {
-                let args: serde_json::Value = match serde_json::from_str(&tc.arguments) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        emit.emit(AgentEvent::ToolExecutionStart {
-                            tool_call_id: tc.id.clone(),
-                            tool_name: tc.name.clone(),
-                            args: serde_json::Value::Null,
-                        })
-                        .await;
-                        let tr = ToolResultMessage {
-                            tool_call_id: tc.id.clone(),
-                            tool_name: tc.name.clone(),
-                            content: vec![Content::Text {
-                                text: format!("Invalid tool call arguments: {e}"),
-                            }],
-                            is_error: true,
-                            timestamp: now_secs(),
-                        };
-                        emit.emit(AgentEvent::ToolExecutionEnd {
-                            tool_call_id: tc.id.clone(),
-                            tool_name: tc.name.clone(),
-                            is_error: true,
-                        })
-                        .await;
-                        results.push(tr);
-                        continue;
-                    }
-                };
-                emit.emit(AgentEvent::ToolExecutionStart {
-                    tool_call_id: tc.id.clone(),
-                    tool_name: tc.name.clone(),
-                    args: args.clone(),
-                })
-                .await;
-
-                let before_ctx = BeforeToolCallContext {
-                    tool_name: tc.name.clone(),
-                    tool_call_id: tc.id.clone(),
-                    args: args.clone(),
-                };
-                let before_result = agent.call_before_tool_call(&before_ctx).await;
-                if before_result.block {
-                    let reason = before_result
-                        .reason
-                        .unwrap_or_else(|| "blocked by hook".into());
-                    let tr = ToolResultMessage {
-                        tool_call_id: tc.id.clone(),
-                        tool_name: tc.name.clone(),
-                        content: vec![Content::Text { text: reason }],
-                        is_error: true,
-                        timestamp: now_secs(),
-                    };
-                    emit.emit(AgentEvent::ToolExecutionEnd {
-                        tool_call_id: tc.id.clone(),
-                        tool_name: tc.name.clone(),
-                        is_error: true,
-                    })
-                    .await;
-                    results.push(tr);
-                    continue;
+                match prepare_tool_call(agent, tc, emit).await {
+                    Ok(args) => prepared.push((tc, args)),
+                    Err(tr) => results.push(tr),
                 }
-                prepared.push((tc, args));
             }
 
-            // Phase 2: execute concurrently
             let futs: Vec<_> = prepared
                 .iter()
-                .map(|(tc, args)| {
-                    let registry = agent.tools();
-                    let name = tc.name.clone();
-                    let args = args.clone();
-                    async move {
-                        match registry.get(&name) {
-                            Some(tool) => tool.execute(args).await,
-                            None => ToolOutput {
-                                content: vec![Content::Text {
-                                    text: format!("Unknown tool: {name}"),
-                                }],
-                                is_error: true,
-                            },
-                        }
-                    }
-                })
+                .map(|(tc, args)| run_tool(agent, &tc.name, args.clone()))
                 .collect();
             let outputs: Vec<ToolOutput> = futures::future::join_all(futs).await;
 
-            // Phase 3: finalize in order
             for ((tc, _args), output) in prepared.into_iter().zip(outputs) {
-                let after_ctx = AfterToolCallContext {
-                    tool_name: tc.name.clone(),
-                    tool_call_id: tc.id.clone(),
-                    args: serde_json::from_str(&tc.arguments).unwrap_or_default(),
-                    is_error: output.is_error,
-                };
-                let after_result = agent.call_after_tool_call(&after_ctx).await;
-                let content = after_result.content.unwrap_or(output.content);
-                let is_error = after_result.is_error.unwrap_or(output.is_error);
-
-                emit.emit(AgentEvent::ToolExecutionEnd {
-                    tool_call_id: tc.id.clone(),
-                    tool_name: tc.name.clone(),
-                    is_error,
-                })
-                .await;
-
-                results.push(ToolResultMessage {
-                    tool_call_id: tc.id.clone(),
-                    tool_name: tc.name.clone(),
-                    content,
-                    is_error,
-                    timestamp: now_secs(),
-                });
+                results.push(finalize_tool_call(agent, tc, output, emit).await);
             }
         }
         ToolExecutionMode::Sequential => {
             for tc in tool_calls {
-                let args: serde_json::Value = match serde_json::from_str(&tc.arguments) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        emit.emit(AgentEvent::ToolExecutionStart {
-                            tool_call_id: tc.id.clone(),
-                            tool_name: tc.name.clone(),
-                            args: serde_json::Value::Null,
-                        })
-                        .await;
-                        let tr = ToolResultMessage {
-                            tool_call_id: tc.id.clone(),
-                            tool_name: tc.name.clone(),
-                            content: vec![Content::Text {
-                                text: format!("Invalid tool call arguments: {e}"),
-                            }],
-                            is_error: true,
-                            timestamp: now_secs(),
-                        };
-                        emit.emit(AgentEvent::ToolExecutionEnd {
-                            tool_call_id: tc.id.clone(),
-                            tool_name: tc.name.clone(),
-                            is_error: true,
-                        })
-                        .await;
+                let args = match prepare_tool_call(agent, tc, emit).await {
+                    Ok(args) => args,
+                    Err(tr) => {
                         results.push(tr);
                         continue;
                     }
                 };
-                emit.emit(AgentEvent::ToolExecutionStart {
-                    tool_call_id: tc.id.clone(),
-                    tool_name: tc.name.clone(),
-                    args: args.clone(),
-                })
-                .await;
-
-                let before_ctx = BeforeToolCallContext {
-                    tool_name: tc.name.clone(),
-                    tool_call_id: tc.id.clone(),
-                    args: args.clone(),
-                };
-                let before_result = agent.call_before_tool_call(&before_ctx).await;
-                if before_result.block {
-                    let reason = before_result
-                        .reason
-                        .unwrap_or_else(|| "blocked by hook".into());
-                    let tr = ToolResultMessage {
-                        tool_call_id: tc.id.clone(),
-                        tool_name: tc.name.clone(),
-                        content: vec![Content::Text { text: reason }],
-                        is_error: true,
-                        timestamp: now_secs(),
-                    };
-                    emit.emit(AgentEvent::ToolExecutionEnd {
-                        tool_call_id: tc.id.clone(),
-                        tool_name: tc.name.clone(),
-                        is_error: true,
-                    })
-                    .await;
-                    results.push(tr);
-                    continue;
-                }
-
-                let output = match agent.tools().get(&tc.name) {
-                    Some(tool) => tool.execute(args).await,
-                    None => ToolOutput {
-                        content: vec![Content::Text {
-                            text: format!("Unknown tool: {}", tc.name),
-                        }],
-                        is_error: true,
-                    },
-                };
-
-                let after_ctx = AfterToolCallContext {
-                    tool_name: tc.name.clone(),
-                    tool_call_id: tc.id.clone(),
-                    args: serde_json::from_str(&tc.arguments).unwrap_or_default(),
-                    is_error: output.is_error,
-                };
-                let after_result = agent.call_after_tool_call(&after_ctx).await;
-                let content = after_result.content.unwrap_or(output.content);
-                let is_error = after_result.is_error.unwrap_or(output.is_error);
-
-                emit.emit(AgentEvent::ToolExecutionEnd {
-                    tool_call_id: tc.id.clone(),
-                    tool_name: tc.name.clone(),
-                    is_error,
-                })
-                .await;
-
-                results.push(ToolResultMessage {
-                    tool_call_id: tc.id.clone(),
-                    tool_name: tc.name.clone(),
-                    content,
-                    is_error,
-                    timestamp: now_secs(),
-                });
+                let output = run_tool(agent, &tc.name, args).await;
+                results.push(finalize_tool_call(agent, tc, output, emit).await);
             }
         }
     }
@@ -502,7 +450,7 @@ pub async fn run_agent_loop(
             let tools = build_llm_tools(agent);
             let events = agent
                 .provider()
-                .stream(&agent.config().model, &context, &tools)
+                .complete(&agent.config().model, &context, &tools)
                 .await;
 
             // 3. Accumulate events into AssistantMessage
@@ -616,7 +564,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for StatefulProvider {
-        async fn stream(
+        async fn complete(
             &self,
             _model: &Model,
             _context: &LlmContext,
@@ -652,7 +600,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for ContextCapturingProvider {
-        async fn stream(
+        async fn complete(
             &self,
             _model: &Model,
             context: &LlmContext,
@@ -688,7 +636,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for ToolCapturingProvider {
-        async fn stream(
+        async fn complete(
             &self,
             _model: &Model,
             _context: &LlmContext,
@@ -836,30 +784,7 @@ mod tests {
     // Helper constructors
     // ---------------------------------------------------------------
 
-    fn test_model() -> Model {
-        Model {
-            id: "test-model".into(),
-            provider: "test".into(),
-            base_url: "http://localhost".into(),
-            api_key_env: "TEST_KEY".into(),
-            max_tokens: 4096,
-            context_window: 8192,
-            cost: ModelCost {
-                input_per_million: 0.0,
-                output_per_million: 0.0,
-                cache_read_per_million: 0.0,
-                cache_write_per_million: 0.0,
-            },
-            compat: ProviderCompat {
-                max_tokens_field: MaxTokensField::MaxTokens,
-                supports_reasoning_effort: false,
-                thinking_format: None,
-                requires_tool_result_name: false,
-                requires_assistant_after_tool_result: false,
-                supports_strict_mode: false,
-            },
-        }
-    }
+    use crate::test_helpers::test_model;
 
     fn test_config() -> AgentLoopConfig {
         AgentLoopConfig {
@@ -867,6 +792,7 @@ mod tests {
             system_prompt: "You are a test agent.".into(),
             max_turns: 10,
             tool_execution_mode: ToolExecutionMode::Parallel,
+            tool_policy: None,
         }
     }
 
@@ -1161,6 +1087,7 @@ mod tests {
             system_prompt: "test".into(),
             max_turns: 2,
             tool_execution_mode: ToolExecutionMode::Parallel,
+            tool_policy: None,
         };
         // LLM keeps requesting tools forever (3 calls, but max_turns=2)
         let mut agent = make_agent_with_config(
@@ -1387,6 +1314,7 @@ mod tests {
             system_prompt: "test".into(),
             max_turns: 10,
             tool_execution_mode: ToolExecutionMode::Parallel,
+            tool_policy: None,
         };
         let (tool_a, count_a) = CountingTool::new("tool_a");
         let (tool_b, count_b) = CountingTool::new("tool_b");
@@ -1421,6 +1349,7 @@ mod tests {
             system_prompt: "test".into(),
             max_turns: 10,
             tool_execution_mode: ToolExecutionMode::Sequential,
+            tool_policy: None,
         };
         let (tool_a, count_a) = CountingTool::new("tool_a");
         let (tool_b, count_b) = CountingTool::new("tool_b");
@@ -2035,6 +1964,7 @@ mod tests {
             system_prompt: "test".into(),
             max_turns: 0,
             tool_execution_mode: ToolExecutionMode::Parallel,
+            tool_policy: None,
         };
         let mut agent = make_agent_with_config(
             config,
@@ -2067,6 +1997,7 @@ mod tests {
             system_prompt: "test".into(),
             max_turns: 1,
             tool_execution_mode: ToolExecutionMode::Parallel,
+            tool_policy: None,
         };
         // LLM calls a tool, which would need a second call — but max_turns=1
         let mut agent = make_agent_with_config(
@@ -2103,6 +2034,7 @@ mod tests {
             system_prompt: "".into(),
             max_turns: 10,
             tool_execution_mode: ToolExecutionMode::Parallel,
+            tool_policy: None,
         };
         let provider = ContextCapturingProvider::new(vec![text_response("Hi")]);
         let captured = std::sync::Arc::clone(&provider.captured);
@@ -2534,6 +2466,7 @@ mod tests {
             system_prompt: "test".into(),
             max_turns: 10,
             tool_execution_mode: ToolExecutionMode::Sequential,
+            tool_policy: None,
         };
 
         let counter = std::sync::Arc::new(AtomicUsize::new(0));
