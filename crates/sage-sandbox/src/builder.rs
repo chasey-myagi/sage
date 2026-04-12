@@ -21,6 +21,12 @@ pub struct SandboxBuilder {
     runtime_binary_path: PathBuf,
 }
 
+/// A volume mount mapping a host directory to a guest mount point.
+///
+/// Serialized as JSON and passed to the sandbox-runtime process via the
+/// `SANDBOX_VOLUMES` environment variable.  The runtime adds each entry
+/// as a virtiofs share; the guest agent mounts the corresponding tag.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VolumeMount {
     pub host_path: String,
     pub guest_path: String,
@@ -109,6 +115,10 @@ impl SandboxBuilder {
         // 2. Spawn runtime process
         //    stdin/stdout are piped — the runtime maps them to virtio-console
         //    The guest agent reads/writes /dev/vport0p0 which connects to these pipes
+        // Serialize volumes as JSON for the runtime process
+        let volumes_json = serde_json::to_string(&self.volumes)
+            .map_err(|e| SandboxError::VmCreate(format!("serialize volumes: {e}")))?;
+
         let mut child = tokio::process::Command::new(&self.runtime_binary_path)
             .env("SANDBOX_ROOTFS", rootfs_path.to_str().unwrap_or_default())
             .env(
@@ -117,6 +127,7 @@ impl SandboxBuilder {
             )
             .env("SANDBOX_VCPUS", self.cpus.to_string())
             .env("SANDBOX_MEMORY_MIB", self.memory_mib.to_string())
+            .env("SANDBOX_VOLUMES", &volumes_json)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
@@ -193,6 +204,27 @@ impl SandboxBuilder {
             tracing::warn!("busybox not found — sandbox shell commands may not work");
         }
 
+        // Create mount point directories for volumes (with path traversal check)
+        for vol in &self.volumes {
+            let mount_point = rootfs.join(vol.guest_path.trim_start_matches('/'));
+            tokio::fs::create_dir_all(&mount_point).await.map_err(|e| {
+                SandboxError::VmCreate(format!("mkdir volume mount point {}: {e}", vol.guest_path))
+            })?;
+            // Verify mount point doesn't escape rootfs (e.g. via "../")
+            let canonical = tokio::fs::canonicalize(&mount_point).await.map_err(|e| {
+                SandboxError::VmCreate(format!("canonicalize mount point {}: {e}", vol.guest_path))
+            })?;
+            let rootfs_canonical = tokio::fs::canonicalize(&rootfs)
+                .await
+                .map_err(|e| SandboxError::VmCreate(format!("canonicalize rootfs: {e}")))?;
+            if !canonical.starts_with(&rootfs_canonical) {
+                return Err(SandboxError::VmCreate(format!(
+                    "volume guest_path '{}' escapes rootfs (resolved to {:?})",
+                    vol.guest_path, canonical
+                )));
+            }
+        }
+
         Ok(rootfs)
     }
 }
@@ -241,4 +273,127 @@ fn find_busybox() -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── VolumeMount serialization ──────────────────────────────────
+
+    #[test]
+    fn volume_mount_serializes_to_json() {
+        let vol = VolumeMount {
+            host_path: "/host/workspace".into(),
+            guest_path: "/workspace".into(),
+            read_only: false,
+        };
+        let json = serde_json::to_string(&vol).unwrap();
+        assert!(json.contains("host_path"));
+        assert!(json.contains("/host/workspace"));
+        assert!(json.contains("read_only"));
+    }
+
+    #[test]
+    fn volume_mount_roundtrip() {
+        let original = VolumeMount {
+            host_path: "/data/input".into(),
+            guest_path: "/mnt/input".into(),
+            read_only: true,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: VolumeMount = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.host_path, original.host_path);
+        assert_eq!(decoded.guest_path, original.guest_path);
+        assert_eq!(decoded.read_only, original.read_only);
+    }
+
+    #[test]
+    fn volume_mount_vec_roundtrip() {
+        let volumes = vec![
+            VolumeMount {
+                host_path: "/host/a".into(),
+                guest_path: "/a".into(),
+                read_only: false,
+            },
+            VolumeMount {
+                host_path: "/host/b".into(),
+                guest_path: "/b".into(),
+                read_only: true,
+            },
+        ];
+        let json = serde_json::to_string(&volumes).unwrap();
+        let decoded: Vec<VolumeMount> = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].host_path, "/host/a");
+        assert_eq!(decoded[1].read_only, true);
+    }
+
+    #[test]
+    fn empty_volumes_serialize_to_empty_array() {
+        let volumes: Vec<VolumeMount> = vec![];
+        let json = serde_json::to_string(&volumes).unwrap();
+        assert_eq!(json, "[]");
+    }
+
+    // ── SandboxBuilder configuration ───────────────────────────────
+
+    #[test]
+    fn builder_default_has_empty_volumes() {
+        let builder = SandboxBuilder::new("test");
+        assert!(builder.volumes.is_empty());
+    }
+
+    #[test]
+    fn builder_mount_adds_volume() {
+        let builder = SandboxBuilder::new("test").mount("/host/ws", "/workspace", false);
+        assert_eq!(builder.volumes.len(), 1);
+        assert_eq!(builder.volumes[0].host_path, "/host/ws");
+        assert_eq!(builder.volumes[0].guest_path, "/workspace");
+        assert!(!builder.volumes[0].read_only);
+    }
+
+    #[test]
+    fn builder_multiple_mounts() {
+        let builder = SandboxBuilder::new("test")
+            .mount("/host/a", "/a", false)
+            .mount("/host/b", "/b", true);
+        assert_eq!(builder.volumes.len(), 2);
+    }
+
+    #[test]
+    fn builder_mount_read_only() {
+        let builder = SandboxBuilder::new("test").mount("/host/data", "/data", true);
+        assert!(builder.volumes[0].read_only);
+    }
+
+    // ── prepare_rootfs creates volume mount points ─────────────────
+
+    #[tokio::test]
+    async fn prepare_rootfs_creates_volume_mount_dirs() {
+        let builder = SandboxBuilder::new("test-vol")
+            .mount("/host/ws", "/workspace", false)
+            .mount("/host/data", "/data/input", true);
+
+        let rootfs = builder.prepare_rootfs().await.unwrap();
+
+        // Verify mount point directories were created
+        assert!(rootfs.join("workspace").is_dir());
+        assert!(rootfs.join("data/input").is_dir());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&rootfs);
+    }
+
+    #[tokio::test]
+    async fn prepare_rootfs_without_volumes_succeeds() {
+        let builder = SandboxBuilder::new("test-novol");
+        let rootfs = builder.prepare_rootfs().await.unwrap();
+
+        assert!(rootfs.join("bin").is_dir());
+        assert!(rootfs.join("proc").is_dir());
+        assert!(rootfs.join("tmp").is_dir());
+
+        let _ = std::fs::remove_dir_all(&rootfs);
+    }
 }
