@@ -354,7 +354,7 @@ fn detect_compat(model: &Model) -> ProviderCompat {
     let is_non_standard = is_zai
         || is_deepseek
         || is_xai
-        || provider == "cerebras"
+        || provider == provider::CEREBRAS
         || base_url.contains("cerebras.ai")
         || base_url.contains("chutes.ai")
         || provider == "opencode"
