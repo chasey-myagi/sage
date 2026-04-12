@@ -133,7 +133,11 @@ sage run --config configs/coding-assistant.yaml \
 
 **基础设施：**
 
-- [ ] openai_compat.rs 通用 OpenAI 兼容 provider 对齐 pi-mono
+- [x] openai_compat.rs 通用 OpenAI 兼容 provider 对齐 pi-mono
+  - ThinkingBlock roundtrip via signature-based dynamic field name
+  - tool_name support (requiresToolResultName), hasToolHistory fallback
+  - strict=false on tool defs, skip empty assistant, finish_reason mapping
+  - 12 new tests, code review 8.83/10 (debea21)
 - [ ] 模型自动发现（`/v1/models` 端点探测）
 - [x] redacted_thinking 往返（LlmMessage 增加 thinking variant）
   - ThinkingBlock struct + thinking_blocks field on LlmMessage::Assistant
