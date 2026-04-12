@@ -1,6 +1,10 @@
-// WriteTool — file writing via sandbox.
+// WriteTool — file writing via backend.
+
+use std::sync::Arc;
 
 use crate::types::Content;
+
+use super::backend::ToolBackend;
 
 fn error_output(msg: &str) -> super::ToolOutput {
     super::ToolOutput {
@@ -11,7 +15,7 @@ fn error_output(msg: &str) -> super::ToolOutput {
     }
 }
 
-pub struct WriteTool;
+pub struct WriteTool(pub Arc<dyn ToolBackend>);
 
 #[async_trait::async_trait]
 impl super::AgentTool for WriteTool {
@@ -46,7 +50,7 @@ impl super::AgentTool for WriteTool {
             None => return error_output("missing required parameter: content"),
         };
 
-        match tokio::fs::write(&file_path, &content).await {
+        match self.0.write_file(&file_path, content.as_bytes()).await {
             Ok(()) => super::ToolOutput {
                 content: vec![Content::Text {
                     text: format!(
@@ -66,7 +70,12 @@ impl super::AgentTool for WriteTool {
 mod tests {
     use super::*;
     use crate::tools::AgentTool;
+    use crate::tools::backend::LocalBackend;
     use serde_json::json;
+
+    fn write_tool() -> WriteTool {
+        WriteTool(LocalBackend::new())
+    }
 
     // ---------------------------------------------------------------
     // Metadata
@@ -74,13 +83,13 @@ mod tests {
 
     #[test]
     fn test_name() {
-        let tool = WriteTool;
+        let tool = write_tool();
         assert_eq!(tool.name(), "write");
     }
 
     #[test]
     fn test_description_not_empty() {
-        let tool = WriteTool;
+        let tool = write_tool();
         assert!(!tool.description().is_empty());
     }
 
@@ -90,7 +99,7 @@ mod tests {
 
     #[test]
     fn test_schema_has_file_path_and_content() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         assert!(props.get("file_path").is_some());
@@ -99,7 +108,7 @@ mod tests {
 
     #[test]
     fn test_schema_both_fields_required() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let schema = tool.parameters_schema();
         let required = schema.get("required").unwrap().as_array().unwrap();
         assert!(required.iter().any(|v| v.as_str() == Some("file_path")));
@@ -112,21 +121,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_file_path_returns_error() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let output = tool.execute(json!({"content": "hello"})).await;
         assert!(output.is_error);
     }
 
     #[tokio::test]
     async fn test_missing_content_returns_error() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let output = tool.execute(json!({"file_path": "/tmp/test.txt"})).await;
         assert!(output.is_error);
     }
 
     #[tokio::test]
     async fn test_empty_args_returns_error() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let output = tool.execute(json!({})).await;
         assert!(output.is_error);
     }
@@ -137,7 +146,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_file_path_returns_error() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let output = tool
             .execute(json!({"file_path": "", "content": "hello"}))
             .await;
@@ -150,7 +159,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_content_is_valid_argument() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let output = tool
             .execute(json!({"file_path": "/tmp/test_empty.txt", "content": ""}))
             .await;
@@ -177,7 +186,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_nonexistent_parent_dir_returns_error() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let output = tool
             .execute(json!({
                 "file_path": "/nonexistent_parent_dir_12345/subdir/file.txt",
@@ -196,7 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unicode_file_path() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let output = tool
             .execute(json!({
                 "file_path": "/tmp/测试文件.txt",
@@ -212,7 +221,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_success_path() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let test_path = "/tmp/sage_write_test.txt";
         let test_content = "hello from write test\nsecond line\n";
         let output = tool
@@ -232,7 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_overwrites_existing_file() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let test_path = "/tmp/sage_overwrite_test.txt";
         // Write initial content
         std::fs::write(test_path, "old content").expect("setup write");
@@ -255,7 +264,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_unicode_content_roundtrip() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let test_path =
             std::env::temp_dir().join(format!("sage_write_unicode_{}", std::process::id()));
         let path_str = test_path.to_str().unwrap();
@@ -284,7 +293,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_large_content() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let test_path =
             std::env::temp_dir().join(format!("sage_write_large_{}", std::process::id()));
         let path_str = test_path.to_str().unwrap();
@@ -310,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_success_output_message() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let test_path = std::env::temp_dir().join(format!("sage_write_msg_{}", std::process::id()));
         let path_str = test_path.to_str().unwrap();
 
@@ -341,7 +350,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_success_message_byte_count() {
-        let tool = WriteTool;
+        let tool = write_tool();
         let test_path =
             std::env::temp_dir().join(format!("sage_write_bytecount_{}", std::process::id()));
         let path_str = test_path.to_str().unwrap();

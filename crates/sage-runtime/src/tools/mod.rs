@@ -1,6 +1,7 @@
 // Tools module — Phase 3
 // AgentTool trait, ToolRegistry, parallel/sequential execution.
 
+pub mod backend;
 pub mod bash;
 pub mod edit;
 pub mod find;
@@ -60,16 +61,19 @@ impl ToolRegistry {
     }
 }
 
-/// Factory function: create a tool by name.
-pub fn create_tool(name: &str) -> Option<Box<dyn AgentTool>> {
+/// Factory function: create a tool by name, using the given backend for I/O.
+pub fn create_tool(
+    name: &str,
+    backend: std::sync::Arc<dyn backend::ToolBackend>,
+) -> Option<Box<dyn AgentTool>> {
     match name {
-        "bash" => Some(Box::new(bash::BashTool)),
-        "read" => Some(Box::new(read::ReadTool)),
-        "write" => Some(Box::new(write::WriteTool)),
-        "edit" => Some(Box::new(edit::EditTool)),
-        "grep" => Some(Box::new(grep::GrepTool)),
-        "find" => Some(Box::new(find::FindTool)),
-        "ls" => Some(Box::new(ls::LsTool)),
+        "bash" => Some(Box::new(bash::BashTool(backend))),
+        "read" => Some(Box::new(read::ReadTool(backend))),
+        "write" => Some(Box::new(write::WriteTool(backend))),
+        "edit" => Some(Box::new(edit::EditTool(backend))),
+        "grep" => Some(Box::new(grep::GrepTool(backend))),
+        "find" => Some(Box::new(find::FindTool(backend))),
+        "ls" => Some(Box::new(ls::LsTool(backend))),
         _ => None,
     }
 }
@@ -123,6 +127,7 @@ pub async fn execute_sequential(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::backend::LocalBackend;
     use crate::types::Content;
     use serde_json::json;
 
@@ -612,8 +617,9 @@ mod tests {
     #[tokio::test]
     async fn test_registry_real_tools_write_then_read() {
         let mut registry = ToolRegistry::new();
-        registry.register(Box::new(super::read::ReadTool));
-        registry.register(Box::new(super::write::WriteTool));
+        let backend = LocalBackend::new();
+        registry.register(Box::new(super::read::ReadTool(backend.clone())));
+        registry.register(Box::new(super::write::WriteTool(backend)));
 
         // Create a unique temp file path
         let dir = std::env::temp_dir();
@@ -677,9 +683,10 @@ mod tests {
     fn test_registry_all_seven_real_tools() {
         let mut registry = ToolRegistry::new();
         let tool_names = ["bash", "read", "write", "edit", "grep", "find", "ls"];
+        let backend = LocalBackend::new();
         for name in &tool_names {
-            let tool =
-                super::create_tool(name).expect(&format!("create_tool({}) should succeed", name));
+            let tool = super::create_tool(name, backend.clone())
+                .expect(&format!("create_tool({}) should succeed", name));
             registry.register(tool);
         }
 
@@ -701,7 +708,7 @@ mod tests {
 
     #[test]
     fn test_create_tool_unknown_returns_none() {
-        assert!(super::create_tool("nonexistent_tool_xyz").is_none());
+        assert!(super::create_tool("nonexistent_tool_xyz", LocalBackend::new()).is_none());
     }
 
     // ---------------------------------------------------------------
@@ -711,9 +718,10 @@ mod tests {
     #[tokio::test]
     async fn test_sequential_write_edit_read_workflow() {
         let mut registry = ToolRegistry::new();
-        registry.register(Box::new(super::write::WriteTool));
-        registry.register(Box::new(super::edit::EditTool));
-        registry.register(Box::new(super::read::ReadTool));
+        let backend = LocalBackend::new();
+        registry.register(Box::new(super::write::WriteTool(backend.clone())));
+        registry.register(Box::new(super::edit::EditTool(backend.clone())));
+        registry.register(Box::new(super::read::ReadTool(backend)));
 
         let dir = std::env::temp_dir();
         let file_path = dir.join(format!("sage_seq_workflow_{}", std::process::id()));
@@ -767,8 +775,9 @@ mod tests {
     #[tokio::test]
     async fn test_find_then_read_pipeline() {
         let mut registry = ToolRegistry::new();
-        registry.register(Box::new(super::find::FindTool));
-        registry.register(Box::new(super::read::ReadTool));
+        let backend = LocalBackend::new();
+        registry.register(Box::new(super::find::FindTool(backend.clone())));
+        registry.register(Box::new(super::read::ReadTool(backend)));
 
         let dir = std::env::temp_dir().join(format!("sage_find_read_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

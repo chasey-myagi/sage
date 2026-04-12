@@ -1,6 +1,10 @@
 // ReadTool — file reading with line numbers (cat -n format).
 
+use std::sync::Arc;
+
 use crate::types::Content;
+
+use super::backend::ToolBackend;
 
 /// Format content with line numbers in cat -n format (6-char wide, right-aligned).
 pub fn add_line_numbers(content: &str, start_line: usize) -> String {
@@ -27,7 +31,7 @@ fn error_output(msg: &str) -> super::ToolOutput {
     }
 }
 
-pub struct ReadTool;
+pub struct ReadTool(pub Arc<dyn ToolBackend>);
 
 #[async_trait::async_trait]
 impl super::AgentTool for ReadTool {
@@ -69,8 +73,9 @@ impl super::AgentTool for ReadTool {
             }
         }
 
-        match tokio::fs::read_to_string(file_path).await {
-            Ok(content) => {
+        match self.0.read_file(file_path).await {
+            Ok(bytes) => {
+                let content = String::from_utf8_lossy(&bytes).into_owned();
                 let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(2000) as usize;
 
@@ -94,7 +99,12 @@ impl super::AgentTool for ReadTool {
 mod tests {
     use super::*;
     use crate::tools::AgentTool;
+    use crate::tools::backend::LocalBackend;
     use serde_json::json;
+
+    fn read_tool() -> ReadTool {
+        ReadTool(LocalBackend::new())
+    }
 
     // ---------------------------------------------------------------
     // add_line_numbers
@@ -163,13 +173,13 @@ mod tests {
 
     #[test]
     fn test_name() {
-        let tool = ReadTool;
+        let tool = read_tool();
         assert_eq!(tool.name(), "read");
     }
 
     #[test]
     fn test_description_not_empty() {
-        let tool = ReadTool;
+        let tool = read_tool();
         assert!(!tool.description().is_empty());
     }
 
@@ -179,7 +189,7 @@ mod tests {
 
     #[test]
     fn test_schema_has_file_path() {
-        let tool = ReadTool;
+        let tool = read_tool();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         assert!(props.get("file_path").is_some());
@@ -187,7 +197,7 @@ mod tests {
 
     #[test]
     fn test_schema_file_path_required() {
-        let tool = ReadTool;
+        let tool = read_tool();
         let schema = tool.parameters_schema();
         let required = schema.get("required").unwrap().as_array().unwrap();
         assert!(required.iter().any(|v| v.as_str() == Some("file_path")));
@@ -195,7 +205,7 @@ mod tests {
 
     #[test]
     fn test_schema_has_optional_offset_and_limit() {
-        let tool = ReadTool;
+        let tool = read_tool();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         assert!(props.get("offset").is_some());
@@ -212,7 +222,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_file_path_returns_error() {
-        let tool = ReadTool;
+        let tool = read_tool();
         let output = tool.execute(json!({})).await;
         assert!(output.is_error);
     }
@@ -255,7 +265,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_nonexistent_file_returns_error() {
-        let tool = ReadTool;
+        let tool = read_tool();
         let output = tool
             .execute(json!({"file_path": "/nonexistent_path_12345/no_such_file.txt"}))
             .await;
@@ -274,7 +284,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_file_path_returns_error() {
-        let tool = ReadTool;
+        let tool = read_tool();
         let output = tool.execute(json!({"file_path": ""})).await;
         assert!(output.is_error, "empty file_path should return error");
     }
@@ -285,7 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_negative_offset_returns_error() {
-        let tool = ReadTool;
+        let tool = read_tool();
         let output = tool
             .execute(json!({"file_path": "/tmp/test.txt", "offset": -1}))
             .await;
@@ -295,7 +305,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_negative_limit_returns_error() {
-        let tool = ReadTool;
+        let tool = read_tool();
         let output = tool
             .execute(json!({"file_path": "/tmp/test.txt", "limit": -1}))
             .await;
@@ -309,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_real_file_success() {
-        let tool = ReadTool;
+        let tool = read_tool();
         let file_path = std::env::temp_dir().join(format!("sage_read_test_{}", std::process::id()));
         std::fs::write(&file_path, "first line\nsecond line\nthird line\n").expect("setup write");
 
@@ -341,7 +351,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_offset_and_limit_trim() {
-        let tool = ReadTool;
+        let tool = read_tool();
         let file_path =
             std::env::temp_dir().join(format!("sage_read_offset_test_{}", std::process::id()));
         // Create a 6-line file
@@ -419,7 +429,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_empty_file() {
-        let tool = ReadTool;
+        let tool = read_tool();
         let file_path =
             std::env::temp_dir().join(format!("sage_read_empty_{}", std::process::id()));
         std::fs::write(&file_path, "").expect("setup empty file");
@@ -441,7 +451,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_offset_exceeds_file_length() {
-        let tool = ReadTool;
+        let tool = read_tool();
         let file_path =
             std::env::temp_dir().join(format!("sage_read_offset_exceed_{}", std::process::id()));
         std::fs::write(&file_path, "line1\nline2\nline3\n").expect("setup file");
