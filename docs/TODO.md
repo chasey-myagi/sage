@@ -124,7 +124,7 @@ sage run --config configs/coding-assistant.yaml \
 **Tier 2（独立 Provider 或通过 OpenAI Compat）：**
 
 - [x] Groq（15 models, detect_compat handles compat dynamically）
-- [ ] Mistral
+- [x] Mistral
 - [x] xAI (Grok)（24 models, detect_compat handles compat dynamically）
 - [x] DeepSeek — pi-mono 无独立 provider，模型通过 OpenRouter/Groq/Bedrock 提供
 - [x] Ollama / LM Studio / vLLM — 通过 OpenAI compat + discover_models() 支持，无需 catalog 条目
