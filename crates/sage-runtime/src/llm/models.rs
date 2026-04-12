@@ -598,6 +598,130 @@ pub fn list_providers() -> Vec<&'static str> {
     ]
 }
 
+// ============================================================================
+// Model auto-discovery — /v1/models endpoint probe
+// ============================================================================
+
+/// A model discovered from a remote `/v1/models` endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DiscoveredModel {
+    pub id: String,
+    #[serde(default)]
+    pub owned_by: String,
+    #[serde(default)]
+    pub created: i64,
+}
+
+/// Errors from model discovery.
+#[derive(Debug, thiserror::Error)]
+pub enum DiscoveryError {
+    #[error("HTTP request failed: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("API returned error {status}: {body}")]
+    ApiError { status: u16, body: String },
+    #[error("failed to parse response: {0}")]
+    Parse(String),
+}
+
+/// Query an OpenAI-compatible `/v1/models` endpoint and return available models.
+///
+/// `base_url` should be the API root (e.g., `http://localhost:11434/v1` for Ollama,
+/// or `https://api.openai.com/v1`). The function appends `/models` automatically.
+///
+/// If `api_key` is `None`, the request is sent without an Authorization header
+/// (common for local inference servers).
+pub async fn discover_models(
+    base_url: &str,
+    api_key: Option<&str>,
+) -> Result<Vec<DiscoveredModel>, DiscoveryError> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()?;
+    discover_models_with_client(&client, base_url, api_key).await
+}
+
+/// Like [`discover_models`], but uses a caller-supplied HTTP client.
+///
+/// Useful when you need to control proxy settings, timeouts, or connection pooling.
+pub async fn discover_models_with_client(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: Option<&str>,
+) -> Result<Vec<DiscoveredModel>, DiscoveryError> {
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+
+    let mut req = client.get(&url);
+    if let Some(key) = api_key {
+        req = req.header("Authorization", format!("Bearer {key}"));
+    }
+
+    let response = req.send().await?;
+
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        return Err(DiscoveryError::ApiError { status, body });
+    }
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| DiscoveryError::Parse(e.to_string()))?;
+
+    let data = body
+        .get("data")
+        .and_then(|d| d.as_array())
+        .ok_or_else(|| DiscoveryError::Parse("missing 'data' array in response".into()))?;
+
+    let models: Vec<DiscoveredModel> = data
+        .iter()
+        .filter_map(|v| {
+            serde_json::from_value::<DiscoveredModel>(v.clone())
+                .map_err(|e| tracing::debug!("skipping malformed model entry: {e}"))
+                .ok()
+        })
+        .collect();
+
+    Ok(models)
+}
+
+/// Construct a usable `Model` from a `DiscoveredModel` with conservative defaults.
+///
+/// This creates a Model configured for the `openai-completions` API type, which works
+/// with any OpenAI-compatible endpoint.
+///
+/// **Important**: `max_tokens` (4096) and `context_window` (8192) are conservative
+/// estimates. Callers should override these based on the actual model's capabilities.
+/// Some endpoints (vLLM: `max_model_len`, LM Studio: `context_length`) return this
+/// info in the `/v1/models` response — future versions may extract it automatically.
+pub fn construct_model_from_discovered(
+    discovered: &DiscoveredModel,
+    provider_name: &str,
+    base_url: &str,
+    api_key_env: &str,
+) -> Model {
+    Model {
+        id: discovered.id.clone(),
+        name: discovered.id.clone(),
+        api: api::OPENAI_COMPLETIONS.into(),
+        provider: provider_name.into(),
+        base_url: base_url.into(),
+        api_key_env: api_key_env.into(),
+        reasoning: false,
+        input: vec![InputType::Text],
+        max_tokens: 4096,
+        context_window: 8192,
+        cost: ModelCost {
+            input_per_million: 0.0,
+            output_per_million: 0.0,
+            cache_read_per_million: 0.0,
+            cache_write_per_million: 0.0,
+        },
+        headers: vec![],
+        compat: default_compat(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1000,5 +1124,313 @@ mod tests {
         assert_eq!(model.id, "gemini-2.0-flash");
         assert!(!model.reasoning);
         assert_eq!(model.max_tokens, 8192);
+    }
+
+    // ========================================================================
+    // DiscoveredModel — serde
+    // ========================================================================
+
+    #[test]
+    fn test_discovered_model_deserialize_full() {
+        let json = r#"{"id": "llama3.2:latest", "owned_by": "library", "created": 1700000000}"#;
+        let m: DiscoveredModel = serde_json::from_str(json).unwrap();
+        assert_eq!(m.id, "llama3.2:latest");
+        assert_eq!(m.owned_by, "library");
+        assert_eq!(m.created, 1700000000);
+    }
+
+    #[test]
+    fn test_discovered_model_deserialize_minimal() {
+        // Some endpoints only return id
+        let json = r#"{"id": "qwen2.5-coder:7b"}"#;
+        let m: DiscoveredModel = serde_json::from_str(json).unwrap();
+        assert_eq!(m.id, "qwen2.5-coder:7b");
+        assert_eq!(m.owned_by, ""); // default
+        assert_eq!(m.created, 0); // default
+    }
+
+    #[test]
+    fn test_discovered_model_deserialize_extra_fields_ignored() {
+        let json = r#"{"id": "model-x", "owned_by": "me", "created": 0, "object": "model", "permission": []}"#;
+        let m: DiscoveredModel = serde_json::from_str(json).unwrap();
+        assert_eq!(m.id, "model-x");
+    }
+
+    #[test]
+    fn test_discovered_model_serialize_roundtrip() {
+        let m = DiscoveredModel {
+            id: "gpt-4o".into(),
+            owned_by: "openai".into(),
+            created: 1700000000,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let back: DiscoveredModel = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, "gpt-4o");
+        assert_eq!(back.owned_by, "openai");
+    }
+
+    // ========================================================================
+    // construct_model_from_discovered
+    // ========================================================================
+
+    #[test]
+    fn test_construct_model_uses_discovered_id() {
+        let d = DiscoveredModel {
+            id: "llama3.2:latest".into(),
+            owned_by: "library".into(),
+            created: 0,
+        };
+        let model = construct_model_from_discovered(&d, "ollama", "http://localhost:11434/v1", "OLLAMA_API_KEY");
+        assert_eq!(model.id, "llama3.2:latest");
+        assert_eq!(model.name, "llama3.2:latest");
+        assert_eq!(model.provider, "ollama");
+        assert_eq!(model.base_url, "http://localhost:11434/v1");
+        assert_eq!(model.api_key_env, "OLLAMA_API_KEY");
+    }
+
+    #[test]
+    fn test_construct_model_defaults_to_openai_completions_api() {
+        let d = DiscoveredModel {
+            id: "some-model".into(),
+            owned_by: String::new(),
+            created: 0,
+        };
+        let model = construct_model_from_discovered(&d, "local", "http://localhost:8080/v1", "");
+        assert_eq!(model.api, api::OPENAI_COMPLETIONS);
+    }
+
+    #[test]
+    fn test_construct_model_has_sensible_defaults() {
+        let d = DiscoveredModel {
+            id: "test".into(),
+            owned_by: String::new(),
+            created: 0,
+        };
+        let model = construct_model_from_discovered(&d, "test", "http://localhost/v1", "");
+        assert_eq!(model.max_tokens, 4096);
+        assert_eq!(model.context_window, 8192);
+        assert!(!model.reasoning);
+        assert!(model.input.contains(&InputType::Text));
+        assert_eq!(model.cost.input_per_million, 0.0);
+    }
+
+    #[test]
+    fn test_construct_model_has_compat() {
+        let d = DiscoveredModel {
+            id: "test".into(),
+            owned_by: String::new(),
+            created: 0,
+        };
+        let model = construct_model_from_discovered(&d, "test", "http://localhost/v1", "");
+        // Should have default OpenAI compat flags
+        assert!(model.compat.is_some());
+    }
+
+    // ========================================================================
+    // discover_models — mock server tests
+    // ========================================================================
+
+    /// Create a reqwest client that bypasses system proxy (needed for mockito tests
+    /// on machines with system-level HTTP proxy configured).
+    fn no_proxy_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_discover_models_parses_openai_format() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/models")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "object": "list",
+                "data": [
+                    {"id": "llama3.2:latest", "object": "model", "owned_by": "library", "created": 1700000000},
+                    {"id": "qwen2.5-coder:7b", "object": "model", "owned_by": "library", "created": 1700000001}
+                ]
+            }"#)
+            .create_async()
+            .await;
+
+        let client = no_proxy_client();
+        let models = discover_models_with_client(&client, &server.url(), None)
+            .await
+            .unwrap();
+        mock.assert_async().await;
+
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "llama3.2:latest");
+        assert_eq!(models[1].id, "qwen2.5-coder:7b");
+        assert_eq!(models[0].owned_by, "library");
+    }
+
+    #[tokio::test]
+    async fn test_discover_models_with_api_key() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/models")
+            .match_header("Authorization", "Bearer test-key-123")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data": [{"id": "gpt-4o"}]}"#)
+            .create_async()
+            .await;
+
+        let client = no_proxy_client();
+        let models = discover_models_with_client(&client, &server.url(), Some("test-key-123"))
+            .await
+            .unwrap();
+        mock.assert_async().await;
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "gpt-4o");
+    }
+
+    #[tokio::test]
+    async fn test_discover_models_no_auth_header_when_key_is_none() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/models")
+            .match_header("Authorization", mockito::Matcher::Missing)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data": []}"#)
+            .create_async()
+            .await;
+
+        let client = no_proxy_client();
+        let models = discover_models_with_client(&client, &server.url(), None)
+            .await
+            .unwrap();
+        mock.assert_async().await;
+
+        assert!(models.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_discover_models_api_error_401() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/models")
+            .with_status(401)
+            .with_body(r#"{"error": "unauthorized"}"#)
+            .create_async()
+            .await;
+
+        let client = no_proxy_client();
+        let result = discover_models_with_client(&client, &server.url(), None).await;
+        mock.assert_async().await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            DiscoveryError::ApiError { status, body } => {
+                assert_eq!(status, 401);
+                assert!(body.contains("unauthorized"));
+            }
+            other => panic!("expected ApiError, got: {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_discover_models_missing_data_field() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/models")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"models": ["a", "b"]}"#)
+            .create_async()
+            .await;
+
+        let client = no_proxy_client();
+        let result = discover_models_with_client(&client, &server.url(), None).await;
+        mock.assert_async().await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DiscoveryError::Parse(msg) => assert!(msg.contains("data")),
+            other => panic!("expected Parse error, got: {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_discover_models_connection_refused() {
+        let client = no_proxy_client();
+        let result = discover_models_with_client(&client, "http://127.0.0.1:1", None).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), DiscoveryError::Http(_)));
+    }
+
+    #[tokio::test]
+    async fn test_discover_models_trailing_slash_in_base_url() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/models")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data": [{"id": "model-a"}]}"#)
+            .create_async()
+            .await;
+
+        let client = no_proxy_client();
+        let url = format!("{}/", server.url());
+        let models = discover_models_with_client(&client, &url, None)
+            .await
+            .unwrap();
+        mock.assert_async().await;
+
+        assert_eq!(models.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_discover_models_skips_malformed_entries() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/models")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data": [
+                {"id": "good-model"},
+                {"not_id": "bad-model"},
+                {"id": "another-good"}
+            ]}"#)
+            .create_async()
+            .await;
+
+        let client = no_proxy_client();
+        let models = discover_models_with_client(&client, &server.url(), None)
+            .await
+            .unwrap();
+        mock.assert_async().await;
+
+        // Should skip the malformed entry (missing "id" field)
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "good-model");
+        assert_eq!(models[1].id, "another-good");
+    }
+
+    #[tokio::test]
+    async fn test_discover_models_empty_data_array() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/models")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data": []}"#)
+            .create_async()
+            .await;
+
+        let client = no_proxy_client();
+        let models = discover_models_with_client(&client, &server.url(), None)
+            .await
+            .unwrap();
+        mock.assert_async().await;
+
+        assert!(models.is_empty());
     }
 }
