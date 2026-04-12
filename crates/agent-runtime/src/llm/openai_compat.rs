@@ -141,6 +141,23 @@ impl OpenAiCompatProvider {
     }
 }
 
+/// Process a single SSE line: skip empty/comment lines, strip "data: " prefix, parse chunk.
+fn process_sse_line(line: &str, events: &mut Vec<AssistantMessageEvent>) {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with(':') {
+        return;
+    }
+    if let Some(data) = line.strip_prefix("data: ") {
+        match parse_sse_chunk(data) {
+            Ok(Some(event)) => events.push(event),
+            Ok(None) => {} // [DONE] or empty
+            Err(e) => {
+                tracing::warn!("SSE parse error: {e}, data: {data}");
+            }
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl LlmProvider for OpenAiCompatProvider {
     async fn complete(
@@ -214,43 +231,16 @@ impl LlmProvider for OpenAiCompatProvider {
             while let Some(newline_pos) = byte_buf.iter().position(|&b| b == b'\n') {
                 let line_bytes = byte_buf[..newline_pos].to_vec();
                 byte_buf.drain(..=newline_pos);
-
                 let line = String::from_utf8_lossy(&line_bytes);
-                let line = line.trim();
-                if line.is_empty() || line.starts_with(':') {
-                    continue;
-                }
-                if let Some(data) = line.strip_prefix("data: ") {
-                    match parse_sse_chunk(data) {
-                        Ok(Some(event)) => events.push(event),
-                        Ok(None) => {} // [DONE] or empty
-                        Err(e) => {
-                            tracing::warn!("SSE parse error: {e}, data: {data}");
-                        }
-                    }
-                }
+                process_sse_line(&line, &mut events);
             }
         }
 
-        // Flush any remaining data after stream ends — process line-by-line
-        // to handle cases where the final chunk contains multiple lines without
-        // a trailing newline.
+        // Flush remaining data after stream ends (final chunk may lack trailing newline)
         if !byte_buf.is_empty() {
             let remaining = String::from_utf8_lossy(&byte_buf);
             for line in remaining.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with(':') {
-                    continue;
-                }
-                if let Some(data) = line.strip_prefix("data: ") {
-                    match parse_sse_chunk(data) {
-                        Ok(Some(event)) => events.push(event),
-                        Ok(None) => {}
-                        Err(e) => {
-                            tracing::warn!("SSE parse error: {e}, data: {data}");
-                        }
-                    }
-                }
+                process_sse_line(line, &mut events);
             }
         }
 

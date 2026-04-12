@@ -142,7 +142,11 @@ impl super::AgentTool for BashTool {
                     if let Some(pid) = child.id() {
                         if let Ok(pgid) = i32::try_from(pid) {
                             // Negative pid sends signal to entire process group
-                            unsafe { libc::kill(-pgid, libc::SIGKILL); }
+                            let ret = unsafe { libc::kill(-pgid, libc::SIGKILL) };
+                            if ret != 0 {
+                                let err = std::io::Error::last_os_error();
+                                tracing::warn!(pgid, %err, "failed to kill process group on timeout");
+                            }
                         }
                     }
                 }

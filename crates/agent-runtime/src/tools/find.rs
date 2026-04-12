@@ -36,11 +36,10 @@ async fn find_files_recursive(
         if pattern.matches(&name) {
             results.push(path.to_string_lossy().to_string());
         }
-        // Use symlink_metadata (async, doesn't follow symlinks) to avoid:
-        // 1. Blocking the tokio runtime with sync std::fs::metadata
-        // 2. Infinite recursion through symlink cycles
-        let is_dir = match tokio::fs::symlink_metadata(&path).await {
-            Ok(meta) => meta.is_dir(),
+        // Use entry.file_type() which avoids an extra stat() on Linux (uses d_type
+        // from getdents64). Returns lstat-equivalent metadata — symlink cycles avoided.
+        let is_dir = match entry.file_type().await {
+            Ok(ft) => ft.is_dir(),
             Err(_) => false,
         };
         if is_dir {

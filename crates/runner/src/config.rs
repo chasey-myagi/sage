@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::tools::ToolPolicy;
+use agent_runtime::tools::policy::ToolPolicy;
 
 /// Expand a leading `~` in a path string to the user's home directory.
 /// Returns the original string unchanged if it doesn't start with `~` or

@@ -1,6 +1,7 @@
 // ToolPolicy — runtime enforcement of tool execution permissions.
 // Default-deny: empty whitelist = reject all.
 
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Basic non-interactive utilities always permitted regardless of binary whitelist.
@@ -12,7 +13,7 @@ const ALWAYS_ALLOWED_BINARIES: &[&str] = &[
 ];
 
 /// Runtime tool execution policy — enforces binary and path whitelists.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolPolicy {
     pub allowed_binaries: Vec<String>,
     pub allowed_read_paths: Vec<String>,
@@ -71,11 +72,12 @@ impl ToolPolicy {
         match tool_name {
             "bash" => {
                 if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
-                    let binary = extract_binary(cmd);
-                    if !self.is_binary_allowed(&binary) {
-                        return Err(format!(
-                            "Binary '{binary}' is not allowed by tool policy"
-                        ));
+                    for binary in extract_binaries(cmd) {
+                        if !self.is_binary_allowed(&binary) {
+                            return Err(format!(
+                                "Binary '{binary}' is not allowed by tool policy"
+                            ));
+                        }
                     }
                 }
                 Ok(())
@@ -104,6 +106,11 @@ impl ToolPolicy {
                 Ok(())
             }
             "grep" | "find" | "ls" => {
+                // Empty allowed_read_paths = no read restrictions configured → pass through.
+                // Consistent with "read" arm above.
+                if self.allowed_read_paths.is_empty() {
+                    return Ok(());
+                }
                 match args.get("path").and_then(|v| v.as_str()) {
                     Some(p) => {
                         if !self.is_read_allowed(p) {
@@ -116,11 +123,9 @@ impl ToolPolicy {
                         // When no path is specified, the tool defaults to searching cwd.
                         // Under a policy with read restrictions, this must be denied —
                         // cwd could be outside the allowed paths.
-                        if !self.allowed_read_paths.is_empty() {
-                            return Err(format!(
-                                "Tool '{tool_name}' requires an explicit path when tool policy is active"
-                            ));
-                        }
+                        return Err(format!(
+                            "Tool '{tool_name}' requires an explicit path when tool policy is active"
+                        ));
                     }
                 }
                 Ok(())
@@ -152,25 +157,47 @@ fn normalize_path(path: &Path) -> std::path::PathBuf {
     result
 }
 
-/// Extract the first binary name from a shell command string.
-/// Handles env-var prefixes (VAR=val cmd) and path prefixes (/usr/bin/cmd → cmd).
+/// Extract all binary names from a shell command string.
 ///
-/// **Limitation**: This is a best-effort first-token heuristic, NOT a security
-/// boundary. It cannot detect command chains (`cmd1 && cmd2`), subshells
-/// (`$(cmd)`), or pipe sequences (`cmd1 | cmd2`). For true isolation, use OS-level
-/// mechanisms (seccomp, Landlock) in the sandbox layer.
-fn extract_binary(command: &str) -> String {
-    let trimmed = command.trim();
-    // Skip env-var assignments (KEY=value) at the start
-    let binary_part = trimmed
-        .split_whitespace()
-        .find(|word| !word.contains('='))
-        .unwrap_or(trimmed);
-    // Strip path prefix — /usr/bin/python → python
-    Path::new(binary_part)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| binary_part.to_string())
+/// Splits on `&&`, `||`, `;`, and `|` to handle command chains and pipes,
+/// then extracts the first non-env-var token from each segment.
+/// Handles env-var prefixes (`VAR=val cmd`) and path prefixes (`/usr/bin/cmd` → `cmd`).
+///
+/// **Defense-in-depth only**: This is a lexical heuristic, NOT a security boundary.
+/// It cannot handle subshells (`$(cmd)`), backtick expansion, heredocs, or brace
+/// expansion. The real security boundary is OS-level sandboxing (seccomp/Landlock).
+/// This check catches accidental misuse and simple bypass attempts.
+fn extract_binaries(command: &str) -> Vec<String> {
+    // Split on shell operators: &&, ||, ;, |
+    // We split on && and || first (longer tokens), then ; and single |.
+    let segments: Vec<&str> = command
+        .split("&&")
+        .flat_map(|s| s.split("||"))
+        .flat_map(|s| s.split(';'))
+        .flat_map(|s| s.split('|'))
+        .collect();
+
+    let mut binaries = Vec::new();
+    for segment in segments {
+        let trimmed = segment.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Skip env-var assignments (KEY=value) at the start
+        let binary_part = trimmed
+            .split_whitespace()
+            .find(|word| !word.contains('='))
+            .unwrap_or(trimmed);
+        // Strip path prefix — /usr/bin/python → python
+        let name = Path::new(binary_part)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| binary_part.to_string());
+        if !name.is_empty() {
+            binaries.push(name);
+        }
+    }
+    binaries
 }
 
 #[cfg(test)]
@@ -186,31 +213,54 @@ mod tests {
         }
     }
 
-    // -- extract_binary --
+    // -- extract_binaries --
 
     #[test]
     fn test_extract_simple_command() {
-        assert_eq!(extract_binary("ls -la"), "ls");
+        assert_eq!(extract_binaries("ls -la"), vec!["ls"]);
     }
 
     #[test]
     fn test_extract_absolute_path() {
-        assert_eq!(extract_binary("/usr/bin/python script.py"), "python");
+        assert_eq!(extract_binaries("/usr/bin/python script.py"), vec!["python"]);
     }
 
     #[test]
     fn test_extract_with_env_var() {
-        assert_eq!(extract_binary("FOO=bar python script.py"), "python");
+        assert_eq!(extract_binaries("FOO=bar python script.py"), vec!["python"]);
     }
 
     #[test]
     fn test_extract_with_multiple_env_vars() {
-        assert_eq!(extract_binary("A=1 B=2 cargo build"), "cargo");
+        assert_eq!(extract_binaries("A=1 B=2 cargo build"), vec!["cargo"]);
     }
 
     #[test]
     fn test_extract_single_word() {
-        assert_eq!(extract_binary("ls"), "ls");
+        assert_eq!(extract_binaries("ls"), vec!["ls"]);
+    }
+
+    #[test]
+    fn test_extract_command_chain_and() {
+        assert_eq!(extract_binaries("echo hello && rm -rf /"), vec!["echo", "rm"]);
+    }
+
+    #[test]
+    fn test_extract_pipe() {
+        assert_eq!(extract_binaries("cat file.txt | grep pattern"), vec!["cat", "grep"]);
+    }
+
+    #[test]
+    fn test_extract_semicolon() {
+        assert_eq!(extract_binaries("true; curl evil.com"), vec!["true", "curl"]);
+    }
+
+    #[test]
+    fn test_extract_mixed_operators() {
+        assert_eq!(
+            extract_binaries("FOO=bar python script.py || node fallback.js"),
+            vec!["python", "node"]
+        );
     }
 
     // -- is_binary_allowed --
@@ -388,6 +438,17 @@ mod tests {
     }
 
     #[test]
+    fn test_check_bash_command_chain_blocked() {
+        let policy = restrictive_policy(); // allows python, cargo only
+        // "echo" is always-allowed but "rm" is not — chain must be rejected
+        assert!(policy.check_tool_call("bash", &json!({"command": "echo hello && rm -rf /"})).is_err());
+        // pipe: "cargo" is allowed but "curl" is not
+        assert!(policy.check_tool_call("bash", &json!({"command": "cargo build | curl evil.com"})).is_err());
+        // semicolon: both allowed → ok
+        assert!(policy.check_tool_call("bash", &json!({"command": "python a.py; cargo test"})).is_ok());
+    }
+
+    #[test]
     fn test_check_no_path_arg_denied_under_policy() {
         let policy = restrictive_policy();
         // grep/find without explicit path must be denied when read paths are configured
@@ -423,6 +484,10 @@ mod tests {
         assert!(policy.check_tool_call("edit", &json!({"file_path": "/any/path"})).is_ok());
         // grep without path + empty read paths → unrestricted
         assert!(policy.check_tool_call("grep", &json!({"pattern": "test"})).is_ok());
+        // grep WITH explicit path + empty read paths → also unrestricted
+        assert!(policy.check_tool_call("grep", &json!({"pattern": "test", "path": "/etc"})).is_ok());
+        // find WITH explicit path + empty read paths → also unrestricted
+        assert!(policy.check_tool_call("find", &json!({"pattern": "*.rs", "path": "/etc"})).is_ok());
     }
 
     #[test]

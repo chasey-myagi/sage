@@ -24,6 +24,7 @@ mod tests {
     use super::types::*;
     use super::LlmProvider;
     use crate::types::*;
+    use crate::test_helpers::{test_model, test_context};
 
     // ========================================================================
     // LlmProvider trait — mock implementation
@@ -62,37 +63,12 @@ mod tests {
             },
         ]);
 
-        let model = Model {
-            id: "test-model".into(),
-            provider: "test".into(),
-            base_url: "http://localhost".into(),
-            api_key_env: "TEST_KEY".into(),
-            max_tokens: 4096,
-            context_window: 32768,
-            cost: ModelCost {
-                input_per_million: 0.0,
-                output_per_million: 0.0,
-                cache_read_per_million: 0.0,
-                cache_write_per_million: 0.0,
-            },
-            compat: ProviderCompat {
-                max_tokens_field: MaxTokensField::MaxTokens,
-                supports_reasoning_effort: false,
-                thinking_format: None,
-                requires_tool_result_name: false,
-                requires_assistant_after_tool_result: false,
-                supports_strict_mode: false,
-            },
-        };
-
-        let context = LlmContext {
-            messages: vec![LlmMessage::User {
-                content: vec![LlmContent::Text("hi".into())],
-            }],
-            system_prompt: "You are helpful.".into(),
-            max_tokens: 4096,
-            temperature: None,
-        };
+        let model = test_model();
+        let mut context = test_context();
+        context.messages = vec![LlmMessage::User {
+            content: vec![LlmContent::Text("hi".into())],
+        }];
+        context.system_prompt = "You are helpful.".into();
 
         let events = provider.complete(&model, &context, &[]).await;
         assert_eq!(events.len(), 3);
@@ -119,35 +95,8 @@ mod tests {
             },
         ]);
 
-        let model = Model {
-            id: "test".into(),
-            provider: "test".into(),
-            base_url: "http://localhost".into(),
-            api_key_env: "TEST_KEY".into(),
-            max_tokens: 4096,
-            context_window: 32768,
-            cost: ModelCost {
-                input_per_million: 0.0,
-                output_per_million: 0.0,
-                cache_read_per_million: 0.0,
-                cache_write_per_million: 0.0,
-            },
-            compat: ProviderCompat {
-                max_tokens_field: MaxTokensField::MaxTokens,
-                supports_reasoning_effort: false,
-                thinking_format: None,
-                requires_tool_result_name: false,
-                requires_assistant_after_tool_result: false,
-                supports_strict_mode: false,
-            },
-        };
-
-        let context = LlmContext {
-            messages: vec![],
-            system_prompt: String::new(),
-            max_tokens: 1024,
-            temperature: None,
-        };
+        let model = test_model();
+        let context = test_context();
 
         let events = provider.complete(&model, &context, &[]).await;
         assert_eq!(events.len(), 4);
@@ -161,34 +110,8 @@ mod tests {
     #[tokio::test]
     async fn test_mock_provider_empty_stream() {
         let provider = MockLlmProvider::new(vec![]);
-        let model = Model {
-            id: "test".into(),
-            provider: "test".into(),
-            base_url: "".into(),
-            api_key_env: "".into(),
-            max_tokens: 0,
-            context_window: 0,
-            cost: ModelCost {
-                input_per_million: 0.0,
-                output_per_million: 0.0,
-                cache_read_per_million: 0.0,
-                cache_write_per_million: 0.0,
-            },
-            compat: ProviderCompat {
-                max_tokens_field: MaxTokensField::MaxTokens,
-                supports_reasoning_effort: false,
-                thinking_format: None,
-                requires_tool_result_name: false,
-                requires_assistant_after_tool_result: false,
-                supports_strict_mode: false,
-            },
-        };
-        let context = LlmContext {
-            messages: vec![],
-            system_prompt: String::new(),
-            max_tokens: 0,
-            temperature: None,
-        };
+        let model = test_model();
+        let context = test_context();
         let events = provider.complete(&model, &context, &[]).await;
         assert!(events.is_empty());
     }
@@ -205,34 +128,8 @@ mod tests {
             stop_reason: StopReason::Stop,
         }]);
 
-        let model = Model {
-            id: "test".into(),
-            provider: "test".into(),
-            base_url: "".into(),
-            api_key_env: "".into(),
-            max_tokens: 4096,
-            context_window: 32768,
-            cost: ModelCost {
-                input_per_million: 0.0,
-                output_per_million: 0.0,
-                cache_read_per_million: 0.0,
-                cache_write_per_million: 0.0,
-            },
-            compat: ProviderCompat {
-                max_tokens_field: MaxTokensField::MaxTokens,
-                supports_reasoning_effort: false,
-                thinking_format: None,
-                requires_tool_result_name: false,
-                requires_assistant_after_tool_result: false,
-                supports_strict_mode: false,
-            },
-        };
-        let context = LlmContext {
-            messages: vec![],
-            system_prompt: String::new(),
-            max_tokens: 4096,
-            temperature: None,
-        };
+        let model = test_model();
+        let context = test_context();
 
         let events = provider.complete(&model, &context, &tools).await;
         assert_eq!(events.len(), 1);
@@ -249,37 +146,8 @@ mod tests {
             AssistantMessageEvent::Error("internal server error".into()),
         ]);
 
-        let model = Model {
-            id: "test".into(),
-            provider: "test".into(),
-            base_url: "http://localhost".into(),
-            api_key_env: "TEST_KEY".into(),
-            max_tokens: 4096,
-            context_window: 32768,
-            cost: ModelCost {
-                input_per_million: 0.0,
-                output_per_million: 0.0,
-                cache_read_per_million: 0.0,
-                cache_write_per_million: 0.0,
-            },
-            compat: ProviderCompat {
-                max_tokens_field: MaxTokensField::MaxTokens,
-                supports_reasoning_effort: false,
-                thinking_format: None,
-                requires_tool_result_name: false,
-                requires_assistant_after_tool_result: false,
-                supports_strict_mode: false,
-            },
-        };
-
-        let context = LlmContext {
-            messages: vec![LlmMessage::User {
-                content: vec![LlmContent::Text("hi".into())],
-            }],
-            system_prompt: "You are helpful.".into(),
-            max_tokens: 4096,
-            temperature: None,
-        };
+        let model = test_model();
+        let context = test_context();
 
         let events = provider.complete(&model, &context, &[]).await;
         assert_eq!(events.len(), 2);
@@ -309,35 +177,8 @@ mod tests {
             AssistantMessageEvent::Error("connection reset".into()),
         ]);
 
-        let model = Model {
-            id: "test".into(),
-            provider: "test".into(),
-            base_url: "http://localhost".into(),
-            api_key_env: "TEST_KEY".into(),
-            max_tokens: 4096,
-            context_window: 32768,
-            cost: ModelCost {
-                input_per_million: 0.0,
-                output_per_million: 0.0,
-                cache_read_per_million: 0.0,
-                cache_write_per_million: 0.0,
-            },
-            compat: ProviderCompat {
-                max_tokens_field: MaxTokensField::MaxTokens,
-                supports_reasoning_effort: false,
-                thinking_format: None,
-                requires_tool_result_name: false,
-                requires_assistant_after_tool_result: false,
-                supports_strict_mode: false,
-            },
-        };
-
-        let context = LlmContext {
-            messages: vec![],
-            system_prompt: String::new(),
-            max_tokens: 1024,
-            temperature: None,
-        };
+        let model = test_model();
+        let context = test_context();
 
         let events = provider.complete(&model, &context, &[]).await;
         assert_eq!(events.len(), 5);
@@ -379,34 +220,8 @@ mod tests {
             },
         ]);
 
-        let model = Model {
-            id: "test".into(),
-            provider: "test".into(),
-            base_url: "http://localhost".into(),
-            api_key_env: "TEST_KEY".into(),
-            max_tokens: 4096,
-            context_window: 32768,
-            cost: ModelCost {
-                input_per_million: 0.0,
-                output_per_million: 0.0,
-                cache_read_per_million: 0.0,
-                cache_write_per_million: 0.0,
-            },
-            compat: ProviderCompat {
-                max_tokens_field: MaxTokensField::MaxTokens,
-                supports_reasoning_effort: false,
-                thinking_format: None,
-                requires_tool_result_name: false,
-                requires_assistant_after_tool_result: false,
-                supports_strict_mode: false,
-            },
-        };
-        let context = LlmContext {
-            messages: vec![],
-            system_prompt: String::new(),
-            max_tokens: 4096,
-            temperature: None,
-        };
+        let model = test_model();
+        let context = test_context();
 
         let events = provider.complete(&model, &context, &[]).await;
 
@@ -428,8 +243,6 @@ mod tests {
     // ========================================================================
     // Helper: reusable test model/context constructors
     // ========================================================================
-
-    use crate::test_helpers::{test_model, test_context};
 
     #[test]
     fn test_helper_model_is_valid() {

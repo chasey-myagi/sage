@@ -84,14 +84,7 @@ async fn handle_execute(
         system_prompt: config.system_prompt.clone(),
         max_turns: config.constraints.max_turns as usize,
         tool_execution_mode: ToolExecutionMode::Parallel,
-        tool_policy: {
-            let rp = config.tools.to_policy();
-            Some(agent_runtime::tools::policy::ToolPolicy {
-                allowed_binaries: rp.allowed_binaries,
-                allowed_read_paths: rp.allowed_read_paths,
-                allowed_write_paths: rp.allowed_write_paths,
-            })
-        },
+        tool_policy: Some(config.tools.to_policy()),
     };
 
     let mut agent = Agent::new(loop_config, Box::new(llm_provider), registry);

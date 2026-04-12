@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 agent-sandbox = { workspace = true }
 agent-protocol = { workspace = true }
+agent-runtime = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
