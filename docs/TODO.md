@@ -138,7 +138,11 @@ sage run --config configs/coding-assistant.yaml \
   - tool_name support (requiresToolResultName), hasToolHistory fallback
   - strict=false on tool defs, skip empty assistant, finish_reason mapping
   - 12 new tests, code review 8.83/10 (debea21)
-- [ ] 模型自动发现（`/v1/models` 端点探测）
+- [x] 模型自动发现（`/v1/models` 端点探测）
+  - discover_models() with 15s timeout, discover_models_with_client()
+  - DiscoveredModel serde + construct_model_from_discovered (8K conservative ctx)
+  - DiscoveryError enum, tracing::debug for skipped entries
+  - 17 new tests (mockito mock server), code review 8.48/10 (690c77e)
 - [x] redacted_thinking 往返（LlmMessage 增加 thinking variant）
   - ThinkingBlock struct + thinking_blocks field on LlmMessage::Assistant
   - ThinkingBlockEnd event + per-block accumulator
