@@ -563,6 +563,312 @@ static MODEL_CATALOG: LazyLock<Vec<Model>> = LazyLock::new(|| {
                 ..ProviderCompat::default()
             }),
         },
+        // ── Groq ──
+        // Groq compat flags are handled dynamically by detect_compat() in
+        // openai_completions.rs (is_groq detection, reasoningEffortMap for
+        // Qwen3-32b). Model entries here use compat: None so detect_compat
+        // kicks in at request time.
+        // Groq does not support prompt caching; cache costs are 0.
+        Model {
+            id: "deepseek-r1-distill-llama-70b".into(),
+            name: "DeepSeek R1 Distill Llama 70B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.75,
+                output_per_million: 0.99,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "gemma2-9b-it".into(),
+            name: "Gemma 2 9B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 8192,
+            cost: ModelCost {
+                input_per_million: 0.2,
+                output_per_million: 0.2,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "llama-3.1-8b-instant".into(),
+            name: "Llama 3.1 8B Instant".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 131072,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.05,
+                output_per_million: 0.08,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "llama-3.3-70b-versatile".into(),
+            name: "Llama 3.3 70B Versatile".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 32768,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.59,
+                output_per_million: 0.79,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "llama3-70b-8192".into(),
+            name: "Llama 3 70B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 8192,
+            cost: ModelCost {
+                input_per_million: 0.59,
+                output_per_million: 0.79,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "llama3-8b-8192".into(),
+            name: "Llama 3 8B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 8192,
+            cost: ModelCost {
+                input_per_million: 0.05,
+                output_per_million: 0.08,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "meta-llama/llama-4-maverick-17b-128e-instruct".into(),
+            name: "Llama 4 Maverick 17B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.2,
+                output_per_million: 0.6,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "meta-llama/llama-4-scout-17b-16e-instruct".into(),
+            name: "Llama 4 Scout 17B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text, InputType::Image],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.11,
+                output_per_million: 0.34,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "mistral-saba-24b".into(),
+            name: "Mistral Saba 24B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 32768,
+            context_window: 32768,
+            cost: ModelCost {
+                input_per_million: 0.79,
+                output_per_million: 0.79,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "moonshotai/kimi-k2-instruct".into(),
+            name: "Kimi K2 Instruct".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 16384,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 1.0,
+                output_per_million: 3.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "moonshotai/kimi-k2-instruct-0905".into(),
+            name: "Kimi K2 Instruct 0905".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 16384,
+            context_window: 262144,
+            cost: ModelCost {
+                input_per_million: 1.0,
+                output_per_million: 3.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "openai/gpt-oss-120b".into(),
+            name: "GPT OSS 120B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 65536,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.15,
+                output_per_million: 0.6,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "openai/gpt-oss-20b".into(),
+            name: "GPT OSS 20B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 65536,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.075,
+                output_per_million: 0.3,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "qwen-qwq-32b".into(),
+            name: "Qwen QwQ 32B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 16384,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.29,
+                output_per_million: 0.39,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
+        Model {
+            id: "qwen/qwen3-32b".into(),
+            name: "Qwen3 32B".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::GROQ.into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 16384,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.29,
+                output_per_million: 0.59,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
     ]
 });
 
@@ -589,6 +895,7 @@ pub fn list_providers() -> Vec<&'static str> {
         "anthropic",
         "openai",
         "google",
+        "groq",
         "qwen",
         "doubao",
         "kimi",
@@ -1124,6 +1431,79 @@ mod tests {
         assert_eq!(model.id, "gemini-2.0-flash");
         assert!(!model.reasoning);
         assert_eq!(model.max_tokens, 8192);
+    }
+
+    // ========================================================================
+    // resolve_model — Groq models
+    // ========================================================================
+
+    #[test]
+    fn test_resolve_groq_qwen3_32b() {
+        let model = resolve_model("groq", "qwen/qwen3-32b").unwrap();
+        assert_eq!(model.id, "qwen/qwen3-32b");
+        assert_eq!(model.name, "Qwen3 32B");
+        assert_eq!(model.provider, "groq");
+        assert_eq!(model.api, api::OPENAI_COMPLETIONS);
+        assert_eq!(model.api_key_env, "GROQ_API_KEY");
+        assert_eq!(model.base_url, "https://api.groq.com/openai/v1");
+        assert!(model.reasoning);
+        assert_eq!(model.max_tokens, 16384);
+        assert_eq!(model.context_window, 131072);
+        // compat: None — detect_compat handles Groq dynamically
+        assert!(model.compat.is_none());
+    }
+
+    #[test]
+    fn test_resolve_groq_llama33_70b() {
+        let model = resolve_model("groq", "llama-3.3-70b-versatile").unwrap();
+        assert_eq!(model.id, "llama-3.3-70b-versatile");
+        assert!(!model.reasoning);
+        assert_eq!(model.max_tokens, 32768);
+        assert_eq!(model.context_window, 131072);
+    }
+
+    #[test]
+    fn test_resolve_groq_llama4_maverick() {
+        let model = resolve_model("groq", "meta-llama/llama-4-maverick-17b-128e-instruct").unwrap();
+        assert_eq!(model.name, "Llama 4 Maverick 17B");
+        assert!(!model.reasoning);
+        assert!(model.input.contains(&InputType::Image));
+    }
+
+    #[test]
+    fn test_resolve_groq_deepseek_r1() {
+        let model = resolve_model("groq", "deepseek-r1-distill-llama-70b").unwrap();
+        assert!(model.reasoning);
+        assert_eq!(model.cost.input_per_million, 0.75);
+    }
+
+    #[test]
+    fn test_resolve_groq_qwq_32b() {
+        let model = resolve_model("groq", "qwen-qwq-32b").unwrap();
+        assert!(model.reasoning);
+        assert_eq!(model.max_tokens, 16384);
+    }
+
+    #[test]
+    fn test_resolve_groq_gpt_oss_120b() {
+        let model = resolve_model("groq", "openai/gpt-oss-120b").unwrap();
+        assert!(model.reasoning);
+        assert_eq!(model.max_tokens, 65536);
+    }
+
+    #[test]
+    fn test_groq_in_list_providers() {
+        let providers = list_providers();
+        assert!(providers.contains(&"groq"));
+    }
+
+    #[test]
+    fn test_groq_model_count() {
+        let groq_models: Vec<_> = list_models()
+            .iter()
+            .filter(|m| m.provider == "groq")
+            .collect();
+        assert_eq!(groq_models.len(), 15);
     }
 
     // ========================================================================
