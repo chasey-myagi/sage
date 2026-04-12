@@ -1,7 +1,10 @@
-// FindTool — file pattern matching (glob-based).
+// FindTool — file pattern matching (glob-based) via backend.
+
+use std::sync::Arc;
 
 use crate::types::Content;
-use std::path::Path;
+
+use super::backend::ToolBackend;
 
 /// Default recursion depth limit to prevent unbounded filesystem traversal.
 const DEFAULT_MAX_DEPTH: usize = 20;
@@ -15,9 +18,10 @@ fn error_output(msg: &str) -> super::ToolOutput {
     }
 }
 
-/// Async recursive file search using tokio::fs to avoid blocking the runtime.
+/// Async recursive file search using ToolBackend::list_dir.
 async fn find_files_recursive(
-    base: &Path,
+    backend: &dyn ToolBackend,
+    base: &str,
     pattern: &glob::Pattern,
     max_depth: usize,
     depth: usize,
@@ -26,31 +30,32 @@ async fn find_files_recursive(
     if depth > max_depth {
         return results;
     }
-    let mut entries = match tokio::fs::read_dir(base).await {
+    let entries = match backend.list_dir(base).await {
         Ok(e) => e,
         Err(_) => return results,
     };
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if pattern.matches(&name) {
-            results.push(path.to_string_lossy().to_string());
+    let base_trimmed = base.trim_end_matches('/');
+    for entry in entries {
+        let full_path = format!("{}/{}", base_trimmed, entry.name);
+        if pattern.matches(&entry.name) {
+            results.push(full_path.clone());
         }
-        // Use entry.file_type() which avoids an extra stat() on Linux (uses d_type
-        // from getdents64). Returns lstat-equivalent metadata — symlink cycles avoided.
-        let is_dir = match entry.file_type().await {
-            Ok(ft) => ft.is_dir(),
-            Err(_) => false,
-        };
-        if is_dir {
-            let sub = Box::pin(find_files_recursive(&path, pattern, max_depth, depth + 1)).await;
+        if entry.is_dir {
+            let sub = Box::pin(find_files_recursive(
+                backend,
+                &full_path,
+                pattern,
+                max_depth,
+                depth + 1,
+            ))
+            .await;
             results.extend(sub);
         }
     }
     results
 }
 
-pub struct FindTool;
+pub struct FindTool(pub Arc<dyn ToolBackend>);
 
 #[async_trait::async_trait]
 impl super::AgentTool for FindTool {
@@ -88,8 +93,9 @@ impl super::AgentTool for FindTool {
         };
 
         let base_path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-        let path = Path::new(base_path);
-        if tokio::fs::symlink_metadata(path).await.is_err() {
+
+        // Validate base path exists by attempting to list it
+        if self.0.list_dir(base_path).await.is_err() {
             return error_output(&format!("Path does not exist: {}", base_path));
         }
 
@@ -98,7 +104,7 @@ impl super::AgentTool for FindTool {
             .and_then(|v| v.as_u64())
             .map(|d| d as usize)
             .unwrap_or(DEFAULT_MAX_DEPTH);
-        let results = find_files_recursive(path, &pattern, max_depth, 0).await;
+        let results = find_files_recursive(&*self.0, base_path, &pattern, max_depth, 0).await;
 
         let text = if results.is_empty() {
             "No matching files found".into()
@@ -117,7 +123,12 @@ impl super::AgentTool for FindTool {
 mod tests {
     use super::*;
     use crate::tools::AgentTool;
+    use crate::tools::backend::LocalBackend;
     use serde_json::json;
+
+    fn find_tool() -> FindTool {
+        FindTool(LocalBackend::new())
+    }
 
     // ---------------------------------------------------------------
     // Metadata
@@ -125,13 +136,13 @@ mod tests {
 
     #[test]
     fn test_name() {
-        let tool = FindTool;
+        let tool = find_tool();
         assert_eq!(tool.name(), "find");
     }
 
     #[test]
     fn test_description_not_empty() {
-        let tool = FindTool;
+        let tool = find_tool();
         assert!(!tool.description().is_empty());
     }
 
@@ -141,7 +152,7 @@ mod tests {
 
     #[test]
     fn test_schema_has_pattern() {
-        let tool = FindTool;
+        let tool = find_tool();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         assert!(props.get("pattern").is_some());
@@ -152,7 +163,7 @@ mod tests {
 
     #[test]
     fn test_schema_has_optional_path() {
-        let tool = FindTool;
+        let tool = find_tool();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         assert!(props.get("path").is_some());
@@ -167,7 +178,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_pattern_returns_error() {
-        let tool = FindTool;
+        let tool = find_tool();
         let output = tool.execute(json!({})).await;
         assert!(output.is_error);
     }
@@ -178,7 +189,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_pattern_returns_error() {
-        let tool = FindTool;
+        let tool = find_tool();
         let output = tool.execute(json!({"pattern": ""})).await;
         assert!(output.is_error, "empty pattern should return error");
     }
@@ -189,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_schema_has_optional_type_param() {
-        let tool = FindTool;
+        let tool = find_tool();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         // "type" or "file_type" should exist as optional filter
@@ -202,7 +213,7 @@ mod tests {
 
     #[test]
     fn test_schema_has_optional_depth_param() {
-        let tool = FindTool;
+        let tool = find_tool();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         // "depth" or "max_depth" should exist as optional
@@ -215,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_schema_type_and_depth_are_optional() {
-        let tool = FindTool;
+        let tool = find_tool();
         let schema = tool.parameters_schema();
         let required = schema.get("required").unwrap().as_array().unwrap();
         assert!(
@@ -238,7 +249,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_with_glob_pattern() {
-        let tool = FindTool;
+        let tool = find_tool();
         // A typical glob pattern — should be accepted and executed
         let output = tool.execute(json!({"pattern": "*.rs"})).await;
         // Whether it finds files or not depends on cwd, but should not panic
@@ -247,7 +258,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_with_path_and_pattern() {
-        let tool = FindTool;
+        let tool = find_tool();
         let output = tool
             .execute(json!({"pattern": "*.toml", "path": "/tmp"}))
             .await;
@@ -257,7 +268,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_glob_special_chars() {
-        let tool = FindTool;
+        let tool = find_tool();
         // Glob with brackets and braces
         let output = tool.execute(json!({"pattern": "*.{rs,toml}"})).await;
         assert!(!output.content.is_empty());
@@ -269,7 +280,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_nonexistent_path_returns_error() {
-        let tool = FindTool;
+        let tool = find_tool();
         let output = tool
             .execute(json!({"pattern": "*.rs", "path": "/nonexistent_dir_12345"}))
             .await;
@@ -281,7 +292,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_depth_zero() {
-        let tool = FindTool;
+        let tool = find_tool();
         // depth=0 means only the directory itself, no descent
         let output = tool
             .execute(json!({"pattern": "*.rs", "path": "/tmp", "depth": 0}))
@@ -296,7 +307,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_success_returns_file_list() {
-        let tool = FindTool;
+        let tool = find_tool();
         let dir = std::env::temp_dir().join(format!("sage_find_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("alpha.txt"), "a").expect("setup");
@@ -335,7 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_recursive_nested_dirs() {
-        let tool = FindTool;
+        let tool = find_tool();
         let dir = std::env::temp_dir().join(format!("sage_find_recursive_{}", std::process::id()));
         let sub1 = dir.join("sub1");
         let sub2 = dir.join("sub1").join("sub2");
@@ -377,7 +388,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_depth_one_limits_recursion() {
-        let tool = FindTool;
+        let tool = find_tool();
         let dir = std::env::temp_dir().join(format!("sage_find_depth1_{}", std::process::id()));
         let sub = dir.join("sub");
         let deep = sub.join("deep");

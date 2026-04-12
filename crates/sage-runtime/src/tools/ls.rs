@@ -1,6 +1,10 @@
-// LsTool — directory listing.
+// LsTool — directory listing via backend.
+
+use std::sync::Arc;
 
 use crate::types::Content;
+
+use super::backend::ToolBackend;
 
 fn error_output(msg: &str) -> super::ToolOutput {
     super::ToolOutput {
@@ -11,7 +15,7 @@ fn error_output(msg: &str) -> super::ToolOutput {
     }
 }
 
-pub struct LsTool;
+pub struct LsTool(pub Arc<dyn ToolBackend>);
 
 #[async_trait::async_trait]
 impl super::AgentTool for LsTool {
@@ -40,17 +44,9 @@ impl super::AgentTool for LsTool {
             None => return error_output("missing required parameter: path"),
         };
 
-        if !std::path::Path::new(path).exists() {
-            return error_output(&format!("Path does not exist: {}", path));
-        }
-
-        match tokio::fs::read_dir(path).await {
-            Ok(mut entries) => {
-                let mut names = Vec::new();
-                while let Ok(Some(entry)) = entries.next_entry().await {
-                    names.push(entry.file_name().to_string_lossy().to_string());
-                }
-                names.sort();
+        match self.0.list_dir(path).await {
+            Ok(entries) => {
+                let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
                 super::ToolOutput {
                     content: vec![Content::Text {
                         text: names.join("\n"),
@@ -58,7 +54,7 @@ impl super::AgentTool for LsTool {
                     is_error: false,
                 }
             }
-            Err(e) => error_output(&format!("Failed to list {}: {}", path, e)),
+            Err(e) => error_output(&e),
         }
     }
 }
@@ -67,7 +63,12 @@ impl super::AgentTool for LsTool {
 mod tests {
     use super::*;
     use crate::tools::AgentTool;
+    use crate::tools::backend::LocalBackend;
     use serde_json::json;
+
+    fn ls_tool() -> LsTool {
+        LsTool(LocalBackend::new())
+    }
 
     // ---------------------------------------------------------------
     // Metadata
@@ -75,13 +76,13 @@ mod tests {
 
     #[test]
     fn test_name() {
-        let tool = LsTool;
+        let tool = ls_tool();
         assert_eq!(tool.name(), "ls");
     }
 
     #[test]
     fn test_description_not_empty() {
-        let tool = LsTool;
+        let tool = ls_tool();
         assert!(!tool.description().is_empty());
     }
 
@@ -91,7 +92,7 @@ mod tests {
 
     #[test]
     fn test_schema_has_path() {
-        let tool = LsTool;
+        let tool = ls_tool();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         assert!(props.get("path").is_some());
@@ -106,14 +107,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_path_returns_error() {
-        let tool = LsTool;
+        let tool = ls_tool();
         let output = tool.execute(json!({})).await;
         assert!(output.is_error);
     }
 
     #[tokio::test]
     async fn test_empty_path_returns_error() {
-        let tool = LsTool;
+        let tool = ls_tool();
         let output = tool.execute(json!({"path": ""})).await;
         assert!(output.is_error);
     }
@@ -124,7 +125,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_relative_path_handling() {
-        let tool = LsTool;
+        let tool = ls_tool();
         // Relative path like "src" — should either work (resolved against cwd)
         // or return an error asking for absolute path. Must not panic.
         let output = tool.execute(json!({"path": "src"})).await;
@@ -136,7 +137,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_absolute_path_handling() {
-        let tool = LsTool;
+        let tool = ls_tool();
         // Absolute path — should be accepted by argument parsing
         let output = tool.execute(json!({"path": "/tmp"})).await;
         assert!(
@@ -151,7 +152,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_nonexistent_path_returns_error() {
-        let tool = LsTool;
+        let tool = ls_tool();
         let output = tool
             .execute(json!({"path": "/nonexistent_path_12345"}))
             .await;
@@ -166,7 +167,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_path_is_file_not_directory() {
-        let tool = LsTool;
+        let tool = ls_tool();
         // /etc/hosts is a file on macOS/Linux — ls on a file should either
         // list just the file or return an error indicating it's not a directory
         let output = tool.execute(json!({"path": "/etc/hosts"})).await;
@@ -181,7 +182,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ls_includes_or_excludes_hidden_files() {
-        let tool = LsTool;
+        let tool = ls_tool();
         let output = tool.execute(json!({"path": "/tmp"})).await;
         assert!(!output.content.is_empty());
     }
@@ -192,7 +193,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ls_output_contains_filenames() {
-        let tool = LsTool;
+        let tool = ls_tool();
         // Create a known file in a temp dir to verify output
         let dir = std::env::temp_dir().join("sage_ls_test");
         let _ = std::fs::create_dir_all(&dir);
@@ -216,7 +217,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ls_empty_directory() {
-        let tool = LsTool;
+        let tool = ls_tool();
         let dir = std::env::temp_dir().join("sage_ls_empty_test");
         let _ = std::fs::create_dir_all(&dir);
 
@@ -234,7 +235,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ls_output_format_with_known_files() {
-        let tool = LsTool;
+        let tool = ls_tool();
         let dir = std::env::temp_dir().join(format!("sage_ls_format_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("aaa.txt"), "a").expect("setup");
@@ -260,7 +261,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ls_nonexistent_directory_is_error() {
-        let tool = LsTool;
+        let tool = ls_tool();
         let output = tool
             .execute(json!({"path": "/nonexistent_dir_99999_does_not_exist"}))
             .await;
@@ -281,7 +282,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ls_output_sorted() {
-        let tool = LsTool;
+        let tool = ls_tool();
         let dir = std::env::temp_dir().join(format!("sage_ls_sorted_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
@@ -311,7 +312,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ls_includes_subdirectories() {
-        let tool = LsTool;
+        let tool = ls_tool();
         let dir = std::env::temp_dir().join(format!("sage_ls_subdir_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);

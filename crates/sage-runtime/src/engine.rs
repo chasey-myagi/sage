@@ -6,6 +6,7 @@ use crate::agent_loop::{AgentLoopError, run_agent_loop};
 use crate::event::{AgentEvent, AgentEventSink, EventReceiver, EventSender, EventStream};
 use crate::llm::types::*;
 use crate::llm::{self, LlmProvider};
+use crate::tools::backend::LocalBackend;
 use crate::tools::policy::ToolPolicy;
 use crate::tools::{self, AgentTool, ToolRegistry};
 use crate::types::*;
@@ -272,9 +273,10 @@ impl SageEngine {
         };
 
         // 2. Build ToolRegistry
+        let backend = LocalBackend::new();
         let mut registry = ToolRegistry::new();
         for name in &self.builtin_tool_names {
-            if let Some(tool) = tools::create_tool(name) {
+            if let Some(tool) = tools::create_tool(name, backend.clone()) {
                 registry.register(tool);
             } else {
                 tracing::warn!(tool_name = %name, "unknown builtin tool name — skipped");

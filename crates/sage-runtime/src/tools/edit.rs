@@ -1,6 +1,10 @@
 // EditTool — precise text replacement with fuzzy matching.
 
+use std::sync::Arc;
+
 use crate::types::Content;
+
+use super::backend::ToolBackend;
 
 /// Match types returned by fuzzy_find.
 #[derive(Debug)]
@@ -206,7 +210,7 @@ fn error_output(msg: &str) -> super::ToolOutput {
     }
 }
 
-pub struct EditTool;
+pub struct EditTool(pub Arc<dyn ToolBackend>);
 
 #[async_trait::async_trait]
 impl super::AgentTool for EditTool {
@@ -257,14 +261,18 @@ impl super::AgentTool for EditTool {
             None => return error_output("missing required parameter: new_text"),
         };
 
-        let content = match tokio::fs::read_to_string(&file_path).await {
-            Ok(c) => c,
+        let content = match self.0.read_file(&file_path).await {
+            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
             Err(e) => return error_output(&format!("Failed to read {}: {}", file_path, e)),
         };
 
         match apply_edit(&content, &old_text, &new_text) {
             Ok(result) => {
-                if let Err(e) = tokio::fs::write(&file_path, &result.new_content).await {
+                if let Err(e) = self
+                    .0
+                    .write_file(&file_path, result.new_content.as_bytes())
+                    .await
+                {
                     return error_output(&format!("Failed to write {}: {}", file_path, e));
                 }
                 super::ToolOutput {
@@ -284,7 +292,12 @@ impl super::AgentTool for EditTool {
 mod tests {
     use super::*;
     use crate::tools::AgentTool;
+    use crate::tools::backend::LocalBackend;
     use serde_json::json;
+
+    fn edit_tool() -> EditTool {
+        EditTool(LocalBackend::new())
+    }
 
     // ===============================================================
     // fuzzy_normalize
@@ -586,19 +599,19 @@ mod tests {
 
     #[test]
     fn test_name() {
-        let tool = EditTool;
+        let tool = edit_tool();
         assert_eq!(tool.name(), "edit");
     }
 
     #[test]
     fn test_description_not_empty() {
-        let tool = EditTool;
+        let tool = edit_tool();
         assert!(!tool.description().is_empty());
     }
 
     #[test]
     fn test_schema_has_required_fields() {
-        let tool = EditTool;
+        let tool = edit_tool();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         assert!(props.get("file_path").is_some());
@@ -613,7 +626,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_args_returns_error() {
-        let tool = EditTool;
+        let tool = edit_tool();
         let output = tool.execute(json!({})).await;
         assert!(output.is_error);
     }
@@ -719,13 +732,13 @@ mod tests {
 
     #[test]
     fn test_edit_tool_name() {
-        let tool = EditTool;
+        let tool = edit_tool();
         assert_eq!(tool.name(), "edit");
     }
 
     #[test]
     fn test_edit_tool_schema_has_required_fields() {
-        let tool = EditTool;
+        let tool = edit_tool();
         let schema = tool.parameters_schema();
         let props = schema.get("properties").unwrap();
         assert!(props.get("file_path").is_some());
@@ -739,7 +752,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_file_not_found() {
-        let tool = EditTool;
+        let tool = edit_tool();
         let output = tool
             .execute(json!({
                 "file_path": "/nonexistent_path_12345/no_such_file.rs",
@@ -755,7 +768,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_empty_file_path() {
-        let tool = EditTool;
+        let tool = edit_tool();
         let output = tool
             .execute(json!({
                 "file_path": "",
