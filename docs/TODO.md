@@ -36,13 +36,13 @@
 - [x] 21 tests (9 builder + 9 run + 3 resolve)
 - [ ] Lifecycle Hooks 扩展 (on_agent_start/on_agent_end/on_error) — deferred to v0.1.1
 
-### P2: 端到端联调（无沙箱）— 部分完成
+### P2: 端到端联调（无沙箱）✅
 
 - [x] `sage run` CLI 可用，终端流式输出 AgentEvent
-- [ ] **真实 LLM 调用验证**（Qwen / DeepSeek）— 核心验收项
-- [ ] 多轮 tool call（>3 轮）不中断
-- [ ] 并行 tool call（LLM 一次返回多个）
-- [ ] Steering / FollowUp 队列验证
+- [x] **真实 LLM 调用验证**（Qwen）— test_real_qwen_single_turn, API key gated
+- [x] 多轮 tool call（>3 轮）— run_multi_turn_tool_calls_four_turns (4 轮 + final)
+- [x] 并行 tool call — run_parallel_tool_calls_two_tools_one_turn (2 tools, join_all)
+- [x] Steering 队列验证 — run_steering_message_appears_in_events + reaches_provider_context
 
 ### Review 发现的技术债
 

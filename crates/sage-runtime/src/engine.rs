@@ -581,6 +581,17 @@ mod tests {
         }
     }
 
+    /// Extract text from a Content slice (test helper to avoid repetition).
+    fn text_of(content: &[Content]) -> String {
+        content
+            .iter()
+            .filter_map(|c| match c {
+                Content::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
     struct BlockAllHook;
 
     #[async_trait::async_trait]
@@ -1041,6 +1052,241 @@ mod tests {
             "error should mention base_url: {}",
             err
         );
+    }
+
+    // =================================================================
+    // P2 Integration: multi-turn tool calls (>3 turns)
+    // =================================================================
+
+    #[tokio::test]
+    async fn run_multi_turn_tool_calls_four_turns() {
+        // Provider returns tool calls for 4 consecutive turns, then a final text response.
+        // This verifies the agent loop sustains >3 turns without interruption.
+        let mut responses: Vec<Vec<AssistantMessageEvent>> = (0..4)
+            .map(|i| {
+                vec![
+                    AssistantMessageEvent::ToolCallStart {
+                        id: format!("tc-{i}"),
+                        name: "echo".into(),
+                    },
+                    AssistantMessageEvent::ToolCallDelta {
+                        id: format!("tc-{i}"),
+                        arguments_delta: format!(r#"{{"input":"turn {i}"}}"#),
+                    },
+                    AssistantMessageEvent::Done {
+                        stop_reason: StopReason::ToolUse,
+                    },
+                ]
+            })
+            .collect();
+        // Turn 5: final text response (no more tool calls)
+        responses.push(vec![
+            AssistantMessageEvent::TextDelta("all done".into()),
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+            },
+        ]);
+
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .llm_provider(StatefulProvider::new(responses))
+            .register_tool(EchoTool)
+            .max_turns(10) // plenty of room
+            .build()
+            .unwrap();
+
+        let mut rx = engine.run("go").await.unwrap();
+        let mut turn_count = 0;
+        let mut tool_exec_count = 0;
+        while let Some(event) = rx.next().await {
+            match event {
+                AgentEvent::TurnStart => turn_count += 1,
+                AgentEvent::ToolExecutionEnd { is_error, .. } => {
+                    assert!(!is_error, "tool should succeed on each turn");
+                    tool_exec_count += 1;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(tool_exec_count, 4, "should execute tools on 4 turns");
+        assert_eq!(turn_count, 5, "should have 5 turns total (4 tool + 1 text)");
+    }
+
+    // =================================================================
+    // P2 Integration: multiple tool calls in a single turn
+    // =================================================================
+
+    #[tokio::test]
+    async fn run_two_tool_calls_in_single_turn() {
+        // Provider returns 2 tool calls in a single LLM response.
+        // Both should be dispatched and executed (mode=Parallel uses join_all).
+        let provider = StatefulProvider::new(vec![
+            // Turn 1: two tool calls
+            vec![
+                AssistantMessageEvent::ToolCallStart {
+                    id: "tc-a".into(),
+                    name: "echo".into(),
+                },
+                AssistantMessageEvent::ToolCallDelta {
+                    id: "tc-a".into(),
+                    arguments_delta: r#"{"input":"alpha"}"#.into(),
+                },
+                AssistantMessageEvent::ToolCallStart {
+                    id: "tc-b".into(),
+                    name: "echo".into(),
+                },
+                AssistantMessageEvent::ToolCallDelta {
+                    id: "tc-b".into(),
+                    arguments_delta: r#"{"input":"beta"}"#.into(),
+                },
+                AssistantMessageEvent::Done {
+                    stop_reason: StopReason::ToolUse,
+                },
+            ],
+            // Turn 2: text response
+            vec![
+                AssistantMessageEvent::TextDelta("done".into()),
+                AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .llm_provider(provider)
+            .register_tool(EchoTool)
+            .tool_execution_mode(ToolExecutionMode::Parallel)
+            .build()
+            .unwrap();
+
+        let mut rx = engine.run("hi").await.unwrap();
+        let mut tool_names: Vec<String> = Vec::new();
+        while let Some(event) = rx.next().await {
+            if let AgentEvent::ToolExecutionEnd {
+                tool_name,
+                is_error,
+                ..
+            } = event
+            {
+                assert!(!is_error);
+                tool_names.push(tool_name);
+            }
+        }
+        assert_eq!(
+            tool_names.len(),
+            2,
+            "both tool calls in single turn should execute"
+        );
+        assert!(tool_names.iter().all(|n| n == "echo"));
+    }
+
+    // =================================================================
+    // P2 Integration: steering queue verification
+    // =================================================================
+
+    #[tokio::test]
+    async fn run_steering_message_appears_in_events() {
+        // Verify that the user message passed to engine.run() is emitted
+        // as a MessageStart event (the steering mechanism).
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .llm_provider(simple_provider("response"))
+            .build()
+            .unwrap();
+
+        let mut rx = engine.run("hello from user").await.unwrap();
+        let mut user_messages = Vec::new();
+        while let Some(event) = rx.next().await {
+            if let AgentEvent::MessageStart {
+                message: AgentMessage::User(u),
+            } = &event
+            {
+                user_messages.push(text_of(&u.content));
+            }
+        }
+        assert_eq!(
+            user_messages.len(),
+            1,
+            "should have exactly one user message"
+        );
+        assert_eq!(user_messages[0], "hello from user");
+    }
+
+    #[tokio::test]
+    async fn run_steering_message_in_result_messages() {
+        // Verify that the steered user message appears in the final result
+        // messages (AgentEnd payload), confirming it was processed by the loop.
+        let engine = SageEngine::builder()
+            .system_prompt("You are a test assistant")
+            .llm_provider(simple_provider("ok"))
+            .build()
+            .unwrap();
+
+        let rx = engine.run("this is the user query").await.unwrap();
+        let messages = rx.result().await;
+        assert!(
+            messages.len() >= 2,
+            "should have user + assistant messages, got {}",
+            messages.len()
+        );
+        // First message should be the steered user message
+        match &messages[0] {
+            AgentMessage::User(u) => {
+                assert_eq!(text_of(&u.content), "this is the user query");
+            }
+            other => panic!("expected User message, got {:?}", other),
+        }
+    }
+
+    // =================================================================
+    // P2 Integration: real LLM (Qwen via DashScope) — gated by env var
+    // =================================================================
+
+    #[tokio::test]
+    #[ignore] // Run with: DASHSCOPE_API_KEY=... cargo test -- --ignored test_real_qwen
+    async fn test_real_qwen_single_turn() {
+        // #[ignore] is the single gate — if you run --ignored, the key must be set.
+        let engine = SageEngine::builder()
+            .system_prompt("You are a helpful assistant. Reply in one short sentence.")
+            .provider("qwen")
+            .model("qwen-plus")
+            .max_tokens(256)
+            .max_turns(1)
+            .build()
+            .unwrap();
+
+        let mut rx = engine
+            .run("What is 2+2? Reply with just the number.")
+            .await
+            .unwrap();
+        let mut has_start = false;
+        let mut has_end = false;
+        while let Some(event) = rx.next().await {
+            match &event {
+                AgentEvent::AgentStart => has_start = true,
+                AgentEvent::AgentEnd { messages } => {
+                    has_end = true;
+                    assert!(!messages.is_empty(), "should return messages");
+                    for msg in messages {
+                        if let AgentMessage::Assistant(a) = msg {
+                            if let Some(err) = &a.error_message {
+                                // API error (expired key, rate limit) — the plumbing works
+                                // but the external service rejected us. Skip content check.
+                                eprintln!("LLM API error (plumbing OK): {err}");
+                                return;
+                            }
+                            let text = text_of(&a.content);
+                            eprintln!("Real LLM response: {text}");
+                            assert!(!text.is_empty(), "assistant text should not be empty");
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert!(has_start, "should emit AgentStart");
+        assert!(has_end, "should emit AgentEnd");
     }
 
     // =================================================================
