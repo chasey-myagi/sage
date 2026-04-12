@@ -1,0 +1,23 @@
+[package]
+name = "sage-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "sage"
+path = "src/main.rs"
+
+[dependencies]
+sage-sandbox = { workspace = true }
+sage-runner = { workspace = true }
+sage-runtime = { workspace = true }
+sage-protocol = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+async-trait = { workspace = true }
+clap = { version = "4", features = ["derive"] }

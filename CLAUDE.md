@@ -1,6 +1,6 @@
-# agent-caster
+# Sage
 
-Agent OS 的 Executor Caster — Rust workspace，基于 msb_krun microVM 沙箱。
+Embeddable AI Agent execution engine — Rust workspace，基于 msb_krun microVM 沙箱。
 
 ## 项目结构
 
@@ -37,7 +37,8 @@ crates/
 ```bash
 cargo build
 cargo test
-cargo run -p agent-caster -- --runtime localhost:50070
+cargo run -p sage-cli -- run --config configs/coding-assistant.yaml --message "hello"
+cargo run -p sage-cli -- serve --runtime localhost:50070
 ```
 
 ## 依赖
@@ -48,7 +49,7 @@ cargo run -p agent-caster -- --runtime localhost:50070
 
 ## 代码对齐原则
 
-`agent-runtime` crate 中的 LLM Provider 代码（`src/llm/providers/`、`src/llm/stream.rs`、`src/llm/types.rs` 等）**必须严格对齐 pi-mono 的 TypeScript 参考实现**。
+`sage-runtime` crate 中的 LLM Provider 代码（`src/llm/providers/`、`src/llm/stream.rs`、`src/llm/types.rs` 等）**必须严格对齐 pi-mono 的 TypeScript 参考实现**。
 
 参考源码位置：`~/Dev/cc/external/pi-mono/packages/ai/src/providers/`
 
@@ -75,4 +76,4 @@ cargo run -p agent-caster -- --runtime localhost:50070
 - `dev` — 日常开发
 - `main` — 发版
 - Conventional Commits: `feat(scope): description`
-- scope: `caster`, `sandbox`, `protocol`, `guest`, `runner`, `runtime`
+- scope: `cli`, `sandbox`, `protocol`, `guest`, `runner`, `runtime`
