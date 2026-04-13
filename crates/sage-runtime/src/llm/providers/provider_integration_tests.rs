@@ -6,6 +6,7 @@
 use super::*;
 use crate::llm::registry::{ApiProvider, StreamOptions};
 use crate::llm::types::*;
+use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -123,6 +124,7 @@ fn assert_no_errors(events: &[AssistantMessageEvent]) {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_stream_text() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -162,6 +164,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_stream_tool_call() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -211,6 +214,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_error_401() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -245,6 +249,7 @@ async fn integration_anthropic_error_401() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_completions_stream_text() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -283,6 +288,7 @@ data: [DONE]\n\n",
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_completions_stream_tool_call() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -331,6 +337,7 @@ data: [DONE]\n\n",
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_completions_error_401() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -365,6 +372,7 @@ async fn integration_openai_completions_error_401() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_responses_stream_text() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -407,6 +415,7 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"o
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_google_stream_text() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -445,6 +454,7 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_azure_openai_responses_stream_text() {
     // Clear Azure env vars so provider falls back to model.base_url
     unsafe {
@@ -495,6 +505,7 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"o
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_google_vertex_stream_text() {
     unsafe {
         std::env::set_var("GOOGLE_CLOUD_PROJECT", "test-project");
@@ -543,6 +554,7 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_responses_stream_tool_call() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -595,6 +607,7 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"o
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_responses_error_401() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -629,6 +642,7 @@ async fn integration_openai_responses_error_401() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_google_stream_tool_call() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -677,6 +691,7 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_google_error_403() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -714,6 +729,7 @@ async fn integration_google_error_403() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_azure_openai_responses_stream_tool_call() {
     unsafe {
         std::env::remove_var("AZURE_OPENAI_BASE_URL");
@@ -773,6 +789,7 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"o
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_azure_openai_responses_error_401() {
     unsafe {
         std::env::remove_var("AZURE_OPENAI_BASE_URL");
@@ -817,6 +834,7 @@ async fn integration_azure_openai_responses_error_401() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_google_vertex_error_403() {
     unsafe {
         std::env::set_var("GOOGLE_CLOUD_PROJECT", "test-project");
@@ -863,6 +881,7 @@ async fn integration_google_vertex_error_403() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_stream_text_then_tool_call() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -917,6 +936,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_completions_stop_reason_length() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -959,6 +979,7 @@ data: [DONE]\n\n",
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_stop_reason_end_turn() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1002,6 +1023,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_stop_reason_max_tokens() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1045,6 +1067,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"},\"u
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_google_stream_empty_response() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1082,6 +1105,7 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_completions_error_html_body() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1116,6 +1140,7 @@ async fn integration_openai_completions_error_html_body() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_stream_sse_error_event() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1160,6 +1185,7 @@ data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_completions_empty_stream() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1191,6 +1217,7 @@ async fn integration_openai_completions_empty_stream() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_missing_api_key() {
     ensure_no_proxy();
     let provider = AnthropicProvider::new();
@@ -1218,6 +1245,7 @@ async fn integration_anthropic_missing_api_key() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_all_providers_registered() {
     ensure_no_proxy();
     crate::llm::register_builtin_providers();
@@ -1245,6 +1273,7 @@ async fn integration_all_providers_registered() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_usage_event_tokens() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1299,6 +1328,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_completions_usage_event_tokens() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1340,6 +1370,7 @@ data: [DONE]\n\n",
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_responses_usage_event_tokens() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1390,6 +1421,7 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":30,\"o
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_google_usage_event_tokens() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1434,6 +1466,7 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_tool_call_lifecycle() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1518,6 +1551,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_responses_tool_call_lifecycle() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1591,6 +1625,7 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"o
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_google_tool_call_lifecycle() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1659,6 +1694,7 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_event_ordering_text_usage_done() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1714,6 +1750,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_google_vertex_tool_call() {
     unsafe {
         std::env::set_var("GOOGLE_CLOUD_PROJECT", "test-project");
@@ -1792,6 +1829,7 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_completions_tool_call_delta() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1867,6 +1905,7 @@ data: [DONE]\n\n",
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_multi_turn_context() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -1942,6 +1981,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_thinking_block() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2009,6 +2049,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_redacted_thinking_block() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2073,6 +2114,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_completions_reasoning_content() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2126,6 +2168,7 @@ data: [DONE]\n\n",
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_google_thinking_part() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2180,6 +2223,7 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_responses_reasoning_summary() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2238,6 +2282,7 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"o
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_error_500() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2272,6 +2317,7 @@ async fn integration_anthropic_error_500() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_google_error_500() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2309,6 +2355,7 @@ async fn integration_google_error_500() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_azure_error_500() {
     unsafe {
         std::env::remove_var("AZURE_OPENAI_BASE_URL");
@@ -2353,6 +2400,7 @@ async fn integration_azure_error_500() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_completions_missing_api_key() {
     ensure_no_proxy();
     let provider = OpenAiCompletionsProvider::new();
@@ -2379,6 +2427,7 @@ async fn integration_openai_completions_missing_api_key() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_google_missing_api_key() {
     ensure_no_proxy();
     let provider = GoogleProvider::new();
@@ -2405,6 +2454,7 @@ async fn integration_google_missing_api_key() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_truncated_stream() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2442,6 +2492,7 @@ data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_d
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_completions_empty_body_200() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2474,6 +2525,7 @@ async fn integration_openai_completions_empty_body_200() {
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_multiple_tool_calls() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2557,6 +2609,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_stop_reason_tool_use() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2606,6 +2659,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_google_stop_reason_stop() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2649,6 +2703,7 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_openai_responses_stream_failed_event() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2695,6 +2750,7 @@ data: {\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"server_error\",
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_anthropic_unicode_text_delta() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
@@ -2739,6 +2795,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
 // ===========================================================================
 
 #[tokio::test]
+#[serial]
 async fn integration_azure_usage_event_tokens() {
     unsafe {
         std::env::remove_var("AZURE_OPENAI_BASE_URL");

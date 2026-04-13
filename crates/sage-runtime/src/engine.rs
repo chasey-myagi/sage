@@ -674,6 +674,7 @@ mod tests {
     use crate::agent::{AfterToolCallHook, BeforeToolCallHook};
     use crate::test_helpers::StatefulProvider;
     use crate::tools::{AgentTool, ToolOutput};
+    use serial_test::serial;
 
     // ── Helpers ───────────────────────────────────────────────────
 
@@ -1457,6 +1458,7 @@ mod tests {
     // =================================================================
 
     #[tokio::test]
+    #[serial]
     async fn routing_provider_missing_api_returns_error_and_done() {
         let provider = RoutingProvider;
         let model = custom_model("fake", "fake-model", 4096, None, None);

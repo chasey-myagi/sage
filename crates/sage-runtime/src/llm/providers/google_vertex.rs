@@ -219,6 +219,7 @@ impl ApiProvider for GoogleVertexProvider {
 mod tests {
     use super::*;
     use crate::llm::registry::StreamOptions;
+    use serial_test::serial;
     use serde_json::json;
 
     // -----------------------------------------------------------------------
@@ -248,6 +249,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_empty_options_falls_through() {
         unsafe { std::env::remove_var("GOOGLE_CLOUD_API_KEY") };
         let key = resolve_api_key(Some(""));
@@ -255,6 +257,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_whitespace_only() {
         unsafe { std::env::remove_var("GOOGLE_CLOUD_API_KEY") };
         let key = resolve_api_key(Some("   "));
@@ -262,6 +265,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_none_no_env() {
         unsafe { std::env::remove_var("GOOGLE_CLOUD_API_KEY") };
         let key = resolve_api_key(None);
@@ -299,6 +303,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    #[serial]
     fn test_resolve_project_from_env() {
         unsafe { std::env::set_var("GOOGLE_CLOUD_PROJECT", "env-project") };
         let project = resolve_project();
@@ -307,6 +312,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_project_fallback_gcloud_project() {
         unsafe { std::env::remove_var("GOOGLE_CLOUD_PROJECT") };
         unsafe { std::env::set_var("GCLOUD_PROJECT", "gcloud-proj") };
@@ -316,6 +322,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_project_missing_returns_error() {
         unsafe { std::env::remove_var("GOOGLE_CLOUD_PROJECT") };
         unsafe { std::env::remove_var("GCLOUD_PROJECT") };
@@ -329,6 +336,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    #[serial]
     fn test_resolve_location_from_env() {
         unsafe { std::env::set_var("GOOGLE_CLOUD_LOCATION", "europe-west1") };
         let loc = resolve_location();
@@ -337,6 +345,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_location_missing_returns_error() {
         unsafe { std::env::remove_var("GOOGLE_CLOUD_LOCATION") };
         let result = resolve_location();
