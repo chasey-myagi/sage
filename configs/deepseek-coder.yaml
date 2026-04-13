@@ -9,7 +9,9 @@ system_prompt: |
   Work in /workspace. Use tools to read, write, and execute code.
 tools:
   bash:
-    allowed_binaries: [python3, cargo, node, git]
+    # NOTE: Default rootfs only has busybox (sh/echo/cat/ls/mkdir/rm/cp/mv).
+    # Tools like cargo/git/python3 require a custom rootfs image.
+    allowed_binaries: [sh, echo, cat, ls, mkdir, rm, cp, mv]
   read:
     allowed_paths: ["/workspace"]
   write:
@@ -25,4 +27,3 @@ constraints:
 sandbox:
   cpus: 1
   memory_mib: 1024
-  network: true
