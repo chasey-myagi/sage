@@ -12,7 +12,7 @@ struct GuestVolume {
 ///
 /// This only runs inside a Linux VM, so we use Linux-specific mount calls.
 /// On non-Linux (host dev machine), this is a no-op.
-pub fn mount_filesystems() -> Result<()> {
+pub fn mount_filesystems(tmpfs_size_mb: u32) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         use nix::mount::{MsFlags, mount};
@@ -45,16 +45,18 @@ pub fn mount_filesystems() -> Result<()> {
         )
         .map_err(|e| anyhow::anyhow!("mount /dev: {e}"))?;
 
+        // Mount /tmp with size limit from security config
+        let tmpfs_opts = format!("size={}m", tmpfs_size_mb);
         mount(
             Some("tmpfs"),
             "/tmp",
             Some("tmpfs"),
             MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-            none,
+            Some(tmpfs_opts.as_str()),
         )
-        .map_err(|e| anyhow::anyhow!("mount /tmp: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("mount /tmp (size={tmpfs_size_mb}m): {e}"))?;
 
-        tracing::debug!("essential filesystems mounted");
+        tracing::debug!(tmpfs_size_mb, "essential filesystems mounted");
 
         // Mount virtiofs volumes passed via SAGE_VOLUMES env var
         mount_volumes()?;
@@ -62,6 +64,7 @@ pub fn mount_filesystems() -> Result<()> {
 
     #[cfg(not(target_os = "linux"))]
     {
+        let _ = tmpfs_size_mb;
         tracing::warn!("mount_filesystems is a no-op on non-Linux (guest-agent only runs in VM)");
     }
 

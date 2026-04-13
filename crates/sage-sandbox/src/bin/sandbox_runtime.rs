@@ -103,6 +103,13 @@ fn main() {
                     e = e.env("SAGE_VOLUMES", &json);
                 }
             }
+            // Forward security config to guest agent.
+            if let Ok(sec) = std::env::var("SAGE_SECURITY") {
+                if !sec.is_empty() {
+                    e = e.env("SAGE_SECURITY", &sec);
+                    tracing::info!("forwarding SAGE_SECURITY to guest");
+                }
+            }
             e
         });
 

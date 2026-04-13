@@ -8,3 +8,6 @@ serde = { workspace = true }
 ciborium = { workspace = true }
 bytes = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
