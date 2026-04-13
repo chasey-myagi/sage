@@ -38,7 +38,7 @@ impl GoogleProvider {
 
 /// Convert `LlmMessage` list into Google `contents` array + optional system instruction.
 /// System messages are extracted separately (returned as `None` in contents).
-fn convert_messages(messages: &[LlmMessage]) -> Vec<Value> {
+pub(crate) fn convert_messages(messages: &[LlmMessage]) -> Vec<Value> {
     let mut contents: Vec<Value> = Vec::new();
 
     // Accumulator for tool-result grouping: Google requires all functionResponse
@@ -166,7 +166,7 @@ fn find_tool_name_for_result(messages: &[LlmMessage], tool_msg: &LlmMessage) -> 
 // Tool conversion
 // ---------------------------------------------------------------------------
 
-fn convert_tools(tools: &[LlmTool]) -> Value {
+pub(crate) fn convert_tools(tools: &[LlmTool]) -> Value {
     let declarations: Vec<Value> = tools
         .iter()
         .map(|t| {
@@ -210,7 +210,7 @@ fn map_finish_reason(reason: &str) -> StopReason {
 }
 
 /// Parse a single Google SSE data payload into zero or more events.
-fn parse_google_sse_data(data: &str) -> Vec<AssistantMessageEvent> {
+pub(crate) fn parse_google_sse_data(data: &str) -> Vec<AssistantMessageEvent> {
     let mut events = Vec::new();
 
     let json: Value = match serde_json::from_str(data) {
@@ -326,7 +326,7 @@ fn parse_google_sse_data(data: &str) -> Vec<AssistantMessageEvent> {
 }
 
 /// Process a single raw SSE line, extracting events from `data:` lines.
-fn process_google_sse_line(line: &str, events: &mut Vec<AssistantMessageEvent>) {
+pub(crate) fn process_google_sse_line(line: &str, events: &mut Vec<AssistantMessageEvent>) {
     let line = line.trim();
     if line.is_empty() || line.starts_with(':') {
         return;
@@ -342,17 +342,17 @@ fn process_google_sse_line(line: &str, events: &mut Vec<AssistantMessageEvent>) 
 // ---------------------------------------------------------------------------
 
 /// Check if a model is Gemini 3 (Pro, Flash, or Lite).
-fn is_gemini3(model_id: &str) -> bool {
+pub(crate) fn is_gemini3(model_id: &str) -> bool {
     model_id.contains("gemini-3") || model_id.contains("gemini3")
 }
 
 /// Check if a model is Gemini 3 Pro specifically.
-fn is_gemini3_pro(model_id: &str) -> bool {
+pub(crate) fn is_gemini3_pro(model_id: &str) -> bool {
     model_id.contains("gemini-3-pro") || model_id.contains("gemini3-pro")
 }
 
 /// Map ReasoningLevel to Google ThinkingLevel string for Gemini 3 models.
-fn get_gemini3_thinking_level(
+pub(crate) fn get_gemini3_thinking_level(
     effort: &crate::llm::types::ReasoningLevel,
     model_id: &str,
 ) -> &'static str {
@@ -382,7 +382,7 @@ fn is_gemini3_flash(model_id: &str) -> bool {
 /// Gemini 3 Pro → thinkingLevel: LOW (cannot fully disable).
 /// Gemini 3 Flash/Lite → thinkingLevel: MINIMAL.
 /// Gemini 2.x → thinkingBudget: 0.
-fn get_disabled_thinking_config(model_id: &str) -> Value {
+pub(crate) fn get_disabled_thinking_config(model_id: &str) -> Value {
     if is_gemini3_pro(model_id) {
         json!({ "thinkingLevel": "LOW" })
     } else if is_gemini3_flash(model_id) {
@@ -393,7 +393,7 @@ fn get_disabled_thinking_config(model_id: &str) -> Value {
 }
 
 /// Get per-model thinking budget for Gemini 2.5 models.
-fn get_google_budget(model_id: &str, effort: &crate::llm::types::ReasoningLevel) -> i64 {
+pub(crate) fn get_google_budget(model_id: &str, effort: &crate::llm::types::ReasoningLevel) -> i64 {
     use crate::llm::types::ReasoningLevel;
     if model_id.contains("2.5-pro") || model_id.contains("25-pro") {
         match effort {
@@ -412,6 +412,118 @@ fn get_google_budget(model_id: &str, effort: &crate::llm::types::ReasoningLevel)
     } else {
         -1 // dynamic budget
     }
+}
+
+// ---------------------------------------------------------------------------
+// Shared request body builder (used by google.rs + google_vertex.rs)
+// ---------------------------------------------------------------------------
+
+/// Build the JSON request body for Google / Vertex AI — same wire format.
+pub(crate) fn build_google_request_body(
+    model: &Model,
+    context: &LlmContext,
+    tools: &[LlmTool],
+    options: &StreamOptions,
+) -> Value {
+    let mut body = json!({});
+
+    // Contents
+    let contents = convert_messages(&context.messages);
+    body["contents"] = json!(contents);
+
+    // System instruction
+    if !context.system_prompt.is_empty() {
+        body["systemInstruction"] = json!({
+            "parts": [{ "text": &context.system_prompt }]
+        });
+    }
+
+    // Tools
+    if !tools.is_empty() {
+        body["tools"] = convert_tools(tools);
+    }
+
+    // Generation config
+    let mut gen_config = json!({});
+    let max_tokens = options.max_tokens.unwrap_or(context.max_tokens);
+    gen_config["maxOutputTokens"] = json!(max_tokens);
+    if let Some(temp) = options.temperature.or(context.temperature) {
+        gen_config["temperature"] = json!(temp);
+    }
+
+    // Thinking configuration
+    if options.thinking_enabled == Some(true) {
+        let mut thinking_config = json!({ "includeThoughts": true });
+
+        if let Some(effort) = &options.reasoning {
+            if is_gemini3(&model.id) {
+                thinking_config["thinkingLevel"] =
+                    json!(get_gemini3_thinking_level(effort, &model.id));
+            } else {
+                let budget = options
+                    .thinking_budget_tokens
+                    .map(|b| b as i64)
+                    .unwrap_or_else(|| get_google_budget(&model.id, effort));
+                if budget > 0 {
+                    thinking_config["thinkingBudget"] = json!(budget);
+                }
+            }
+        }
+        gen_config["thinkingConfig"] = thinking_config;
+    } else if model.reasoning {
+        gen_config["thinkingConfig"] = get_disabled_thinking_config(&model.id);
+    }
+
+    body["generationConfig"] = gen_config;
+
+    body
+}
+
+// ---------------------------------------------------------------------------
+// Shared SSE stream reader (used by google.rs + google_vertex.rs)
+// ---------------------------------------------------------------------------
+
+/// Read a Google/Vertex AI SSE response stream and parse into events.
+pub(crate) async fn read_google_sse_stream(
+    response: reqwest::Response,
+) -> Vec<AssistantMessageEvent> {
+    use futures::StreamExt;
+
+    let mut events = Vec::new();
+    let mut byte_buf: Vec<u8> = Vec::new();
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = match chunk_result {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                events.push(AssistantMessageEvent::Error(format!(
+                    "Stream read error: {e}"
+                )));
+                break;
+            }
+        };
+
+        byte_buf.extend_from_slice(&chunk);
+
+        // Process complete lines
+        while let Some(newline_pos) = byte_buf.iter().position(|&b| b == b'\n') {
+            let line_bytes = byte_buf[..newline_pos].to_vec();
+            byte_buf.drain(..=newline_pos);
+            let line = String::from_utf8_lossy(&line_bytes);
+            process_google_sse_line(&line, &mut events);
+        }
+    }
+
+    // Flush remaining data
+    if !byte_buf.is_empty() {
+        let remaining = String::from_utf8_lossy(&byte_buf);
+        for line in remaining.lines() {
+            process_google_sse_line(line, &mut events);
+        }
+    }
+
+    events
 }
 
 // ---------------------------------------------------------------------------
@@ -453,62 +565,8 @@ impl ApiProvider for GoogleProvider {
             model.id
         );
 
-        // Build request body
-        let mut body = json!({});
-
-        // Contents
-        let contents = convert_messages(&context.messages);
-        body["contents"] = json!(contents);
-
-        // System instruction
-        if !context.system_prompt.is_empty() {
-            body["systemInstruction"] = json!({
-                "parts": [{ "text": &context.system_prompt }]
-            });
-        }
-
-        // Tools
-        if !tools.is_empty() {
-            body["tools"] = convert_tools(tools);
-        }
-
-        // Generation config
-        let mut gen_config = json!({});
-        let max_tokens = options.max_tokens.unwrap_or(context.max_tokens);
-        gen_config["maxOutputTokens"] = json!(max_tokens);
-        if let Some(temp) = options.temperature.or(context.temperature) {
-            gen_config["temperature"] = json!(temp);
-        }
-
-        // Thinking configuration
-        if options.thinking_enabled == Some(true) {
-            let mut thinking_config = json!({ "includeThoughts": true });
-
-            // Map effort level to thinking level or budget
-            if let Some(effort) = &options.reasoning {
-                if is_gemini3(&model.id) {
-                    // Gemini 3 models use thinkingLevel
-                    thinking_config["thinkingLevel"] =
-                        json!(get_gemini3_thinking_level(effort, &model.id));
-                } else {
-                    // Gemini 2.5 models use thinkingBudget
-                    let budget = options
-                        .thinking_budget_tokens
-                        .map(|b| b as i64)
-                        .unwrap_or_else(|| get_google_budget(&model.id, effort));
-                    if budget > 0 {
-                        thinking_config["thinkingBudget"] = json!(budget);
-                    }
-                }
-            }
-            gen_config["thinkingConfig"] = thinking_config;
-        } else if model.reasoning {
-            // Disable thinking explicitly for reasoning models when not enabled.
-            // Gemini 3 models cannot fully disable thinking — use lowest level.
-            gen_config["thinkingConfig"] = get_disabled_thinking_config(&model.id);
-        }
-
-        body["generationConfig"] = gen_config;
+        // Build request body (shared with Vertex AI)
+        let body = build_google_request_body(model, context, tools, options);
 
         // Build the HTTP request
         let mut req = self
@@ -541,44 +599,8 @@ impl ApiProvider for GoogleProvider {
             ))];
         }
 
-        // Parse SSE stream
-        use futures::StreamExt;
-
-        let mut events = Vec::new();
-        let mut byte_buf: Vec<u8> = Vec::new();
-        let mut stream = response.bytes_stream();
-
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = match chunk_result {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    events.push(AssistantMessageEvent::Error(format!(
-                        "Stream read error: {e}"
-                    )));
-                    break;
-                }
-            };
-
-            byte_buf.extend_from_slice(&chunk);
-
-            // Process complete lines
-            while let Some(newline_pos) = byte_buf.iter().position(|&b| b == b'\n') {
-                let line_bytes = byte_buf[..newline_pos].to_vec();
-                byte_buf.drain(..=newline_pos);
-                let line = String::from_utf8_lossy(&line_bytes);
-                process_google_sse_line(&line, &mut events);
-            }
-        }
-
-        // Flush remaining data
-        if !byte_buf.is_empty() {
-            let remaining = String::from_utf8_lossy(&byte_buf);
-            for line in remaining.lines() {
-                process_google_sse_line(line, &mut events);
-            }
-        }
-
-        events
+        // Parse SSE stream (shared with Vertex AI)
+        read_google_sse_stream(response).await
     }
 }
 
