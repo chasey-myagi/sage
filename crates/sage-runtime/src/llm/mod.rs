@@ -35,6 +35,7 @@ pub fn register_builtin_providers() {
     registry::register_provider(Arc::new(GoogleProvider::new()));
     registry::register_provider(Arc::new(AzureOpenAiResponsesProvider::new()));
     registry::register_provider(Arc::new(BedrockProvider::new()));
+    registry::register_provider(Arc::new(GoogleVertexProvider::new()));
 }
 
 /// Stream a completion using the model's registered API provider.

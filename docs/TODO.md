@@ -118,7 +118,7 @@ sage run --config configs/coding-assistant.yaml \
 **Tier 1（云厂商变体）：**
 
 - [x] Bedrock provider — AWS SigV4 签名 + Anthropic on Bedrock streaming
-- [ ] Vertex AI provider — Google OAuth2 + Gemini on Vertex streaming
+- [x] Vertex AI provider — Google OAuth2 + Gemini on Vertex streaming
 - [x] Azure OpenAI provider — Azure AD / API key + deployment endpoint
 
 **Tier 2（独立 Provider 或通过 OpenAI Compat）：**
