@@ -44,14 +44,138 @@ pub struct LlmConfig {
     pub api_key_env: Option<String>,
 }
 
+/// Network access policy for the sandbox.
+///
+/// Accepts both boolean and string values in YAML for backward compatibility:
+/// - `true` → `Full`, `false` → `Airgapped`
+/// - `"airgapped"` / `"whitelist"` / `"full"` (string form)
+#[derive(Debug, Clone, PartialEq)]
+pub enum NetworkPolicy {
+    /// No network access (default). Guest is completely isolated.
+    Airgapped,
+    /// Network restricted to specific hosts via msb_krun TSI whitelist.
+    Whitelist,
+    /// Unrestricted network access (debugging only).
+    Full,
+}
+
+impl Default for NetworkPolicy {
+    fn default() -> Self {
+        NetworkPolicy::Airgapped
+    }
+}
+
+impl Serialize for NetworkPolicy {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            NetworkPolicy::Airgapped => serializer.serialize_str("airgapped"),
+            NetworkPolicy::Whitelist => serializer.serialize_str("whitelist"),
+            NetworkPolicy::Full => serializer.serialize_str("full"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for NetworkPolicy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Helper {
+            Bool(bool),
+            String(String),
+        }
+
+        match Helper::deserialize(deserializer)? {
+            Helper::Bool(true) => Ok(NetworkPolicy::Full),
+            Helper::Bool(false) => Ok(NetworkPolicy::Airgapped),
+            Helper::String(s) => match s.as_str() {
+                "airgapped" => Ok(NetworkPolicy::Airgapped),
+                "whitelist" => Ok(NetworkPolicy::Whitelist),
+                "full" => Ok(NetworkPolicy::Full),
+                other => Err(serde::de::Error::custom(format!(
+                    "unknown network policy: {other} (expected airgapped, whitelist, or full)"
+                ))),
+            },
+        }
+    }
+}
+
+/// Security hardening configuration for the guest VM.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    /// Enable seccomp-bpf syscall filtering (Linux only).
+    #[serde(default = "default_true")]
+    pub seccomp: bool,
+    /// Enable Landlock LSM filesystem access control (Linux only).
+    #[serde(default = "default_true")]
+    pub landlock: bool,
+    /// Maximum file size in MB that can be written inside the sandbox.
+    #[serde(default = "default_max_file_size_mb")]
+    pub max_file_size_mb: u32,
+    /// Maximum number of open file descriptors.
+    #[serde(default = "default_max_open_files")]
+    pub max_open_files: u32,
+    /// tmpfs size limit in MB.
+    #[serde(default = "default_tmpfs_size_mb")]
+    pub tmpfs_size_mb: u32,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            seccomp: default_true(),
+            landlock: default_true(),
+            max_file_size_mb: default_max_file_size_mb(),
+            max_open_files: default_max_open_files(),
+            tmpfs_size_mb: default_tmpfs_size_mb(),
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_max_file_size_mb() -> u32 {
+    100
+}
+
+fn default_max_open_files() -> u32 {
+    256
+}
+
+fn default_tmpfs_size_mb() -> u32 {
+    512
+}
+
+fn default_exec_timeout_secs() -> u32 {
+    30
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SandboxConfig {
     #[serde(default = "default_cpus")]
     pub cpus: u32,
     #[serde(default = "default_memory_mib")]
     pub memory_mib: u32,
+    /// Network access policy. Accepts bool for backward compatibility:
+    /// `true` → Full, `false` → Airgapped. String values: airgapped, whitelist, full.
     #[serde(default)]
-    pub network: bool,
+    pub network: NetworkPolicy,
+    /// Allowed hosts for whitelist network policy (ignored for other policies).
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+    /// Security hardening settings (seccomp, landlock, resource limits).
+    #[serde(default)]
+    pub security: SecurityConfig,
+    /// Per-command execution timeout in seconds.
+    #[serde(default = "default_exec_timeout_secs")]
+    pub exec_timeout_secs: u32,
 }
 
 fn default_cpus() -> u32 {
@@ -80,10 +204,35 @@ pub enum Toolset {
 
 /// Preset allowed binaries for ops toolset.
 const OPS_BINARIES: &[&str] = &[
-    "curl", "wget", "docker", "kubectl", "ssh", "scp", "systemctl", "journalctl",
-    "ps", "top", "htop", "df", "du", "free", "netstat", "ss", "ping", "dig",
-    "nslookup", "ip", "iptables", "tar", "gzip", "zip", "unzip", "jq", "yq",
-    "awk", "sed",
+    "curl",
+    "wget",
+    "docker",
+    "kubectl",
+    "ssh",
+    "scp",
+    "systemctl",
+    "journalctl",
+    "ps",
+    "top",
+    "htop",
+    "df",
+    "du",
+    "free",
+    "netstat",
+    "ss",
+    "ping",
+    "dig",
+    "nslookup",
+    "ip",
+    "iptables",
+    "tar",
+    "gzip",
+    "zip",
+    "unzip",
+    "jq",
+    "yq",
+    "awk",
+    "sed",
 ];
 
 /// Preset allowed binaries for web toolset.
@@ -630,7 +779,7 @@ sandbox:
         let sb = config.sandbox.unwrap();
         assert_eq!(sb.cpus, 2);
         assert_eq!(sb.memory_mib, 1024);
-        assert!(sb.network);
+        assert_eq!(sb.network, NetworkPolicy::Full);
     }
 
     #[test]
@@ -648,7 +797,7 @@ sandbox: {}
         let sb = config.sandbox.unwrap();
         assert_eq!(sb.cpus, 1);
         assert_eq!(sb.memory_mib, 512);
-        assert!(!sb.network);
+        assert_eq!(sb.network, NetworkPolicy::Airgapped);
     }
 
     #[test]
@@ -798,7 +947,7 @@ sandbox:
         let sb = config.sandbox.unwrap();
         assert_eq!(sb.cpus, 2);
         assert_eq!(sb.memory_mib, 2048);
-        assert!(sb.network);
+        assert_eq!(sb.network, NetworkPolicy::Full);
         assert_eq!(config.tools.tool_names().len(), 7);
     }
 
@@ -1107,14 +1256,8 @@ constraints: { max_turns: 1, timeout_secs: 1 }
         // Toolset should serialize/deserialize correctly
         let coding = Toolset::Coding;
         let readonly = Toolset::Readonly;
-        assert_eq!(
-            serde_yaml::to_string(&coding).unwrap().trim(),
-            "coding"
-        );
-        assert_eq!(
-            serde_yaml::to_string(&readonly).unwrap().trim(),
-            "readonly"
-        );
+        assert_eq!(serde_yaml::to_string(&coding).unwrap().trim(), "coding");
+        assert_eq!(serde_yaml::to_string(&readonly).unwrap().trim(), "readonly");
     }
 
     #[test]
@@ -1441,6 +1584,855 @@ constraints: { max_turns: 1, timeout_secs: 1 }
             let deserialized: Toolset = serde_yaml::from_str(expected).unwrap();
             assert_eq!(deserialized, toolset);
         }
+    }
+
+    // -- State: "cannot disable preset tool" behavior documentation --
+
+    // ========================================================================
+    // P7: Security Hardening — NetworkPolicy
+    // ========================================================================
+
+    #[test]
+    fn network_policy_bool_false_is_airgapped() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: false
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sandbox.unwrap().network, NetworkPolicy::Airgapped);
+    }
+
+    #[test]
+    fn network_policy_bool_true_is_full() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: true
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sandbox.unwrap().network, NetworkPolicy::Full);
+    }
+
+    #[test]
+    fn network_policy_string_airgapped() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: airgapped
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sandbox.unwrap().network, NetworkPolicy::Airgapped);
+    }
+
+    #[test]
+    fn network_policy_string_whitelist() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: whitelist
+  allowed_hosts:
+    - api.openai.com
+    - api.anthropic.com
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.network, NetworkPolicy::Whitelist);
+        assert_eq!(sb.allowed_hosts, vec!["api.openai.com", "api.anthropic.com"]);
+    }
+
+    #[test]
+    fn network_policy_string_full() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: full
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sandbox.unwrap().network, NetworkPolicy::Full);
+    }
+
+    #[test]
+    fn network_policy_default_is_airgapped() {
+        // When network field is omitted, default should be airgapped
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  cpus: 1
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sandbox.unwrap().network, NetworkPolicy::Airgapped);
+    }
+
+    #[test]
+    fn network_policy_invalid_string_error() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: foobar
+"#;
+        let result = serde_yaml::from_str::<AgentConfig>(yaml);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("unknown network policy"),
+            "error should mention unknown policy, got: {err}"
+        );
+    }
+
+    #[test]
+    fn network_policy_integer_error() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: 42
+"#;
+        // Integer is neither bool nor string — should fail
+        assert!(serde_yaml::from_str::<AgentConfig>(yaml).is_err());
+    }
+
+    #[test]
+    fn network_policy_serialize_roundtrip() {
+        // Serialize always uses string form, deserialize accepts both
+        for (policy, expected_str) in [
+            (NetworkPolicy::Airgapped, "airgapped"),
+            (NetworkPolicy::Whitelist, "whitelist"),
+            (NetworkPolicy::Full, "full"),
+        ] {
+            let serialized = serde_yaml::to_string(&policy).unwrap();
+            assert_eq!(serialized.trim(), expected_str);
+            let deserialized: NetworkPolicy = serde_yaml::from_str(&serialized).unwrap();
+            assert_eq!(deserialized, policy);
+        }
+    }
+
+    #[test]
+    fn network_policy_default_trait() {
+        assert_eq!(NetworkPolicy::default(), NetworkPolicy::Airgapped);
+    }
+
+    // ========================================================================
+    // P7: Security Hardening — SandboxConfig with allowed_hosts
+    // ========================================================================
+
+    #[test]
+    fn sandbox_whitelist_with_hosts() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: whitelist
+  allowed_hosts:
+    - api.openai.com
+    - "*.anthropic.com"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.network, NetworkPolicy::Whitelist);
+        assert_eq!(sb.allowed_hosts.len(), 2);
+        assert_eq!(sb.allowed_hosts[0], "api.openai.com");
+        assert_eq!(sb.allowed_hosts[1], "*.anthropic.com");
+    }
+
+    #[test]
+    fn sandbox_airgapped_with_hosts_still_airgapped() {
+        // allowed_hosts is accepted but logically ignored for airgapped
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: airgapped
+  allowed_hosts: [api.example.com]
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.network, NetworkPolicy::Airgapped);
+        assert_eq!(sb.allowed_hosts, vec!["api.example.com"]);
+    }
+
+    #[test]
+    fn sandbox_full_with_hosts_accepted() {
+        // allowed_hosts is accepted but logically ignored for full access
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: full
+  allowed_hosts: [api.example.com]
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.network, NetworkPolicy::Full);
+        // Hosts stored but ignored at enforcement level
+        assert_eq!(sb.allowed_hosts.len(), 1);
+    }
+
+    #[test]
+    fn sandbox_default_empty_hosts() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox: {}
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.sandbox.unwrap().allowed_hosts.is_empty());
+    }
+
+    // ========================================================================
+    // P7: Security Hardening — SecurityConfig
+    // ========================================================================
+
+    #[test]
+    fn security_config_all_defaults() {
+        let cfg = SecurityConfig::default();
+        assert!(cfg.seccomp);
+        assert!(cfg.landlock);
+        assert_eq!(cfg.max_file_size_mb, 100);
+        assert_eq!(cfg.max_open_files, 256);
+        assert_eq!(cfg.tmpfs_size_mb, 512);
+    }
+
+    #[test]
+    fn security_config_explicit_all_fields() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  security:
+    seccomp: false
+    landlock: false
+    max_file_size_mb: 50
+    max_open_files: 128
+    tmpfs_size_mb: 256
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sec = &config.sandbox.unwrap().security;
+        assert!(!sec.seccomp);
+        assert!(!sec.landlock);
+        assert_eq!(sec.max_file_size_mb, 50);
+        assert_eq!(sec.max_open_files, 128);
+        assert_eq!(sec.tmpfs_size_mb, 256);
+    }
+
+    #[test]
+    fn security_config_partial_override() {
+        // Only override seccomp, rest should keep defaults
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  security:
+    seccomp: false
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sec = &config.sandbox.unwrap().security;
+        assert!(!sec.seccomp);
+        assert!(sec.landlock); // default
+        assert_eq!(sec.max_file_size_mb, 100); // default
+        assert_eq!(sec.max_open_files, 256); // default
+        assert_eq!(sec.tmpfs_size_mb, 512); // default
+    }
+
+    #[test]
+    fn security_config_landlock_disabled() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  security:
+    landlock: false
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sec = &config.sandbox.unwrap().security;
+        assert!(sec.seccomp); // default: enabled
+        assert!(!sec.landlock);
+    }
+
+    #[test]
+    fn security_config_zero_max_file_size() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  security:
+    max_file_size_mb: 0
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sandbox.unwrap().security.max_file_size_mb, 0);
+    }
+
+    #[test]
+    fn security_config_large_values() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  security:
+    max_file_size_mb: 10240
+    max_open_files: 65536
+    tmpfs_size_mb: 8192
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sec = &config.sandbox.unwrap().security;
+        assert_eq!(sec.max_file_size_mb, 10240);
+        assert_eq!(sec.max_open_files, 65536);
+        assert_eq!(sec.tmpfs_size_mb, 8192);
+    }
+
+    #[test]
+    fn security_config_omitted_uses_defaults() {
+        // No security section → SecurityConfig::default()
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  cpus: 2
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sandbox.unwrap().security, SecurityConfig::default());
+    }
+
+    #[test]
+    fn security_config_empty_section_uses_defaults() {
+        // Explicit empty security section → all defaults
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  security: {}
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sandbox.unwrap().security, SecurityConfig::default());
+    }
+
+    #[test]
+    fn security_config_serialize_roundtrip() {
+        let cfg = SecurityConfig {
+            seccomp: false,
+            landlock: true,
+            max_file_size_mb: 200,
+            max_open_files: 512,
+            tmpfs_size_mb: 1024,
+        };
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        let parsed: SecurityConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed, cfg);
+    }
+
+    // ========================================================================
+    // P7: Security Hardening — Extended SandboxConfig
+    // ========================================================================
+
+    #[test]
+    fn sandbox_exec_timeout_default() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox: {}
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sandbox.unwrap().exec_timeout_secs, 30);
+    }
+
+    #[test]
+    fn sandbox_exec_timeout_custom() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  exec_timeout_secs: 120
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sandbox.unwrap().exec_timeout_secs, 120);
+    }
+
+    #[test]
+    fn sandbox_backward_compat_bool_network_true() {
+        // Old-style YAML with network: true should still parse correctly
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  cpus: 2
+  memory_mib: 1024
+  network: true
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.cpus, 2);
+        assert_eq!(sb.memory_mib, 1024);
+        assert_eq!(sb.network, NetworkPolicy::Full);
+        // New fields should have defaults
+        assert!(sb.allowed_hosts.is_empty());
+        assert_eq!(sb.security, SecurityConfig::default());
+        assert_eq!(sb.exec_timeout_secs, 30);
+    }
+
+    #[test]
+    fn sandbox_backward_compat_bool_network_false() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  cpus: 1
+  memory_mib: 512
+  network: false
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.network, NetworkPolicy::Airgapped);
+    }
+
+    #[test]
+    fn sandbox_backward_compat_empty() {
+        // sandbox: {} should work with all defaults
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox: {}
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.cpus, 1);
+        assert_eq!(sb.memory_mib, 512);
+        assert_eq!(sb.network, NetworkPolicy::Airgapped);
+        assert!(sb.allowed_hosts.is_empty());
+        assert_eq!(sb.security, SecurityConfig::default());
+        assert_eq!(sb.exec_timeout_secs, 30);
+    }
+
+    #[test]
+    fn sandbox_full_yaml_every_field() {
+        let yaml = r#"
+name: secure-agent
+description: "fully secured agent"
+llm: { provider: anthropic, model: claude-sonnet-4-20250514, max_tokens: 4096 }
+system_prompt: "secure test"
+tools:
+  toolset: coding
+constraints: { max_turns: 30, timeout_secs: 600 }
+sandbox:
+  cpus: 4
+  memory_mib: 4096
+  network: whitelist
+  allowed_hosts:
+    - api.anthropic.com
+    - api.openai.com
+    - "*.githubusercontent.com"
+  security:
+    seccomp: true
+    landlock: true
+    max_file_size_mb: 200
+    max_open_files: 512
+    tmpfs_size_mb: 1024
+  exec_timeout_secs: 60
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.name, "secure-agent");
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.cpus, 4);
+        assert_eq!(sb.memory_mib, 4096);
+        assert_eq!(sb.network, NetworkPolicy::Whitelist);
+        assert_eq!(sb.allowed_hosts.len(), 3);
+        assert_eq!(sb.allowed_hosts[0], "api.anthropic.com");
+        assert_eq!(sb.allowed_hosts[2], "*.githubusercontent.com");
+        assert!(sb.security.seccomp);
+        assert!(sb.security.landlock);
+        assert_eq!(sb.security.max_file_size_mb, 200);
+        assert_eq!(sb.security.max_open_files, 512);
+        assert_eq!(sb.security.tmpfs_size_mb, 1024);
+        assert_eq!(sb.exec_timeout_secs, 60);
+    }
+
+    #[test]
+    fn agent_config_existing_yaml_still_parses_with_security_fields() {
+        // The original FEISHU_YAML has no sandbox/security — must still parse
+        let config: AgentConfig = serde_yaml::from_str(FEISHU_YAML).unwrap();
+        assert!(config.sandbox.is_none());
+    }
+
+    #[test]
+    fn network_policy_whitelist_empty_hosts_accepted() {
+        // Whitelist with no hosts is valid (but useless — no traffic allowed)
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: whitelist
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.network, NetworkPolicy::Whitelist);
+        assert!(sb.allowed_hosts.is_empty());
+    }
+
+    #[test]
+    fn sandbox_exec_timeout_zero_allowed() {
+        // Zero timeout = no per-command timeout enforcement
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  exec_timeout_secs: 0
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sandbox.unwrap().exec_timeout_secs, 0);
+    }
+
+    // ========================================================================
+    // P7: Security Hardening — Boundary / Error path supplements
+    // ========================================================================
+
+    #[test]
+    fn network_policy_case_sensitive_rejects_capitalized() {
+        for value in &["Full", "FULL", "Airgapped", "AIRGAPPED", "Whitelist", "WHITELIST"] {
+            let yaml = format!(
+                r#"
+name: t
+description: "t"
+llm: {{ provider: a, model: b, max_tokens: 1 }}
+system_prompt: "t"
+tools: {{}}
+constraints: {{ max_turns: 1, timeout_secs: 1 }}
+sandbox:
+  network: {value}
+"#
+            );
+            let result = serde_yaml::from_str::<AgentConfig>(&yaml);
+            assert!(
+                result.is_err(),
+                "network: {value} should be rejected (case sensitive)"
+            );
+        }
+    }
+
+    #[test]
+    fn network_policy_empty_string_error() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: ""
+"#;
+        let result = serde_yaml::from_str::<AgentConfig>(yaml);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("unknown network policy"),
+            "empty string should produce 'unknown network policy' error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn network_policy_yaml_null_is_error() {
+        // network: ~ (YAML null) is NOT the same as omitting the field.
+        // serde(default) only activates when the key is absent, not when
+        // the value is null. With our custom Deserialize impl, null doesn't
+        // match bool or string, so it correctly errors.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: ~
+"#;
+        assert!(serde_yaml::from_str::<AgentConfig>(yaml).is_err());
+    }
+
+    #[test]
+    fn security_config_string_where_u32_expected_error() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  security:
+    max_file_size_mb: "abc"
+"#;
+        assert!(serde_yaml::from_str::<AgentConfig>(yaml).is_err());
+    }
+
+    #[test]
+    fn security_config_negative_value_error() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  security:
+    max_file_size_mb: -1
+"#;
+        assert!(serde_yaml::from_str::<AgentConfig>(yaml).is_err());
+    }
+
+    #[test]
+    fn security_config_u32_overflow_error() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  security:
+    max_open_files: 4294967296
+"#;
+        assert!(serde_yaml::from_str::<AgentConfig>(yaml).is_err());
+    }
+
+    #[test]
+    fn security_config_int_where_bool_expected_error() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  security:
+    seccomp: 42
+"#;
+        // seccomp expects bool, not integer
+        assert!(serde_yaml::from_str::<AgentConfig>(yaml).is_err());
+    }
+
+    #[test]
+    fn sandbox_allowed_hosts_special_characters_accepted() {
+        // Serde layer accepts any string; validation is at enforcement level
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: whitelist
+  allowed_hosts:
+    - ""
+    - "host with spaces"
+    - "../../etc/passwd"
+    - "api.例え.jp"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.allowed_hosts.len(), 4);
+        assert_eq!(sb.allowed_hosts[0], "");
+        assert_eq!(sb.allowed_hosts[3], "api.例え.jp");
+    }
+
+    #[test]
+    fn sandbox_allowed_hosts_integer_coerced_to_string() {
+        // serde_yaml coerces YAML scalars (including integers) to String
+        // in a Vec<String>. This documents that behavior — host validation
+        // is at enforcement level, not serde level.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  network: whitelist
+  allowed_hosts:
+    - 42
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.allowed_hosts, vec!["42"]);
+    }
+
+    #[test]
+    fn sandbox_config_full_serialize_roundtrip() {
+        // Construct a SandboxConfig with non-default values in every field,
+        // serialize to YAML, deserialize back, and verify all fields match.
+        let original = SandboxConfig {
+            cpus: 4,
+            memory_mib: 2048,
+            network: NetworkPolicy::Whitelist,
+            allowed_hosts: vec!["api.example.com".into(), "*.internal.net".into()],
+            security: SecurityConfig {
+                seccomp: false,
+                landlock: true,
+                max_file_size_mb: 200,
+                max_open_files: 512,
+                tmpfs_size_mb: 1024,
+            },
+            exec_timeout_secs: 60,
+        };
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let parsed: SandboxConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed.cpus, 4);
+        assert_eq!(parsed.memory_mib, 2048);
+        assert_eq!(parsed.network, NetworkPolicy::Whitelist);
+        assert_eq!(parsed.allowed_hosts, vec!["api.example.com", "*.internal.net"]);
+        assert_eq!(parsed.security.seccomp, false);
+        assert_eq!(parsed.security.landlock, true);
+        assert_eq!(parsed.security.max_file_size_mb, 200);
+        assert_eq!(parsed.security.max_open_files, 512);
+        assert_eq!(parsed.security.tmpfs_size_mb, 1024);
+        assert_eq!(parsed.exec_timeout_secs, 60);
+    }
+
+    #[test]
+    fn sandbox_exec_timeout_u32_max() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  exec_timeout_secs: 4294967295
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sandbox.unwrap().exec_timeout_secs, u32::MAX);
+    }
+
+    #[test]
+    fn security_config_max_file_size_u32_max() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  security:
+    max_file_size_mb: 4294967295
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sandbox.unwrap().security.max_file_size_mb, u32::MAX);
     }
 
     // -- State: "cannot disable preset tool" behavior documentation --
