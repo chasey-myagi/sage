@@ -38,6 +38,9 @@ aws-types = "1"
 ciborium = "0.2"              # CBOR encoding for wire protocol
 bytes = "1"
 
+# Testing
+serial_test = "3"
+
 # VMM
 msb_krun = "0.1"
 libc = "0.2"

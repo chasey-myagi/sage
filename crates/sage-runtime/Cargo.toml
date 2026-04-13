@@ -32,3 +32,4 @@ libc = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
 mockito = "1"
+serial_test = { workspace = true }

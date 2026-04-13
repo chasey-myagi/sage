@@ -252,12 +252,14 @@ impl ApiProvider for AzureOpenAiResponsesProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     // ========================================================================
     // parse_deployment_name_map
     // ========================================================================
 
     #[test]
+    #[serial]
     fn test_parse_deployment_name_map_empty() {
         unsafe { std::env::remove_var("AZURE_OPENAI_DEPLOYMENT_NAME_MAP") };
         let map = parse_deployment_name_map();
@@ -265,6 +267,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_deployment_name_map_single() {
         unsafe { std::env::set_var("AZURE_OPENAI_DEPLOYMENT_NAME_MAP", "gpt-4o=my-gpt4o-deploy") };
         let map = parse_deployment_name_map();
@@ -273,6 +276,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_deployment_name_map_multiple() {
         unsafe {
             std::env::set_var(
@@ -289,6 +293,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_deployment_name_map_ignores_malformed() {
         unsafe {
             std::env::set_var(
@@ -307,6 +312,7 @@ mod tests {
     // ========================================================================
 
     #[test]
+    #[serial]
     fn test_resolve_deployment_name_passthrough() {
         unsafe { std::env::remove_var("AZURE_OPENAI_DEPLOYMENT_NAME_MAP") };
         let model = crate::test_helpers::test_model();
@@ -315,6 +321,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_deployment_name_mapped() {
         let model = crate::test_helpers::test_model();
         unsafe {
@@ -333,6 +340,7 @@ mod tests {
     // ========================================================================
 
     #[test]
+    #[serial]
     fn test_resolve_base_url_from_env() {
         unsafe {
             std::env::set_var(
@@ -348,6 +356,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_base_url_from_resource_name() {
         unsafe { std::env::remove_var("AZURE_OPENAI_BASE_URL") };
         unsafe { std::env::set_var("AZURE_OPENAI_RESOURCE_NAME", "my-resource") };
@@ -358,6 +367,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_base_url_from_model() {
         unsafe { std::env::remove_var("AZURE_OPENAI_BASE_URL") };
         unsafe { std::env::remove_var("AZURE_OPENAI_RESOURCE_NAME") };
@@ -368,6 +378,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_base_url_error_when_missing() {
         unsafe { std::env::remove_var("AZURE_OPENAI_BASE_URL") };
         unsafe { std::env::remove_var("AZURE_OPENAI_RESOURCE_NAME") };
@@ -383,12 +394,14 @@ mod tests {
     // ========================================================================
 
     #[test]
+    #[serial]
     fn test_resolve_api_version_default() {
         unsafe { std::env::remove_var("AZURE_OPENAI_API_VERSION") };
         assert_eq!(resolve_api_version(), "v1");
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_version_custom() {
         unsafe { std::env::set_var("AZURE_OPENAI_API_VERSION", "2024-06-01") };
         assert_eq!(resolve_api_version(), "2024-06-01");

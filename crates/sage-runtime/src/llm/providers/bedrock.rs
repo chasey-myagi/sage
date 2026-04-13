@@ -554,6 +554,7 @@ impl ApiProvider for BedrockProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     // ========================================================================
     // normalize_tool_call_id
@@ -631,6 +632,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_supports_prompt_caching_non_claude() {
         unsafe { std::env::remove_var("AWS_BEDROCK_FORCE_CACHE") };
         assert!(!supports_prompt_caching("amazon.nova-pro-v1:0"));
@@ -642,6 +644,7 @@ mod tests {
     // ========================================================================
 
     #[test]
+    #[serial]
     fn test_resolve_region_default_us_east_1() {
         unsafe { std::env::remove_var("AWS_REGION") };
         unsafe { std::env::remove_var("AWS_DEFAULT_REGION") };
@@ -650,6 +653,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_region_from_env() {
         unsafe { std::env::set_var("AWS_REGION", "eu-west-1") };
         assert_eq!(resolve_region(), Some("eu-west-1".into()));
@@ -657,6 +661,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_region_none_when_profile_set() {
         unsafe { std::env::remove_var("AWS_REGION") };
         unsafe { std::env::remove_var("AWS_DEFAULT_REGION") };

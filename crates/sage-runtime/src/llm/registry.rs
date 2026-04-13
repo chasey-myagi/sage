@@ -102,6 +102,7 @@ pub fn resolve_provider(api: &str) -> Result<Arc<dyn ApiProvider>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     struct MockProvider;
 
@@ -125,6 +126,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_register_and_get() {
         clear_providers();
         register_provider(Arc::new(MockProvider));
@@ -134,6 +136,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_provider_error() {
         clear_providers();
         let result = resolve_provider("nonexistent");
