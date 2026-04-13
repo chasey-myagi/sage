@@ -16,6 +16,7 @@ pub mod api {
     pub const ANTHROPIC_MESSAGES: &str = "anthropic-messages";
     pub const GOOGLE_GENERATIVE_AI: &str = "google-generative-ai";
     pub const AZURE_OPENAI_RESPONSES: &str = "azure-openai-responses";
+    pub const BEDROCK_CONVERSE_STREAM: &str = "bedrock-converse-stream";
 }
 
 // ============================================================================
@@ -39,6 +40,7 @@ pub mod provider {
     pub const CEREBRAS: &str = "cerebras";
     pub const MISTRAL: &str = "mistral";
     pub const GITHUB_COPILOT: &str = "github-copilot";
+    pub const AMAZON_BEDROCK: &str = "amazon-bedrock";
 }
 
 // ============================================================================

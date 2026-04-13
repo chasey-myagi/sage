@@ -48,6 +48,7 @@ pub fn api_key_env_var(provider: &str) -> String {
         "cerebras" => "CEREBRAS_API_KEY".into(),
         "github-copilot" => "COPILOT_GITHUB_TOKEN".into(),
         "azure-openai-responses" => "AZURE_OPENAI_API_KEY".into(),
+        "amazon-bedrock" => "AWS_ACCESS_KEY_ID".into(),
         other => format!("{}_API_KEY", other.to_uppercase()),
     }
 }
@@ -71,6 +72,7 @@ pub fn resolve_api_key(provider: &str) -> Result<String, KeyError> {
         "cerebras",
         "github-copilot",
         "azure-openai-responses",
+        "amazon-bedrock",
     ];
     if !known.contains(&provider) {
         return Err(KeyError::UnknownProvider {
@@ -226,6 +228,24 @@ mod tests {
         assert!(
             err.contains("AZURE_OPENAI_API_KEY"),
             "azure-openai-responses should be a known provider, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_env_var_amazon_bedrock() {
+        assert_eq!(api_key_env_var("amazon-bedrock"), "AWS_ACCESS_KEY_ID");
+    }
+
+    #[test]
+    fn test_resolve_api_key_amazon_bedrock_recognized() {
+        unsafe { std::env::remove_var("AWS_ACCESS_KEY_ID") };
+        let result = resolve_api_key("amazon-bedrock");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("AWS_ACCESS_KEY_ID"),
+            "amazon-bedrock should be a known provider, got: {}",
             err
         );
     }
