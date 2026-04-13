@@ -13,6 +13,9 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentEvent {
     AgentStart,
+    RunError {
+        error: String,
+    },
     AgentEnd {
         messages: Vec<AgentMessage>,
     },
@@ -415,6 +418,10 @@ mod tests {
     #[tokio::test]
     async fn agent_event_all_variants_constructable() {
         let _start = AgentEvent::AgentStart;
+
+        let _run_error = AgentEvent::RunError {
+            error: "boom".to_string(),
+        };
 
         let _end = AgentEvent::AgentEnd { messages: vec![] };
 
@@ -904,6 +911,9 @@ mod tests {
 
         let events: Vec<AgentEvent> = vec![
             AgentEvent::AgentStart,
+            AgentEvent::RunError {
+                error: "boom".into(),
+            },
             AgentEvent::AgentEnd {
                 messages: vec![user_msg.clone()],
             },
