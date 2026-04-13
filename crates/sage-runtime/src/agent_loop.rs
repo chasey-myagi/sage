@@ -512,9 +512,37 @@ pub async fn run_agent_loop(
                 .complete(&agent.config().model, &context, &tools)
                 .await;
 
-            // 4. Accumulate events into AssistantMessage
+            // 4. Accumulate events into AssistantMessage + emit streaming events
             let mut accum = MessageAccumulator::new();
+            let mut tool_id_to_name: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
             for event in &events {
+                match event {
+                    AssistantMessageEvent::TextDelta(delta) => {
+                        emit.emit(AgentEvent::MessageUpdate {
+                            message: AgentMessage::assistant(String::new()),
+                            delta: delta.clone(),
+                        })
+                        .await;
+                    }
+                    AssistantMessageEvent::ToolCallStart { id, name } => {
+                        tool_id_to_name.insert(id.clone(), name.clone());
+                    }
+                    AssistantMessageEvent::ToolCallDelta {
+                        id,
+                        arguments_delta,
+                    } => {
+                        let tool_name =
+                            tool_id_to_name.get(id).cloned().unwrap_or_default();
+                        emit.emit(AgentEvent::ToolExecutionUpdate {
+                            tool_call_id: id.clone(),
+                            tool_name,
+                            partial_result: arguments_delta.clone(),
+                        })
+                        .await;
+                    }
+                    _ => {}
+                }
                 accum.push_event(event);
             }
             let (assistant_msg, tool_call_accums) = accum.build(&agent.config().model);
@@ -2893,6 +2921,70 @@ mod tests {
                 assert!(!redacted);
             }
             other => panic!("expected Thinking, got: {other:?}"),
+        }
+    }
+
+    // ── Issue #6: Regression — MessageUpdate and ToolExecutionUpdate emitted ──
+
+    #[tokio::test]
+    async fn test_fix_text_delta_emits_message_update() {
+        let sink = CollectorSink::new();
+        let mut agent = make_agent(
+            vec![text_response("hello world")],
+            ToolRegistry::new(),
+        );
+        agent.push_message(AgentMessage::User(UserMessage::from_text("hi")));
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        let events = sink.events().await;
+        let message_updates: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::MessageUpdate { .. }))
+            .collect();
+        assert!(
+            !message_updates.is_empty(),
+            "TextDelta should produce MessageUpdate events"
+        );
+        // Verify the delta content
+        if let AgentEvent::MessageUpdate { delta, .. } = &message_updates[0] {
+            assert_eq!(delta, "hello world");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fix_tool_call_delta_emits_tool_execution_update() {
+        let sink = CollectorSink::new();
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc-1", "echo", r#"{"text":"hi"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.push_message(AgentMessage::User(UserMessage::from_text("use echo")));
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        let events = sink.events().await;
+        let tool_updates: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::ToolExecutionUpdate { .. }))
+            .collect();
+        assert!(
+            !tool_updates.is_empty(),
+            "ToolCallDelta should produce ToolExecutionUpdate events"
+        );
+        // Verify tool name is correctly resolved from ToolCallStart
+        if let AgentEvent::ToolExecutionUpdate {
+            tool_call_id,
+            tool_name,
+            partial_result,
+        } = &tool_updates[0]
+        {
+            assert_eq!(tool_call_id, "tc-1");
+            assert_eq!(tool_name, "echo");
+            assert_eq!(partial_result, r#"{"text":"hi"}"#);
         }
     }
 }
