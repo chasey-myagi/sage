@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sage_runner::config::NetworkPolicy;
+use sage_runner::config::{NetworkPolicy, SecurityConfig};
 use sage_runner::AgentConfig;
 use sage_runtime::engine::{SageEngine, SandboxSettings};
 use sage_runtime::event::AgentEvent;
@@ -165,14 +165,7 @@ fn build_engine_from_config(
             NetworkPolicy::Airgapped => false,
         };
         // Convert runner SecurityConfig → protocol GuestSecurityConfig for the guest.
-        let guest_security = sage_protocol::GuestSecurityConfig {
-            seccomp: sandbox.security.seccomp,
-            landlock: sandbox.security.landlock,
-            max_file_size_mb: sandbox.security.max_file_size_mb,
-            max_open_files: sandbox.security.max_open_files,
-            tmpfs_size_mb: sandbox.security.tmpfs_size_mb,
-            allowed_paths: vec!["/workspace".into(), "/tmp".into()],
-        };
+        let guest_security = to_guest_security(&sandbox.security, &[]);
 
         builder = builder.sandbox(SandboxSettings {
             cpus: sandbox.cpus,
@@ -184,6 +177,31 @@ fn build_engine_from_config(
     }
 
     Ok(builder.build()?)
+}
+
+/// Convert runner `SecurityConfig` → protocol `GuestSecurityConfig`.
+///
+/// `extra_volume_paths` are guest paths from volume mounts that Landlock
+/// must allow read+write access to, in addition to `/workspace` and `/tmp`.
+fn to_guest_security(
+    config: &SecurityConfig,
+    extra_volume_paths: &[&str],
+) -> sage_protocol::GuestSecurityConfig {
+    let mut allowed_paths: Vec<String> = vec!["/workspace".into(), "/tmp".into()];
+    for path in extra_volume_paths {
+        if !allowed_paths.iter().any(|p| p == path) {
+            allowed_paths.push((*path).into());
+        }
+    }
+    sage_protocol::GuestSecurityConfig {
+        seccomp: config.seccomp,
+        landlock: config.landlock,
+        max_file_size_mb: config.max_file_size_mb,
+        max_open_files: config.max_open_files,
+        tmpfs_size_mb: config.tmpfs_size_mb,
+        max_processes: config.max_processes,
+        allowed_paths,
+    }
 }
 
 #[cfg(test)]
@@ -347,6 +365,7 @@ sandbox:
     max_file_size_mb: 75
     max_open_files: 192
     tmpfs_size_mb: 384
+    max_processes: 96
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
         let engine = build_engine_from_config(&config, None, None).unwrap();
@@ -366,6 +385,7 @@ sandbox:
         assert_eq!(guest_config.max_file_size_mb, 75);
         assert_eq!(guest_config.max_open_files, 192);
         assert_eq!(guest_config.tmpfs_size_mb, 384);
+        assert_eq!(guest_config.max_processes, 96);
     }
 
     #[test]

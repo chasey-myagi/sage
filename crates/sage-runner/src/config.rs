@@ -123,6 +123,9 @@ pub struct SecurityConfig {
     /// tmpfs size limit in MB.
     #[serde(default = "default_tmpfs_size_mb")]
     pub tmpfs_size_mb: u32,
+    /// Maximum number of processes (RLIMIT_NPROC). Prevents fork bombs.
+    #[serde(default = "default_max_processes")]
+    pub max_processes: u32,
 }
 
 impl Default for SecurityConfig {
@@ -133,6 +136,7 @@ impl Default for SecurityConfig {
             max_file_size_mb: default_max_file_size_mb(),
             max_open_files: default_max_open_files(),
             tmpfs_size_mb: default_tmpfs_size_mb(),
+            max_processes: default_max_processes(),
         }
     }
 }
@@ -151,6 +155,10 @@ fn default_max_open_files() -> u32 {
 
 fn default_tmpfs_size_mb() -> u32 {
     512
+}
+
+fn default_max_processes() -> u32 {
+    256
 }
 
 fn default_exec_timeout_secs() -> u32 {

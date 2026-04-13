@@ -56,14 +56,28 @@ pub fn apply(config: &GuestSecurityConfig) -> Result<()> {
     Ok(())
 }
 
+/// Minimum values for resource limits — below these the guest agent cannot function.
+const MIN_OPEN_FILES: u32 = 32;
+const MIN_TMPFS_SIZE_MB: u32 = 16;
+const MIN_PROCESSES: u32 = 8;
+
 /// Apply resource limits via setrlimit.
 fn apply_resource_limits(config: &GuestSecurityConfig) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         use nix::sys::resource::{Resource, setrlimit};
 
+        // Clamp to safe minimums — values below these would crash the guest agent.
+        let nofile = config.max_open_files.max(MIN_OPEN_FILES) as u64;
+        if config.max_open_files < MIN_OPEN_FILES {
+            tracing::warn!(
+                configured = config.max_open_files,
+                enforced = MIN_OPEN_FILES,
+                "max_open_files below minimum, clamped"
+            );
+        }
+
         // RLIMIT_NOFILE — max open file descriptors
-        let nofile = config.max_open_files as u64;
         setrlimit(Resource::RLIMIT_NOFILE, nofile, nofile)
             .map_err(|e| anyhow::anyhow!("setrlimit NOFILE({nofile}): {e}"))?;
         tracing::debug!(max_open_files = nofile, "RLIMIT_NOFILE set");
@@ -73,6 +87,19 @@ fn apply_resource_limits(config: &GuestSecurityConfig) -> Result<()> {
         setrlimit(Resource::RLIMIT_FSIZE, fsize_bytes, fsize_bytes)
             .map_err(|e| anyhow::anyhow!("setrlimit FSIZE({fsize_bytes}): {e}"))?;
         tracing::debug!(max_file_size_mb = config.max_file_size_mb, "RLIMIT_FSIZE set");
+
+        // RLIMIT_NPROC — max processes (prevents fork bombs)
+        let nproc = config.max_processes.max(MIN_PROCESSES) as u64;
+        if config.max_processes < MIN_PROCESSES {
+            tracing::warn!(
+                configured = config.max_processes,
+                enforced = MIN_PROCESSES,
+                "max_processes below minimum, clamped"
+            );
+        }
+        setrlimit(Resource::RLIMIT_NPROC, nproc, nproc)
+            .map_err(|e| anyhow::anyhow!("setrlimit NPROC({nproc}): {e}"))?;
+        tracing::debug!(max_processes = nproc, "RLIMIT_NPROC set");
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -191,13 +218,17 @@ fn apply_seccomp() -> Result<()> {
         libc::SYS_timerfd_settime,
         // Misc
         libc::SYS_getrandom,
+        // NOTE: SYS_prctl is needed by glibc/musl for thread setup (PR_SET_NAME,
+        // PR_SET_VMA). Argument filtering would be ideal but seccompiler's rule
+        // syntax makes it verbose — acceptable risk given the VM isolation layer.
         libc::SYS_prctl,
         libc::SYS_arch_prctl,
         libc::SYS_rseq,
         libc::SYS_uname,
         libc::SYS_umask,
-        // seccomp itself (for the filter load)
-        libc::SYS_seccomp,
+        // NOTE: SYS_seccomp intentionally excluded — the filter is already
+        // installed by the time this allowlist takes effect. Allowing it would
+        // let child processes load additional filters (even if only stricter ones).
     ];
 
     let syscall_count = allowed.len();
@@ -265,11 +296,27 @@ fn apply_landlock(config: &GuestSecurityConfig) -> Result<()> {
     }
 
     // Allow read-only on essential system paths
-    for path in &["/proc", "/dev", "/sys", "/bin", "/usr", "/lib", "/etc"] {
+    for path in &["/proc", "/sys", "/bin", "/usr", "/lib", "/etc"] {
         if let Ok(fd) = PathFd::new(path) {
             ruleset = ruleset
                 .add_rule(PathBeneath::new(fd, read_access))
                 .map_err(|e| anyhow::anyhow!("landlock rule {path}: {e}"))?;
+        }
+    }
+
+    // /dev needs special treatment: read-only for the directory itself,
+    // but /dev/null, /dev/zero, /dev/urandom need write access
+    // (many programs write to /dev/null, tokio reads /dev/urandom).
+    if let Ok(fd) = PathFd::new("/dev") {
+        ruleset = ruleset
+            .add_rule(PathBeneath::new(fd, read_access))
+            .map_err(|e| anyhow::anyhow!("landlock rule /dev: {e}"))?;
+    }
+    for dev_path in &["/dev/null", "/dev/zero", "/dev/urandom"] {
+        if let Ok(fd) = PathFd::new(dev_path) {
+            ruleset = ruleset
+                .add_rule(PathBeneath::new(fd, write_access))
+                .map_err(|e| anyhow::anyhow!("landlock rule {dev_path}: {e}"))?;
         }
     }
 
@@ -396,10 +443,8 @@ mod tests {
         let config = GuestSecurityConfig {
             seccomp: false,
             landlock: false,
-            max_file_size_mb: 100,
-            max_open_files: 256,
-            tmpfs_size_mb: 512,
             allowed_paths: vec![],
+            ..Default::default()
         };
         // On macOS, seccomp/landlock are no-ops, resource limits are skipped
         #[cfg(not(target_os = "linux"))]
@@ -423,6 +468,7 @@ mod tests {
             max_file_size_mb: 200,
             max_open_files: 512,
             tmpfs_size_mb: 1024,
+            max_processes: 128,
             allowed_paths: vec!["/a".into(), "/b".into()],
         };
         let json = serde_json::to_string(&config).unwrap();
@@ -623,6 +669,7 @@ mod tests {
             max_file_size_mb: 75,
             max_open_files: 192,
             tmpfs_size_mb: 384,
+            max_processes: 64,
             allowed_paths: vec!["/workspace".into(), "/tmp".into(), "/data".into()],
         };
 

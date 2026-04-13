@@ -108,6 +108,9 @@ pub struct GuestSecurityConfig {
     /// tmpfs size limit for /tmp (MiB).
     #[serde(default = "default_tmpfs_size_mb")]
     pub tmpfs_size_mb: u32,
+    /// Maximum number of processes (RLIMIT_NPROC). Prevents fork bombs.
+    #[serde(default = "default_max_processes")]
+    pub max_processes: u32,
     /// Paths the guest can read/write (Landlock allowlist).
     /// Default: ["/workspace", "/tmp"]
     #[serde(default = "default_allowed_paths")]
@@ -122,6 +125,7 @@ impl Default for GuestSecurityConfig {
             max_file_size_mb: default_max_file_size_mb(),
             max_open_files: default_max_open_files(),
             tmpfs_size_mb: default_tmpfs_size_mb(),
+            max_processes: default_max_processes(),
             allowed_paths: default_allowed_paths(),
         }
     }
@@ -138,6 +142,9 @@ fn default_max_open_files() -> u32 {
 }
 fn default_tmpfs_size_mb() -> u32 {
     512
+}
+fn default_max_processes() -> u32 {
+    256
 }
 fn default_allowed_paths() -> Vec<String> {
     vec!["/workspace".into(), "/tmp".into()]
@@ -157,6 +164,7 @@ mod tests {
         assert_eq!(config.max_file_size_mb, 100);
         assert_eq!(config.max_open_files, 256);
         assert_eq!(config.tmpfs_size_mb, 512);
+        assert_eq!(config.max_processes, 256);
         assert_eq!(config.allowed_paths, vec!["/workspace", "/tmp"]);
     }
 
@@ -170,6 +178,7 @@ mod tests {
             max_file_size_mb: 200,
             max_open_files: 512,
             tmpfs_size_mb: 1024,
+            max_processes: 128,
             allowed_paths: vec!["/workspace".into(), "/data".into()],
         };
         let json = serde_json::to_string(&config).unwrap();
@@ -220,6 +229,7 @@ mod tests {
             max_file_size_mb: 50,
             max_open_files: 128,
             tmpfs_size_mb: 256,
+            max_processes: 64,
             allowed_paths: vec!["/workspace".into()],
         };
         let mut cbor_buf = Vec::new();
