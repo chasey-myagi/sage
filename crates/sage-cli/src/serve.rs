@@ -13,11 +13,10 @@ use sage_runtime::types::*;
 pub async fn run(runtime_addr: String, _caster_id: String, _max_concurrent: usize) -> Result<()> {
     tracing::info!("connecting to Rune Runtime at {}", runtime_addr);
 
-    // TODO: Phase 2 — Rune Caster SDK integration
-    tracing::warn!("serve command is a stub — Rune Caster SDK integration pending (Phase 2)");
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("shutting down");
-    Ok(())
+    anyhow::bail!(
+        "sage serve is not yet implemented — Rune Caster SDK integration pending (Phase 2). \
+         Use `sage run` for local agent execution instead."
+    );
 }
 
 /// Run a local test: load config → build SageEngine → run → print events.
@@ -470,5 +469,16 @@ sandbox:
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
         let result = build_engine_from_config(&config, None, None);
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_fix_serve_stub_returns_error() {
+        let result = run("localhost:50070".into(), "test-caster".into(), 1).await;
+        assert!(result.is_err(), "serve stub should return an error, not silently wait");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("not yet implemented"),
+            "error should explain that serve is unimplemented, got: {err}"
+        );
     }
 }
