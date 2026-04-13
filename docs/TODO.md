@@ -153,7 +153,10 @@ sage run --config configs/coding-assistant.yaml \
 
 ### v0.3.0 验收
 
-- 每个 Provider 至少一个集成测试（真实 API 或 mock）
+- [x] 每个 Provider 至少一个集成测试（真实 API 或 mock）
+  - 56 个 mockito-based 集成测试，覆盖 6 个 HTTP provider
+  - 文本流、工具调用生命周期、Usage token、Thinking/Reasoning、错误处理、事件顺序
+  - test-review 8.475/10, code-review 8.46/10 (957fcd1)
 - `sage run --config X.yaml` 可切换所有已支持 Provider
 
 ---
