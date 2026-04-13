@@ -15,3 +15,6 @@ pub use google::GoogleProvider;
 pub use google_vertex::GoogleVertexProvider;
 pub use openai_completions::OpenAiCompletionsProvider;
 pub use openai_responses::OpenAiResponsesProvider;
+
+#[cfg(test)]
+mod provider_integration_tests;
