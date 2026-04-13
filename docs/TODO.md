@@ -204,29 +204,93 @@ sage run --config configs/coding-assistant.yaml \
 - [x] Toolset ↔ ToolPolicy 联动（预设自带 allowed_binaries）
 - [x] 34 个新测试, test-review PASS, code-review 8.50/10 (15ea633)
 
-### P7: 安全加固（Layer 3）
+### P5.5: 上下文工程增强（Context Engineering）
 
-- [ ] seccomp-bpf profile
-  - Guest Agent 启动加载 filter
-  - 只允许必要系统调用，拒绝 ptrace/mount/reboot
-- [ ] Landlock LSM
-  - Guest Agent 启动设置文件系统访问范围
-- [ ] 网络策略
-  - airgapped（默认）：Guest 完全断网
-  - tsi_whitelist：msb_krun TSI 域名白名单
-  - full（仅调试）
-- [ ] 资源限制
-  - vCPU / memory_mib 从 AgentConfig 读取
-  - exec timeout 强制 kill
+> 参考 Pi (Warp) 和 Claude Code 的上下文工程，在引擎层提升长对话效率和 LLM 成本控制。
+> 分析来源：`context-engineering-report/index.html`
+
+**P0 — Microcompact 双层压缩**
+
+- [ ] `compaction.rs` 新增 `microcompact()` 轻量清理层
+  - 遍历历史，清除超过 N 轮之前的 ToolResultMessage 内容
+  - 替换为 `[tool result cleared - {tool_name}: {byte_count} bytes]`
+  - 保留消息结构（tool_call_id, tool_name, is_error）
+  - Thinking blocks 清理：只保留最近 2-3 个 turn 的 thinking
+  - 触发阈值：`microcompact_threshold`（默认 0.75 context usage）
+- [ ] agent_loop.rs 集成：先 microcompact → 还不够 → 再 full compaction
+- [ ] 零 LLM 调用开销，比当前纯 LLM 摘要更快更省
+- 参考：CC `services/compact/apiMicrocompact.ts` 的 `clear_tool_uses` 策略
+
+**P1 — Anthropic Provider Prompt Caching**
+
+- [ ] `providers/anthropic.rs` 给 system prompt block 加 `cache_control: { type: "ephemeral" }`
+- [ ] 最后一条 user message 加 `cache_control: { type: "ephemeral" }`
+- [ ] 两个 cache breakpoint 足够引擎层使用（不需要 CC 的 memoized section 复杂度）
+- [ ] 验证：连续对话中 Usage.cache_read > 0
+- 参考：CC `services/api/claude.ts` 的 per-block cache_control
+
+**P1 — SystemPromptBuilder**
+
+- [ ] 新增 `sage-runtime/src/system_prompt.rs`
+  - `SystemPromptBuilder` + `PromptSection { name, content, cacheable }`
+  - `.section(name, content)` / `.cacheable_section(name, content)` / `.build()`
+- [ ] Provider 层根据 `cacheable` 标记决定是否加 `cache_control`
+- [ ] SageEngineBuilder 接受 `SystemPrompt` 替代裸 `String`（向后兼容）
+- [ ] 上层项目可结构化组装 prompt（base + tools_guide + project_context + metadata）
+- 参考：Pi `core/system-prompt.ts` 的 `buildSystemPrompt()` 动态拼装
+
+**P2 — Context Budget 机制**
+
+- [ ] 新增 `ContextBudget` struct
+  - `context_window`, `system_reserve`, `output_reserve`, `history_budget`
+  - `microcompact_threshold: f32` (0.75), `compaction_threshold: f32` (0.90)
+- [ ] 主动预算管理替代被动溢出检测
+- [ ] 集成到 `CompactionSettings`，与现有 `reserve_tokens` 对齐
+
+**P2 — transformContext Hook**
+
+- [ ] SageEngineBuilder 新增 `.on_transform_context(Fn(&mut Vec<AgentMessage>))`
+- [ ] 在 `agent_loop.rs` LLM 调用前执行，允许上层项目：
+  - 注入记忆/项目上下文（产品层做记忆，引擎层提供注入点）
+  - 在发送前过滤敏感信息
+  - 实现自定义压缩策略
+- [ ] 对齐 future.md "学习/记忆不做，上层项目通过 Hooks 实现"
+- 参考：Pi `agent/src/types.ts` 的 `transformContext()` option
+
+**不做（产品层职责）：**
+
+| CC/Pi 能力 | 理由 |
+|-----------|------|
+| 结构化记忆系统 (memdir) | future.md 明确"不做"，上层项目职责 |
+| CLAUDE.md / AGENTS.md 指令层级 | 产品层指令系统 |
+| System Reminder 注入 | 产品层的中间对话注入 |
+| Skills / Prompt Templates | 产品层扩展 |
+| Deferred Tool Loading | Sage 工具集小（7 个），无需延迟加载 |
+| CC sticky-on latch / cache break detection | 过度工程，简单 cache_control 足够 |
+
+### P7: 安全加固（Layer 3）✅
+
+- [x] seccomp-bpf profile
+  - Guest Agent 启动加载 BPF filter（手写 sock_filter 指令）
+  - 精简 allowlist：移除 SYS_seccomp/SYS_setrlimit/Landlock syscalls，添加 SYS_close_range
+  - 拒绝 ptrace/mount/reboot 等危险系统调用
+- [x] Landlock LSM
+  - allowed_paths allowlist，/dev 只读 + /dev/null,zero,urandom 可写
+  - allowed_paths 从 volume guest_paths + 默认路径推导
+- [x] 网络策略
+  - airgapped（默认）/ whitelist（待 TSI 支持）/ full（调试）
+- [x] 资源限制
+  - RLIMIT_NOFILE / RLIMIT_FSIZE / RLIMIT_NPROC + 值钳位
   - tmpfs 磁盘限额
-- [ ] 安全测试
-  - `rm -rf /` → Host 不受影响
-  - `curl evil.com` → airgapped 拦截
-  - fork bomb → vCPU 限制
+- [x] GuestSecurityConfig 共享类型 + fail-closed 语义
+- [x] 安全测试（38 guest + 13 sandbox + 11 CLI, 两轮 Linus review）
 
 ### v0.4.0 验收
 
 - 30+ turns 长对话自动压缩不 OOM
+- microcompact 在 full compaction 之前触发，零 LLM 开销
+- Anthropic provider 连续对话 cache_read > 0
+- SystemPromptBuilder API 可用，上层项目可结构化组装 prompt
 - seccomp/Landlock 在 Guest 生效
 - airgapped 模式下 Guest 无法外联
 
@@ -370,7 +434,7 @@ v0.2.0 — Sandboxed          microVM 对接，工具在 VM 内执行
 v0.3.0 — Full LLM           20+ Provider 全量覆盖
   │
   ▼
-v0.4.0 — Production Runtime 压缩 + Toolset + 安全加固
+v0.4.0 — Production Runtime 压缩 + Toolset + 上下文工程 + 安全加固
   │
   ▼
 v0.5.0 — Advanced Sandbox   OCI 镜像 + VM 预热池 + 快照
@@ -387,9 +451,9 @@ v1.0.0 — Release            文档 + 示例 + crates.io 发布
 | v0.1.0 | 改名 + Engine API + 端到端 | ~2,000 行 |
 | v0.2.0 | Sandbox 对接 | ~1,500 行 |
 | v0.3.0 | 20+ Provider | ~6,000 行 |
-| v0.4.0 | 压缩 + 安全 | ~2,500 行 |
+| v0.4.0 | 压缩 + 上下文工程 + 安全 | ~3,500 行 |
 | v0.5.0 | 高级沙箱 | ~1,500 行 |
 | v0.6.0 | 可观测 + DevEx | ~1,500 行 |
 | v1.0.0 | 文档 + 发布 | ~500 行 |
-| **累计** | | **~15,500 行** |
-| **最终总量** | | **~40,000 行** (现有 24,277 + 新增) |
+| **累计** | | **~16,500 行** |
+| **最终总量** | | **~41,000 行** (现有 24,277 + 新增) |
