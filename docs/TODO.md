@@ -168,16 +168,28 @@ sage run --config configs/coding-assistant.yaml \
 
 > 长对话、配置简化、安全加固 — 生产环境所需的运行时能力。
 
-### P5: 上下文压缩 (Compaction)
+### P5: 上下文压缩 (Compaction) ✅
 
-- [ ] `sage-runtime/src/compaction.rs`
-  - token 计数器（基于 model context_window）
-  - 超限检测
-- [ ] 压缩策略
-  - 截断：保留 system + 最近 N 条
-  - LLM 摘要：调 LLM 压缩历史
-- [ ] on_context_overflow hook（上层可注入自定义策略）
-- [ ] 集成到 agent_loop.rs INNERMOST 循环 transformContext 步骤
+- [x] `sage-runtime/src/compaction.rs` (~2962 行, 103 tests)
+  - token 估算器（chars/4 启发式, 图片/工具截断）
+  - should_compact 阈值检测 + is_context_overflow (13 错误模式)
+  - find_cut_point 算法（保留最近 token, 分裂 turn 检测）
+  - extract_file_operations（从 tool call 参数提取读写路径）
+  - prepare_compaction / compact 两阶段工作流
+  - 三套摘要 prompt（初始/更新/分裂 turn 前缀）
+  - safe_truncate UTF-8 安全截断
+  - ContextOverflowHook trait（Compact/Truncate/CustomSummary/Abort）
+- [x] 压缩策略
+  - 截断：truncate_messages 保留最近 N tokens
+  - LLM 摘要：compact() 调 LLM 生成摘要 + CompactionSummaryMessage
+- [x] on_context_overflow hook（ContextOverflowHook trait）
+- [x] 集成到 agent_loop.rs
+  - try_compact() 异步辅助（emit events, fallback to truncate）
+  - 主动压缩（LLM 调用前 should_compact 检测）
+  - 被动压缩（LLM 响应后 overflow 检测 + 安全重试）
+  - CompactionStart/CompactionEnd 事件
+  - build_llm_context 统一复用 transform.rs（消除代码重复）
+- [x] test-review 8.54/10, code-review 7.95/10 (165e6d0)
 
 ### P6: Runner 增强 — Toolset 预设
 
