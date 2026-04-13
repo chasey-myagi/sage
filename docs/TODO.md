@@ -157,7 +157,10 @@ sage run --config configs/coding-assistant.yaml \
   - 56 个 mockito-based 集成测试，覆盖 6 个 HTTP provider
   - 文本流、工具调用生命周期、Usage token、Thinking/Reasoning、错误处理、事件顺序
   - test-review 8.475/10, code-review 8.46/10 (957fcd1)
-- `sage run --config X.yaml` 可切换所有已支持 Provider
+- [x] `sage run --config X.yaml` 可切换所有已支持 Provider
+  - `--provider` / `--model` CLI 覆盖已实现
+  - 3 个示例配置：coding-assistant (qwen), deepseek-coder, feishu-assistant (anthropic)
+  - Model catalog 支持 100+ 内置模型 + 自定义 base_url/api_key_env
 
 ---
 
