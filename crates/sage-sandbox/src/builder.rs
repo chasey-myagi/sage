@@ -5,6 +5,16 @@ use crate::error::SandboxError;
 use crate::handle::SandboxHandle;
 use crate::relay::AgentRelay;
 
+/// Commands available inside the guest rootfs via busybox symlinks.
+///
+/// **Current state**: Only busybox is installed. Tools like `cargo`, `git`,
+/// `python3`, `rg`, `fd` are NOT available in the default rootfs.
+/// YAML configs referencing these binaries will fail at execution time.
+///
+/// Future work: support custom rootfs images or a tool installer mechanism
+/// to provide richer development environments inside the sandbox.
+pub const BUSYBOX_COMMANDS: &[&str] = &["sh", "echo", "cat", "ls", "mkdir", "rm", "cp", "mv"];
+
 /// Configuration for a sandbox VM instance.
 pub struct SandboxBuilder {
     name: String,
@@ -218,7 +228,7 @@ impl SandboxBuilder {
             set_executable(&bb_dest).await?;
 
             // Create symlinks for common commands
-            for cmd in &["sh", "echo", "cat", "ls", "mkdir", "rm", "cp", "mv"] {
+            for cmd in BUSYBOX_COMMANDS {
                 let link = rootfs.join(format!("bin/{cmd}"));
                 let _ = tokio::fs::symlink("busybox", &link).await;
             }
@@ -448,5 +458,13 @@ mod tests {
         assert!(rootfs.join("tmp").is_dir());
 
         let _ = std::fs::remove_dir_all(&rootfs);
+    }
+
+    #[test]
+    fn test_fix_rootfs_documents_available_commands() {
+        // Regression: BUSYBOX_COMMANDS must match the actual symlinks created
+        // in prepare_rootfs(). If you add a command to the rootfs, add it here too.
+        let expected = &["sh", "echo", "cat", "ls", "mkdir", "rm", "cp", "mv"];
+        assert_eq!(BUSYBOX_COMMANDS, expected);
     }
 }

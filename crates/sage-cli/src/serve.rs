@@ -14,7 +14,7 @@ pub async fn run(runtime_addr: String, _caster_id: String, _max_concurrent: usiz
     tracing::info!("connecting to Rune Runtime at {}", runtime_addr);
 
     // TODO: Phase 2 — Rune Caster SDK integration
-    tracing::info!("agent caster running (stub mode)");
+    tracing::warn!("serve command is a stub — Rune Caster SDK integration pending (Phase 2)");
     tokio::signal::ctrl_c().await?;
     tracing::info!("shutting down");
     Ok(())
@@ -86,6 +86,7 @@ fn print_event(event: &AgentEvent) {
                 );
             }
         }
+        // NOTE: Not currently emitted by agent_loop — reserved for future streaming
         AgentEvent::MessageUpdate { delta, .. } => {
             eprint!("{delta}");
         }
@@ -95,6 +96,7 @@ fn print_event(event: &AgentEvent) {
         AgentEvent::ToolExecutionStart { tool_name, .. } => {
             eprintln!("  [tool: {tool_name}]");
         }
+        // NOTE: Not currently emitted by agent_loop — reserved for future streaming
         AgentEvent::ToolExecutionUpdate { partial_result, .. } => {
             eprint!("{partial_result}");
         }
@@ -148,22 +150,19 @@ fn build_engine_from_config(
         builder = builder.api_key_env(env);
     }
     if let Some(sandbox) = &config.sandbox {
-        let network_enabled = match &sandbox.network {
-            NetworkPolicy::Full => true,
-            NetworkPolicy::Whitelist => {
-                if sandbox.allowed_hosts.is_empty() {
-                    tracing::warn!(
-                        "network: whitelist with no allowed_hosts — treating as airgapped"
-                    );
-                    false
-                } else {
-                    // TODO(P7): Pass allowed_hosts to SandboxSettings once the runtime
-                    // supports host-level filtering via msb_krun TSI.
-                    true
-                }
+        match &sandbox.network {
+            NetworkPolicy::Full => {
+                anyhow::bail!(
+                    "network policy 'full' is not yet implemented — use 'airgapped' (default)"
+                );
             }
-            NetworkPolicy::Airgapped => false,
-        };
+            NetworkPolicy::Whitelist => {
+                anyhow::bail!(
+                    "network policy 'whitelist' is not yet implemented — use 'airgapped' (default)"
+                );
+            }
+            NetworkPolicy::Airgapped => {}
+        }
         // Convert runner SecurityConfig → protocol GuestSecurityConfig for the guest.
         let guest_security = to_guest_security(&sandbox.security, &[]);
 
@@ -171,7 +170,7 @@ fn build_engine_from_config(
             cpus: sandbox.cpus,
             memory_mib: sandbox.memory_mib,
             volumes: Vec::new(),
-            network_enabled,
+            network_enabled: false,
             security: Some(guest_security),
         });
     }
@@ -220,7 +219,7 @@ constraints: { max_turns: 5, timeout_secs: 90 }
 sandbox:
   cpus: 2
   memory_mib: 1024
-  network: true
+  network: airgapped
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
 
@@ -231,7 +230,7 @@ sandbox:
 
         assert_eq!(sandbox.cpus, 2);
         assert_eq!(sandbox.memory_mib, 1024);
-        assert!(sandbox.network_enabled);
+        assert!(!sandbox.network_enabled);
     }
 
     #[test]
@@ -406,5 +405,70 @@ sandbox:
         let engine = build_engine_from_config(&config, None, None).unwrap();
         let security = engine.sandbox_settings().unwrap().security.as_ref().unwrap();
         assert_eq!(security.allowed_paths, vec!["/workspace", "/tmp"]);
+    }
+
+    // ── Regression: unsupported network policies rejected at config time ──
+
+    #[test]
+    fn test_fix_network_full_rejected_at_config_time() {
+        let yaml = r#"
+name: net-full
+description: "full network"
+llm: { provider: test, model: test-model, max_tokens: 256 }
+system_prompt: "test"
+tools: {}
+constraints: { max_turns: 5, timeout_secs: 90 }
+sandbox:
+  cpus: 1
+  memory_mib: 512
+  network: full
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let result = build_engine_from_config(&config, None, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not yet implemented"), "error was: {err}");
+    }
+
+    #[test]
+    fn test_fix_network_whitelist_rejected_at_config_time() {
+        let yaml = r#"
+name: net-whitelist
+description: "whitelist network"
+llm: { provider: test, model: test-model, max_tokens: 256 }
+system_prompt: "test"
+tools: {}
+constraints: { max_turns: 5, timeout_secs: 90 }
+sandbox:
+  cpus: 1
+  memory_mib: 512
+  network: whitelist
+  allowed_hosts: ["api.example.com"]
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let result = build_engine_from_config(&config, None, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not yet implemented"), "error was: {err}");
+    }
+
+    #[test]
+    fn test_fix_network_true_rejected_at_config_time() {
+        // `network: true` maps to NetworkPolicy::Full via bool compat
+        let yaml = r#"
+name: net-true
+description: "bool network"
+llm: { provider: test, model: test-model, max_tokens: 256 }
+system_prompt: "test"
+tools: {}
+constraints: { max_turns: 5, timeout_secs: 90 }
+sandbox:
+  cpus: 1
+  memory_mib: 512
+  network: true
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let result = build_engine_from_config(&config, None, None);
+        assert!(result.is_err());
     }
 }
