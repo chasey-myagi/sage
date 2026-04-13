@@ -47,6 +47,7 @@ pub fn api_key_env_var(provider: &str) -> String {
         "mistral" => "MISTRAL_API_KEY".into(),
         "cerebras" => "CEREBRAS_API_KEY".into(),
         "github-copilot" => "COPILOT_GITHUB_TOKEN".into(),
+        "azure-openai-responses" => "AZURE_OPENAI_API_KEY".into(),
         other => format!("{}_API_KEY", other.to_uppercase()),
     }
 }
@@ -69,6 +70,7 @@ pub fn resolve_api_key(provider: &str) -> Result<String, KeyError> {
         "mistral",
         "cerebras",
         "github-copilot",
+        "azure-openai-responses",
     ];
     if !known.contains(&provider) {
         return Err(KeyError::UnknownProvider {
@@ -208,6 +210,24 @@ mod tests {
     #[test]
     fn test_env_var_github_copilot() {
         assert_eq!(api_key_env_var("github-copilot"), "COPILOT_GITHUB_TOKEN");
+    }
+
+    #[test]
+    fn test_env_var_azure_openai_responses() {
+        assert_eq!(api_key_env_var("azure-openai-responses"), "AZURE_OPENAI_API_KEY");
+    }
+
+    #[test]
+    fn test_resolve_api_key_azure_openai_responses_recognized() {
+        unsafe { std::env::remove_var("AZURE_OPENAI_API_KEY") };
+        let result = resolve_api_key("azure-openai-responses");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("AZURE_OPENAI_API_KEY"),
+            "azure-openai-responses should be a known provider, got: {}",
+            err
+        );
     }
 
     #[test]

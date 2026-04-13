@@ -33,6 +33,7 @@ pub fn register_builtin_providers() {
     registry::register_provider(Arc::new(OpenAiCompletionsProvider::new()));
     registry::register_provider(Arc::new(OpenAiResponsesProvider::new()));
     registry::register_provider(Arc::new(GoogleProvider::new()));
+    registry::register_provider(Arc::new(AzureOpenAiResponsesProvider::new()));
 }
 
 /// Stream a completion using the model's registered API provider.

@@ -146,7 +146,7 @@ pub fn convert_tools(tools: &[LlmTool]) -> Vec<Value> {
 // Request body builder
 // ---------------------------------------------------------------------------
 
-fn build_request_body(
+pub fn build_request_body(
     model: &Model,
     context: &LlmContext,
     tools: &[LlmTool],
@@ -505,106 +505,116 @@ impl ApiProvider for OpenAiResponsesProvider {
             ))];
         }
 
-        // Parse SSE stream with byte-buffer approach for UTF-8 safety.
-        // The Responses API uses `event: <type>\ndata: <json>\n\n` format.
-        use futures::StreamExt;
+        parse_sse_stream(response).await
+    }
+}
 
-        let mut events = Vec::new();
-        let mut state = StreamState::default();
-        let mut byte_buf: Vec<u8> = Vec::new();
-        let mut current_event_type = String::new();
-        let mut stream = response.bytes_stream();
+// ---------------------------------------------------------------------------
+// Shared SSE stream parser (reused by Azure OpenAI provider)
+// ---------------------------------------------------------------------------
 
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = match chunk_result {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    events.push(AssistantMessageEvent::Error(format!(
-                        "Stream read error: {e}"
-                    )));
-                    break;
-                }
-            };
+/// Parse an SSE response stream from the OpenAI Responses API.
+///
+/// This is extracted from the ApiProvider impl to allow reuse by the Azure
+/// OpenAI Responses provider, which uses the same SSE protocol.
+pub async fn parse_sse_stream(response: reqwest::Response) -> Vec<AssistantMessageEvent> {
+    use futures::StreamExt;
 
-            byte_buf.extend_from_slice(&chunk);
+    let mut events = Vec::new();
+    let mut state = StreamState::default();
+    let mut byte_buf: Vec<u8> = Vec::new();
+    let mut current_event_type = String::new();
+    let mut stream = response.bytes_stream();
 
-            // Process all complete lines in the buffer
-            while let Some(newline_pos) = byte_buf.iter().position(|&b| b == b'\n') {
-                let line_bytes = byte_buf[..newline_pos].to_vec();
-                byte_buf.drain(..=newline_pos);
-                let line = String::from_utf8_lossy(&line_bytes);
-                let line = line.trim();
-
-                if line.is_empty() {
-                    // Empty line = end of SSE block, reset event type
-                    current_event_type.clear();
-                    continue;
-                }
-
-                if line.starts_with(':') {
-                    // SSE comment, skip
-                    continue;
-                }
-
-                if let Some(event_type) = line.strip_prefix("event: ") {
-                    current_event_type = event_type.trim().to_string();
-                } else if let Some(data_str) = line.strip_prefix("data: ") {
-                    let data_str = data_str.trim();
-                    if data_str.is_empty() {
-                        continue;
-                    }
-                    match serde_json::from_str::<Value>(data_str) {
-                        Ok(data) => {
-                            let event_type = if current_event_type.is_empty() {
-                                // Fallback: try to get type from data
-                                data["type"].as_str().unwrap_or("").to_string()
-                            } else {
-                                current_event_type.clone()
-                            };
-                            if !event_type.is_empty() {
-                                process_responses_event(
-                                    &event_type,
-                                    &data,
-                                    &mut state,
-                                    &mut events,
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("Responses API SSE parse error: {e}, data: {data_str}");
-                        }
-                    }
-                }
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = match chunk_result {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                events.push(AssistantMessageEvent::Error(format!(
+                    "Stream read error: {e}"
+                )));
+                break;
             }
-        }
+        };
 
-        // Flush remaining data after stream ends
-        if !byte_buf.is_empty() {
-            let remaining = String::from_utf8_lossy(&byte_buf);
-            for line in remaining.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with(':') {
+        byte_buf.extend_from_slice(&chunk);
+
+        // Process all complete lines in the buffer
+        while let Some(newline_pos) = byte_buf.iter().position(|&b| b == b'\n') {
+            let line_bytes = byte_buf[..newline_pos].to_vec();
+            byte_buf.drain(..=newline_pos);
+            let line = String::from_utf8_lossy(&line_bytes);
+            let line = line.trim();
+
+            if line.is_empty() {
+                // Empty line = end of SSE block, reset event type
+                current_event_type.clear();
+                continue;
+            }
+
+            if line.starts_with(':') {
+                // SSE comment, skip
+                continue;
+            }
+
+            if let Some(event_type) = line.strip_prefix("event: ") {
+                current_event_type = event_type.trim().to_string();
+            } else if let Some(data_str) = line.strip_prefix("data: ") {
+                let data_str = data_str.trim();
+                if data_str.is_empty() {
                     continue;
                 }
-                if let Some(event_type) = line.strip_prefix("event: ") {
-                    current_event_type = event_type.trim().to_string();
-                } else if let Some(data_str) = line.strip_prefix("data: ") {
-                    if let Ok(data) = serde_json::from_str::<Value>(data_str.trim()) {
+                match serde_json::from_str::<Value>(data_str) {
+                    Ok(data) => {
                         let event_type = if current_event_type.is_empty() {
+                            // Fallback: try to get type from data
                             data["type"].as_str().unwrap_or("").to_string()
                         } else {
                             current_event_type.clone()
                         };
                         if !event_type.is_empty() {
-                            process_responses_event(&event_type, &data, &mut state, &mut events);
+                            process_responses_event(
+                                &event_type,
+                                &data,
+                                &mut state,
+                                &mut events,
+                            );
                         }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Responses API SSE parse error: {e}, data: {data_str}");
                     }
                 }
             }
         }
-
-        events
     }
+
+    // Flush remaining data after stream ends
+    if !byte_buf.is_empty() {
+        let remaining = String::from_utf8_lossy(&byte_buf);
+        for line in remaining.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with(':') {
+                continue;
+            }
+            if let Some(event_type) = line.strip_prefix("event: ") {
+                current_event_type = event_type.trim().to_string();
+            } else if let Some(data_str) = line.strip_prefix("data: ") {
+                if let Ok(data) = serde_json::from_str::<Value>(data_str.trim()) {
+                    let event_type = if current_event_type.is_empty() {
+                        data["type"].as_str().unwrap_or("").to_string()
+                    } else {
+                        current_event_type.clone()
+                    };
+                    if !event_type.is_empty() {
+                        process_responses_event(&event_type, &data, &mut state, &mut events);
+                    }
+                }
+            }
+        }
+    }
+
+    events
 }
 
 // ===========================================================================

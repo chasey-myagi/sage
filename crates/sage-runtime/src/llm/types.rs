@@ -15,6 +15,7 @@ pub mod api {
     pub const OPENAI_RESPONSES: &str = "openai-responses";
     pub const ANTHROPIC_MESSAGES: &str = "anthropic-messages";
     pub const GOOGLE_GENERATIVE_AI: &str = "google-generative-ai";
+    pub const AZURE_OPENAI_RESPONSES: &str = "azure-openai-responses";
 }
 
 // ============================================================================
