@@ -25,6 +25,10 @@ pub struct SandboxSettings {
     pub cpus: u32,
     pub memory_mib: u32,
     pub volumes: Vec<sage_sandbox::VolumeMount>,
+    pub network_enabled: bool,
+    /// Security enforcement config passed to the guest agent.
+    /// When set, the guest applies seccomp, landlock, and resource limits.
+    pub security: Option<sage_protocol::GuestSecurityConfig>,
 }
 
 impl Default for SandboxSettings {
@@ -33,6 +37,8 @@ impl Default for SandboxSettings {
             cpus: 1,
             memory_mib: 512,
             volumes: Vec::new(),
+            network_enabled: false,
+            security: None,
         }
     }
 }
@@ -212,6 +218,7 @@ pub struct SageEngine {
     // Agent config
     system_prompt: String,
     max_turns: usize,
+    timeout_secs: Option<u64>,
     tool_execution_mode: ToolExecutionMode,
     tool_policy: Option<ToolPolicy>,
 
@@ -243,6 +250,7 @@ impl std::fmt::Debug for SageEngine {
             .field("provider_name", &self.provider_name)
             .field("model_id", &self.model_id)
             .field("max_turns", &self.max_turns)
+            .field("timeout_secs", &self.timeout_secs)
             .field("max_tokens", &self.max_tokens)
             .finish_non_exhaustive()
     }
@@ -253,6 +261,7 @@ impl SageEngine {
         SageEngineBuilder {
             system_prompt: None,
             max_turns: None,
+            timeout_secs: None,
             tool_execution_mode: None,
             tool_policy: None,
             builtin_tool_names: Vec::new(),
@@ -310,11 +319,20 @@ impl SageEngine {
         let sandbox_handle: Option<Arc<sage_sandbox::SandboxHandle>> = if let Some(ref settings) =
             self.sandbox_settings
         {
+            if settings.network_enabled {
+                return Err(SageError::Sandbox(
+                    "network-enabled sandbox is not implemented".into(),
+                ));
+            }
+
             let mut sb = sage_sandbox::SandboxBuilder::new(format!("sage-{}", std::process::id()))
                 .cpus(settings.cpus)
                 .memory_mib(settings.memory_mib);
             for vol in &settings.volumes {
                 sb = sb.mount(&vol.host_path, &vol.guest_path, vol.read_only);
+            }
+            if let Some(ref sec) = settings.security {
+                sb = sb.security(sec.clone());
             }
             let handle = sb
                 .create()
@@ -371,8 +389,36 @@ impl SageEngine {
         let sink = ChannelSink {
             sender: sender.clone(),
         };
+        let timeout_secs = self.timeout_secs;
         tokio::spawn(async move {
-            let result = run_agent_loop(&mut agent, &sink).await;
+            let result = match timeout_secs {
+                Some(timeout_secs) => {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(timeout_secs),
+                        run_agent_loop(&mut agent, &sink),
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => {
+                            sink.emit(AgentEvent::RunError {
+                                error: format!("agent run timed out after {timeout_secs}s"),
+                            })
+                            .await;
+
+                            if let Some(handle) = sandbox_handle {
+                                if let Err(e) = handle.stop().await {
+                                    tracing::error!(error = %e, "failed to stop sandbox");
+                                }
+                            }
+                            sender.end(vec![]);
+                            return;
+                        }
+                    }
+                }
+                None => run_agent_loop(&mut agent, &sink).await,
+            };
+
             // Stop sandbox VM if one was created for this run
             if let Some(handle) = sandbox_handle {
                 if let Err(e) = handle.stop().await {
@@ -383,12 +429,24 @@ impl SageEngine {
                 Ok(messages) => sender.end(messages),
                 Err(e) => {
                     tracing::error!(error = %e, "agent loop failed");
+                    sink.emit(AgentEvent::RunError {
+                        error: e.to_string(),
+                    })
+                    .await;
                     sender.end(vec![]);
                 }
             }
         });
 
         Ok(receiver)
+    }
+
+    pub fn sandbox_settings(&self) -> Option<&SandboxSettings> {
+        self.sandbox_settings.as_ref()
+    }
+
+    pub fn timeout_secs(&self) -> Option<u64> {
+        self.timeout_secs
     }
 }
 
@@ -436,6 +494,7 @@ impl AgentTool for ArcTool {
 pub struct SageEngineBuilder {
     system_prompt: Option<String>,
     max_turns: Option<usize>,
+    timeout_secs: Option<u64>,
     tool_execution_mode: Option<ToolExecutionMode>,
     tool_policy: Option<ToolPolicy>,
     builtin_tool_names: Vec<String>,
@@ -462,6 +521,11 @@ impl SageEngineBuilder {
 
     pub fn max_turns(mut self, n: usize) -> Self {
         self.max_turns = Some(n);
+        self
+    }
+
+    pub fn timeout_secs(mut self, secs: u64) -> Self {
+        self.timeout_secs = Some(secs);
         self
     }
 
@@ -581,6 +645,7 @@ impl SageEngineBuilder {
         Ok(SageEngine {
             system_prompt,
             max_turns: self.max_turns.unwrap_or(10),
+            timeout_secs: self.timeout_secs.filter(|secs| *secs > 0),
             tool_execution_mode: self
                 .tool_execution_mode
                 .unwrap_or(ToolExecutionMode::Parallel),
@@ -721,6 +786,7 @@ mod tests {
         let b = SageEngine::builder();
         assert!(b.system_prompt.is_none());
         assert!(b.max_turns.is_none());
+        assert!(b.timeout_secs.is_none());
         assert!(b.tool_execution_mode.is_none());
         assert!(b.tool_policy.is_none());
         assert!(b.builtin_tool_names.is_empty());
@@ -1440,6 +1506,7 @@ mod tests {
         assert_eq!(s.cpus, 1);
         assert_eq!(s.memory_mib, 512);
         assert!(s.volumes.is_empty());
+        assert!(!s.network_enabled);
     }
 
     #[test]
@@ -1452,6 +1519,8 @@ mod tests {
                 guest_path: "/workspace".into(),
                 read_only: false,
             }],
+            network_enabled: false,
+            security: None,
         };
         let engine = SageEngine::builder()
             .system_prompt("test")
@@ -1495,6 +1564,8 @@ mod tests {
                     read_only: true,
                 },
             ],
+            network_enabled: false,
+            security: None,
         };
         assert_eq!(settings.volumes.len(), 2);
         assert!(settings.volumes[1].read_only);
@@ -1587,6 +1658,19 @@ mod tests {
             b.backend.is_none(),
             "default builder should have no backend"
         );
+    }
+
+    #[test]
+    fn builder_timeout_secs_sets_value() {
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .provider("test")
+            .model("test-model")
+            .timeout_secs(42)
+            .build()
+            .unwrap();
+
+        assert_eq!(engine.timeout_secs(), Some(42));
     }
 
     #[test]
@@ -1826,6 +1910,76 @@ mod tests {
                 .iter()
                 .map(|e| std::mem::discriminant(e))
                 .collect::<Vec<_>>()
+        );
+    }
+
+    struct SlowProvider {
+        sleep_ms: u64,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for SlowProvider {
+        async fn complete(
+            &self,
+            _model: &Model,
+            _context: &LlmContext,
+            _tools: &[LlmTool],
+        ) -> Vec<AssistantMessageEvent> {
+            tokio::time::sleep(std::time::Duration::from_millis(self.sleep_ms)).await;
+            vec![AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+            }]
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fix_engine_timeout_emits_run_error_event() {
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .llm_provider(SlowProvider { sleep_ms: 2_000 })
+            .timeout_secs(1)
+            .build()
+            .unwrap();
+
+        let mut rx = engine.run("hi").await.unwrap();
+        let run = tokio::time::timeout(std::time::Duration::from_millis(1_500), async move {
+            let mut saw_run_error = false;
+            while let Some(event) = rx.next().await {
+                if matches!(event, AgentEvent::RunError { .. }) {
+                    saw_run_error = true;
+                }
+            }
+            saw_run_error
+        })
+        .await
+        .expect("engine run should terminate after the configured timeout");
+
+        assert!(run, "engine should emit a RunError event on task timeout");
+    }
+
+    #[tokio::test]
+    async fn test_fix_network_enabled_sandbox_rejected_before_create() {
+        let engine = SageEngine::builder()
+            .system_prompt("test")
+            .llm_provider(simple_provider("hello"))
+            .sandbox(SandboxSettings {
+                cpus: 1,
+                memory_mib: 256,
+                volumes: vec![],
+                network_enabled: true,
+                security: None,
+            })
+            .build()
+            .unwrap();
+
+        let err = match engine.run("hi").await {
+            Ok(_) => panic!("network-enabled sandbox should be rejected"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string()
+                .contains("network-enabled sandbox is not implemented"),
+            "unexpected error: {err}"
         );
     }
 }

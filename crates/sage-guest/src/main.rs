@@ -10,6 +10,7 @@
 mod exec;
 mod fs;
 mod init;
+mod security;
 
 use anyhow::{Context, Result};
 use bytes::BytesMut;
@@ -28,14 +29,29 @@ async fn main() -> Result<()> {
 
     tracing::info!("guest agent starting (PID {})", std::process::id());
 
-    // Phase 1: Mount essential filesystems
-    init::mount_filesystems()?;
+    // Phase 1: Load security config (before mounts, so we can use tmpfs_size).
+    // Fail-closed: if SAGE_SECURITY is set but invalid, refuse to start.
+    let security_config = security::load_config()?;
 
-    // Phase 2: Start SIGCHLD reaper (PID 1 duty)
+    // Phase 2: Mount essential filesystems (uses tmpfs_size from security config)
+    let tmpfs_size_mb = security_config
+        .as_ref()
+        .map(|c| c.tmpfs_size_mb)
+        .unwrap_or(sage_protocol::GuestSecurityConfig::default().tmpfs_size_mb);
+    init::mount_filesystems(tmpfs_size_mb)?;
+
+    // Phase 3: Apply security policy (seccomp, landlock, resource limits)
+    if let Some(ref config) = security_config {
+        security::apply(config)?;
+    } else {
+        tracing::warn!("no security config (SAGE_SECURITY not set) — running without enforcement");
+    }
+
+    // Phase 4: Start SIGCHLD reaper (PID 1 duty)
     #[cfg(target_os = "linux")]
     start_reaper();
 
-    // Phase 3: Open console and run main loop
+    // Phase 5: Open console and run main loop
     run_main_loop().await
 }
 

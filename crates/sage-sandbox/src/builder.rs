@@ -19,6 +19,8 @@ pub struct SandboxBuilder {
     krunfw_path: PathBuf,
     /// Path to the sandbox-runtime binary.
     runtime_binary_path: PathBuf,
+    /// Security configuration passed to guest via SAGE_SECURITY env var.
+    security_config: Option<sage_protocol::GuestSecurityConfig>,
 }
 
 /// A volume mount mapping a host directory to a guest mount point.
@@ -47,6 +49,7 @@ impl SandboxBuilder {
             guest_agent_path: PathBuf::from("target/aarch64-unknown-linux-musl/release/sage-guest"),
             krunfw_path: PathBuf::from(format!("{home}/.microsandbox/lib/libkrunfw.5.dylib")),
             runtime_binary_path: PathBuf::from("target/debug/sandbox-runtime"),
+            security_config: None,
         }
     }
 
@@ -99,6 +102,11 @@ impl SandboxBuilder {
         self
     }
 
+    pub fn security(mut self, config: sage_protocol::GuestSecurityConfig) -> Self {
+        self.security_config = Some(config);
+        self
+    }
+
     /// Create and start the sandbox VM.
     ///
     /// 1. Prepare a minimal rootfs directory
@@ -119,8 +127,16 @@ impl SandboxBuilder {
         let volumes_json = serde_json::to_string(&self.volumes)
             .map_err(|e| SandboxError::VmCreate(format!("serialize volumes: {e}")))?;
 
-        let mut child = tokio::process::Command::new(&self.runtime_binary_path)
-            .env("SANDBOX_ROOTFS", rootfs_path.to_str().unwrap_or_default())
+        // Serialize security config for the guest agent
+        let security_json = self
+            .security_config
+            .as_ref()
+            .map(|c| serde_json::to_string(c))
+            .transpose()
+            .map_err(|e| SandboxError::VmCreate(format!("serialize security config: {e}")))?;
+
+        let mut cmd = tokio::process::Command::new(&self.runtime_binary_path);
+        cmd.env("SANDBOX_ROOTFS", rootfs_path.to_str().unwrap_or_default())
             .env(
                 "SANDBOX_KRUNFW",
                 self.krunfw_path.to_str().unwrap_or_default(),
@@ -130,7 +146,13 @@ impl SandboxBuilder {
             .env("SANDBOX_VOLUMES", &volumes_json)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit());
+
+        if let Some(ref sec_json) = security_json {
+            cmd.env("SAGE_SECURITY", sec_json);
+        }
+
+        let mut child = cmd
             .spawn()
             .map_err(|e| SandboxError::VmCreate(format!("spawn runtime: {e}")))?;
 
@@ -365,6 +387,36 @@ mod tests {
     fn builder_mount_read_only() {
         let builder = SandboxBuilder::new("test").mount("/host/data", "/data", true);
         assert!(builder.volumes[0].read_only);
+    }
+
+    // ── Security config builder ─────────────────────────────────────
+
+    #[test]
+    fn builder_default_has_no_security_config() {
+        let builder = SandboxBuilder::new("test");
+        assert!(builder.security_config.is_none());
+    }
+
+    #[test]
+    fn builder_security_sets_config() {
+        let config = sage_protocol::GuestSecurityConfig {
+            seccomp: true,
+            landlock: false,
+            max_file_size_mb: 50,
+            max_open_files: 128,
+            tmpfs_size_mb: 256,
+            allowed_paths: vec!["/workspace".into()],
+        };
+        let builder = SandboxBuilder::new("test").security(config.clone());
+        assert_eq!(builder.security_config, Some(config));
+    }
+
+    #[test]
+    fn builder_security_serializes_to_json() {
+        let config = sage_protocol::GuestSecurityConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let decoded: sage_protocol::GuestSecurityConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, decoded);
     }
 
     // ── prepare_rootfs creates volume mount points ─────────────────

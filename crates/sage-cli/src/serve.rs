@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sage_runner::config::{NetworkPolicy, SecurityConfig};
+use sage_runner::config::NetworkPolicy;
 use sage_runner::AgentConfig;
 use sage_runtime::engine::{SageEngine, SandboxSettings};
 use sage_runtime::event::AgentEvent;
@@ -164,19 +164,22 @@ fn build_engine_from_config(
             }
             NetworkPolicy::Airgapped => false,
         };
-        // TODO(P7): Wire security config (seccomp, landlock, resource limits) and
-        // exec_timeout_secs to SandboxSettings once the guest agent consumes them.
-        // Currently these values are parsed from YAML but not enforced at runtime.
-        if sandbox.security != SecurityConfig::default() {
-            tracing::warn!(
-                "sandbox security config is parsed but not yet enforced at runtime"
-            );
-        }
+        // Convert runner SecurityConfig → protocol GuestSecurityConfig for the guest.
+        let guest_security = sage_protocol::GuestSecurityConfig {
+            seccomp: sandbox.security.seccomp,
+            landlock: sandbox.security.landlock,
+            max_file_size_mb: sandbox.security.max_file_size_mb,
+            max_open_files: sandbox.security.max_open_files,
+            tmpfs_size_mb: sandbox.security.tmpfs_size_mb,
+            allowed_paths: vec!["/workspace".into(), "/tmp".into()],
+        };
+
         builder = builder.sandbox(SandboxSettings {
             cpus: sandbox.cpus,
             memory_mib: sandbox.memory_mib,
             volumes: Vec::new(),
             network_enabled,
+            security: Some(guest_security),
         });
     }
 
@@ -227,5 +230,161 @@ constraints: { max_turns: 5, timeout_secs: 47 }
 
         let engine = build_engine_from_config(&config, None, None).unwrap();
         assert_eq!(engine.timeout_secs(), Some(47));
+    }
+
+    #[test]
+    fn test_sandbox_wires_security_config_defaults() {
+        let yaml = r#"
+name: secured
+description: "secured"
+llm: { provider: test, model: test-model, max_tokens: 256 }
+system_prompt: "test"
+tools: {}
+constraints: { max_turns: 5, timeout_secs: 90 }
+sandbox:
+  cpus: 1
+  memory_mib: 512
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let sandbox = engine.sandbox_settings().expect("sandbox should be set");
+
+        let security = sandbox.security.as_ref().expect("security should be wired");
+        assert!(security.seccomp);
+        assert!(security.landlock);
+        assert_eq!(security.max_file_size_mb, 100);
+        assert_eq!(security.max_open_files, 256);
+        assert_eq!(security.tmpfs_size_mb, 512);
+    }
+
+    #[test]
+    fn test_sandbox_wires_custom_security_config() {
+        let yaml = r#"
+name: custom-sec
+description: "custom"
+llm: { provider: test, model: test-model, max_tokens: 256 }
+system_prompt: "test"
+tools: {}
+constraints: { max_turns: 5, timeout_secs: 90 }
+sandbox:
+  cpus: 2
+  memory_mib: 1024
+  network: airgapped
+  security:
+    seccomp: false
+    landlock: true
+    max_file_size_mb: 50
+    max_open_files: 128
+    tmpfs_size_mb: 256
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let sandbox = engine.sandbox_settings().expect("sandbox should be set");
+
+        let security = sandbox.security.as_ref().expect("security should be wired");
+        assert!(!security.seccomp);
+        assert!(security.landlock);
+        assert_eq!(security.max_file_size_mb, 50);
+        assert_eq!(security.max_open_files, 128);
+        assert_eq!(security.tmpfs_size_mb, 256);
+    }
+
+    #[test]
+    fn test_sandbox_without_security_section_uses_defaults() {
+        let yaml = r#"
+name: no-sec-section
+description: "no explicit security"
+llm: { provider: test, model: test-model, max_tokens: 256 }
+system_prompt: "test"
+tools: {}
+constraints: { max_turns: 5, timeout_secs: 90 }
+sandbox:
+  cpus: 1
+  memory_mib: 512
+  network: false
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let sandbox = engine.sandbox_settings().expect("sandbox should be set");
+
+        // SecurityConfig defaults to all enabled
+        let security = sandbox.security.as_ref().expect("security should be wired");
+        assert!(security.seccomp);
+        assert!(security.landlock);
+    }
+
+    #[test]
+    fn test_no_sandbox_means_no_security() {
+        let yaml = r#"
+name: no-sandbox
+description: "no sandbox"
+llm: { provider: test, model: test-model, max_tokens: 256 }
+system_prompt: "test"
+tools: {}
+constraints: { max_turns: 5, timeout_secs: 90 }
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let engine = build_engine_from_config(&config, None, None).unwrap();
+        assert!(engine.sandbox_settings().is_none());
+    }
+
+    #[test]
+    fn test_full_pipeline_yaml_to_guest_security_roundtrip() {
+        // Full pipeline: YAML → AgentConfig → SandboxSettings → JSON → GuestSecurityConfig
+        let yaml = r#"
+name: pipeline-test
+description: "full pipeline"
+llm: { provider: test, model: test-model, max_tokens: 256 }
+system_prompt: "test"
+tools: {}
+constraints: { max_turns: 5, timeout_secs: 90 }
+sandbox:
+  cpus: 2
+  memory_mib: 1024
+  security:
+    seccomp: false
+    landlock: true
+    max_file_size_mb: 75
+    max_open_files: 192
+    tmpfs_size_mb: 384
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let sandbox = engine.sandbox_settings().unwrap();
+        let security = sandbox.security.as_ref().unwrap();
+
+        // Serialize as the builder would for SAGE_SECURITY env var
+        let json = serde_json::to_string(security).unwrap();
+
+        // Deserialize as the guest would
+        let guest_config: sage_protocol::GuestSecurityConfig =
+            serde_json::from_str(&json).unwrap();
+
+        // Verify all values survived the full pipeline
+        assert!(!guest_config.seccomp);
+        assert!(guest_config.landlock);
+        assert_eq!(guest_config.max_file_size_mb, 75);
+        assert_eq!(guest_config.max_open_files, 192);
+        assert_eq!(guest_config.tmpfs_size_mb, 384);
+    }
+
+    #[test]
+    fn test_security_allowed_paths_always_set() {
+        // Even without explicit allowed_hosts in YAML, allowed_paths should have defaults
+        let yaml = r#"
+name: paths-test
+description: "test"
+llm: { provider: test, model: test-model, max_tokens: 256 }
+system_prompt: "test"
+tools: {}
+constraints: { max_turns: 5, timeout_secs: 90 }
+sandbox:
+  cpus: 1
+  memory_mib: 512
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let security = engine.sandbox_settings().unwrap().security.as_ref().unwrap();
+        assert_eq!(security.allowed_paths, vec!["/workspace", "/tmp"]);
     }
 }
