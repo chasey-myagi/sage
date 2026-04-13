@@ -92,7 +92,7 @@ graph TB
     end
 
     subgraph Host["上层项目（Runeforge / AgentOS / CLI）"]
-        API["Sage Embeddable API<br/>SageEngine::from_config()<br/>.register_tool() / .run()"]
+        API["Sage Embeddable API<br/>SageEngine::builder()<br/>.register_tool() / .run()"]
     end
 
     subgraph Sage["Sage Engine"]
@@ -402,11 +402,15 @@ session.prompt("帮我查飞书日程")
 
 ```rust
 // Runeforge 嵌入 Sage（Rust）— 等价的 API 面
-let engine = SageEngine::from_config("assistant.yaml").await?
-    .register_tool(my_tool);
+let engine = SageEngine::builder()
+    .system_prompt("你是飞书助手。")
+    .provider("anthropic")
+    .model("claude-haiku-4-5-20251001")
+    .register_tool(my_tool)
+    .build()?;
 
-let stream = engine.run("帮我查飞书日程").await?;
-// stream: impl Stream<Item = AgentEvent>
+let mut stream = engine.run("帮我查飞书日程").await?;
+// stream: EventReceiver<AgentEvent, Vec<AgentMessage>>
 ```
 
 ## 扩展模型
