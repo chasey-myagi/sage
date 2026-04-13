@@ -191,11 +191,18 @@ sage run --config configs/coding-assistant.yaml \
   - build_llm_context 统一复用 transform.rs（消除代码重复）
 - [x] test-review 8.54/10, code-review 7.95/10 (165e6d0)
 
-### P6: Runner 增强 — Toolset 预设
+### P6: Runner 增强 — Toolset 预设 ✅
 
-- [ ] Toolset 定义：coding / ops / web / minimal
-- [ ] AgentConfig YAML 支持 `toolset: coding` 简写
-- [ ] Toolset ↔ ToolPolicy 联动（预设自带 allowed_binaries / allowed_paths）
+- [x] Toolset 枚举：Coding / Ops / Web / Minimal / Readonly
+  - coding: 全部 7 工具, bash `*` 通配
+  - ops: bash + read + grep + find + ls, 29 个运维命令白名单
+  - web: bash + read, 6 个 HTTP 工具白名单
+  - minimal/readonly: read + grep + find + ls, 只读
+- [x] AgentConfig YAML 支持 `toolset: coding` 简写
+  - expand() 展开预设 → resolved() 合并显式覆盖
+  - 向后兼容：无 toolset 字段时行为不变
+- [x] Toolset ↔ ToolPolicy 联动（预设自带 allowed_binaries）
+- [x] 34 个新测试, test-review PASS, code-review 8.50/10 (15ea633)
 
 ### P7: 安全加固（Layer 3）
 
