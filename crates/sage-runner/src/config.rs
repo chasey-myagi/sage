@@ -2005,6 +2005,7 @@ sandbox:
             max_file_size_mb: 200,
             max_open_files: 512,
             tmpfs_size_mb: 1024,
+            max_processes: 128,
         };
         let yaml = serde_yaml::to_string(&cfg).unwrap();
         let parsed: SecurityConfig = serde_yaml::from_str(&yaml).unwrap();
@@ -2393,6 +2394,7 @@ sandbox:
                 max_file_size_mb: 200,
                 max_open_files: 512,
                 tmpfs_size_mb: 1024,
+                max_processes: 128,
             },
             exec_timeout_secs: 60,
         };
@@ -2407,6 +2409,7 @@ sandbox:
         assert_eq!(parsed.security.max_file_size_mb, 200);
         assert_eq!(parsed.security.max_open_files, 512);
         assert_eq!(parsed.security.tmpfs_size_mb, 1024);
+        assert_eq!(parsed.security.max_processes, 128);
         assert_eq!(parsed.exec_timeout_secs, 60);
     }
 
