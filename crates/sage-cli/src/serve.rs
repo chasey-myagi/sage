@@ -123,5 +123,11 @@ fn print_event(event: &AgentEvent) {
                 eprintln!("  [tool: {tool_name} — ERROR]");
             }
         }
+        AgentEvent::CompactionStart { reason, message_count } => {
+            eprintln!("  [compaction: {reason}, {message_count} messages]");
+        }
+        AgentEvent::CompactionEnd { tokens_before, messages_compacted } => {
+            eprintln!("  [compacted: {messages_compacted} messages, was {tokens_before} tokens]");
+        }
     }
 }
