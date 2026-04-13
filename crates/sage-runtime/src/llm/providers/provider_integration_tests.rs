@@ -188,7 +188,12 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
         "ANTHROPIC_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("run ls"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("run ls"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -303,7 +308,12 @@ data: [DONE]\n\n",
         "OPENAI_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("run ls"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("run ls"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -562,7 +572,12 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"o
         "OPENAI_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("run ls"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("run ls"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -639,7 +654,12 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
         "GOOGLE_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("run ls"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("run ls"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -661,9 +681,10 @@ async fn integration_google_error_403() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
     let _mock = server
-        .mock("POST", mockito::Matcher::Regex(
-            r"/models/gemini-2\.0-flash:streamGenerateContent\?.*".into(),
-        ))
+        .mock(
+            "POST",
+            mockito::Matcher::Regex(r"/models/gemini-2\.0-flash:streamGenerateContent\?.*".into()),
+        )
         .with_status(403)
         .with_body("{\"error\":{\"message\":\"Forbidden\"}}")
         .create_async()
@@ -729,7 +750,12 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"o
         "AZURE_OPENAI_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("run ls"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("run ls"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -758,7 +784,10 @@ async fn integration_azure_openai_responses_error_401() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
     let _mock = server
-        .mock("POST", mockito::Matcher::Regex(r"/responses\?api-version=.*".into()))
+        .mock(
+            "POST",
+            mockito::Matcher::Regex(r"/responses\?api-version=.*".into()),
+        )
         .with_status(401)
         .with_body("{\"error\":{\"message\":\"Invalid API key\"}}")
         .create_async()
@@ -863,7 +892,12 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
         "ANTHROPIC_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("check files"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("check files"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -1167,7 +1201,9 @@ async fn integration_anthropic_missing_api_key() {
         "NONEXISTENT_API_KEY_ENV_VAR",
     );
     let opts = StreamOptions::default(); // no api_key
-    let events = provider.stream(&model, &make_context("hi"), &[], &opts).await;
+    let events = provider
+        .stream(&model, &make_context("hi"), &[], &opts)
+        .await;
 
     assert!(
         events
@@ -1241,7 +1277,11 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
     assert_no_errors(&events);
     let usages = collect_usage(&events);
     // Anthropic emits two Usage events: message_start (input) + message_delta (output)
-    assert!(usages.len() >= 2, "Expected at least 2 Usage events, got {}", usages.len());
+    assert!(
+        usages.len() >= 2,
+        "Expected at least 2 Usage events, got {}",
+        usages.len()
+    );
 
     // First usage: input tokens from message_start
     assert_eq!(usages[0].input, 25);
@@ -1334,7 +1374,10 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":30,\"o
 
     assert_no_errors(&events);
     let usages = collect_usage(&events);
-    assert!(!usages.is_empty(), "Expected Usage event from response.completed");
+    assert!(
+        !usages.is_empty(),
+        "Expected Usage event from response.completed"
+    );
     // input_tokens(30) - cached_tokens(10) = 20
     assert_eq!(usages[0].input, 20);
     assert_eq!(usages[0].output, 12);
@@ -1377,7 +1420,10 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
 
     assert_no_errors(&events);
     let usages = collect_usage(&events);
-    assert!(!usages.is_empty(), "Expected Usage event from usageMetadata");
+    assert!(
+        !usages.is_empty(),
+        "Expected Usage event from usageMetadata"
+    );
     assert_eq!(usages[0].input, 20);
     assert_eq!(usages[0].output, 8);
     assert_eq!(usages[0].total_tokens, 28);
@@ -1414,7 +1460,12 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
         "ANTHROPIC_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("read /tmp"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("read /tmp"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -1452,8 +1503,14 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
     let start_pos = event_position(&events, "ToolCallStart").unwrap();
     let delta_pos = event_position(&events, "ToolCallDelta").unwrap();
     let end_pos = event_position(&events, "ToolCallEnd").unwrap();
-    assert!(start_pos < delta_pos, "ToolCallStart should precede ToolCallDelta");
-    assert!(delta_pos < end_pos, "ToolCallDelta should precede ToolCallEnd");
+    assert!(
+        start_pos < delta_pos,
+        "ToolCallStart should precede ToolCallDelta"
+    );
+    assert!(
+        delta_pos < end_pos,
+        "ToolCallDelta should precede ToolCallEnd"
+    );
 }
 
 // ===========================================================================
@@ -1490,7 +1547,12 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"o
         "OPENAI_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("read /tmp"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("read /tmp"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -1510,7 +1572,9 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"o
         "Expected ToolCallDelta with /tmp"
     );
     assert!(
-        events.iter().any(|e| matches!(e, AssistantMessageEvent::ToolCallEnd { .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::ToolCallEnd { .. })),
         "Expected ToolCallEnd"
     );
 
@@ -1552,7 +1616,12 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
         "GOOGLE_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("read /tmp"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("read /tmp"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -1572,7 +1641,9 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
         "Expected ToolCallDelta with /tmp"
     );
     assert!(
-        events.iter().any(|e| matches!(e, AssistantMessageEvent::ToolCallEnd { .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::ToolCallEnd { .. })),
         "Expected ToolCallEnd"
     );
 
@@ -1620,11 +1691,12 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
     assert_no_errors(&events);
 
     // TextDelta must appear before Done
-    let text_pos = event_position(&events, "TextDelta")
-        .expect("Expected TextDelta event");
-    let done_pos = event_position(&events, "Done")
-        .expect("Expected Done event");
-    assert!(text_pos < done_pos, "TextDelta (pos {text_pos}) should precede Done (pos {done_pos})");
+    let text_pos = event_position(&events, "TextDelta").expect("Expected TextDelta event");
+    let done_pos = event_position(&events, "Done").expect("Expected Done event");
+    assert!(
+        text_pos < done_pos,
+        "TextDelta (pos {text_pos}) should precede Done (pos {done_pos})"
+    );
 
     // message_delta Usage appears right before Done (output tokens)
     let last_usage_pos = events
@@ -1672,7 +1744,12 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
         "GOOGLE_CLOUD_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("run ls"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("run ls"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -1692,7 +1769,9 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
         "Expected ToolCallDelta with 'ls -la'"
     );
     assert!(
-        events.iter().any(|e| matches!(e, AssistantMessageEvent::ToolCallEnd { .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::ToolCallEnd { .. })),
         "Expected ToolCallEnd"
     );
     assert_has_done(&events);
@@ -1739,7 +1818,12 @@ data: [DONE]\n\n",
         "OPENAI_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("read /tmp"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("read /tmp"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -1888,7 +1972,12 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
         "ANTHROPIC_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("think about this"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("think about this"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -1948,7 +2037,12 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
         "ANTHROPIC_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("think"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("think"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -2004,7 +2098,12 @@ data: [DONE]\n\n",
         "OPENAI_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("think"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("think"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -2053,7 +2152,12 @@ data: {\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\
         "GOOGLE_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("think"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("think"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -2107,7 +2211,12 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"o
         "OPENAI_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("think"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("think"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -2151,7 +2260,9 @@ async fn integration_anthropic_error_500() {
         .await;
 
     assert!(
-        events.iter().any(|e| matches!(e, AssistantMessageEvent::Error(m) if m.contains("500"))),
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Error(m) if m.contains("500"))),
         "Expected 500 error, got: {events:?}"
     );
 }
@@ -2165,9 +2276,10 @@ async fn integration_google_error_500() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
     let _mock = server
-        .mock("POST", mockito::Matcher::Regex(
-            r"/models/gemini-2\.0-flash:streamGenerateContent\?.*".into(),
-        ))
+        .mock(
+            "POST",
+            mockito::Matcher::Regex(r"/models/gemini-2\.0-flash:streamGenerateContent\?.*".into()),
+        )
         .with_status(500)
         .with_body("{\"error\":{\"message\":\"Internal error\"}}")
         .create_async()
@@ -2185,7 +2297,9 @@ async fn integration_google_error_500() {
         .await;
 
     assert!(
-        events.iter().any(|e| matches!(e, AssistantMessageEvent::Error(m) if m.contains("500"))),
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Error(m) if m.contains("500"))),
         "Expected 500 error, got: {events:?}"
     );
 }
@@ -2206,7 +2320,10 @@ async fn integration_azure_error_500() {
     ensure_no_proxy();
     let mut server = mockito::Server::new_async().await;
     let _mock = server
-        .mock("POST", mockito::Matcher::Regex(r"/responses\?api-version=.*".into()))
+        .mock(
+            "POST",
+            mockito::Matcher::Regex(r"/responses\?api-version=.*".into()),
+        )
         .with_status(500)
         .with_body("<html>Internal Server Error</html>")
         .create_async()
@@ -2224,7 +2341,9 @@ async fn integration_azure_error_500() {
         .await;
 
     assert!(
-        events.iter().any(|e| matches!(e, AssistantMessageEvent::Error(m) if m.contains("500"))),
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Error(m) if m.contains("500"))),
         "Expected 500 error, got: {events:?}"
     );
 }
@@ -2248,7 +2367,9 @@ async fn integration_openai_completions_missing_api_key() {
         .await;
 
     assert!(
-        events.iter().any(|e| matches!(e, AssistantMessageEvent::Error(..))),
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Error(..))),
         "Expected error for missing API key, got: {events:?}"
     );
 }
@@ -2272,7 +2393,9 @@ async fn integration_google_missing_api_key() {
         .await;
 
     assert!(
-        events.iter().any(|e| matches!(e, AssistantMessageEvent::Error(..))),
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Error(..))),
         "Expected error for missing API key, got: {events:?}"
     );
 }
@@ -2380,7 +2503,12 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
         "ANTHROPIC_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("do two things"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("do two things"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -2390,7 +2518,12 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
         .iter()
         .filter(|e| matches!(e, AssistantMessageEvent::ToolCallStart { .. }))
         .collect();
-    assert_eq!(starts.len(), 2, "Expected 2 ToolCallStart events, got {}", starts.len());
+    assert_eq!(
+        starts.len(),
+        2,
+        "Expected 2 ToolCallStart events, got {}",
+        starts.len()
+    );
 
     // Verify both tool names present
     assert!(events.iter().any(|e| matches!(
@@ -2405,7 +2538,12 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
         .iter()
         .filter(|e| matches!(e, AssistantMessageEvent::ToolCallEnd { .. }))
         .collect();
-    assert_eq!(ends.len(), 2, "Expected 2 ToolCallEnd events, got {}", ends.len());
+    assert_eq!(
+        ends.len(),
+        2,
+        "Expected 2 ToolCallEnd events, got {}",
+        ends.len()
+    );
 
     // Done with ToolUse
     assert!(events.iter().any(|e| matches!(
@@ -2445,7 +2583,12 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
         "ANTHROPIC_API_KEY",
     );
     let events = provider
-        .stream(&model, &make_context("run it"), &[], &make_options("test-key"))
+        .stream(
+            &model,
+            &make_context("run it"),
+            &[],
+            &make_options("test-key"),
+        )
         .await;
 
     assert_no_errors(&events);
@@ -2584,7 +2727,10 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
     assert_no_errors(&events);
     let text = collect_text(&events);
     assert!(text.contains("世界"), "Expected CJK characters in text");
-    assert!(text.contains("café"), "Expected accented characters in text");
+    assert!(
+        text.contains("café"),
+        "Expected accented characters in text"
+    );
     assert_has_done(&events);
 }
 

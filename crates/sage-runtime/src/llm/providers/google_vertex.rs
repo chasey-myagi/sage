@@ -77,10 +77,7 @@ pub(crate) fn resolve_project() -> Result<String, String> {
             return Ok(p);
         }
     }
-    Err(
-        "Vertex AI requires a project ID. Set GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT."
-            .into(),
-    )
+    Err("Vertex AI requires a project ID. Set GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT.".into())
 }
 
 /// Resolve the GCP location from environment variables.
@@ -368,13 +365,7 @@ mod tests {
 
     #[test]
     fn test_build_url_without_api_key() {
-        let url = build_url(
-            "",
-            "europe-west4",
-            "prod-project",
-            "gemini-2.0-flash",
-            None,
-        );
+        let url = build_url("", "europe-west4", "prod-project", "gemini-2.0-flash", None);
         assert_eq!(
             url,
             "https://europe-west4-aiplatform.googleapis.com/v1/projects/prod-project/locations/europe-west4/publishers/google/models/gemini-2.0-flash:streamGenerateContent?alt=sse"
@@ -396,20 +387,8 @@ mod tests {
 
     #[test]
     fn test_build_url_base_url_trailing_slash_stripped() {
-        let url1 = build_url(
-            "https://proxy.example.com/",
-            "loc",
-            "proj",
-            "model",
-            None,
-        );
-        let url2 = build_url(
-            "https://proxy.example.com",
-            "loc",
-            "proj",
-            "model",
-            None,
-        );
+        let url1 = build_url("https://proxy.example.com/", "loc", "proj", "model", None);
+        let url2 = build_url("https://proxy.example.com", "loc", "proj", "model", None);
         assert_eq!(url1, url2);
     }
 
@@ -485,9 +464,7 @@ mod tests {
 
         let body = build_google_request_body(&model, &context, &tools, &options);
         assert!(body["tools"].is_array());
-        let decls = body["tools"][0]["functionDeclarations"]
-            .as_array()
-            .unwrap();
+        let decls = body["tools"][0]["functionDeclarations"].as_array().unwrap();
         assert_eq!(decls.len(), 1);
         assert_eq!(decls[0]["name"], "bash");
     }
@@ -504,9 +481,7 @@ mod tests {
         let options = StreamOptions::default();
 
         let body = build_google_request_body(&model, &context, &[], &options);
-        let temp = body["generationConfig"]["temperature"]
-            .as_f64()
-            .unwrap();
+        let temp = body["generationConfig"]["temperature"].as_f64().unwrap();
         assert!((temp - 0.7).abs() < 0.001, "expected ~0.7, got {temp}");
     }
 
@@ -618,9 +593,7 @@ mod tests {
         };
 
         let body = build_google_request_body(&model, &context, &[], &options);
-        let temp = body["generationConfig"]["temperature"]
-            .as_f64()
-            .unwrap();
+        let temp = body["generationConfig"]["temperature"].as_f64().unwrap();
         assert!((temp - 0.9).abs() < 0.001, "expected ~0.9, got {temp}");
     }
 

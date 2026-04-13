@@ -266,9 +266,7 @@ mod tests {
 
     #[test]
     fn test_parse_deployment_name_map_single() {
-        unsafe {
-            std::env::set_var("AZURE_OPENAI_DEPLOYMENT_NAME_MAP", "gpt-4o=my-gpt4o-deploy")
-        };
+        unsafe { std::env::set_var("AZURE_OPENAI_DEPLOYMENT_NAME_MAP", "gpt-4o=my-gpt4o-deploy") };
         let map = parse_deployment_name_map();
         assert_eq!(map.get("gpt-4o").unwrap(), "my-gpt4o-deploy");
         unsafe { std::env::remove_var("AZURE_OPENAI_DEPLOYMENT_NAME_MAP") };
@@ -337,7 +335,10 @@ mod tests {
     #[test]
     fn test_resolve_base_url_from_env() {
         unsafe {
-            std::env::set_var("AZURE_OPENAI_BASE_URL", "https://my-resource.openai.azure.com/v1/")
+            std::env::set_var(
+                "AZURE_OPENAI_BASE_URL",
+                "https://my-resource.openai.azure.com/v1/",
+            )
         };
         unsafe { std::env::remove_var("AZURE_OPENAI_RESOURCE_NAME") };
         let model = crate::test_helpers::test_model();
@@ -434,7 +435,10 @@ mod tests {
         let context = crate::test_helpers::test_context();
         let options = StreamOptions::default();
         let body = build_azure_request_body(&model, &context, &[], &options, "my-deployment");
-        assert!(body.get("store").is_none(), "Azure body should not have 'store' field");
+        assert!(
+            body.get("store").is_none(),
+            "Azure body should not have 'store' field"
+        );
         assert_eq!(body["model"], "my-deployment");
     }
 

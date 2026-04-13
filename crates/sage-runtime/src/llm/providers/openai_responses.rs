@@ -573,12 +573,7 @@ pub async fn parse_sse_stream(response: reqwest::Response) -> Vec<AssistantMessa
                             current_event_type.clone()
                         };
                         if !event_type.is_empty() {
-                            process_responses_event(
-                                &event_type,
-                                &data,
-                                &mut state,
-                                &mut events,
-                            );
+                            process_responses_event(&event_type, &data, &mut state, &mut events);
                         }
                     }
                     Err(e) => {

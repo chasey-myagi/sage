@@ -868,7 +868,11 @@ mod tests {
             }],
         }];
         skip_empty_assistant_messages(&mut messages);
-        assert_eq!(messages.len(), 1, "thinking-only assistant must be retained");
+        assert_eq!(
+            messages.len(),
+            1,
+            "thinking-only assistant must be retained"
+        );
     }
 
     #[test]

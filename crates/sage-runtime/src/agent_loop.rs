@@ -4,8 +4,8 @@
 
 use crate::agent::Agent;
 use crate::compaction::{
-    self, CompactionReason, apply_compaction, estimate_context_tokens,
-    is_context_overflow, prepare_compaction, should_compact, truncate_messages,
+    self, CompactionReason, apply_compaction, estimate_context_tokens, is_context_overflow,
+    prepare_compaction, should_compact, truncate_messages,
 };
 use crate::event::{AgentEvent, AgentEventSink};
 use crate::llm::types::*;
@@ -442,10 +442,7 @@ async fn try_compact(
         }
         Err(_) => {
             // Compaction failed — fall back to truncation
-            truncate_messages(
-                agent.messages_mut(),
-                settings.keep_recent_tokens,
-            );
+            truncate_messages(agent.messages_mut(), settings.keep_recent_tokens);
             false
         }
     }
@@ -2698,11 +2695,7 @@ mod tests {
 
         let provider = ContextCapturingProvider::new(vec![turn1, turn2]);
         let captured = provider.captured.clone();
-        let mut agent = Agent::new(
-            test_config(),
-            Box::new(provider),
-            echo_registry(),
-        );
+        let mut agent = Agent::new(test_config(), Box::new(provider), echo_registry());
         agent.steer(AgentMessage::User(UserMessage::from_text("Hello")));
         let sink = CollectorSink::new();
         let _ = run_agent_loop(&mut agent, &sink).await;

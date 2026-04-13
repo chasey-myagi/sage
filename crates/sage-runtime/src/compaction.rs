@@ -180,10 +180,7 @@ pub struct ContextOverflowContext {
 /// Hook for custom context overflow handling.
 #[async_trait::async_trait]
 pub trait ContextOverflowHook: Send + Sync {
-    async fn on_context_overflow(
-        &self,
-        ctx: &ContextOverflowContext,
-    ) -> ContextOverflowAction;
+    async fn on_context_overflow(&self, ctx: &ContextOverflowContext) -> ContextOverflowAction;
 }
 
 // ============================================================================
@@ -209,15 +206,18 @@ fn safe_truncate(s: &str, max_bytes: usize) -> &str {
 /// Estimate token count for a single AgentMessage using chars/4 heuristic.
 pub fn estimate_message_tokens(msg: &AgentMessage) -> u32 {
     let chars = match msg {
-        AgentMessage::User(u) => {
-            u.content.iter().map(|c| content_char_count(c)).sum::<usize>()
-        }
-        AgentMessage::Assistant(a) => {
-            a.content.iter().map(|c| content_char_count(c)).sum::<usize>()
-        }
+        AgentMessage::User(u) => u
+            .content
+            .iter()
+            .map(|c| content_char_count(c))
+            .sum::<usize>(),
+        AgentMessage::Assistant(a) => a
+            .content
+            .iter()
+            .map(|c| content_char_count(c))
+            .sum::<usize>(),
         AgentMessage::ToolResult(tr) => {
-            let raw: usize =
-                tr.content.iter().map(|c| content_char_count(c)).sum();
+            let raw: usize = tr.content.iter().map(|c| content_char_count(c)).sum();
             raw.min(TOOL_RESULT_TRUNCATE_CHARS)
         }
         AgentMessage::CompactionSummary(cs) => cs.summary.len(),
@@ -273,8 +273,7 @@ pub fn should_compact(
     if !settings.enabled {
         return false;
     }
-    context_tokens
-        > (context_window as u64).saturating_sub(settings.reserve_tokens as u64)
+    context_tokens > (context_window as u64).saturating_sub(settings.reserve_tokens as u64)
 }
 
 /// Overflow error patterns — aligned with pi-mono overflow.ts.
@@ -325,19 +324,13 @@ pub fn is_context_overflow(msg: &AssistantMessage, context_window: u32) -> bool 
 fn is_valid_cut_point(msg: &AgentMessage) -> bool {
     matches!(
         msg,
-        AgentMessage::User(_)
-            | AgentMessage::Assistant(_)
-            | AgentMessage::CompactionSummary(_)
+        AgentMessage::User(_) | AgentMessage::Assistant(_) | AgentMessage::CompactionSummary(_)
     )
 }
 
 /// Find the user message that started a turn containing `index`.
 /// Searches backwards from `index` to `start`.
-fn find_turn_start(
-    messages: &[AgentMessage],
-    index: usize,
-    start: usize,
-) -> Option<usize> {
+fn find_turn_start(messages: &[AgentMessage], index: usize, start: usize) -> Option<usize> {
     for i in (start..index).rev() {
         if matches!(messages[i], AgentMessage::User(_)) {
             return Some(i);
@@ -426,8 +419,7 @@ pub fn extract_file_operations(messages: &[AgentMessage]) -> FileOperations {
                     name, arguments, ..
                 } = content
                 {
-                    if let Some(path) = arguments.get("file_path").and_then(|v| v.as_str())
-                    {
+                    if let Some(path) = arguments.get("file_path").and_then(|v| v.as_str()) {
                         match name.as_str() {
                             "read" | "read_file" => {
                                 ops.read.insert(path.to_string());
@@ -599,10 +591,7 @@ fn build_initial_summarization_prompt(serialized: &str) -> String {
     )
 }
 
-fn build_update_summarization_prompt(
-    serialized: &str,
-    previous_summary: &str,
-) -> String {
+fn build_update_summarization_prompt(serialized: &str, previous_summary: &str) -> String {
     format!(
         "You have a previous conversation summary and new conversation messages. \
          Update the summary to include the new information.\n\n\
@@ -698,8 +687,7 @@ pub async fn compact(
         return Err(CompactionError::NothingToCompact);
     }
 
-    let serialized =
-        serialize_messages_for_summary(&preparation.messages_to_summarize);
+    let serialized = serialize_messages_for_summary(&preparation.messages_to_summarize);
 
     // Build prompt — initial or update depending on previous summary
     let user_prompt = match &preparation.previous_summary {
@@ -708,11 +696,8 @@ pub async fn compact(
     };
 
     // Call LLM for summarization
-    let max_summary_tokens = (preparation
-        .tokens_before
-        .min(model.max_tokens as u64)
-        * 80
-        / 100) as u32;
+    let max_summary_tokens =
+        (preparation.tokens_before.min(model.max_tokens as u64) * 80 / 100) as u32;
 
     let summary_context = LlmContext {
         messages: vec![LlmMessage::User {
@@ -746,10 +731,8 @@ pub async fn compact(
     }
 
     // Handle split turn — generate turn prefix summary
-    if preparation.is_split_turn && !preparation.turn_prefix_messages.is_empty()
-    {
-        let prefix_serialized =
-            serialize_messages_for_summary(&preparation.turn_prefix_messages);
+    if preparation.is_split_turn && !preparation.turn_prefix_messages.is_empty() {
+        let prefix_serialized = serialize_messages_for_summary(&preparation.turn_prefix_messages);
         let prefix_prompt = build_turn_prefix_prompt(&prefix_serialized);
 
         let prefix_context = LlmContext {
@@ -761,8 +744,7 @@ pub async fn compact(
             temperature: Some(0.0),
         };
 
-        let prefix_events =
-            provider.complete(model, &prefix_context, &[]).await;
+        let prefix_events = provider.complete(model, &prefix_context, &[]).await;
         let mut prefix_summary = String::new();
         for event in &prefix_events {
             match event {
@@ -806,32 +788,23 @@ pub async fn compact(
 ///
 /// Replaces messages[0..first_kept_index] with a single CompactionSummary,
 /// preserving messages[first_kept_index..].
-pub fn apply_compaction(
-    messages: &mut Vec<AgentMessage>,
-    result: &CompactionResult,
-) {
-    if result.first_kept_index == 0 || result.first_kept_index > messages.len()
-    {
+pub fn apply_compaction(messages: &mut Vec<AgentMessage>, result: &CompactionResult) {
+    if result.first_kept_index == 0 || result.first_kept_index > messages.len() {
         return;
     }
 
     let kept = messages.split_off(result.first_kept_index);
     messages.clear();
-    messages.push(AgentMessage::CompactionSummary(
-        CompactionSummaryMessage {
-            summary: result.summary.clone(),
-            tokens_before: result.tokens_before,
-            timestamp: crate::types::now_secs(),
-        },
-    ));
+    messages.push(AgentMessage::CompactionSummary(CompactionSummaryMessage {
+        summary: result.summary.clone(),
+        tokens_before: result.tokens_before,
+        timestamp: crate::types::now_secs(),
+    }));
     messages.extend(kept);
 }
 
 /// Simple truncation fallback: keep only recent messages within token budget.
-pub fn truncate_messages(
-    messages: &mut Vec<AgentMessage>,
-    keep_recent_tokens: u32,
-) {
+pub fn truncate_messages(messages: &mut Vec<AgentMessage>, keep_recent_tokens: u32) {
     if messages.is_empty() {
         return;
     }
@@ -950,7 +923,7 @@ mod tests {
     #[test]
     fn estimate_context_tokens_multiple_messages() {
         let messages = vec![
-            user_msg(&big_message(400)),    // 100 tokens
+            user_msg(&big_message(400)),      // 100 tokens
             assistant_msg(&big_message(800)), // 200 tokens
         ];
         let total = estimate_context_tokens(&messages);
@@ -1189,19 +1162,16 @@ mod tests {
     #[test]
     fn find_cut_point_never_cuts_at_tool_result() {
         let messages = vec![
-            user_msg("start"),                       // 0: valid cut
-            assistant_msg("thinking..."),             // 1: valid cut
-            tool_result_msg("tc-1", "output here"),  // 2: NOT valid
-            user_msg("next question"),               // 3: valid cut
-            assistant_msg("answer"),                  // 4: valid cut
+            user_msg("start"),                      // 0: valid cut
+            assistant_msg("thinking..."),           // 1: valid cut
+            tool_result_msg("tc-1", "output here"), // 2: NOT valid
+            user_msg("next question"),              // 3: valid cut
+            assistant_msg("answer"),                // 4: valid cut
         ];
         // keep_recent_tokens very small → wants to cut near the end
         // But should never return index 2 (ToolResult)
         let cut = find_cut_point(&messages, 0, 5, 1);
-        assert_ne!(
-            cut.first_kept_index, 2,
-            "must not cut at ToolResult"
-        );
+        assert_ne!(cut.first_kept_index, 2, "must not cut at ToolResult");
     }
 
     #[test]
@@ -1217,7 +1187,10 @@ mod tests {
         // keep_recent_tokens = 50 → wants to keep only last msg
         let cut = find_cut_point(&messages, 0, 4, 50);
         if cut.first_kept_index == 3 {
-            assert!(cut.is_split_turn, "cutting at assistant mid-turn should detect split");
+            assert!(
+                cut.is_split_turn,
+                "cutting at assistant mid-turn should detect split"
+            );
             assert_eq!(cut.turn_start_index, Some(0));
         }
     }
@@ -1273,11 +1246,7 @@ mod tests {
     #[test]
     fn extract_file_ops_from_tool_calls() {
         let messages = vec![
-            assistant_with_tool_call(
-                "reading",
-                "read_file",
-                json!({"file_path": "/src/main.rs"}),
-            ),
+            assistant_with_tool_call("reading", "read_file", json!({"file_path": "/src/main.rs"})),
             tool_result_msg("tc-1", "fn main() {}"),
             assistant_with_tool_call(
                 "editing",
@@ -1382,12 +1351,7 @@ mod tests {
 
     #[test]
     fn prepare_compaction_empty_messages() {
-        let prep = prepare_compaction(
-            &[],
-            0,
-            &CompactionSettings::default(),
-            None,
-        );
+        let prep = prepare_compaction(&[], 0, &CompactionSettings::default(), None);
         assert!(prep.is_none());
     }
 
@@ -1398,7 +1362,12 @@ mod tests {
     #[tokio::test]
     async fn compact_generates_summary_via_llm() {
         let messages: Vec<AgentMessage> = (0..10)
-            .map(|i| user_msg(&format!("Message number {i} with content: {}", big_message(396))))
+            .map(|i| {
+                user_msg(&format!(
+                    "Message number {i} with content: {}",
+                    big_message(396)
+                ))
+            })
             .collect();
 
         let settings = CompactionSettings {
@@ -1406,13 +1375,7 @@ mod tests {
             reserve_tokens: 1000,
             keep_recent_tokens: 300,
         };
-        let prep = prepare_compaction(
-            &messages,
-            50000,
-            &settings,
-            None,
-        )
-        .unwrap();
+        let prep = prepare_compaction(&messages, 50000, &settings, None).unwrap();
 
         // Mock provider returns a summary
         let provider = StatefulProvider::new(vec![vec![
@@ -1450,11 +1413,9 @@ mod tests {
         .unwrap();
 
         // Provider returns Done without any text
-        let provider = StatefulProvider::new(vec![vec![
-            AssistantMessageEvent::Done {
-                stop_reason: StopReason::Stop,
-            },
-        ]]);
+        let provider = StatefulProvider::new(vec![vec![AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+        }]]);
 
         let model = test_model();
         let result = compact(prep, &provider, &model).await;
@@ -1682,7 +1643,10 @@ mod tests {
         let long_args = json!({"content": big_message(500)});
         let msg = assistant_with_tool_call("writing", "write_file", long_args);
         let serialized = serialize_messages_for_summary(&[msg]);
-        assert!(serialized.contains("..."), "long args should be truncated with ...");
+        assert!(
+            serialized.contains("..."),
+            "long args should be truncated with ..."
+        );
     }
 
     #[test]
@@ -1716,7 +1680,7 @@ mod tests {
                 },
                 Content::ToolCall {
                     id: "tc-1".into(),
-                    name: "bash".into(), // 4 chars
+                    name: "bash".into(),             // 4 chars
                     arguments: json!({"cmd": "ls"}), // ~12 chars
                 },
             ],
@@ -1785,11 +1749,11 @@ mod tests {
     #[test]
     fn find_cut_point_compaction_summary_is_valid_cut() {
         let messages = vec![
-            compaction_summary_msg("old summary"),       // 0: valid cut
-            user_msg(&big_message(400)),                 // 1: valid cut
-            assistant_msg(&big_message(400)),             // 2: valid cut
-            user_msg(&big_message(400)),                 // 3: valid cut
-            assistant_msg(&big_message(400)),             // 4: valid cut
+            compaction_summary_msg("old summary"), // 0: valid cut
+            user_msg(&big_message(400)),           // 1: valid cut
+            assistant_msg(&big_message(400)),      // 2: valid cut
+            user_msg(&big_message(400)),           // 3: valid cut
+            assistant_msg(&big_message(400)),      // 4: valid cut
         ];
         let cut = find_cut_point(&messages, 0, 5, 150);
         // Should be able to cut at CompactionSummary (index 0)
@@ -1883,20 +1847,15 @@ mod tests {
             reserve_tokens: 1000,
             keep_recent_tokens: 300,
         };
-        let mut prep = prepare_compaction(
-            &messages,
-            50000,
-            &settings,
-            Some("## Goal\nBuild module X"),
-        )
-        .unwrap();
+        let mut prep =
+            prepare_compaction(&messages, 50000, &settings, Some("## Goal\nBuild module X"))
+                .unwrap();
         // Ensure previous_summary is set (triggers update prompt path)
         assert!(prep.previous_summary.is_some());
 
         let provider = StatefulProvider::new(vec![vec![
             AssistantMessageEvent::TextDelta(
-                "## Goal\nBuild module X\n## Progress\n### Done\n- Module X complete"
-                    .into(),
+                "## Goal\nBuild module X\n## Progress\n### Done\n- Module X complete".into(),
             ),
             AssistantMessageEvent::Done {
                 stop_reason: StopReason::Stop,
@@ -2066,15 +2025,27 @@ mod tests {
         // Build a realistic 12-message conversation
         let messages = vec![
             user_msg("Create a new Rust project"),
-            assistant_with_tool_call("I'll create the project", "bash", json!({"command": "cargo init myapp"})),
+            assistant_with_tool_call(
+                "I'll create the project",
+                "bash",
+                json!({"command": "cargo init myapp"}),
+            ),
             tool_result_msg("tc-1", "Created binary (application) `myapp` package"),
             assistant_msg("Project created. Let me add some code."),
             user_msg("Add a hello world function"),
-            assistant_with_tool_call("Adding function", "write_file", json!({"file_path": "/src/lib.rs", "content": "pub fn hello() { println!(\"Hello!\"); }"})),
+            assistant_with_tool_call(
+                "Adding function",
+                "write_file",
+                json!({"file_path": "/src/lib.rs", "content": "pub fn hello() { println!(\"Hello!\"); }"}),
+            ),
             tool_result_msg("tc-2", "File written successfully"),
             assistant_msg("Done! I've added the hello function."),
             user_msg("Now add tests"),
-            assistant_with_tool_call("Adding tests", "write_file", json!({"file_path": "/src/lib.rs", "content": "#[test] fn test_hello() {}"})),
+            assistant_with_tool_call(
+                "Adding tests",
+                "write_file",
+                json!({"file_path": "/src/lib.rs", "content": "#[test] fn test_hello() {}"}),
+            ),
             tool_result_msg("tc-3", "File written successfully"),
             assistant_msg("Tests added and passing."),
         ];
@@ -2113,7 +2084,9 @@ mod tests {
 
         // Verify structure: CompactionSummary + kept messages
         assert_eq!(messages.len(), 1 + kept_count);
-        assert!(matches!(&messages[0], AgentMessage::CompactionSummary(cs) if cs.summary.contains("hello function")));
+        assert!(
+            matches!(&messages[0], AgentMessage::CompactionSummary(cs) if cs.summary.contains("hello function"))
+        );
         // Remaining messages are from the kept portion
         for msg in &messages[1..] {
             assert!(!matches!(msg, AgentMessage::CompactionSummary(_)));
@@ -2126,7 +2099,11 @@ mod tests {
         let messages = vec![
             compaction_summary_msg("## Goal\nBuild API\n## Done\n- Setup project"),
             user_msg("Add authentication"),
-            assistant_with_tool_call("Adding auth", "write_file", json!({"file_path": "/src/auth.rs", "content": "pub fn auth() {}"})),
+            assistant_with_tool_call(
+                "Adding auth",
+                "write_file",
+                json!({"file_path": "/src/auth.rs", "content": "pub fn auth() {}"}),
+            ),
             tool_result_msg("tc-1", "Written"),
             assistant_msg("Auth module added."),
             user_msg("Add middleware"),
@@ -2171,7 +2148,9 @@ mod tests {
         apply_compaction(&mut messages, &result);
 
         // Should start with new CompactionSummary
-        assert!(matches!(&messages[0], AgentMessage::CompactionSummary(cs) if cs.summary.contains("Middleware")));
+        assert!(
+            matches!(&messages[0], AgentMessage::CompactionSummary(cs) if cs.summary.contains("Middleware"))
+        );
     }
 
     #[test]
@@ -2396,11 +2375,9 @@ mod tests {
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None).unwrap();
 
-        let provider = StatefulProvider::new(vec![vec![
-            AssistantMessageEvent::Done {
-                stop_reason: StopReason::Stop,
-            },
-        ]]);
+        let provider = StatefulProvider::new(vec![vec![AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+        }]]);
 
         let model = test_model();
         let result = compact(prep, &provider, &model).await;
@@ -2576,11 +2553,7 @@ mod tests {
     fn extract_file_ops_short_tool_names() {
         // "read" and "write" (not just "read_file"/"write_file") are valid
         let messages = vec![
-            assistant_with_tool_call(
-                "reading",
-                "read",
-                json!({"file_path": "/src/main.rs"}),
-            ),
+            assistant_with_tool_call("reading", "read", json!({"file_path": "/src/main.rs"})),
             tool_result_msg("tc-1", "fn main(){}"),
             assistant_with_tool_call(
                 "writing",
@@ -2589,8 +2562,14 @@ mod tests {
             ),
         ];
         let ops = extract_file_operations(&messages);
-        assert!(ops.read.contains("/src/main.rs"), "short 'read' should work");
-        assert!(ops.written.contains("/src/new.rs"), "short 'write' should work");
+        assert!(
+            ops.read.contains("/src/main.rs"),
+            "short 'read' should work"
+        );
+        assert!(
+            ops.written.contains("/src/new.rs"),
+            "short 'write' should work"
+        );
     }
 
     // ========================================================================
@@ -2604,10 +2583,10 @@ mod tests {
         // With keep_recent_tokens small enough to keep only msg 3,
         // cut at index 3 (Assistant) will detect split turn back to user at 0.
         let messages = vec![
-            user_msg("do something"),                               // 0
+            user_msg("do something"),                                              // 0
             assistant_with_tool_call("calling", "bash", json!({"command": "ls"})), // 1
-            tool_result_msg("tc-1", "file.txt"),                    // 2
-            assistant_msg(&big_message(400)),                       // 3: ~100 tokens
+            tool_result_msg("tc-1", "file.txt"),                                   // 2
+            assistant_msg(&big_message(400)),                                      // 3: ~100 tokens
         ];
         let settings = CompactionSettings {
             enabled: true,
@@ -2619,8 +2598,10 @@ mod tests {
         let prep = prep.unwrap();
         // If cut at index 3 (assistant mid-turn), should detect split
         if prep.is_split_turn {
-            assert!(!prep.turn_prefix_messages.is_empty(),
-                    "split turn should have non-empty prefix messages");
+            assert!(
+                !prep.turn_prefix_messages.is_empty(),
+                "split turn should have non-empty prefix messages"
+            );
         }
     }
 
@@ -2668,11 +2649,15 @@ mod tests {
         let provider = StatefulProvider::new(vec![
             vec![
                 AssistantMessageEvent::TextDelta("Round 1 summary".into()),
-                AssistantMessageEvent::Done { stop_reason: StopReason::Stop },
+                AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Stop,
+                },
             ],
             vec![
                 AssistantMessageEvent::TextDelta("Round 2 updated summary".into()),
-                AssistantMessageEvent::Done { stop_reason: StopReason::Stop },
+                AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Stop,
+                },
             ],
         ]);
         let model = test_model();
@@ -2686,13 +2671,8 @@ mod tests {
         for i in 0..8 {
             messages_r2.push(user_msg(&format!("{}{}", big_message(396), i)));
         }
-        let prep_r2 = prepare_compaction(
-            &messages_r2,
-            50000,
-            &settings,
-            Some(&result_r1.summary),
-        )
-        .unwrap();
+        let prep_r2 =
+            prepare_compaction(&messages_r2, 50000, &settings, Some(&result_r1.summary)).unwrap();
         assert!(prep_r2.previous_summary.is_some());
 
         let result_r2 = compact(prep_r2, &provider, &model).await.unwrap();
@@ -2703,9 +2683,8 @@ mod tests {
     #[test]
     fn apply_compaction_then_add_messages_then_apply_again() {
         // Simulate: compact → add new messages → compact again
-        let mut messages: Vec<AgentMessage> = (0..6)
-            .map(|i| user_msg(&format!("msg{i}")))
-            .collect();
+        let mut messages: Vec<AgentMessage> =
+            (0..6).map(|i| user_msg(&format!("msg{i}"))).collect();
 
         // First apply: cut at index 3
         let result1 = CompactionResult {
@@ -2775,11 +2754,9 @@ mod tests {
         };
 
         // First call returns empty (Done only, no TextDelta)
-        let provider = StatefulProvider::new(vec![vec![
-            AssistantMessageEvent::Done {
-                stop_reason: StopReason::Stop,
-            },
-        ]]);
+        let provider = StatefulProvider::new(vec![vec![AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+        }]]);
 
         let model = test_model();
         let result = compact(prep, &provider, &model).await;
@@ -2818,8 +2795,7 @@ mod tests {
     #[test]
     fn compaction_error_is_std_error() {
         // Verify CompactionError implements std::error::Error properly
-        let e: Box<dyn std::error::Error> =
-            Box::new(CompactionError::NothingToCompact);
+        let e: Box<dyn std::error::Error> = Box::new(CompactionError::NothingToCompact);
         assert!(e.source().is_none());
 
         let e2: Box<dyn std::error::Error> =
@@ -2834,8 +2810,7 @@ mod tests {
     #[test]
     fn estimate_context_tokens_many_large_messages_no_overflow() {
         // 100 messages each 40000 chars = 1M tokens, verify u32 handles this
-        let messages: Vec<AgentMessage> =
-            (0..100).map(|_| user_msg(&big_message(40000))).collect();
+        let messages: Vec<AgentMessage> = (0..100).map(|_| user_msg(&big_message(40000))).collect();
         let tokens = estimate_context_tokens(&messages);
         assert_eq!(tokens, 1_000_000);
     }
@@ -2914,11 +2889,7 @@ mod tests {
     fn serialize_messages_truncates_multibyte_tool_args_safely() {
         // Tool call args with CJK characters → truncation at 200 bytes must not panic
         let long_cjk = "测".repeat(100); // 300 bytes (3 bytes each)
-        let msg = assistant_with_tool_call(
-            "processing",
-            "bash",
-            json!({"command": long_cjk}),
-        );
+        let msg = assistant_with_tool_call("processing", "bash", json!({"command": long_cjk}));
         // This should not panic
         let serialized = serialize_messages_for_summary(&[msg]);
         assert!(serialized.contains("..."));
@@ -2948,9 +2919,9 @@ mod tests {
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None).unwrap();
 
-        let provider = StatefulProvider::new(vec![vec![
-            AssistantMessageEvent::Error("rate limit exceeded".into()),
-        ]]);
+        let provider = StatefulProvider::new(vec![vec![AssistantMessageEvent::Error(
+            "rate limit exceeded".into(),
+        )]]);
 
         let model = test_model();
         let result = compact(prep, &provider, &model).await;

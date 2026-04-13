@@ -218,7 +218,10 @@ mod tests {
 
     #[test]
     fn test_env_var_azure_openai_responses() {
-        assert_eq!(api_key_env_var("azure-openai-responses"), "AZURE_OPENAI_API_KEY");
+        assert_eq!(
+            api_key_env_var("azure-openai-responses"),
+            "AZURE_OPENAI_API_KEY"
+        );
     }
 
     #[test]

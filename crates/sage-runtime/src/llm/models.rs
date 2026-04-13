@@ -5894,8 +5894,16 @@ mod tests {
     #[test]
     fn test_groq_models_invariants() {
         for m in list_models().iter().filter(|m| m.provider == "groq") {
-            assert_eq!(m.base_url, "https://api.groq.com/openai/v1", "bad base_url for {}", m.id);
-            assert_eq!(m.api_key_env, "GROQ_API_KEY", "bad api_key_env for {}", m.id);
+            assert_eq!(
+                m.base_url, "https://api.groq.com/openai/v1",
+                "bad base_url for {}",
+                m.id
+            );
+            assert_eq!(
+                m.api_key_env, "GROQ_API_KEY",
+                "bad api_key_env for {}",
+                m.id
+            );
             assert_eq!(m.api, api::OPENAI_COMPLETIONS, "bad api for {}", m.id);
             assert!(m.compat.is_none(), "unexpected compat for {}", m.id);
         }
@@ -5981,7 +5989,11 @@ mod tests {
     #[test]
     fn test_xai_models_invariants() {
         for m in list_models().iter().filter(|m| m.provider == "xai") {
-            assert_eq!(m.base_url, "https://api.x.ai/v1", "bad base_url for {}", m.id);
+            assert_eq!(
+                m.base_url, "https://api.x.ai/v1",
+                "bad base_url for {}",
+                m.id
+            );
             assert_eq!(m.api_key_env, "XAI_API_KEY", "bad api_key_env for {}", m.id);
             assert_eq!(m.api, api::OPENAI_COMPLETIONS, "bad api for {}", m.id);
             assert!(m.compat.is_none(), "unexpected compat for {}", m.id);
@@ -6038,8 +6050,16 @@ mod tests {
     #[test]
     fn test_cerebras_models_invariants() {
         for m in list_models().iter().filter(|m| m.provider == "cerebras") {
-            assert_eq!(m.base_url, "https://api.cerebras.ai/v1", "bad base_url for {}", m.id);
-            assert_eq!(m.api_key_env, "CEREBRAS_API_KEY", "bad api_key_env for {}", m.id);
+            assert_eq!(
+                m.base_url, "https://api.cerebras.ai/v1",
+                "bad base_url for {}",
+                m.id
+            );
+            assert_eq!(
+                m.api_key_env, "CEREBRAS_API_KEY",
+                "bad api_key_env for {}",
+                m.id
+            );
             assert_eq!(m.api, api::OPENAI_COMPLETIONS, "bad api for {}", m.id);
             assert!(m.compat.is_none(), "unexpected compat for {}", m.id);
         }
@@ -6127,8 +6147,16 @@ mod tests {
     #[test]
     fn test_mistral_models_invariants() {
         for m in list_models().iter().filter(|m| m.provider == "mistral") {
-            assert_eq!(m.base_url, "https://api.mistral.ai/v1", "bad base_url for {}", m.id);
-            assert_eq!(m.api_key_env, "MISTRAL_API_KEY", "bad api_key_env for {}", m.id);
+            assert_eq!(
+                m.base_url, "https://api.mistral.ai/v1",
+                "bad base_url for {}",
+                m.id
+            );
+            assert_eq!(
+                m.api_key_env, "MISTRAL_API_KEY",
+                "bad api_key_env for {}",
+                m.id
+            );
             assert_eq!(m.api, api::OPENAI_COMPLETIONS, "bad api for {}", m.id);
             assert!(m.compat.is_none(), "unexpected compat for {}", m.id);
         }
@@ -6209,14 +6237,33 @@ mod tests {
 
     #[test]
     fn test_copilot_models_invariants() {
-        for m in list_models().iter().filter(|m| m.provider == "github-copilot") {
-            assert_eq!(m.base_url, "https://api.individual.githubcopilot.com", "bad base_url for {}", m.id);
-            assert_eq!(m.api_key_env, "COPILOT_GITHUB_TOKEN", "bad api_key_env for {}", m.id);
+        for m in list_models()
+            .iter()
+            .filter(|m| m.provider == "github-copilot")
+        {
+            assert_eq!(
+                m.base_url, "https://api.individual.githubcopilot.com",
+                "bad base_url for {}",
+                m.id
+            );
+            assert_eq!(
+                m.api_key_env, "COPILOT_GITHUB_TOKEN",
+                "bad api_key_env for {}",
+                m.id
+            );
             // openai-completions models have explicit compat; others have None
             if m.api == api::OPENAI_COMPLETIONS {
-                assert!(m.compat.is_some(), "completions model {} must have compat", m.id);
+                assert!(
+                    m.compat.is_some(),
+                    "completions model {} must have compat",
+                    m.id
+                );
             } else {
-                assert!(m.compat.is_none(), "non-completions model {} should have compat: None", m.id);
+                assert!(
+                    m.compat.is_none(),
+                    "non-completions model {} should have compat: None",
+                    m.id
+                );
             }
             // All copilot models have zero cost
             assert_eq!(m.cost.input_per_million, 0.0, "bad cost for {}", m.id);
@@ -6238,9 +6285,18 @@ mod tests {
             .filter(|m| m.provider == "github-copilot")
             .cloned()
             .collect();
-        let anthropic_count = copilot.iter().filter(|m| m.api == api::ANTHROPIC_MESSAGES).count();
-        let completions_count = copilot.iter().filter(|m| m.api == api::OPENAI_COMPLETIONS).count();
-        let responses_count = copilot.iter().filter(|m| m.api == api::OPENAI_RESPONSES).count();
+        let anthropic_count = copilot
+            .iter()
+            .filter(|m| m.api == api::ANTHROPIC_MESSAGES)
+            .count();
+        let completions_count = copilot
+            .iter()
+            .filter(|m| m.api == api::OPENAI_COMPLETIONS)
+            .count();
+        let responses_count = copilot
+            .iter()
+            .filter(|m| m.api == api::OPENAI_RESPONSES)
+            .count();
         assert_eq!(anthropic_count, 6, "expected 6 anthropic-messages models");
         assert_eq!(completions_count, 7, "expected 7 openai-completions models");
         assert_eq!(responses_count, 11, "expected 11 openai-responses models");
@@ -6256,9 +6312,16 @@ mod tests {
         assert_eq!(completions.len(), 7);
         for m in &completions {
             let compat = m.compat.as_ref().unwrap_or_else(|| {
-                panic!("copilot openai-completions model '{}' must have compat", m.id)
+                panic!(
+                    "copilot openai-completions model '{}' must have compat",
+                    m.id
+                )
             });
-            assert!(!compat.supports_store, "{}: supports_store should be false", m.id);
+            assert!(
+                !compat.supports_store,
+                "{}: supports_store should be false",
+                m.id
+            );
             assert!(
                 !compat.supports_developer_role,
                 "{}: supports_developer_role should be false",
@@ -6299,18 +6362,45 @@ mod tests {
             .iter()
             .filter(|m| m.provider == "azure-openai-responses")
             .collect();
-        assert_eq!(models.len(), 40, "expected 40 azure-openai-responses models");
+        assert_eq!(
+            models.len(),
+            40,
+            "expected 40 azure-openai-responses models"
+        );
     }
 
     #[test]
     fn test_azure_models_invariants() {
-        for m in list_models().iter().filter(|m| m.provider == "azure-openai-responses") {
+        for m in list_models()
+            .iter()
+            .filter(|m| m.provider == "azure-openai-responses")
+        {
             assert_eq!(m.api, api::AZURE_OPENAI_RESPONSES, "bad api for {}", m.id);
-            assert!(m.base_url.is_empty(), "azure base_url should be empty for {} (resolved at runtime)", m.id);
-            assert_eq!(m.api_key_env, "AZURE_OPENAI_API_KEY", "bad api_key_env for {}", m.id);
-            assert!(m.compat.is_none(), "azure model {} should have compat: None", m.id);
-            assert!(m.headers.is_empty(), "azure model {} should have no static headers", m.id);
-            assert!(m.max_tokens <= m.context_window, "max_tokens > context_window for {}", m.id);
+            assert!(
+                m.base_url.is_empty(),
+                "azure base_url should be empty for {} (resolved at runtime)",
+                m.id
+            );
+            assert_eq!(
+                m.api_key_env, "AZURE_OPENAI_API_KEY",
+                "bad api_key_env for {}",
+                m.id
+            );
+            assert!(
+                m.compat.is_none(),
+                "azure model {} should have compat: None",
+                m.id
+            );
+            assert!(
+                m.headers.is_empty(),
+                "azure model {} should have no static headers",
+                m.id
+            );
+            assert!(
+                m.max_tokens <= m.context_window,
+                "max_tokens > context_window for {}",
+                m.id
+            );
         }
     }
 
@@ -6324,7 +6414,11 @@ mod tests {
         // o-series and gpt-5 reasoning models should have reasoning=true
         for m in &azure {
             if m.id.starts_with("o1") || m.id.starts_with("o3") || m.id.starts_with("o4") {
-                assert!(m.reasoning, "o-series model {} should have reasoning=true", m.id);
+                assert!(
+                    m.reasoning,
+                    "o-series model {} should have reasoning=true",
+                    m.id
+                );
             }
         }
         // gpt-4 (non-turbo) should have reasoning=false
@@ -6364,13 +6458,36 @@ mod tests {
 
     #[test]
     fn test_bedrock_models_invariants() {
-        for m in list_models().iter().filter(|m| m.provider == "amazon-bedrock") {
+        for m in list_models()
+            .iter()
+            .filter(|m| m.provider == "amazon-bedrock")
+        {
             assert_eq!(m.api, api::BEDROCK_CONVERSE_STREAM, "bad api for {}", m.id);
-            assert!(m.base_url.is_empty(), "bedrock base_url should be empty for {} (resolved via AWS SDK)", m.id);
-            assert_eq!(m.api_key_env, "AWS_ACCESS_KEY_ID", "bad api_key_env for {}", m.id);
-            assert!(m.compat.is_none(), "bedrock model {} should have compat: None", m.id);
-            assert!(m.headers.is_empty(), "bedrock model {} should have no static headers", m.id);
-            assert!(m.max_tokens <= m.context_window, "max_tokens > context_window for {}", m.id);
+            assert!(
+                m.base_url.is_empty(),
+                "bedrock base_url should be empty for {} (resolved via AWS SDK)",
+                m.id
+            );
+            assert_eq!(
+                m.api_key_env, "AWS_ACCESS_KEY_ID",
+                "bad api_key_env for {}",
+                m.id
+            );
+            assert!(
+                m.compat.is_none(),
+                "bedrock model {} should have compat: None",
+                m.id
+            );
+            assert!(
+                m.headers.is_empty(),
+                "bedrock model {} should have no static headers",
+                m.id
+            );
+            assert!(
+                m.max_tokens <= m.context_window,
+                "max_tokens > context_window for {}",
+                m.id
+            );
         }
     }
 
@@ -6384,12 +6501,22 @@ mod tests {
         // Claude 4.x models should have reasoning=true
         for m in &bedrock {
             if m.id.contains("claude-opus-4") || m.id.contains("claude-sonnet-4") {
-                assert!(m.reasoning, "Claude 4.x model {} should have reasoning=true", m.id);
+                assert!(
+                    m.reasoning,
+                    "Claude 4.x model {} should have reasoning=true",
+                    m.id
+                );
             }
         }
         // Nova Lite should not have reasoning
-        let nova_lite = bedrock.iter().find(|m| m.id == "amazon.nova-lite-v1:0").unwrap();
-        assert!(!nova_lite.reasoning, "Nova Lite should not be a reasoning model");
+        let nova_lite = bedrock
+            .iter()
+            .find(|m| m.id == "amazon.nova-lite-v1:0")
+            .unwrap();
+        assert!(
+            !nova_lite.reasoning,
+            "Nova Lite should not be a reasoning model"
+        );
     }
 
     #[test]
@@ -6462,7 +6589,12 @@ mod tests {
             owned_by: "library".into(),
             created: 0,
         };
-        let model = construct_model_from_discovered(&d, "ollama", "http://localhost:11434/v1", "OLLAMA_API_KEY");
+        let model = construct_model_from_discovered(
+            &d,
+            "ollama",
+            "http://localhost:11434/v1",
+            "OLLAMA_API_KEY",
+        );
         assert_eq!(model.id, "llama3.2:latest");
         assert_eq!(model.name, "llama3.2:latest");
         assert_eq!(model.provider, "ollama");
@@ -6515,10 +6647,7 @@ mod tests {
     /// Create a reqwest client that bypasses system proxy (needed for mockito tests
     /// on machines with system-level HTTP proxy configured).
     fn no_proxy_client() -> reqwest::Client {
-        reqwest::Client::builder()
-            .no_proxy()
-            .build()
-            .unwrap()
+        reqwest::Client::builder().no_proxy().build().unwrap()
     }
 
     #[tokio::test]
@@ -6676,11 +6805,13 @@ mod tests {
             .mock("GET", "/models")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"data": [
+            .with_body(
+                r#"{"data": [
                 {"id": "good-model"},
                 {"not_id": "bad-model"},
                 {"id": "another-good"}
-            ]}"#)
+            ]}"#,
+            )
             .create_async()
             .await;
 
