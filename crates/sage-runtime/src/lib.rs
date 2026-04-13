@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod agent_loop;
+pub mod compaction;
 pub mod engine;
 pub mod event;
 pub mod llm;

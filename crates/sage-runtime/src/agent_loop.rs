@@ -3,6 +3,10 @@
 // Implements the full agent execution lifecycle with event emission.
 
 use crate::agent::Agent;
+use crate::compaction::{
+    self, CompactionReason, apply_compaction, estimate_context_tokens,
+    is_context_overflow, prepare_compaction, should_compact, truncate_messages,
+};
 use crate::event::{AgentEvent, AgentEventSink};
 use crate::llm::types::*;
 use crate::tools::ToolOutput;
@@ -178,72 +182,8 @@ impl MessageAccumulator {
 /// Build LlmContext from the agent's current state.
 fn build_llm_context(agent: &Agent) -> LlmContext {
     let config = agent.config();
-    let mut messages = Vec::new();
-    for msg in agent.messages() {
-        match msg {
-            AgentMessage::User(u) => {
-                let content: Vec<LlmContent> = u
-                    .content
-                    .iter()
-                    .filter_map(|c| match c {
-                        Content::Text { text } => Some(LlmContent::Text(text.clone())),
-                        Content::Image { data, .. } => {
-                            Some(LlmContent::Image { url: data.clone() })
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                messages.push(LlmMessage::User { content });
-            }
-            AgentMessage::Assistant(a) => {
-                let text = a.text();
-                let tool_calls: Vec<LlmToolCall> = a
-                    .tool_calls()
-                    .iter()
-                    .filter_map(|c| match c {
-                        Content::ToolCall {
-                            id,
-                            name,
-                            arguments,
-                        } => Some(LlmToolCall {
-                            id: id.clone(),
-                            function: LlmFunctionCall {
-                                name: name.clone(),
-                                arguments: arguments.to_string(),
-                            },
-                        }),
-                        _ => None,
-                    })
-                    .collect();
-                let thinking_blocks =
-                    crate::llm::transform::extract_thinking_blocks(&a.content);
-                messages.push(LlmMessage::Assistant {
-                    content: text,
-                    tool_calls,
-                    thinking_blocks,
-                });
-            }
-            AgentMessage::ToolResult(tr) => {
-                let text = tr
-                    .content
-                    .iter()
-                    .filter_map(|c| match c {
-                        Content::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                messages.push(LlmMessage::Tool {
-                    tool_call_id: tr.tool_call_id.clone(),
-                    content: text,
-                    tool_name: None,
-                });
-            }
-        }
-    }
-
     LlmContext {
-        messages,
+        messages: crate::llm::transform::agent_to_llm_messages(agent.messages()),
         system_prompt: config.system_prompt.clone(),
         max_tokens: config.model.max_tokens,
         temperature: None,
@@ -448,6 +388,69 @@ async fn execute_tool_calls(
     results
 }
 
+/// Attempt compaction on the agent's messages.
+/// Returns true if compaction was performed successfully.
+async fn try_compact(
+    agent: &mut Agent,
+    reason: CompactionReason,
+    emit: &dyn AgentEventSink,
+) -> bool {
+    // Clone to release the immutable borrow on agent before mutable operations below.
+    let settings = agent.config().compaction.clone();
+    if !settings.enabled {
+        return false;
+    }
+
+    let context_tokens = estimate_context_tokens(agent.messages()) as u64;
+    let prep = prepare_compaction(
+        agent.messages(),
+        context_tokens,
+        &settings,
+        agent.previous_compaction_summary(),
+    );
+
+    let prep = match prep {
+        Some(p) => p,
+        None => return false,
+    };
+
+    let reason_str = match reason {
+        CompactionReason::Threshold => "threshold",
+        CompactionReason::Overflow => "overflow",
+    };
+    emit.emit(AgentEvent::CompactionStart {
+        reason: reason_str.to_string(),
+        message_count: agent.messages().len(),
+    })
+    .await;
+
+    let first_kept = prep.first_kept_index;
+    let model = agent.config().model.clone();
+    match compaction::compact(prep, agent.provider(), &model).await {
+        Ok(result) => {
+            let tokens_before = result.tokens_before;
+            agent.compaction_file_ops_mut().merge(&result.file_ops);
+            agent.set_previous_compaction_summary(Some(result.summary.clone()));
+            apply_compaction(agent.messages_mut(), &result);
+
+            emit.emit(AgentEvent::CompactionEnd {
+                tokens_before,
+                messages_compacted: first_kept,
+            })
+            .await;
+            true
+        }
+        Err(_) => {
+            // Compaction failed — fall back to truncation
+            truncate_messages(
+                agent.messages_mut(),
+                settings.keep_recent_tokens,
+            );
+            false
+        }
+    }
+}
+
 /// Run the three-layer agent loop.
 pub async fn run_agent_loop(
     agent: &mut Agent,
@@ -495,7 +498,16 @@ pub async fn run_agent_loop(
                 new_messages.push(msg);
             }
 
-            // 2. Build context and call LLM
+            // 2. Proactive compaction — check before LLM call
+            {
+                let ctx_tokens = estimate_context_tokens(agent.messages()) as u64;
+                let cw = agent.config().model.context_window;
+                if should_compact(ctx_tokens, cw, &agent.config().compaction) {
+                    try_compact(agent, CompactionReason::Threshold, emit).await;
+                }
+            }
+
+            // 3. Build context and call LLM
             let context = build_llm_context(agent);
             let tools = build_llm_tools(agent);
             let events = agent
@@ -503,19 +515,29 @@ pub async fn run_agent_loop(
                 .complete(&agent.config().model, &context, &tools)
                 .await;
 
-            // 3. Accumulate events into AssistantMessage
+            // 4. Accumulate events into AssistantMessage
             let mut accum = MessageAccumulator::new();
             for event in &events {
                 accum.push_event(event);
             }
             let (assistant_msg, tool_call_accums) = accum.build(&agent.config().model);
 
+            // 5. Reactive compaction — check for context overflow in response
+            if is_context_overflow(&assistant_msg, agent.config().model.context_window) {
+                let compacted = try_compact(agent, CompactionReason::Overflow, emit).await;
+                if compacted {
+                    // Compaction succeeded — retry LLM call (don't push the overflow response)
+                    continue;
+                }
+                // Compaction failed or not possible — fall through to push error response
+            }
+
             agent.push_message(AgentMessage::Assistant(assistant_msg.clone()));
             new_messages.push(AgentMessage::Assistant(assistant_msg.clone()));
 
             turn_count += 1;
 
-            // 4. Check for early termination
+            // 6. Check for early termination
             if matches!(
                 assistant_msg.stop_reason,
                 StopReason::Error | StopReason::Aborted
@@ -533,7 +555,7 @@ pub async fn run_agent_loop(
                 return Ok(new_messages);
             }
 
-            // 5. Execute tool calls (using raw accums to preserve malformed args)
+            // 7. Execute tool calls (using raw accums to preserve malformed args)
             has_more_tool_calls = !tool_call_accums.is_empty();
 
             let tool_results = if has_more_tool_calls {
@@ -553,11 +575,11 @@ pub async fn run_agent_loop(
             })
             .await;
 
-            // 6. Poll steering queue for new messages
+            // 8. Poll steering queue for new messages
             pending = agent.drain_steering();
         }
 
-        // 7. Check follow-up queue
+        // 9. Check follow-up queue
         let follow_ups = agent.drain_follow_up();
         if !follow_ups.is_empty() {
             pending = follow_ups;
@@ -579,6 +601,7 @@ pub async fn run_agent_loop(
 mod tests {
     use super::*;
     use crate::agent::{AfterToolCallHook, Agent, AgentLoopConfig, BeforeToolCallHook};
+    use crate::compaction::CompactionSettings;
     use crate::event::{AgentEvent, AgentEventSink};
     use crate::llm::LlmProvider;
     use crate::llm::types::*;
@@ -803,6 +826,7 @@ mod tests {
             max_turns: 10,
             tool_execution_mode: ToolExecutionMode::Parallel,
             tool_policy: None,
+            compaction: CompactionSettings::default(),
         }
     }
 
@@ -1104,6 +1128,7 @@ mod tests {
             max_turns: 2,
             tool_execution_mode: ToolExecutionMode::Parallel,
             tool_policy: None,
+            compaction: CompactionSettings::default(),
         };
         // LLM keeps requesting tools forever (3 calls, but max_turns=2)
         let mut agent = make_agent_with_config(
@@ -1328,6 +1353,7 @@ mod tests {
             max_turns: 10,
             tool_execution_mode: ToolExecutionMode::Parallel,
             tool_policy: None,
+            compaction: CompactionSettings::default(),
         };
         let (tool_a, count_a) = CountingTool::new("tool_a");
         let (tool_b, count_b) = CountingTool::new("tool_b");
@@ -1368,6 +1394,7 @@ mod tests {
             max_turns: 10,
             tool_execution_mode: ToolExecutionMode::Sequential,
             tool_policy: None,
+            compaction: CompactionSettings::default(),
         };
         let (tool_a, count_a) = CountingTool::new("tool_a");
         let (tool_b, count_b) = CountingTool::new("tool_b");
@@ -1959,6 +1986,7 @@ mod tests {
             max_turns: 0,
             tool_execution_mode: ToolExecutionMode::Parallel,
             tool_policy: None,
+            compaction: CompactionSettings::default(),
         };
         let mut agent = make_agent_with_config(
             config,
@@ -1992,6 +2020,7 @@ mod tests {
             max_turns: 1,
             tool_execution_mode: ToolExecutionMode::Parallel,
             tool_policy: None,
+            compaction: CompactionSettings::default(),
         };
         // LLM calls a tool, which would need a second call — but max_turns=1
         let mut agent = make_agent_with_config(
@@ -2032,6 +2061,7 @@ mod tests {
             max_turns: 10,
             tool_execution_mode: ToolExecutionMode::Parallel,
             tool_policy: None,
+            compaction: CompactionSettings::default(),
         };
         let provider = ContextCapturingProvider::new(vec![text_response("Hi")]);
         let captured = std::sync::Arc::clone(&provider.captured);
@@ -2471,6 +2501,7 @@ mod tests {
             max_turns: 10,
             tool_execution_mode: ToolExecutionMode::Sequential,
             tool_policy: None,
+            compaction: CompactionSettings::default(),
         };
 
         let counter = std::sync::Arc::new(AtomicUsize::new(0));

@@ -99,6 +99,12 @@ pub fn agent_to_llm_messages(messages: &[AgentMessage]) -> Vec<LlmMessage> {
                     tool_name: None,
                 }
             }
+            AgentMessage::CompactionSummary(cs) => LlmMessage::User {
+                content: vec![LlmContent::Text(format!(
+                    "[Previous conversation summary]\n\n{}",
+                    cs.summary
+                ))],
+            },
         })
         .collect()
 }
