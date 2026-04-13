@@ -405,6 +405,7 @@ mod tests {
             max_file_size_mb: 50,
             max_open_files: 128,
             tmpfs_size_mb: 256,
+            max_processes: 64,
             allowed_paths: vec!["/workspace".into()],
         };
         let builder = SandboxBuilder::new("test").security(config.clone());
