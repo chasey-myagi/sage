@@ -99,12 +99,23 @@ pub struct ToolResultMessage {
     pub timestamp: u64,
 }
 
+/// Compaction summary message — replaces older messages after context compaction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionSummaryMessage {
+    /// LLM-generated summary of compacted messages.
+    pub summary: String,
+    /// Context tokens before compaction.
+    pub tokens_before: u64,
+    pub timestamp: u64,
+}
+
 /// Top-level agent message envelope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentMessage {
     User(UserMessage),
     Assistant(AssistantMessage),
     ToolResult(ToolResultMessage),
+    CompactionSummary(CompactionSummaryMessage),
 }
 
 impl AgentMessage {

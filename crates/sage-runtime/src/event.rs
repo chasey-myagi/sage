@@ -46,6 +46,15 @@ pub enum AgentEvent {
         tool_name: String,
         is_error: bool,
     },
+    CompactionStart {
+        reason: String,
+        message_count: usize,
+    },
+    CompactionEnd {
+        tokens_before: u64,
+        /// Number of messages summarized (replaced by one CompactionSummary message).
+        messages_compacted: usize,
+    },
 }
 
 /// Trait for receiving agent events.

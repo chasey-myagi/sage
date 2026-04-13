@@ -1,6 +1,7 @@
 // Agent — Phase 4
 // Agent struct with state management, steering/follow-up queues, and hooks.
 
+use crate::compaction::{CompactionSettings, FileOperations};
 use crate::llm::LlmProvider;
 use crate::llm::types::*;
 use crate::tools::ToolRegistry;
@@ -18,6 +19,8 @@ pub struct AgentLoopConfig {
     /// Optional tool policy for enforcing binary/path whitelists.
     /// When None, all tool calls are allowed (unrestricted mode).
     pub tool_policy: Option<ToolPolicy>,
+    /// Compaction settings for context window management.
+    pub compaction: CompactionSettings,
 }
 
 /// Hook called before a tool is executed.
@@ -43,6 +46,10 @@ pub struct Agent {
     follow_up_queue: VecDeque<AgentMessage>,
     before_hook: Option<Box<dyn BeforeToolCallHook>>,
     after_hook: Option<Box<dyn AfterToolCallHook>>,
+    /// Cumulative file operations tracked across compaction rounds.
+    compaction_file_ops: FileOperations,
+    /// Previous compaction summary (for iterative update prompt).
+    previous_compaction_summary: Option<String>,
 }
 
 impl Agent {
@@ -61,6 +68,8 @@ impl Agent {
             follow_up_queue: VecDeque::new(),
             before_hook: None,
             after_hook: None,
+            compaction_file_ops: FileOperations::default(),
+            previous_compaction_summary: None,
         }
     }
 
@@ -90,6 +99,28 @@ impl Agent {
 
     pub fn tools(&self) -> &ToolRegistry {
         &self.tools
+    }
+
+    pub fn messages_mut(&mut self) -> &mut Vec<AgentMessage> {
+        &mut self.messages
+    }
+
+    // -- compaction state --
+
+    pub fn compaction_file_ops(&self) -> &FileOperations {
+        &self.compaction_file_ops
+    }
+
+    pub fn compaction_file_ops_mut(&mut self) -> &mut FileOperations {
+        &mut self.compaction_file_ops
+    }
+
+    pub fn previous_compaction_summary(&self) -> Option<&str> {
+        self.previous_compaction_summary.as_deref()
+    }
+
+    pub fn set_previous_compaction_summary(&mut self, summary: Option<String>) {
+        self.previous_compaction_summary = summary;
     }
 
     // -- steering queue --
@@ -200,6 +231,7 @@ mod tests {
             max_turns: 10,
             tool_execution_mode: ToolExecutionMode::Parallel,
             tool_policy: None,
+            compaction: CompactionSettings::default(),
         }
     }
 

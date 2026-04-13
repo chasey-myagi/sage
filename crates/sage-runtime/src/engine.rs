@@ -349,6 +349,7 @@ impl SageEngine {
             max_turns: self.max_turns,
             tool_execution_mode: self.tool_execution_mode,
             tool_policy: self.tool_policy.clone(),
+            compaction: crate::compaction::CompactionSettings::default(),
         };
 
         // 4. Create Agent
