@@ -1,7 +1,7 @@
 // SageEngine — builder-pattern API for creating and running AI agents.
 // "SQLite of AI Agents" — zero-config embed, single crate dependency.
 
-use crate::agent::{AfterToolCallHook, Agent, AgentLoopConfig, BeforeToolCallHook};
+use crate::agent::{AfterToolCallHook, Agent, AgentLoopConfig, BeforeToolCallHook, TransformContextHook};
 use crate::agent_loop::{AgentLoopError, run_agent_loop};
 use crate::event::{AgentEvent, AgentEventSink, EventReceiver, EventSender, EventStream};
 use crate::llm::types::*;
@@ -158,6 +158,10 @@ impl LlmProvider for RoutingProvider {
                 let options = llm::registry::StreamOptions {
                     max_tokens: Some(context.max_tokens),
                     temperature: context.temperature,
+                    // Enable prompt caching by default. Providers that support it
+                    // (Anthropic: cache_control blocks; OpenAI Responses: prompt_cache_key)
+                    // will apply it; others silently ignore this field.
+                    cache_retention: Some(llm::registry::CacheRetention::Standard),
                     ..Default::default()
                 };
                 provider.stream(model, context, tools, &options).await
@@ -241,6 +245,10 @@ pub struct SageEngine {
     // Hooks
     before_hook: Option<Arc<dyn BeforeToolCallHook>>,
     after_hook: Option<Arc<dyn AfterToolCallHook>>,
+    transform_context_hook: Option<Arc<dyn TransformContextHook>>,
+
+    // Context budget override
+    context_budget: Option<crate::compaction::ContextBudget>,
 }
 
 impl std::fmt::Debug for SageEngine {
@@ -276,6 +284,8 @@ impl SageEngine {
             custom_llm_provider: None,
             before_hook: None,
             after_hook: None,
+            transform_context_hook: None,
+            context_budget: None,
         }
     }
 
@@ -360,14 +370,18 @@ impl SageEngine {
             registry.register(Box::new(ArcTool(Arc::clone(tool))));
         }
 
-        // 3. AgentLoopConfig
+        // 3. AgentLoopConfig — apply ContextBudget override if provided
+        let mut compaction = crate::compaction::CompactionSettings::default();
+        if let Some(ref budget) = self.context_budget {
+            budget.apply_to(&mut compaction);
+        }
         let loop_config = AgentLoopConfig {
             model,
             system_prompt: self.system_prompt.clone(),
             max_turns: self.max_turns,
             tool_execution_mode: self.tool_execution_mode,
             tool_policy: self.tool_policy.clone(),
-            compaction: crate::compaction::CompactionSettings::default(),
+            compaction,
         };
 
         // 4. Create Agent
@@ -379,6 +393,9 @@ impl SageEngine {
         }
         if let Some(ref hook) = self.after_hook {
             agent.set_after_tool_call(Box::new(ArcAfterHook(Arc::clone(hook))));
+        }
+        if let Some(ref hook) = self.transform_context_hook {
+            agent.set_transform_context(Box::new(ArcTransformContextHook(Arc::clone(hook))));
         }
 
         // 6. Steer initial message
@@ -406,10 +423,10 @@ impl SageEngine {
                             })
                             .await;
 
-                            if let Some(handle) = sandbox_handle {
-                                if let Err(e) = handle.stop().await {
-                                    tracing::error!(error = %e, "failed to stop sandbox");
-                                }
+                            if let Some(handle) = sandbox_handle
+                                && let Err(e) = handle.stop().await
+                            {
+                                tracing::error!(error = %e, "failed to stop sandbox");
                             }
                             sender.end(vec![]);
                             return;
@@ -420,10 +437,10 @@ impl SageEngine {
             };
 
             // Stop sandbox VM if one was created for this run
-            if let Some(handle) = sandbox_handle {
-                if let Err(e) = handle.stop().await {
-                    tracing::error!(error = %e, "failed to stop sandbox");
-                }
+            if let Some(handle) = sandbox_handle
+                && let Err(e) = handle.stop().await
+            {
+                tracing::error!(error = %e, "failed to stop sandbox");
             }
             match result {
                 Ok(messages) => sender.end(messages),
@@ -470,6 +487,15 @@ impl AfterToolCallHook for ArcAfterHook {
     }
 }
 
+struct ArcTransformContextHook(Arc<dyn TransformContextHook>);
+
+#[async_trait::async_trait]
+impl TransformContextHook for ArcTransformContextHook {
+    async fn transform_context(&self, messages: &mut Vec<AgentMessage>) {
+        self.0.transform_context(messages).await
+    }
+}
+
 /// Wraps `Arc<dyn AgentTool>` so it can be registered as `Box<dyn AgentTool>`.
 struct ArcTool(Arc<dyn AgentTool>);
 
@@ -509,6 +535,8 @@ pub struct SageEngineBuilder {
     custom_llm_provider: Option<Arc<dyn LlmProvider>>,
     before_hook: Option<Arc<dyn BeforeToolCallHook>>,
     after_hook: Option<Arc<dyn AfterToolCallHook>>,
+    transform_context_hook: Option<Arc<dyn TransformContextHook>>,
+    context_budget: Option<crate::compaction::ContextBudget>,
 }
 
 impl SageEngineBuilder {
@@ -516,6 +544,21 @@ impl SageEngineBuilder {
 
     pub fn system_prompt(mut self, prompt: &str) -> Self {
         self.system_prompt = Some(prompt.to_string());
+        self
+    }
+
+    /// Set the system prompt from a [`SystemPromptBuilder`].
+    ///
+    /// All sections are joined into a flat `String` (sections separated by `"\n\n"`).
+    /// **The `cacheable` flag on individual sections is not propagated to the provider** —
+    /// cache_control injection happens at the provider layer based on `StreamOptions`,
+    /// not per-section. The builder is useful for structured composition; caching is
+    /// controlled separately via `StreamOptions::cache_retention`.
+    pub fn system_prompt_builder(
+        mut self,
+        builder: crate::system_prompt::SystemPromptBuilder,
+    ) -> Self {
+        self.system_prompt = Some(builder.build().to_string());
         self
     }
 
@@ -618,6 +661,22 @@ impl SageEngineBuilder {
         self
     }
 
+    /// Set a hook called before each LLM call to transform the message history.
+    ///
+    /// Use this to inject memory, filter sensitive content, or apply custom compression
+    /// strategies (e.g. retrieval-augmented memory, project-context injection).
+    pub fn on_transform_context(mut self, hook: impl TransformContextHook + 'static) -> Self {
+        self.transform_context_hook = Some(Arc::new(hook));
+        self
+    }
+
+    /// Set an explicit context budget. Overrides the per-field thresholds in
+    /// the default [`CompactionSettings`] with computed values.
+    pub fn context_budget(mut self, budget: crate::compaction::ContextBudget) -> Self {
+        self.context_budget = Some(budget);
+        self
+    }
+
     // ── Build ──
 
     pub fn build(self) -> Result<SageEngine, SageError> {
@@ -662,6 +721,8 @@ impl SageEngineBuilder {
             custom_llm_provider: self.custom_llm_provider,
             before_hook: self.before_hook,
             after_hook: self.after_hook,
+            transform_context_hook: self.transform_context_hook,
+            context_budget: self.context_budget,
         })
     }
 }

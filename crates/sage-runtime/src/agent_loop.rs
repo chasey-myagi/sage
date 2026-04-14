@@ -5,7 +5,7 @@
 use crate::agent::Agent;
 use crate::compaction::{
     self, CompactionReason, apply_compaction, estimate_context_tokens, is_context_overflow,
-    prepare_compaction, should_compact, truncate_messages,
+    microcompact, prepare_compaction, should_compact, should_microcompact, truncate_messages,
 };
 use crate::event::{AgentEvent, AgentEventSink};
 use crate::llm::types::*;
@@ -158,8 +158,10 @@ impl MessageAccumulator {
             content.push(Content::Text { text: self.text });
         }
         for tc in &self.tool_calls {
-            let args = serde_json::from_str(&tc.arguments)
-                .unwrap_or(serde_json::Value::String(tc.arguments.clone()));
+            let args = serde_json::from_str(&tc.arguments).unwrap_or_else(|e| {
+                tracing::warn!(tool = %tc.name, error = %e, "tool call arguments are not valid JSON — using empty object");
+                serde_json::Value::Object(Default::default())
+            });
             content.push(Content::ToolCall {
                 id: tc.id.clone(),
                 name: tc.name.clone(),
@@ -244,6 +246,7 @@ async fn prepare_tool_call(
     let args: serde_json::Value = match serde_json::from_str(&tc.arguments) {
         Ok(v) => v,
         Err(e) => {
+            tracing::warn!(tool = %tc.name, error = %e, "tool call arguments are not valid JSON — blocking call");
             return Err(emit_blocked(
                 tc,
                 serde_json::Value::Null,
@@ -255,10 +258,10 @@ async fn prepare_tool_call(
     };
 
     // Enforce tool policy before any execution
-    if let Some(policy) = &agent.config().tool_policy {
-        if let Err(reason) = policy.check_tool_call(&tc.name, &args) {
-            return Err(emit_blocked(tc, args, reason, emit).await);
-        }
+    if let Some(policy) = &agent.config().tool_policy
+        && let Err(reason) = policy.check_tool_call(&tc.name, &args)
+    {
+        return Err(emit_blocked(tc, args, reason, emit).await);
     }
 
     emit.emit(AgentEvent::ToolExecutionStart {
@@ -297,16 +300,18 @@ async fn prepare_tool_call(
 }
 
 /// Finalize a tool call: run after hook, emit end, build result.
+/// Accepts already-parsed `args` to avoid redundant JSON parsing.
 async fn finalize_tool_call(
     agent: &Agent,
     tc: &ToolCallAccum,
+    args: serde_json::Value,
     output: ToolOutput,
     emit: &dyn AgentEventSink,
 ) -> ToolResultMessage {
     let after_ctx = AfterToolCallContext {
         tool_name: tc.name.clone(),
         tool_call_id: tc.id.clone(),
-        args: serde_json::from_str(&tc.arguments).unwrap_or_default(),
+        args,
         is_error: output.is_error,
     };
     let after_result = agent.call_after_tool_call(&after_ctx).await;
@@ -348,29 +353,34 @@ async fn execute_tool_calls(
     tool_calls: &[ToolCallAccum],
     emit: &dyn AgentEventSink,
 ) -> Vec<ToolResultMessage> {
-    let mut results = Vec::new();
-
     match agent.config().tool_execution_mode {
         ToolExecutionMode::Parallel => {
-            let mut prepared = Vec::new();
-            for tc in tool_calls {
+            // Use index slots to preserve original tool_calls ordering.
+            // Anthropic requires tool results in the same order as tool uses.
+            let mut slots: Vec<Option<ToolResultMessage>> = vec![None; tool_calls.len()];
+            let mut prepared: Vec<(usize, &ToolCallAccum, serde_json::Value)> = Vec::new();
+
+            for (idx, tc) in tool_calls.iter().enumerate() {
                 match prepare_tool_call(agent, tc, emit).await {
-                    Ok(args) => prepared.push((tc, args)),
-                    Err(tr) => results.push(tr),
+                    Ok(args) => prepared.push((idx, tc, args)),
+                    Err(tr) => slots[idx] = Some(tr),
                 }
             }
 
             let futs: Vec<_> = prepared
                 .iter()
-                .map(|(tc, args)| run_tool(agent, &tc.name, args.clone()))
+                .map(|(_, tc, args)| run_tool(agent, &tc.name, args.clone()))
                 .collect();
             let outputs: Vec<ToolOutput> = futures::future::join_all(futs).await;
 
-            for ((tc, _args), output) in prepared.into_iter().zip(outputs) {
-                results.push(finalize_tool_call(agent, tc, output, emit).await);
+            for ((idx, tc, args), output) in prepared.into_iter().zip(outputs) {
+                slots[idx] = Some(finalize_tool_call(agent, tc, args, output, emit).await);
             }
+
+            slots.into_iter().flatten().collect()
         }
         ToolExecutionMode::Sequential => {
+            let mut results = Vec::new();
             for tc in tool_calls {
                 let args = match prepare_tool_call(agent, tc, emit).await {
                     Ok(args) => args,
@@ -379,13 +389,12 @@ async fn execute_tool_calls(
                         continue;
                     }
                 };
-                let output = run_tool(agent, &tc.name, args).await;
-                results.push(finalize_tool_call(agent, tc, output, emit).await);
+                let output = run_tool(agent, &tc.name, args.clone()).await;
+                results.push(finalize_tool_call(agent, tc, args, output, emit).await);
             }
+            results
         }
     }
-
-    results
 }
 
 /// Attempt compaction on the agent's messages.
@@ -440,9 +449,16 @@ async fn try_compact(
             .await;
             true
         }
-        Err(_) => {
-            // Compaction failed — fall back to truncation
+        Err(e) => {
+            // Compaction failed — fall back to truncation.
+            // Emit CompactionEnd so listeners always see a matched Start/End pair.
+            tracing::warn!("compaction summarization failed, falling back to truncation: {e}");
             truncate_messages(agent.messages_mut(), settings.keep_recent_tokens);
+            emit.emit(AgentEvent::CompactionEnd {
+                tokens_before: context_tokens,
+                messages_compacted: 0,
+            })
+            .await;
             false
         }
     }
@@ -495,7 +511,27 @@ pub async fn run_agent_loop(
                 new_messages.push(msg);
             }
 
-            // 2. Proactive compaction — check before LLM call
+            // 2a. Microcompact — lightweight client-side cleanup, zero LLM cost.
+            //     Fires at 75% context usage, before full compaction at ~90%.
+            {
+                let ctx_tokens = estimate_context_tokens(agent.messages()) as u64;
+                let cw = agent.config().model.context_window;
+                if should_microcompact(ctx_tokens, cw, &agent.config().compaction) {
+                    let keep_turns = agent.config().compaction.microcompact_keep_turns;
+                    let keep_thinking_turns =
+                        agent.config().compaction.microcompact_keep_thinking_turns;
+                    let cleared = microcompact(
+                        agent.messages_mut(),
+                        keep_turns,
+                        keep_thinking_turns,
+                    );
+                    if cleared > 0 {
+                        tracing::debug!(cleared, "microcompact cleared tool results");
+                    }
+                }
+            }
+
+            // 2b. Proactive compaction — full LLM summarization.
             {
                 let ctx_tokens = estimate_context_tokens(agent.messages()) as u64;
                 let cw = agent.config().model.context_window;
@@ -503,6 +539,9 @@ pub async fn run_agent_loop(
                     try_compact(agent, CompactionReason::Threshold, emit).await;
                 }
             }
+
+            // 2c. transformContext hook — inject memory, filter, or custom context edits.
+            agent.call_transform_context().await;
 
             // 3. Build context and call LLM
             let context = build_llm_context(agent);

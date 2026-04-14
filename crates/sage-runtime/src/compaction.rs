@@ -16,12 +16,20 @@ use std::collections::BTreeSet;
 /// Compaction configuration — aligned with pi-mono DEFAULT_COMPACTION_SETTINGS.
 #[derive(Debug, Clone)]
 pub struct CompactionSettings {
-    /// Whether compaction is enabled.
+    /// Whether full LLM-based compaction is enabled.
     pub enabled: bool,
     /// Tokens reserved for LLM response generation.
     pub reserve_tokens: u32,
     /// Recent tokens to preserve (not summarized).
     pub keep_recent_tokens: u32,
+    /// Whether microcompact (lightweight client-side cleanup) is enabled.
+    pub microcompact_enabled: bool,
+    /// Fraction of context_window at which microcompact triggers (default: 0.75).
+    pub microcompact_threshold: f32,
+    /// Number of recent turns whose ToolResult content to preserve (default: 3).
+    pub microcompact_keep_turns: usize,
+    /// Number of recent turns whose thinking blocks to preserve (default: 2).
+    pub microcompact_keep_thinking_turns: usize,
 }
 
 impl Default for CompactionSettings {
@@ -30,7 +38,85 @@ impl Default for CompactionSettings {
             enabled: true,
             reserve_tokens: 16384,
             keep_recent_tokens: 20000,
+            microcompact_enabled: true,
+            microcompact_threshold: 0.75,
+            microcompact_keep_turns: 3,
+            microcompact_keep_thinking_turns: 2,
         }
+    }
+}
+
+// ============================================================================
+// ContextBudget — explicit budget overlay for CompactionSettings
+// ============================================================================
+
+/// Explicit context budget specification.
+///
+/// When set via `SageEngineBuilder::context_budget()`, overrides the computed
+/// threshold fields in [`CompactionSettings`]. Provides a higher-level API for
+/// expressing context management intent without touching individual token counts.
+///
+/// # Example
+/// ```rust,ignore
+/// SageEngine::builder()
+///     .context_budget(ContextBudget {
+///         context_window: 200_000,
+///         system_reserve: 4_000,
+///         output_reserve: 8_000,
+///         microcompact_threshold: 0.70,
+///         compaction_threshold: 0.85,
+///     })
+/// ```
+#[derive(Debug, Clone)]
+pub struct ContextBudget {
+    /// Total context window size in tokens.
+    pub context_window: u32,
+    /// Tokens to reserve for the system prompt (excluded from history budget).
+    pub system_reserve: u32,
+    /// Tokens to reserve for LLM output generation.
+    pub output_reserve: u32,
+    /// Fraction of context_window at which microcompact fires (default: 0.75).
+    pub microcompact_threshold: f32,
+    /// Fraction of context_window at which full compaction fires (default: 0.90).
+    pub compaction_threshold: f32,
+}
+
+impl Default for ContextBudget {
+    fn default() -> Self {
+        Self {
+            context_window: 200_000,
+            system_reserve: 4_000,
+            output_reserve: 16_384,
+            microcompact_threshold: 0.75,
+            compaction_threshold: 0.90,
+        }
+    }
+}
+
+impl ContextBudget {
+    /// Apply this budget to an existing [`CompactionSettings`], overriding
+    /// the threshold-related fields.
+    pub fn apply_to(&self, settings: &mut CompactionSettings) {
+        // history_budget = context_window - system_reserve - output_reserve
+        let history_budget = self
+            .context_window
+            .saturating_sub(self.system_reserve)
+            .saturating_sub(self.output_reserve);
+
+        // Translate compaction_threshold into reserve_tokens.
+        // should_compact fires when: context_tokens > context_window - reserve_tokens
+        // We want it to fire at:     context_window * compaction_threshold
+        // Therefore:                 reserve_tokens = context_window * (1 - compaction_threshold)
+        settings.reserve_tokens =
+            (self.context_window as f32 * (1.0 - self.compaction_threshold)) as u32;
+
+        // keep_recent_tokens: how much history to retain after compaction (50% of history budget)
+        settings.keep_recent_tokens = (history_budget as f32 * 0.5) as u32;
+
+        // microcompact threshold fraction; explicitly enable so apply_to doesn't depend
+        // on the caller's default values being correct.
+        settings.microcompact_enabled = true;
+        settings.microcompact_threshold = self.microcompact_threshold;
     }
 }
 
@@ -209,15 +295,15 @@ pub fn estimate_message_tokens(msg: &AgentMessage) -> u32 {
         AgentMessage::User(u) => u
             .content
             .iter()
-            .map(|c| content_char_count(c))
+            .map(content_char_count)
             .sum::<usize>(),
         AgentMessage::Assistant(a) => a
             .content
             .iter()
-            .map(|c| content_char_count(c))
+            .map(content_char_count)
             .sum::<usize>(),
         AgentMessage::ToolResult(tr) => {
-            let raw: usize = tr.content.iter().map(|c| content_char_count(c)).sum();
+            let raw: usize = tr.content.iter().map(content_char_count).sum();
             raw.min(TOOL_RESULT_TRUNCATE_CHARS)
         }
         AgentMessage::CompactionSummary(cs) => cs.summary.len(),
@@ -227,7 +313,7 @@ pub fn estimate_message_tokens(msg: &AgentMessage) -> u32 {
 
 /// Estimate total context tokens from a slice of messages.
 pub fn estimate_context_tokens(messages: &[AgentMessage]) -> u32 {
-    messages.iter().map(|m| estimate_message_tokens(m)).sum()
+    messages.iter().map(estimate_message_tokens).sum()
 }
 
 /// Calculate context tokens from actual Usage data (preferred over estimation).
@@ -263,6 +349,20 @@ fn content_char_count(content: &Content) -> usize {
 // Decision functions
 // ============================================================================
 
+/// Check whether microcompact (lightweight client-side cleanup) should be triggered.
+/// Fires at microcompact_threshold (default 75%) of context_window, before full compaction.
+pub fn should_microcompact(
+    context_tokens: u64,
+    context_window: u32,
+    settings: &CompactionSettings,
+) -> bool {
+    if !settings.microcompact_enabled {
+        return false;
+    }
+    let threshold = (context_window as f64 * settings.microcompact_threshold as f64) as u64;
+    context_tokens > threshold
+}
+
 /// Check whether compaction should be triggered.
 /// Aligned with pi-mono's shouldCompact.
 pub fn should_compact(
@@ -274,6 +374,89 @@ pub fn should_compact(
         return false;
     }
     context_tokens > (context_window as u64).saturating_sub(settings.reserve_tokens as u64)
+}
+
+/// Lightweight context cleanup: replace old ToolResult content with size placeholders,
+/// and remove old thinking blocks. Zero LLM calls — runs before full compaction.
+///
+/// Returns the number of ToolResult messages whose content was cleared.
+///
+/// A "turn" boundary is each `AgentMessage::User` message. Messages before the
+/// `(total_turns - keep_turns)`-th turn have their ToolResult content replaced;
+/// messages before the `(total_turns - keep_thinking_turns)`-th turn have their
+/// thinking blocks stripped from AssistantMessages.
+pub fn microcompact(
+    messages: &mut [AgentMessage],
+    keep_turns: usize,
+    keep_thinking_turns: usize,
+) -> usize {
+    // Collect indices of User messages — each marks the start of a turn.
+    let turn_starts: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| matches!(m, AgentMessage::User(_)))
+        .map(|(i, _)| i)
+        .collect();
+
+    let total_turns = turn_starts.len();
+    if total_turns <= keep_turns {
+        return 0;
+    }
+
+    // Cutoff index for ToolResult clearing: everything before this index is stale.
+    let tool_cutoff = turn_starts[total_turns - keep_turns];
+
+    // Cutoff index for thinking-block clearing.
+    let think_cutoff = if total_turns > keep_thinking_turns {
+        turn_starts[total_turns - keep_thinking_turns]
+    } else {
+        0
+    };
+
+    let mut cleared = 0;
+
+    for (i, msg) in messages.iter_mut().enumerate() {
+        // Clear ToolResult content for old turns.
+        // When Text content is present, the *entire* content (including any Image) is replaced
+        // with a single text placeholder — both to save tokens and for simplicity.
+        // Tool results containing *only* non-Text content (e.g. pure Image) are left untouched.
+        if i < tool_cutoff
+            && let AgentMessage::ToolResult(tr) = msg
+        {
+            let byte_count: usize = tr
+                .content
+                .iter()
+                .filter_map(|c| {
+                    if let Content::Text { text } = c {
+                        Some(text.len())
+                    } else {
+                        None
+                    }
+                })
+                .sum();
+            if byte_count > 0 {
+                tr.content = vec![Content::Text {
+                    text: format!(
+                        "[tool result cleared - {}: {} bytes]",
+                        tr.tool_name, byte_count
+                    ),
+                }];
+                cleared += 1;
+            }
+        }
+
+        // Strip thinking blocks from old assistant messages.
+        if i < think_cutoff
+            && let AgentMessage::Assistant(a) = msg
+        {
+            let had_thinking = a.content.iter().any(|c| matches!(c, Content::Thinking { .. }));
+            if had_thinking {
+                a.content.retain(|c| !matches!(c, Content::Thinking { .. }));
+            }
+        }
+    }
+
+    cleared
 }
 
 /// Overflow error patterns — aligned with pi-mono overflow.ts.
@@ -381,13 +564,9 @@ pub fn find_cut_point(
     }
 
     // Find nearest valid cut point at or after threshold_index
-    let mut cut_index = threshold_index;
-    for i in threshold_index..end {
-        if is_valid_cut_point(&messages[i]) {
-            cut_index = i;
-            break;
-        }
-    }
+    let cut_index = (threshold_index..end)
+        .find(|&i| is_valid_cut_point(&messages[i]))
+        .unwrap_or(threshold_index);
 
     // Check if this splits a turn
     let is_user = matches!(messages[cut_index], AgentMessage::User(_));
@@ -480,12 +659,12 @@ pub fn serialize_messages_for_summary(messages: &[AgentMessage]) -> String {
                     if let Content::Thinking {
                         thinking, redacted, ..
                     } = c
+                        && !redacted
+                        && !thinking.is_empty()
                     {
-                        if !redacted && !thinking.is_empty() {
-                            out.push_str("[Assistant thinking]: ");
-                            out.push_str(thinking);
-                            out.push_str("\n\n");
-                        }
+                        out.push_str("[Assistant thinking]: ");
+                        out.push_str(thinking);
+                        out.push_str("\n\n");
                     }
                 }
                 // Text content
@@ -1044,6 +1223,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 5000,
+        ..Default::default()
         };
         // threshold = 10000 - 1000 = 9000
         // exactly at threshold: NOT compact (need to exceed)
@@ -1303,6 +1483,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 300,
+        ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None);
         assert!(prep.is_some());
@@ -1321,6 +1502,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 300,
+        ..Default::default()
         };
         let prep = prepare_compaction(
             &messages,
@@ -1344,6 +1526,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 100_000,
+        ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None);
         assert!(prep.is_none());
@@ -1374,6 +1557,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 300,
+        ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None).unwrap();
 
@@ -1407,6 +1591,7 @@ mod tests {
                 enabled: true,
                 reserve_tokens: 1000,
                 keep_recent_tokens: 100,
+            ..Default::default()
             },
             None,
         )
@@ -1707,6 +1892,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 5000,
+        ..Default::default()
         };
         // saturating_sub: 0 - 1000 = 0, any tokens > 0 → compact
         assert!(should_compact(1, 0, &settings));
@@ -1846,6 +2032,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 300,
+        ..Default::default()
         };
         let mut prep =
             prepare_compaction(&messages, 50000, &settings, Some("## Goal\nBuild module X"))
@@ -2054,6 +2241,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 500,
             keep_recent_tokens: 100, // Keep only last ~1-2 messages
+        ..Default::default()
         };
 
         // Step 1: Prepare
@@ -2116,6 +2304,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 500,
             keep_recent_tokens: 150,
+        ..Default::default()
         };
 
         // Second round prepare — previous summary comes from the CompactionSummary message
@@ -2210,6 +2399,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 50,
+        ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None);
         // Degradation: still produces a preparation (cuts at ToolResult)
@@ -2344,6 +2534,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 50,
+        ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None).unwrap();
 
@@ -2372,6 +2563,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 50,
+        ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None).unwrap();
 
@@ -2399,6 +2591,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 50,
+        ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None).unwrap();
 
@@ -2592,6 +2785,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 50, // only keep last ~50 tokens
+        ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None);
         assert!(prep.is_some());
@@ -2643,6 +2837,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 100,
+        ..Default::default()
         };
         let prep_r1 = prepare_compaction(&messages_r1, 50000, &settings, None).unwrap();
 
@@ -2916,6 +3111,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 50,
+        ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None).unwrap();
 

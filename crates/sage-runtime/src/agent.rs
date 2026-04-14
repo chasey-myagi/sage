@@ -35,6 +35,29 @@ pub trait AfterToolCallHook: Send + Sync {
     async fn after_tool_call(&self, ctx: &AfterToolCallContext) -> AfterToolCallResult;
 }
 
+/// Hook called before each LLM call to transform the message history.
+///
+/// Use this to inject memory, filter sensitive content, or apply custom compression.
+/// The hook receives a mutable reference to the agent's message slice and may
+/// add, remove, or modify messages in place.
+///
+/// # Example
+/// ```rust,ignore
+/// struct MemoryInjector { memories: Vec<String> }
+///
+/// #[async_trait::async_trait]
+/// impl TransformContextHook for MemoryInjector {
+///     async fn transform_context(&self, messages: &mut Vec<AgentMessage>) {
+///         // Inject a memory recap as a system message before the last user turn
+///         // ...
+///     }
+/// }
+/// ```
+#[async_trait::async_trait]
+pub trait TransformContextHook: Send + Sync {
+    async fn transform_context(&self, messages: &mut Vec<AgentMessage>);
+}
+
 /// The Agent — owns config, provider, tools, message history, queues, and hooks.
 pub struct Agent {
     config: AgentLoopConfig,
@@ -46,6 +69,7 @@ pub struct Agent {
     follow_up_queue: VecDeque<AgentMessage>,
     before_hook: Option<Box<dyn BeforeToolCallHook>>,
     after_hook: Option<Box<dyn AfterToolCallHook>>,
+    transform_context_hook: Option<Box<dyn TransformContextHook>>,
     /// Cumulative file operations tracked across compaction rounds.
     compaction_file_ops: FileOperations,
     /// Previous compaction summary (for iterative update prompt).
@@ -68,6 +92,7 @@ impl Agent {
             follow_up_queue: VecDeque::new(),
             before_hook: None,
             after_hook: None,
+            transform_context_hook: None,
             compaction_file_ops: FileOperations::default(),
             previous_compaction_summary: None,
         }
@@ -155,6 +180,21 @@ impl Agent {
 
     pub fn set_after_tool_call(&mut self, hook: Box<dyn AfterToolCallHook>) {
         self.after_hook = Some(hook);
+    }
+
+    pub fn set_transform_context(&mut self, hook: Box<dyn TransformContextHook>) {
+        self.transform_context_hook = Some(hook);
+    }
+
+    /// Call the transform context hook if present; no-op if none is set.
+    ///
+    /// Uses `take()`/restore to sidestep the borrow checker:
+    /// we cannot hold `&self.transform_context_hook` and `&mut self.messages` simultaneously.
+    pub async fn call_transform_context(&mut self) {
+        if let Some(hook) = self.transform_context_hook.take() {
+            hook.transform_context(&mut self.messages).await;
+            self.transform_context_hook = Some(hook);
+        }
     }
 
     pub fn has_before_tool_call_hook(&self) -> bool {

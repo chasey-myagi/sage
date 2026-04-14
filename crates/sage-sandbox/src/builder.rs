@@ -141,7 +141,7 @@ impl SandboxBuilder {
         let security_json = self
             .security_config
             .as_ref()
-            .map(|c| serde_json::to_string(c))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| SandboxError::VmCreate(format!("serialize security config: {e}")))?;
 

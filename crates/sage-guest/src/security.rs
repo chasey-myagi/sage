@@ -57,14 +57,18 @@ pub fn apply(config: &GuestSecurityConfig) -> Result<()> {
 }
 
 /// Minimum values for resource limits — below these the guest agent cannot function.
+#[allow(dead_code)]
 const MIN_OPEN_FILES: u32 = 32;
+#[allow(dead_code)]
 const MIN_TMPFS_SIZE_MB: u32 = 16;
+#[allow(dead_code)]
 const MIN_PROCESSES: u32 = 8;
 
 /// Device paths that Landlock must grant write access to inside the guest.
 ///
 /// - `/dev/null`, `/dev/zero`, `/dev/urandom`: standard device contracts
 /// - `/dev/vport0p0`: virtio-console used for host↔guest communication
+#[allow(dead_code)]
 const LANDLOCK_WRITABLE_DEVS: &[&str] = &["/dev/null", "/dev/zero", "/dev/urandom", "/dev/vport0p0"];
 
 /// Apply resource limits via setrlimit.
