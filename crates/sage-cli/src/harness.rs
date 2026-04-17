@@ -281,12 +281,18 @@ fn evaluate_single(
                 }
             }
         }
-        Criterion::ToolCalled { tool: _ } => {
-            // ToolCalled criterion: not yet available, blocked until Sprint 10.
-            // Tool call tracing is not yet wired from the agent session event stream.
-            CaseResult::Error(
-                "ToolCalled criterion not yet wired to agent tool trace; blocked in Sprint 9; will enable in Sprint 10".to_string()
-            )
+        Criterion::ToolCalled { tool } => {
+            // Sprint 10 wiring: tool_calls is now the ordered list of tool
+            // names from ToolResultMessage records in session.messages().
+            // Empty or error slots are excluded at the caller.
+            if tool_calls.iter().any(|name| name == tool) {
+                CaseResult::Pass
+            } else {
+                CaseResult::Fail(format!(
+                    "tool_called: expected '{tool}' in tool_calls, got {:?}",
+                    tool_calls
+                ))
+            }
         }
         Criterion::TokenBudget {
             max_input_tokens,
@@ -480,6 +486,22 @@ fn sum_assistant_tokens(messages: &[AgentMessage]) -> (u64, u64) {
     (input, output)
 }
 
+/// Extract the ordered list of tool names actually executed during this
+/// session, walking `ToolResultMessage` records (which represent completed
+/// tool calls — call that errored at the provider boundary show up here as
+/// well with `is_error == true`, but their tool_name is still recorded).
+///
+/// Used by the `ToolCalled` harness criterion (Sprint 9 → Sprint 10 wiring).
+fn extract_tool_calls(messages: &[AgentMessage]) -> Vec<String> {
+    messages
+        .iter()
+        .filter_map(|m| match m {
+            AgentMessage::ToolResult(tr) => Some(tr.tool_name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 // ── run_single_case ───────────────────────────────────────────────────────────
 
 /// Run a single test case and return the outcome.
@@ -540,13 +562,17 @@ async fn run_single_case(
     // making the criterion trivially pass — Linus flagged this in Sprint 9
     // review and marked it "urgent").
     let (input_tokens, output_tokens) = sum_assistant_tokens(session.messages());
+    // Sprint 9 → S10.x wiring: extract the actually-executed tool calls from
+    // ToolResultMessage records in the conversation. Ordered by execution
+    // sequence so ToolCalled criterion can assert ordering if needed later.
+    let tool_calls = extract_tool_calls(session.messages());
 
     // Evaluate declarative criteria first (if any).
     let criteria_result = if !case.criteria.is_empty() {
         evaluate_criteria(
             &case.criteria,
             &last_text,
-            &[], // tool_calls: not yet wired; tests mock this
+            &tool_calls,
             turns,
             input_tokens,
             output_tokens,
@@ -868,31 +894,71 @@ eval: "optional/script.sh"
     // ── tool_called ───────────────────────────────────────────────────────
 
     #[test]
-    fn eval_tool_called_returns_error_not_yet_wired() {
-        // ToolCalled is blocked until Sprint 10; always returns Error to surface
-        // the issue immediately rather than silently passing or failing.
+    fn eval_tool_called_present_passes() {
+        // Sprint 9 → S10 wiring: ToolCalled now actually checks the
+        // tool_calls slice against the expected tool name.
         let criteria = vec![Criterion::ToolCalled {
             tool: "bash".to_string(),
         }];
-        let result =
-            evaluate_criteria(&criteria, "done", &tools(&["bash"]), 1, 100, 50, None);
-        match result {
-            CaseResult::Error(msg) => {
-                assert!(msg.contains("ToolCalled"), "should mention criterion: {msg}");
-                assert!(msg.contains("Sprint 10"), "should mention Sprint 10: {msg}");
-            }
-            other => panic!("expected Error, got {other:?}"),
-        }
+        let result = evaluate_criteria(&criteria, "done", &tools(&["bash"]), 1, 100, 50, None);
+        assert!(matches!(result, CaseResult::Pass), "bash in tool_calls should pass");
     }
 
     #[test]
-    fn eval_tool_called_absent_also_returns_error() {
-        // Even when the tool was NOT called, ToolCalled returns Error (not wired yet).
+    fn eval_tool_called_absent_fails() {
         let criteria = vec![Criterion::ToolCalled {
             tool: "bash".to_string(),
         }];
         let result = evaluate_criteria(&criteria, "done", &tools(&["read_file"]), 1, 100, 50, None);
-        assert!(matches!(result, CaseResult::Error(_)));
+        match result {
+            CaseResult::Fail(msg) => {
+                assert!(msg.contains("bash"), "fail message should include expected tool: {msg}");
+                assert!(msg.contains("read_file"), "fail message should include actual tool_calls: {msg}");
+            }
+            other => panic!("expected Fail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn eval_tool_called_empty_tool_calls_fails() {
+        let criteria = vec![Criterion::ToolCalled {
+            tool: "bash".to_string(),
+        }];
+        let result = evaluate_criteria(&criteria, "done", &no_tools(), 1, 100, 50, None);
+        assert!(matches!(result, CaseResult::Fail(_)));
+    }
+
+    // ── extract_tool_calls helper ─────────────────────────────────────────
+
+    #[test]
+    fn extract_tool_calls_collects_tool_names_from_tool_results_in_order() {
+        use sage_runtime::types::ToolResultMessage;
+        let msgs = vec![
+            assistant_with_usage(10, 5),
+            AgentMessage::ToolResult(ToolResultMessage {
+                tool_call_id: "1".into(),
+                tool_name: "bash".into(),
+                content: vec![],
+                is_error: false,
+                timestamp: 0,
+            }),
+            AgentMessage::ToolResult(ToolResultMessage {
+                tool_call_id: "2".into(),
+                tool_name: "read".into(),
+                content: vec![],
+                is_error: false,
+                timestamp: 0,
+            }),
+            assistant_with_usage(5, 3),
+        ];
+        let calls = extract_tool_calls(&msgs);
+        assert_eq!(calls, vec!["bash".to_string(), "read".to_string()]);
+    }
+
+    #[test]
+    fn extract_tool_calls_empty_when_no_tool_results() {
+        let msgs = vec![assistant_with_usage(10, 5)];
+        assert_eq!(extract_tool_calls(&msgs), Vec::<String>::new());
     }
 
     // ── token_budget ──────────────────────────────────────────────────────
