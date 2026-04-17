@@ -24,14 +24,19 @@ pub enum SourceKind {
     /// Git-clonable URL. We preserve the original string; the transport
     /// layer (git) does its own parsing.
     GitUrl(String),
+    /// npm-style skill package identifier (e.g. `@scope/name` or
+    /// `owner/name`). Installed via `npx skills add` rather than a raw
+    /// git clone; the shell-out handles registry resolution and caching.
+    NpmStyle(String),
 }
 
 /// Decide which kind of source the user passed.
 ///
-/// Rules:
+/// Rules (order matters — the first match wins):
 /// - `.git` suffix, `http(s)://`, or `git@…:` prefix → `GitUrl`
 /// - `/`, `.`, or `~` leading → `LocalPath`
-/// - anything else → error (deferred to v0.0.3 npm-style)
+/// - `@scope/name` or `owner/repo` shape (one `/`, no `:`) → `NpmStyle`
+/// - anything else → error
 pub fn detect_source(source: &str) -> Result<SourceKind> {
     let trimmed = source.trim();
     if trimmed.is_empty() {
@@ -57,10 +62,22 @@ pub fn detect_source(source: &str) -> Result<SourceKind> {
     {
         return Ok(SourceKind::LocalPath(expand_tilde(trimmed)));
     }
+    // npm-style: `@scope/name` OR `owner/name`. Constraints:
+    //   - Exactly one `/` (more slashes could be a mistyped path)
+    //   - No `:` (filters out SSH URLs we missed above, plus Windows C:\)
+    //   - No whitespace / control chars
+    //   - Both halves non-empty
+    if !trimmed.contains(':') && !trimmed.chars().any(char::is_whitespace) {
+        let body = trimmed.strip_prefix('@').unwrap_or(trimmed);
+        let parts: Vec<&str> = body.split('/').collect();
+        if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+            return Ok(SourceKind::NpmStyle(trimmed.to_string()));
+        }
+    }
     Err(anyhow!(
         "unsupported skill source '{source}': expected local path (./, /, ~), \
-         git URL (https://…, git@…:…, or .git suffix). npm-style \
-         @user/repo is planned for v0.0.3."
+         git URL (https://…, git@…:…, or .git suffix), or npm-style \
+         package (@scope/name or owner/repo)."
     ))
 }
 
@@ -86,12 +103,30 @@ fn expand_tilde(s: &str) -> PathBuf {
 /// - Git URL: repo name with `.git` suffix stripped.
 pub fn default_name_for(kind: &SourceKind) -> Result<String> {
     match kind {
-        SourceKind::LocalPath(p) => p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow!("cannot derive skill name from path {}", p.display())),
+        SourceKind::LocalPath(p) => {
+            // Literal `file_name` first so hypothetical paths like
+            // `/home/u/skills/lark-base` still yield `lark-base` without
+            // needing the dir to physically exist on the test host.
+            if let Some(name) = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .filter(|s| !s.is_empty())
+            {
+                return Ok(name.to_string());
+            }
+            // `Path::file_name` returns None on `.`, `..`, and paths that
+            // normalise to bare roots — `sage skill add . --agent foo`
+            // from inside the skill dir is a common user flow. Canonicalise
+            // to reach the real directory name.
+            let resolved = std::fs::canonicalize(p)
+                .with_context(|| format!("cannot resolve local source {}", p.display()))?;
+            resolved
+                .file_name()
+                .and_then(|n| n.to_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .ok_or_else(|| anyhow!("cannot derive skill name from path {}", p.display()))
+        }
         SourceKind::GitUrl(url) => {
             // Strip trailing slash, then take tail after last `/` or `:`.
             let trimmed = url.trim_end_matches('/');
@@ -105,6 +140,17 @@ pub fn default_name_for(kind: &SourceKind) -> Result<String> {
                 return Err(anyhow!("cannot derive skill name from git URL '{url}'"));
             }
             Ok(name.to_string())
+        }
+        SourceKind::NpmStyle(spec) => {
+            // `@scope/name` → `name`; `owner/repo` → `repo`.
+            let tail = spec
+                .rsplit_once('/')
+                .map(|(_, t)| t)
+                .unwrap_or(spec.as_str());
+            if tail.is_empty() {
+                return Err(anyhow!("cannot derive skill name from npm spec '{spec}'"));
+            }
+            Ok(tail.to_string())
         }
     }
 }
@@ -155,9 +201,19 @@ pub async fn install_skill(
             )
         })?;
 
-    match &kind {
-        SourceKind::LocalPath(src) => copy_dir_recursive(src, &dst).await?,
-        SourceKind::GitUrl(url) => git_clone(url, &dst).await?,
+    // All three transports can leave a half-populated `dst` on error
+    // (copy fails on an unreadable file, git clone dies on auth/network,
+    // npx exits non-zero mid-download). Without rollback here the user
+    // sees "skill already exists" on retry and has to `rm -rf` manually.
+    // Centralise cleanup at the boundary: any Err → remove dst.
+    let fetch_result: Result<()> = match &kind {
+        SourceKind::LocalPath(src) => copy_dir_recursive(src, &dst).await,
+        SourceKind::GitUrl(url) => git_clone(url, &dst).await,
+        SourceKind::NpmStyle(spec) => npx_skills_add(spec, workspace_skills_dir).await,
+    };
+    if let Err(e) = fetch_result {
+        let _ = tokio::fs::remove_dir_all(&dst).await;
+        return Err(e);
     }
 
     // Verify the installed skill actually has a SKILL.md.
@@ -247,6 +303,50 @@ fn copy_dir_inner<'a>(
         }
         Ok(())
     })
+}
+
+/// Shell out to `npx --yes skills add <spec>` inside `workspace_skills_dir`.
+///
+/// This hands the registry / cache / auth concerns to the `skills` CLI
+/// rather than reimplementing them; we only own the integration point.
+/// The `--yes` flag suppresses npm's "install X?" interactive prompt.
+///
+/// When `npx` is not on PATH we surface a concrete remediation hint
+/// instead of the raw `NotFound` IO error. npm-style is a user-facing
+/// convenience; the friendly error is load-bearing UX.
+async fn npx_skills_add(spec: &str, workspace_skills_dir: &Path) -> Result<()> {
+    // Windows ships `npx` as `npx.cmd` (a shim). std::process::Command
+    // doesn't auto-append `.cmd`, so explicit platform split keeps
+    // Windows's friendly-error path honest (code-review Important #6).
+    #[cfg(windows)]
+    let program = "npx.cmd";
+    #[cfg(not(windows))]
+    let program = "npx";
+
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.arg("--yes")
+        .arg("skills")
+        .arg("add")
+        .arg(spec)
+        .current_dir(workspace_skills_dir);
+    let status = cmd.status().await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            anyhow!(
+                "`npx` was not found on PATH — install Node.js (>= 18) to enable \
+                 npm-style skill install, or fall back to \
+                 `sage skill add --agent <name> <local-path-or-git-url>`. \
+                 Original error: {e}"
+            )
+        } else {
+            anyhow!("failed to invoke `npx skills add {spec}`: {e}")
+        }
+    })?;
+    if !status.success() {
+        return Err(anyhow!(
+            "`npx skills add {spec}` exited with status {status}"
+        ));
+    }
+    Ok(())
 }
 
 /// Shell out to `git clone --depth 1 <url> <dst>`.
@@ -377,10 +477,21 @@ pub async fn run_skill_add(
     name_override: Option<&str>,
 ) -> Result<()> {
     crate::serve::validate_agent_name(agent)?;
-    let skills_dir = crate::serve::sage_agents_dir()?
-        .join(agent)
-        .join("workspace")
-        .join("skills");
+    let agent_dir = crate::serve::sage_agents_dir()?.join(agent);
+    // Agent must have been initialised first — otherwise `install_skill`
+    // happily creates `~/.sage/agents/<typo>/workspace/skills/` and leaves
+    // the operator with an orphaned tree (no config.yaml / AGENT.md) that
+    // every subsequent `sage <cmd> --agent <typo>` will reject. Gate on
+    // config.yaml presence so the mistake surfaces at install time.
+    let config_path = agent_dir.join("config.yaml");
+    if !config_path.exists() {
+        return Err(anyhow!(
+            "agent '{agent}' is not initialised (missing {}); \
+             run `sage init --agent {agent}` first",
+            config_path.display()
+        ));
+    }
+    let skills_dir = agent_dir.join("workspace").join("skills");
     let installed = install_skill(&skills_dir, source, name_override).await?;
     println!(
         "✓ installed skill '{}' at {}",
@@ -471,11 +582,42 @@ mod tests {
         ));
     }
 
+    /// v0.0.3 #81 Wave 4: `owner/repo` now routes to NpmStyle instead of
+    /// erroring. Detection is decoupled from whether npx is installed —
+    /// the install step surfaces that failure later with a clearer message.
     #[test]
-    fn detect_source_npm_style_is_error_in_v0_0_2() {
-        // Deferred to v0.0.3 — must fail clearly, not silently misclassify.
-        let err = detect_source("pbakaus/impeccable").unwrap_err().to_string();
-        assert!(err.contains("unsupported") || err.contains("npm"));
+    fn detect_source_owner_repo_is_npm_style() {
+        assert!(matches!(
+            detect_source("pbakaus/impeccable").unwrap(),
+            SourceKind::NpmStyle(_)
+        ));
+    }
+
+    /// `@scope/name` (leading `@`) is the canonical npm-style shape and
+    /// must route to NpmStyle — v0.0.3 needs this for distribution paths
+    /// that publish under npm scopes.
+    #[test]
+    fn detect_source_at_scope_name_is_npm_style() {
+        let src = detect_source("@larksuite/lark-base").unwrap();
+        assert!(matches!(src, SourceKind::NpmStyle(_)));
+        if let SourceKind::NpmStyle(spec) = src {
+            assert_eq!(spec, "@larksuite/lark-base", "spec must be preserved verbatim");
+        }
+    }
+
+    /// `foo/bar/baz` has too many slashes — it could be a mistyped path or
+    /// an unsupported scope nesting. Error rather than misclassify.
+    #[test]
+    fn detect_source_multi_slash_bareword_is_error() {
+        let err = detect_source("foo/bar/baz").unwrap_err().to_string();
+        assert!(err.contains("unsupported"));
+    }
+
+    /// A single bareword (no slash) isn't a complete npm spec and we don't
+    /// want to guess whether it's a registry name or typo.
+    #[test]
+    fn detect_source_single_bareword_is_error() {
+        assert!(detect_source("lark-base").is_err());
     }
 
     #[test]
@@ -508,6 +650,42 @@ mod tests {
     fn default_name_for_trailing_slash_url_still_works() {
         let kind = SourceKind::GitUrl("https://github.com/u/skill/".into());
         assert_eq!(default_name_for(&kind).unwrap(), "skill");
+    }
+
+    /// v0.0.3 Wave 4: npm specs derive their directory name from the tail
+    /// (everything after the last `/`), stripping any `@scope/` prefix.
+    #[test]
+    fn default_name_for_npm_scope_strips_scope() {
+        let kind = SourceKind::NpmStyle("@larksuite/lark-base".into());
+        assert_eq!(default_name_for(&kind).unwrap(), "lark-base");
+    }
+
+    #[test]
+    fn default_name_for_npm_owner_repo_uses_repo() {
+        let kind = SourceKind::NpmStyle("pbakaus/impeccable".into());
+        assert_eq!(default_name_for(&kind).unwrap(), "impeccable");
+    }
+
+    /// Review P2: `.` and `..` used to fail with "cannot derive name"
+    /// because `Path::file_name` returns None on them. Now they resolve
+    /// via canonicalize to a real directory name.
+    #[tokio::test]
+    async fn default_name_for_dot_resolves_to_current_dir_basename() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let inner = tmp.path().join("my-skill-dir");
+        std::fs::create_dir_all(&inner).unwrap();
+        // Create SKILL.md so the dir looks like a skill — canonicalize
+        // needs the path to exist.
+        std::fs::write(inner.join("SKILL.md"), "---\nname: x\n---\nbody").unwrap();
+
+        // Run from inside the skill dir and feed `.`.
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&inner).unwrap();
+        let name_res = default_name_for(&SourceKind::LocalPath(PathBuf::from(".")));
+        std::env::set_current_dir(&prev).unwrap();
+
+        let name = name_res.expect("dot path must derive a name via canonicalize");
+        assert_eq!(name, "my-skill-dir");
     }
 
     // ── install_skill (local only — git requires real git binary) ─────────
@@ -580,6 +758,36 @@ mod tests {
         assert_eq!(installed.name, "nicer-local-name");
         assert!(ws.join("nicer-local-name").join("SKILL.md").exists());
         assert!(!ws.join("ugly-upstream-name").exists());
+    }
+
+    /// Review P3: if the fetch step itself fails (source unreadable,
+    /// git clone failure, npx failure) we must roll back `dst` — the
+    /// previous code only rolled back on the post-fetch SKILL.md check,
+    /// leaving the dir on retry. Simulate via a LocalPath that points
+    /// to a file (not a directory): `copy_dir_recursive` bails inside
+    /// `metadata().is_dir()` check, but only after `create_dir_all(dst)`
+    /// already ran.
+    #[tokio::test]
+    async fn install_rolls_back_when_fetch_step_fails_midway() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // Source is a regular file, not a directory — triggers the
+        // "must be a directory" branch inside copy_dir_recursive.
+        let bogus_file = tmp.path().join("not-a-dir");
+        std::fs::write(&bogus_file, b"hi").unwrap();
+        let ws = tmp.path().join("ws").join("skills");
+
+        let err = install_skill(&ws, bogus_file.to_str().unwrap(), None)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("must be a directory"),
+            "error must surface the underlying fetch failure: {err}"
+        );
+        // Rolled back — the half-created dst (if any) must not leak.
+        assert!(
+            !ws.join("not-a-dir").exists(),
+            "dst must be removed when fetch step fails"
+        );
     }
 
     #[tokio::test]

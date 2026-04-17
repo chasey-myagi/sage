@@ -9,6 +9,7 @@ mod harness;
 mod known_models;
 mod serve;
 mod session_archive;
+mod skill_evaluate;
 mod skill_install;
 mod skill_scorer;
 mod triggers;
@@ -323,6 +324,21 @@ enum SkillAction {
         #[arg(long)]
         agent: String,
     },
+
+    /// Run one self-evolution pass on a skill: back up, let the agent
+    /// rewrite via the eval prompt, verify, roll back on failure.
+    ///
+    /// Example:
+    ///   sage skill evaluate --agent feishu --skill lark-base
+    Evaluate {
+        /// Agent whose workspace hosts the skill.
+        #[arg(long)]
+        agent: String,
+
+        /// Skill directory name under `workspace/skills/`.
+        #[arg(long)]
+        skill: String,
+    },
 }
 
 #[tokio::main]
@@ -348,6 +364,10 @@ async fn main() -> Result<()> {
             SkillAction::List { agent } => {
                 tracing::info!(agent = %agent, "listing skills");
                 skill_install::run_skill_list(&agent).await
+            }
+            SkillAction::Evaluate { agent, skill } => {
+                tracing::info!(agent = %agent, skill = %skill, "evaluating skill");
+                skill_evaluate::run_skill_evaluate(&agent, &skill).await
             }
         },
         Commands::List => {

@@ -360,6 +360,61 @@ mod tests {
         }
     }
 
+    // ── pi-mono drift-detection golden snapshot（#74 sub 4）─────────────
+    //
+    // 目的：锁死 v0.0.3 发布时 provider_specs.rs 的 (id, api_kind) 二元组
+    // 全集。任何 provider 增删改都会让这个测试失败，提醒开发者**同时**去
+    // pi-mono `packages/ai/src/providers/*.ts` 核对新旧 provider。
+    //
+    // 这不是等价性校验 —— pi-mono 与 Rust 侧的字段命名并不一一对应（TS
+    // 用 camelCase，Rust 用 snake_case；compat 结构也不同）。它是一个
+    // drift guard：失败时唯一正确的反应是 (a) 过一遍 pi-mono 看有没有
+    // 新东西需要同步，(b) 更新下面的 EXPECTED 数组对齐当前状态。
+    //
+    // 测试失败的修复指引写在 panic 消息里，不要只改 EXPECTED 就完事。
+
+    #[test]
+    fn provider_specs_golden_snapshot_matches_expected() {
+        // (id, api_kind) ordered by appearance in PROVIDERS vec. Keep in
+        // lockstep with provider_specs.rs declarations above.
+        const EXPECTED: &[(&str, &str)] = &[
+            ("anthropic", api::ANTHROPIC_MESSAGES),
+            ("openai", api::OPENAI_COMPLETIONS),
+            ("google", api::GOOGLE_GENERATIVE_AI),
+            ("qwen", api::OPENAI_COMPLETIONS),
+            ("doubao", api::OPENAI_COMPLETIONS),
+            ("kimi", api::OPENAI_COMPLETIONS),
+            ("minimax", api::ANTHROPIC_MESSAGES),
+            ("zai", api::OPENAI_COMPLETIONS),
+            ("deepseek", api::OPENAI_COMPLETIONS),
+            ("groq", api::OPENAI_COMPLETIONS),
+            ("xai", api::OPENAI_COMPLETIONS),
+            ("cerebras", api::OPENAI_COMPLETIONS),
+            ("mistral", api::OPENAI_COMPLETIONS),
+            ("github-copilot", api::ANTHROPIC_MESSAGES),
+            ("openrouter", api::OPENAI_COMPLETIONS),
+            ("azure-openai-responses", api::AZURE_OPENAI_RESPONSES),
+            ("amazon-bedrock", api::BEDROCK_CONVERSE_STREAM),
+            ("google-vertex", api::GOOGLE_VERTEX),
+        ];
+        let actual: Vec<(&str, &str)> =
+            list_providers().iter().map(|s| (s.id, s.api_kind)).collect();
+        if actual.as_slice() != EXPECTED {
+            panic!(
+                "\nProvider spec snapshot drift detected.\n\
+                 Expected (v0.0.3 golden):\n  {:?}\n\
+                 Actual:\n  {:?}\n\
+                 \n\
+                 Update steps when this test fails:\n  \
+                 1. Cross-check ~/Dev/cc/external/pi-mono/packages/ai/src/providers/*.ts\n     \
+                    for new/removed providers (CLAUDE.md alignment requirement).\n  \
+                 2. Sync api_kind / default_compat / default_max_tokens here.\n  \
+                 3. Update the EXPECTED array in this test to the new golden.\n",
+                EXPECTED, actual,
+            );
+        }
+    }
+
     // ── Kimi spec 具体字段验证 ─────────────────────────────────────────────
 
     #[test]

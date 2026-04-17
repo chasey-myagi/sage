@@ -150,9 +150,27 @@ async fn write_msg_to(writer: &Arc<Mutex<OwnedWriteHalf>>, msg: &ServerMsg) {
 ///
 /// Binds a Unix socket, writes a PID file, then accepts one client connection
 /// at a time. Runs until a `Shutdown` message is received.
+///
+/// # Metrics semantics (v0.0.3 #79)
+///
+/// One `TaskRecord` captures the entire daemon lifetime — not one per client
+/// connection. A long-lived daemon that serves five Feishu conversations
+/// accumulates turn / tool / token counts into a single record and flushes
+/// it to `<workspace>/metrics/<task_id>.json` on shutdown. That matches the
+/// way operators think about daemons (one process, one task) and avoids
+/// flooding the metrics dir with a file per TCP flap. Finalize fires on
+/// both the explicit `Shutdown` exit and any accept-loop error.
+///
+/// # Known limitation (v0.0.3)
+///
+/// Hard kills — `SIGKILL`, OOM, process panic / abort — lose any in-flight
+/// metrics that haven't been finalized yet. Graceful exits (`Shutdown` msg,
+/// accept-loop `Err`) do finalize. Operators needing strict durability
+/// should treat the TaskRecord as best-effort observability, not audit
+/// log. v0.0.4 may switch to an append-only per-event log to close this.
 pub async fn run_server(agent_name: &str, dev: bool) -> Result<()> {
     crate::serve::validate_agent_name(agent_name)?;
-    let config = crate::serve::load_agent_config(agent_name).await?;
+    let (config, config_hash) = crate::serve::load_agent_config_with_hash(agent_name).await?;
     let engine = crate::serve::build_engine_for_agent(&config, dev).await?;
     let mut session = engine
         .session()
@@ -173,27 +191,97 @@ pub async fn run_server(agent_name: &str, dev: bool) -> Result<()> {
 
     tracing::info!(agent = agent_name, pid = pid, socket = ?sock_path, "daemon started");
 
-    loop {
-        let (stream, _addr) = listener
-            .accept()
-            .await
-            .context("failed to accept connection")?;
-        let shutdown = handle_client(stream, &mut session).await?;
-        if shutdown {
-            break;
+    // One MetricsCollector for the whole daemon lifetime (see function doc).
+    let shared_metrics = build_daemon_metrics(agent_name, &config, config_hash)?;
+
+    let loop_result: Result<()> = async {
+        loop {
+            let (stream, _addr) = listener
+                .accept()
+                .await
+                .context("failed to accept connection")?;
+            let shutdown = handle_client(stream, &mut session, &shared_metrics).await?;
+            if shutdown {
+                break;
+            }
         }
+        Ok(())
     }
+    .await;
 
     let _ = tokio::fs::remove_file(&sock_path).await;
     let _ = tokio::fs::remove_file(&pid_file).await;
+    finalize_daemon_metrics(&shared_metrics, &loop_result).await;
     tracing::info!(agent = agent_name, "daemon stopped");
-    Ok(())
+    loop_result
+}
+
+/// Build the daemon-lifetime [`MetricsCollector`] and wrap it in the
+/// shared cell that the per-client `handle_client` call uses to tee
+/// events into the record.
+///
+/// Extracted so unit tests can exercise the config → collector wiring
+/// without spinning up the Unix socket listener.
+fn build_daemon_metrics(
+    agent_name: &str,
+    config: &sage_runner::config::AgentConfig,
+    config_hash: String,
+) -> Result<sage_runner::metrics::SharedMetrics> {
+    let agent_dir = crate::serve::sage_agents_dir()?.join(agent_name);
+    let workspace_dir = config
+        .sandbox
+        .as_ref()
+        .and_then(|s| s.workspace_host.clone())
+        .unwrap_or_else(|| agent_dir.join("workspace"));
+    let session_type = config
+        .memory
+        .as_ref()
+        .and_then(|m| m.session_type.clone())
+        .unwrap_or(sage_runner::config::SessionType::UserDriven);
+    let collector = sage_runner::metrics::MetricsCollector::new(
+        config.name.clone(),
+        config.llm.provider.clone(),
+        config.llm.model.clone(),
+        session_type,
+        workspace_dir,
+        config_hash,
+    );
+    Ok(sage_runner::metrics::share_collector(collector))
+}
+
+/// Pull the collector out of the shared cell and call `finalize` with the
+/// success / failure derived from the accept-loop outcome.
+///
+/// Idempotent — double calls are cheap because `take_collector` returns
+/// `None` once drained. Designed this way so the callers can always run
+/// this on daemon exit without having to track "did we already finalize?"
+/// state alongside loop-error handling.
+async fn finalize_daemon_metrics(
+    shared: &sage_runner::metrics::SharedMetrics,
+    loop_result: &Result<()>,
+) {
+    let Some(collector) = sage_runner::metrics::take_collector(shared).await else {
+        return;
+    };
+    let (success, failure_reason) = match loop_result {
+        Ok(()) => (true, None),
+        Err(e) => (false, Some(e.to_string())),
+    };
+    if let Err(e) = collector.finalize(success, failure_reason).await {
+        tracing::warn!(error = %e, "metrics finalize failed at daemon stop");
+    }
 }
 
 /// Handle one client connection. Returns `true` if the client sent `Shutdown`.
+///
+/// Per-client disconnect (`n == 0`) deliberately does NOT finalize metrics
+/// — the next client reconnect continues accumulating into the same
+/// daemon-lifetime record. Only the explicit `Shutdown` message terminates
+/// the accept loop; finalize then runs once in [`run_server`].
 async fn handle_client(
     stream: tokio::net::UnixStream,
     session: &mut sage_runtime::SageSession,
+    shared_metrics: &sage_runner::metrics::SharedMetrics,
 ) -> Result<bool> {
     let (read_half, write_half) = stream.into_split();
     let writer = Arc::new(Mutex::new(write_half));
@@ -207,7 +295,8 @@ async fn handle_client(
             .await
             .context("failed to read from client")?;
         if n == 0 {
-            // Client disconnected cleanly
+            // Client disconnected cleanly — keep metrics alive for the
+            // next reconnect.
             break;
         }
 
@@ -221,9 +310,13 @@ async fn handle_client(
 
         match msg {
             ClientMsg::Send { text } => {
-                let sink = SocketSink {
+                let socket_sink = SocketSink {
                     writer: Arc::clone(&writer),
                 };
+                let sink = sage_runner::metrics::MetricsSink::new(
+                    shared_metrics.clone(),
+                    socket_sink,
+                );
                 match session.send(&text, &sink).await {
                     Ok(()) => write_msg_to(&writer, &ServerMsg::RunEnd).await,
                     Err(e) => {
@@ -531,4 +624,94 @@ async fn send_msg(writer: &Arc<Mutex<OwnedWriteHalf>>, msg: &ClientMsg) -> Resul
     let mut w = writer.lock().await;
     w.write_all(line.as_bytes()).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    //! #79 daemon metrics wiring — unit tests on the factored helpers.
+    //!
+    //! Full daemon integration (socket bind + accept loop + LLM engine)
+    //! isn't exercised here; those paths need a live Rune runtime and a
+    //! real provider. The lifecycle logic we *do* own is encapsulated in
+    //! [`finalize_daemon_metrics`], which is the part most likely to
+    //! regress (idempotency, success/failure propagation).
+    use super::*;
+    use sage_runner::config::SessionType;
+    use sage_runner::metrics::{share_collector, MetricsCollector};
+
+    fn new_collector(dir: &std::path::Path) -> MetricsCollector {
+        MetricsCollector::new(
+            "test-agent".to_string(),
+            "kimi".to_string(),
+            "moonshot-v1-auto".to_string(),
+            SessionType::UserDriven,
+            dir.to_path_buf(),
+            "sha256:deadbeef".to_string(),
+        )
+    }
+
+    /// `Ok(())` loop result must produce a success=true TaskRecord on disk.
+    #[tokio::test]
+    async fn finalize_on_ok_writes_success_record() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let shared = share_collector(new_collector(dir.path()));
+        finalize_daemon_metrics(&shared, &Ok(())).await;
+        let metrics = dir.path().join("metrics");
+        let mut found = 0;
+        for entry in std::fs::read_dir(&metrics).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if name == "summary.json" { continue; }
+            let json: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(json["success"], true, "success must be true on Ok");
+            assert!(json["failure_reason"].is_null());
+            found += 1;
+        }
+        assert_eq!(found, 1, "exactly one per-task record must be written");
+    }
+
+    /// `Err(_)` loop result must produce success=false with the error string
+    /// preserved as the failure reason so operators can see why the daemon
+    /// exited.
+    #[tokio::test]
+    async fn finalize_on_err_records_failure_reason() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let shared = share_collector(new_collector(dir.path()));
+        let err: Result<()> = Err(anyhow::anyhow!("accept loop exploded"));
+        finalize_daemon_metrics(&shared, &err).await;
+        let metrics = dir.path().join("metrics");
+        let mut found = 0;
+        for entry in std::fs::read_dir(&metrics).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if name == "summary.json" { continue; }
+            let json: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(json["success"], false);
+            assert_eq!(json["failure_reason"], "accept loop exploded");
+            found += 1;
+        }
+        assert_eq!(found, 1);
+    }
+
+    /// Double-finalize must be a no-op (not panic, not double-write). The
+    /// shared cell's `take_collector` returns `None` after the first drain,
+    /// so the second call is effectively a read + early return.
+    #[tokio::test]
+    async fn finalize_is_idempotent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let shared = share_collector(new_collector(dir.path()));
+        finalize_daemon_metrics(&shared, &Ok(())).await;
+        finalize_daemon_metrics(&shared, &Ok(())).await; // second call: must not panic
+        let metrics = dir.path().join("metrics");
+        let record_count = std::fs::read_dir(&metrics)
+            .unwrap()
+            .filter(|e| {
+                let name = e.as_ref().unwrap().file_name().into_string().unwrap();
+                name != "summary.json"
+            })
+            .count();
+        assert_eq!(record_count, 1, "idempotent — single record, no duplicates");
+    }
 }
