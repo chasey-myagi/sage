@@ -111,6 +111,23 @@ enum Commands {
         dev: bool,
     },
 
+    /// Show craft efficiency scores for an agent's collected metrics.
+    ///
+    /// Reads `~/.sage/agents/<name>/workspace/metrics/*.json` (per-task
+    /// records written by MetricsCollector), aggregates them by craft, and
+    /// prints a per-craft stats table with score = tokens_best / tokens_avg.
+    /// Task #72 sub-path 3.
+    CraftScore {
+        /// Agent whose metrics directory to score.
+        #[arg(long)]
+        agent: String,
+
+        /// Show only crafts that qualify for an automatic CraftEvaluation
+        /// session (score < 0.5 AND usage_count >= 5).
+        #[arg(long)]
+        needs_evaluation: bool,
+    },
+
     /// Initialise a new agent workspace at ~/.sage/agents/<name>/
     Init {
         /// Agent name (becomes the workspace directory name under ~/.sage/agents/)
@@ -290,6 +307,13 @@ async fn main() -> Result<()> {
         Commands::Start { agent } => {
             tracing::info!(agent = %agent, "starting daemon");
             daemon::start_daemon(&agent, false).await
+        }
+        Commands::CraftScore {
+            agent,
+            needs_evaluation,
+        } => {
+            tracing::info!(agent = %agent, needs_evaluation, "scoring crafts");
+            serve::run_craft_score(&agent, needs_evaluation).await
         }
         Commands::Connect { agent } => {
             tracing::info!(agent = %agent, "connecting to daemon");
@@ -559,6 +583,62 @@ mod tests {
                 assert!(!dev, "--dev must default to false when flag is absent");
             }
             _ => panic!("expected Run subcommand"),
+        }
+    }
+
+    // ── Sprint 12 task #72 sub-path 3: `sage craft-score` subcommand ──────
+
+    #[test]
+    fn cli_craft_score_requires_agent_name() {
+        // `sage craft-score` without --agent must be a clap parse error;
+        // the command would be meaningless without pointing at a workspace.
+        let res = Cli::try_parse_from(["sage", "craft-score"]);
+        assert!(
+            res.is_err(),
+            "craft-score without --agent must fail clap parsing"
+        );
+    }
+
+    #[test]
+    fn cli_craft_score_parses_with_agent_only() {
+        // Happy path: single --agent flag, no --needs-evaluation, dispatches
+        // to the CraftScore variant with the expected defaults.
+        let cli = Cli::parse_from(["sage", "craft-score", "--agent", "feishu"]);
+        match cli.command {
+            Commands::CraftScore {
+                agent,
+                needs_evaluation,
+            } => {
+                assert_eq!(agent, "feishu");
+                assert!(
+                    !needs_evaluation,
+                    "--needs-evaluation must default to false"
+                );
+            }
+            _ => panic!("expected CraftScore subcommand"),
+        }
+    }
+
+    #[test]
+    fn cli_craft_score_parses_needs_evaluation_flag() {
+        // Filtered output mode: only print crafts that qualify for an
+        // automatic CraftEvaluation session.
+        let cli = Cli::parse_from([
+            "sage",
+            "craft-score",
+            "--agent",
+            "knowledge",
+            "--needs-evaluation",
+        ]);
+        match cli.command {
+            Commands::CraftScore {
+                agent,
+                needs_evaluation,
+            } => {
+                assert_eq!(agent, "knowledge");
+                assert!(needs_evaluation, "--needs-evaluation flag must parse to true");
+            }
+            _ => panic!("expected CraftScore subcommand"),
         }
     }
 

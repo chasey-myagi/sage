@@ -201,7 +201,16 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
     // out of run_chat and skip finalize entirely, silently losing the
     // TaskRecord on every failed turn. Now the Result flows here and the
     // metrics record accurately reflects success vs. the failure reason.
-    let loop_result = chat_loop(agent, &agent_dir, &mut session, &sink, &cancel_token).await;
+    let loop_result = chat_loop(
+        agent,
+        &agent_dir,
+        &config.llm.provider,
+        &config.llm.model,
+        &mut session,
+        &sink,
+        &cancel_token,
+    )
+    .await;
 
     let (success, failure_reason) = match &loop_result {
         Ok(()) => (true, None),
@@ -220,9 +229,15 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
 /// finalize. Returns `Ok(())` on clean exit (`/exit`, EOF, readline Ctrl+C)
 /// and `Err(...)` on any failure; [`run_chat`] always observes this result
 /// before calling `finalize` so the TaskRecord reflects reality.
+///
+/// `provider` / `model` are captured at session construction time and
+/// threaded through so every successful send can append to the
+/// `known_models.json` cache (Sprint 12 task #72 sub-path 2).
 async fn chat_loop(
     agent: &str,
     agent_dir: &std::path::Path,
+    provider: &str,
+    model: &str,
     session: &mut sage_runtime::SageSession,
     sink: &dyn sage_runtime::event::AgentEventSink,
     cancel_token: &tokio_util::sync::CancellationToken,
@@ -266,6 +281,12 @@ async fn chat_loop(
                     Some(template) => {
                         let text = substitute_arguments(&template, &args);
                         send_with_cancel(session, sink, text.trim(), cancel_token).await?;
+                        // Task #72 sub-path 2: record on each successful
+                        // send so the known_models cache reflects which
+                        // (provider, model) the user has actually used.
+                        // Idempotent — duplicates collapse inside the
+                        // record_used_model set semantics.
+                        crate::serve::record_session_model(provider, model);
                     }
                     None => {
                         eprintln!(
@@ -277,6 +298,7 @@ async fn chat_loop(
             }
             ChatInput::Message(text) => {
                 send_with_cancel(session, sink, text.trim(), cancel_token).await?;
+                crate::serve::record_session_model(provider, model);
             }
         }
     }

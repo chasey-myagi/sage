@@ -99,6 +99,79 @@ pub fn crafts_needing_evaluation(
     names
 }
 
+/// Render a human-readable report for `sage craft-score`.
+///
+/// Output format is fixed: a two-decimal score (`0.80`) so tests can grep
+/// for it and operators can grep historic reports. Crafts are sorted by
+/// name for deterministic, diff-friendly output. Sprint 12 task #72
+/// sub-path 3.
+///
+/// When `needs_only` is `true`, only crafts returned by
+/// [`crafts_needing_evaluation`] are shown (low-score + sufficient-usage).
+/// Empty results produce a friendly "no data" / "no candidates" hint rather
+/// than a blank table.
+pub fn format_craft_score_report(
+    stats: &HashMap<String, CraftStats>,
+    needs_only: bool,
+) -> String {
+    if stats.is_empty() {
+        return "no data yet — run the agent and let it invoke a craft \
+                before scoring"
+            .to_string();
+    }
+
+    // Filter first, then sort for deterministic output.
+    let visible: Vec<(&String, &CraftStats)> = if needs_only {
+        let needy = crafts_needing_evaluation(stats);
+        stats
+            .iter()
+            .filter(|(name, _)| needy.iter().any(|n| n == *name))
+            .collect()
+    } else {
+        stats.iter().collect()
+    };
+
+    if visible.is_empty() {
+        // Only reachable with needs_only=true and no qualifying craft —
+        // the all-empty-stats case is handled above.
+        return "no crafts currently qualify for evaluation \
+                (threshold: score < 0.5 and usage_count >= 5)"
+            .to_string();
+    }
+
+    let mut sorted = visible;
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+
+    let mut out = String::new();
+    out.push_str("craft               usage  tokens_best  tokens_avg  score\n");
+    out.push_str("─────               ─────  ───────────  ──────────  ─────\n");
+    for (name, s) in &sorted {
+        let line = format!(
+            "{name:<19} {usage:>5}  {best:>11}  {avg:>10}  {score:.2}\n",
+            name = truncate_for_column(name, 19),
+            usage = s.usage_count,
+            best = s.tokens_best,
+            avg = s.tokens_avg,
+            score = s.score(),
+        );
+        out.push_str(&line);
+    }
+    out
+}
+
+/// Clip a craft name to fit the report's first column without breaking
+/// alignment. Keeps the head + `…` so long names are still recognisable.
+fn truncate_for_column(name: &str, max: usize) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    if chars.len() <= max {
+        name.to_string()
+    } else {
+        // Leave 1 char for the ellipsis.
+        let head: String = chars.iter().take(max - 1).collect();
+        format!("{head}…")
+    }
+}
+
 /// Aggregate records by craft name: a record with `crafts_active = [a, b]`
 /// contributes to both `a` and `b` (tokens_total += sum, usage_count += 1).
 /// tokens_best tracks the min (input+output) across runs touching the craft.
@@ -498,5 +571,108 @@ mod tests {
         });
         let result = crafts_needing_evaluation(&map);
         assert_eq!(result, vec!["bad1", "bad2"], "both qualifying crafts returned, sorted");
+    }
+
+    // ── Sprint 12 task #72 sub-path 3: format_craft_score_report ──────────
+
+    #[test]
+    fn format_craft_score_report_empty_stats_shows_no_data_message() {
+        // User guidance: the `sage craft-score` CLI must not return a scary
+        // error when metrics haven't been collected yet. A newly initialised
+        // agent has zero records; the tool should print a friendly hint
+        // instead of an empty table.
+        let stats: HashMap<String, CraftStats> = HashMap::new();
+        let report = format_craft_score_report(&stats, false);
+        assert!(
+            report.contains("no data"),
+            "empty report must mention 'no data', got: {report:?}"
+        );
+    }
+
+    #[test]
+    fn format_craft_score_report_lists_each_craft_with_score() {
+        // Happy path: two crafts with known stats produce a report that
+        // includes both names and their numeric score.
+        let mut stats = HashMap::new();
+        stats.insert(
+            "alpha".to_string(),
+            make_stats(10, 500, 40, 50),
+        );
+        stats.insert(
+            "beta".to_string(),
+            make_stats(3, 300, 80, 100),
+        );
+        let report = format_craft_score_report(&stats, false);
+        assert!(report.contains("alpha"), "report must include craft name 'alpha'");
+        assert!(report.contains("beta"), "report must include craft name 'beta'");
+        // alpha score = 40/50 = 0.80; beta = 80/100 = 0.80.
+        assert!(
+            report.contains("0.80"),
+            "report must render a score like 0.80 for both crafts, got: {report}"
+        );
+    }
+
+    #[test]
+    fn format_craft_score_report_sorts_crafts_deterministically() {
+        // HashMap iteration is non-deterministic — the report must sort by
+        // name so the CLI output is stable across invocations (diff-friendly
+        // for operators comparing weeks of data).
+        let mut stats = HashMap::new();
+        stats.insert("zzz".into(), make_stats(5, 100, 10, 20));
+        stats.insert("aaa".into(), make_stats(5, 100, 10, 20));
+        stats.insert("mmm".into(), make_stats(5, 100, 10, 20));
+        let report = format_craft_score_report(&stats, false);
+        let aaa_pos = report.find("aaa").unwrap();
+        let mmm_pos = report.find("mmm").unwrap();
+        let zzz_pos = report.find("zzz").unwrap();
+        assert!(
+            aaa_pos < mmm_pos && mmm_pos < zzz_pos,
+            "crafts must appear in lexicographic order; got positions aaa={aaa_pos}, mmm={mmm_pos}, zzz={zzz_pos}"
+        );
+    }
+
+    #[test]
+    fn format_craft_score_report_needs_only_filters_to_evaluation_candidates() {
+        // `--needs-evaluation` flag: report should list only crafts that
+        // pass `crafts_needing_evaluation` (score < 0.5 AND usage >= 5).
+        let mut stats = HashMap::new();
+        // needs eval: score = 10/100 = 0.10 < 0.5, usage 10 >= 5
+        stats.insert("lazy".into(), make_stats(10, 1000, 10, 100));
+        // doesn't need eval: high score
+        stats.insert("good".into(), make_stats(10, 1000, 80, 100));
+        // doesn't need eval: low usage
+        stats.insert("new".into(), make_stats(2, 200, 10, 100));
+
+        let report = format_craft_score_report(&stats, /* needs_only */ true);
+        assert!(
+            report.contains("lazy"),
+            "needs-eval report must include 'lazy' (low score + sufficient usage)"
+        );
+        assert!(
+            !report.contains("good"),
+            "needs-eval report must NOT include 'good' (high score)"
+        );
+        assert!(
+            !report.contains("new"),
+            "needs-eval report must NOT include 'new' (insufficient usage)"
+        );
+    }
+
+    #[test]
+    fn format_craft_score_report_needs_only_with_zero_candidates_is_empty_hint() {
+        // When no craft qualifies for evaluation, the filtered report should
+        // explicitly say so (not print a blank body the user can't interpret).
+        let mut stats = HashMap::new();
+        stats.insert("good1".into(), make_stats(10, 1000, 80, 100));
+        stats.insert("good2".into(), make_stats(10, 1000, 90, 100));
+        let report = format_craft_score_report(&stats, true);
+        // Report mentions "no" (as in "no crafts need evaluation" or
+        // "no candidates") and does not list the healthy crafts.
+        assert!(!report.contains("good1"));
+        assert!(!report.contains("good2"));
+        assert!(
+            report.to_lowercase().contains("no"),
+            "empty needs-eval report must include an explicit 'no' hint, got: {report:?}"
+        );
     }
 }
