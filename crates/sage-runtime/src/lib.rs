@@ -24,7 +24,7 @@ pub use agent::{StopAction, StopContext, StopHook, TransformContextHook};
 pub use compaction::ContextBudget;
 pub use engine::{SageEngine, SageEngineBuilder, SageError, SageSession, SandboxSettings};
 pub use event::{AgentEvent, EventReceiver};
-pub use hook::{HookBus, HookEvent, HookHandler, HookOutcome};
+pub use hook::{HookBus, HookEvent, HookHandler, HookOutcome, HookReceiver};
 pub use system_prompt::{PromptSection, SystemPrompt, SystemPromptBuilder};
 pub use tools::AgentTool as SageTool;
 

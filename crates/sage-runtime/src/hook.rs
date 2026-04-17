@@ -4,6 +4,8 @@
 // StopHook traits in agent.rs are untouched. Phase 2 (S6.2) will wire those
 // implementations to drive through HookHandler.
 
+use std::sync::{Arc, Mutex};
+
 use serde_json::Value;
 use tokio::sync::broadcast;
 
@@ -111,23 +113,74 @@ pub trait HookHandler: Send + Sync {
 /// Multi-subscriber bus for [`HookEvent`]. The engine emits; handlers
 /// subscribe. Bounded channel — slow subscribers observing `RecvError::Lagged`
 /// is the caller's responsibility.
+///
+/// When constructed via [`HookBus::with_session_start_replay`], the bus caches
+/// the last `SessionStart` event so a subscriber attaching after the engine
+/// has already emitted it (the common `SageEngine::session()` →
+/// `session.hook_bus().subscribe()` pattern) still observes the start event.
+/// Replay is intentionally scoped to `SessionStart` alone — all other variants
+/// follow pure broadcast semantics (subscribe-before-emit-or-miss) regardless
+/// of construction mode.
+#[derive(Clone)]
 pub struct HookBus {
     tx: broadcast::Sender<HookEvent>,
+    last_session_start: Option<Arc<Mutex<Option<HookEvent>>>>,
 }
 
 impl HookBus {
+    /// Construct a bus with pure broadcast semantics: emits prior to any
+    /// subscription are unconditionally dropped.
     pub fn new(capacity: usize) -> Self {
         let (tx, _) = broadcast::channel(capacity);
-        Self { tx }
+        Self {
+            tx,
+            last_session_start: None,
+        }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<HookEvent> {
-        self.tx.subscribe()
+    /// Construct a bus that caches the most recent `SessionStart` emit and
+    /// replays it once to any subsequent subscriber. Used by [`SageSession`]
+    /// so that the engine can emit `SessionStart` synchronously during
+    /// session construction without racing against the caller's `subscribe()`.
+    ///
+    /// [`SageSession`]: crate::engine::SageSession
+    pub fn with_session_start_replay(capacity: usize) -> Self {
+        let (tx, _) = broadcast::channel(capacity);
+        Self {
+            tx,
+            last_session_start: Some(Arc::new(Mutex::new(None))),
+        }
+    }
+
+    /// Subscribe to the bus. If this bus was built with session-start replay
+    /// enabled and a `SessionStart` has already been cached, the returned
+    /// [`HookReceiver`] yields the cached event first before forwarding live
+    /// broadcasts.
+    pub fn subscribe(&self) -> HookReceiver {
+        // Clone the cached SessionStart under the lock so the snapshot is
+        // consistent with the broadcast rx we attach next — any SessionStart
+        // emitted after this point is observed through the live channel.
+        let pending = self
+            .last_session_start
+            .as_ref()
+            .and_then(|cache| cache.lock().ok().and_then(|g| g.clone()));
+        HookReceiver {
+            rx: self.tx.subscribe(),
+            pending,
+        }
     }
 
     /// Non-blocking emit. Drops the event if no subscribers are attached
-    /// (broadcast semantics).
+    /// (broadcast semantics). When replay is enabled, a `SessionStart` emit
+    /// is additionally cached so late subscribers can replay it exactly once
+    /// on the next `subscribe()` call.
     pub fn emit(&self, event: HookEvent) {
+        if let (Some(cache), HookEvent::SessionStart { .. }) =
+            (self.last_session_start.as_ref(), &event)
+            && let Ok(mut guard) = cache.lock()
+        {
+            *guard = Some(event.clone());
+        }
         let _ = self.tx.send(event);
     }
 
@@ -139,6 +192,44 @@ impl HookBus {
 impl Default for HookBus {
     fn default() -> Self {
         Self::new(256)
+    }
+}
+
+/// Subscriber handle returned by [`HookBus::subscribe`].
+///
+/// Wraps a [`broadcast::Receiver`] with a one-shot `SessionStart` replay slot
+/// populated when the source bus has replay enabled. The first `recv` /
+/// `try_recv` yields the cached event (if any); subsequent calls behave
+/// identically to the raw broadcast receiver.
+pub struct HookReceiver {
+    rx: broadcast::Receiver<HookEvent>,
+    pending: Option<HookEvent>,
+}
+
+impl HookReceiver {
+    pub async fn recv(&mut self) -> Result<HookEvent, broadcast::error::RecvError> {
+        if let Some(e) = self.pending.take() {
+            return Ok(e);
+        }
+        self.rx.recv().await
+    }
+
+    pub fn try_recv(&mut self) -> Result<HookEvent, broadcast::error::TryRecvError> {
+        if let Some(e) = self.pending.take() {
+            return Ok(e);
+        }
+        self.rx.try_recv()
+    }
+
+    /// Produce an independent receiver attached to the **live** broadcast
+    /// stream only; any SessionStart replay still pending on `self` is NOT
+    /// propagated. Callers who want a fresh SessionStart replay should call
+    /// `HookBus::subscribe` again instead.
+    pub fn resubscribe(&self) -> HookReceiver {
+        HookReceiver {
+            rx: self.rx.resubscribe(),
+            pending: None,
+        }
     }
 }
 

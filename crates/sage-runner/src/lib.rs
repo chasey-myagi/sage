@@ -9,5 +9,5 @@ pub mod config;
 pub mod hooks;
 pub mod metrics;
 
-pub use config::{home_dir, AgentConfig};
+pub use config::{AgentConfig, home_dir};
 pub use sage_runtime::tools::policy::ToolPolicy;

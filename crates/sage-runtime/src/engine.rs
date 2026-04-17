@@ -7,6 +7,7 @@ use crate::agent::{
 };
 use crate::agent_loop::{AgentLoopError, run_agent_loop};
 use crate::event::{AgentEvent, AgentEventSink, EventReceiver, EventSender, EventStream};
+use crate::hook::{HookBus, HookEvent};
 use crate::llm::types::*;
 use crate::llm::{self, LlmProvider};
 use crate::tools::backend::{LocalBackend, SandboxBackend, ToolBackend};
@@ -14,6 +15,7 @@ use crate::tools::policy::ToolPolicy;
 use crate::tools::{self, AgentTool, ToolRegistry};
 use crate::types::*;
 use std::sync::Arc;
+use std::time::Instant;
 
 // ── SandboxSettings ──────────────────────────────────────────────────
 
@@ -563,11 +565,52 @@ impl SageEngine {
             agent.set_stop_hook(Box::new(ArcStopHook(Arc::clone(hook))));
         }
 
+        // S6.2a: construct lifecycle state for HookEvent emission.
+        let session_id = generate_session_id();
+        let agent_name = self.name.clone();
+        let model_id = self.model_id.clone();
+        // Replay-enabled bus: SessionStart is cached so the caller's
+        // `session.hook_bus().subscribe()` (which necessarily happens after
+        // session() returns) still observes the start event. This replaces
+        // the earlier spawn+yield hack that gambled on task ordering.
+        let hook_bus = HookBus::with_session_start_replay(256);
+        let started_at = Instant::now();
+
+        // Emit SessionStart BEFORE constructing SageSession so that if any
+        // later clone / allocation on the construction path panics, Drop
+        // won't emit a "SessionEnd without matching SessionStart" to
+        // downstream telemetry.
+        hook_bus.emit(HookEvent::SessionStart {
+            session_id: session_id.clone(),
+            agent_name: agent_name.clone(),
+            model: model_id.clone(),
+        });
+
         Ok(SageSession {
             agent,
             timeout_secs: self.timeout_secs,
+            session_id,
+            agent_name,
+            model_id,
+            hook_bus,
+            started_at,
+            turn_count: 0,
+            closed: false,
         })
     }
+}
+
+/// Generate a compact hex session identifier for a [`SageSession`].
+///
+/// Mirrors the ID scheme used by the agent loop so that correlated
+/// `AgentEvent` and `HookEvent` streams share compatible identifiers.
+fn generate_session_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("{ms:013x}")
 }
 
 // ── SageSession ───────────────────────────────────────────────────────
@@ -580,6 +623,25 @@ impl SageEngine {
 pub struct SageSession {
     agent: Agent,
     timeout_secs: Option<u64>,
+    session_id: String,
+    // S6.2a: fields consumed by HookEvent payloads once emission is wired.
+    #[allow(dead_code)]
+    agent_name: String,
+    #[allow(dead_code)]
+    model_id: String,
+    hook_bus: HookBus,
+    started_at: Instant,
+    /// Incremented at the start of each [`SageSession::send`] call.
+    ///
+    /// Semantic contract: this tracks **attempted** turns, not successful
+    /// ones. A `send()` that returns an error still counts — the intent is
+    /// "how many turns were attempted", not "how many completed". Consumers
+    /// that need success-only counts should subscribe to `TurnEnd` events
+    /// via the session's [`HookBus`]. `SessionEnd.turn_count` reports this
+    /// field's value at session close (or drop) time.
+    turn_count: u32,
+    /// Set to true by `close()` so `Drop` does not double-emit SessionEnd.
+    closed: bool,
 }
 
 impl SageSession {
@@ -592,6 +654,12 @@ impl SageSession {
         message: &str,
         sink: &dyn AgentEventSink,
     ) -> Result<(), SageError> {
+        // Counted at send() entry (not after completion) so SessionEnd.turn_count
+        // reflects user-visible turns regardless of mid-loop failures. A send()
+        // that returns an error still counts — it's "how many turns were
+        // attempted", not "how many succeeded". Telemetry consumers that need
+        // success-only counts should subscribe to TurnEnd events directly.
+        self.turn_count += 1;
         self.agent
             .steer(AgentMessage::User(UserMessage::from_text(message)));
         match self.timeout_secs {
@@ -618,6 +686,64 @@ impl SageSession {
     /// Read-only view of the current conversation history.
     pub fn messages(&self) -> &[AgentMessage] {
         self.agent.messages()
+    }
+
+    /// Borrow the session's [`HookBus`].
+    ///
+    /// External observers subscribe here to receive lifecycle [`HookEvent`]s
+    /// (`SessionStart`, `SessionEnd`, `PreCompact`, `PostCompact`, ...).
+    ///
+    /// [`HookEvent`]: crate::hook::HookEvent
+    pub fn hook_bus(&self) -> &HookBus {
+        &self.hook_bus
+    }
+
+    /// Stable session identifier — shared across all `HookEvent`s emitted by
+    /// this session. Matches the scheme used by the agent loop so logs can be
+    /// correlated.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Explicitly close the session and emit `HookEvent::SessionEnd`.
+    ///
+    /// Consumes the session — any further interaction must happen before the
+    /// call. `success` is propagated verbatim into the emitted event. When a
+    /// session is dropped without calling `close`, no `SessionEnd` is emitted
+    /// and a warning is logged.
+    pub async fn close(mut self, success: bool) -> Result<(), SageError> {
+        let duration_ms =
+            u64::try_from(self.started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.hook_bus.emit(HookEvent::SessionEnd {
+            session_id: self.session_id.clone(),
+            duration_ms,
+            turn_count: self.turn_count,
+            success,
+        });
+        self.closed = true;
+        Ok(())
+    }
+}
+
+impl Drop for SageSession {
+    fn drop(&mut self) {
+        if !self.closed {
+            // Session dropped without explicit close() — treat as unclean
+            // failure. SessionEnd still fires so telemetry sees every session
+            // terminate (with success=false + warn log so operators know why).
+            let duration_ms =
+                u64::try_from(self.started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+            self.hook_bus.emit(HookEvent::SessionEnd {
+                session_id: self.session_id.clone(),
+                duration_ms,
+                turn_count: self.turn_count,
+                success: false,
+            });
+            tracing::warn!(
+                session_id = %self.session_id,
+                "SageSession dropped without close() — SessionEnd emitted with success=false"
+            );
+        }
     }
 }
 
@@ -2224,6 +2350,417 @@ mod tests {
             err.to_string()
                 .contains("network-enabled sandbox is not implemented"),
             "unexpected error: {err}"
+        );
+    }
+
+    // =================================================================
+    // S6.2a: SageSession HookEvent lifecycle emission
+    // =================================================================
+    //
+    // These tests lock the behavioral contract for Sprint 6 S6.2a: SageSession
+    // owns a HookBus and emits SessionStart / SessionEnd / PreCompact /
+    // PostCompact at the documented lifecycle points. Stubs in engine.rs /
+    // agent_loop.rs / compaction.rs mark the emission sites with `TODO S6.2a`.
+    // Tests here will stay red until the implementer wires the emits through.
+
+    use crate::hook::HookEvent;
+    use tokio::sync::broadcast::error::TryRecvError;
+    use tokio::time::{Duration, timeout};
+
+    /// Build a bare-minimum engine + session for lifecycle tests.
+    fn lifecycle_engine(provider: StatefulProvider) -> SageEngine {
+        SageEngine::builder()
+            .name("session-test-agent")
+            .system_prompt("test")
+            .llm_provider(provider)
+            .build()
+            .expect("engine builder should succeed")
+    }
+
+    /// Build an engine whose `.name()` and `.model()` are explicit — used to
+    /// assert payload fields on SessionStart.
+    fn named_engine(name: &str, provider_name: &str, model: &str) -> SageEngine {
+        SageEngine::builder()
+            .name(name)
+            .system_prompt("test")
+            .provider(provider_name)
+            .model(model)
+            .base_url("http://localhost")
+            .api_key_env("TEST_KEY")
+            .build()
+            .expect("engine builder should succeed")
+    }
+
+    /// Wait briefly for a HookEvent on `rx`, panicking on timeout. Timeouts are
+    /// the expected failure mode for the red-phase stubs.
+    async fn expect_event(rx: &mut crate::hook::HookReceiver, label: &str) -> HookEvent {
+        timeout(Duration::from_millis(200), rx.recv())
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for HookEvent::{label}"))
+            .unwrap_or_else(|e| panic!("HookEvent channel closed while awaiting {label}: {e:?}"))
+    }
+
+    // ── SessionStart emission ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn session_start_event_emitted_after_engine_session_call() {
+        let engine = lifecycle_engine(simple_provider("hello"));
+        // Subscribe via a lightweight pre-subscription channel: we build a
+        // fresh HookBus through the engine, subscribe, then trigger a second
+        // session(). Since HookBus subscribes only receive *subsequent* emits,
+        // the only reliable path is to subscribe to the session returned by
+        // session() and assert SessionStart is still recoverable. Broadcast
+        // capacity (default 256) means the SessionStart emitted during
+        // construction remains buffered for the first subscriber.
+        let session = engine.session().await.expect("session build");
+        let mut rx = session.hook_bus().subscribe();
+
+        // Ensure we don't accidentally miss the event: request a second
+        // broadcast by re-emitting via the public API is not possible for
+        // SessionStart. Instead, the implementer MUST emit SessionStart after
+        // the HookBus is owned by the session AND the subscriber has a chance
+        // to attach — meaning either (a) construction defers emit via
+        // `tokio::spawn`, or (b) this test instead subscribes via a getter on
+        // SageEngineBuilder. For the red phase we assert the former contract.
+        let event = expect_event(&mut rx, "SessionStart").await;
+        match event {
+            HookEvent::SessionStart {
+                session_id,
+                agent_name,
+                model,
+            } => {
+                assert_eq!(session_id, session.session_id());
+                assert_eq!(agent_name, "session-test-agent");
+                assert!(!model.is_empty(), "model should be populated");
+            }
+            other => panic!("expected SessionStart, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn session_start_includes_agent_name_and_model() {
+        let engine = named_engine("payload-agent", "deepseek", "deepseek-chat");
+        let session = engine.session().await.expect("session build");
+        let mut rx = session.hook_bus().subscribe();
+
+        let event = expect_event(&mut rx, "SessionStart").await;
+        match event {
+            HookEvent::SessionStart {
+                agent_name, model, ..
+            } => {
+                assert_eq!(agent_name, "payload-agent");
+                assert_eq!(model, "deepseek-chat");
+            }
+            other => panic!("expected SessionStart, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn session_start_not_re_emitted_on_send() {
+        // SessionStart fires exactly once per session — calling send() must
+        // not produce a second one.
+        let engine = lifecycle_engine(simple_provider("hello"));
+        let mut session = engine.session().await.expect("session build");
+        let mut rx = session.hook_bus().subscribe();
+
+        // Drain SessionStart (expected once).
+        let _ = expect_event(&mut rx, "SessionStart").await;
+
+        // Drive a turn — any subsequent SessionStart is a bug.
+        let sink = crate::event::EventStream::<AgentEvent, Vec<AgentMessage>>::new().0;
+        struct NoopSink;
+        #[async_trait::async_trait]
+        impl AgentEventSink for NoopSink {
+            async fn emit(&self, _event: AgentEvent) {}
+        }
+        session
+            .send("follow-up", &NoopSink)
+            .await
+            .expect("send should succeed");
+        let _ = sink; // keep the sender alive above cleanup order
+
+        // Drain any trailing events; none should be SessionStart.
+        loop {
+            match rx.try_recv() {
+                Ok(HookEvent::SessionStart { .. }) => {
+                    panic!("SessionStart must not fire a second time on send()")
+                }
+                Ok(_) => continue,
+                Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(_)) => continue,
+            }
+        }
+    }
+
+    // ── SessionEnd emission ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn session_end_event_emitted_on_close() {
+        let engine = lifecycle_engine(simple_provider("hello"));
+        let session = engine.session().await.expect("session build");
+        let mut rx = session.hook_bus().subscribe();
+        let _start = expect_event(&mut rx, "SessionStart").await;
+
+        session.close(true).await.expect("close should succeed");
+        let event = expect_event(&mut rx, "SessionEnd").await;
+        assert!(
+            matches!(event, HookEvent::SessionEnd { .. }),
+            "expected SessionEnd, got {event:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_end_success_field_reflects_argument() {
+        // close(true)
+        let engine = lifecycle_engine(simple_provider("hello"));
+        let session = engine.session().await.expect("session build");
+        let mut rx = session.hook_bus().subscribe();
+        let _ = expect_event(&mut rx, "SessionStart").await;
+        session.close(true).await.unwrap();
+        let ok = expect_event(&mut rx, "SessionEnd(true)").await;
+        match ok {
+            HookEvent::SessionEnd { success, .. } => assert!(success),
+            other => panic!("expected SessionEnd, got {other:?}"),
+        }
+
+        // close(false)
+        let engine = lifecycle_engine(simple_provider("hello"));
+        let session = engine.session().await.expect("session build");
+        let mut rx = session.hook_bus().subscribe();
+        let _ = expect_event(&mut rx, "SessionStart").await;
+        session.close(false).await.unwrap();
+        let fail = expect_event(&mut rx, "SessionEnd(false)").await;
+        match fail {
+            HookEvent::SessionEnd { success, .. } => assert!(!success),
+            other => panic!("expected SessionEnd, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn session_end_duration_ms_covers_session_lifetime() {
+        let engine = lifecycle_engine(simple_provider("hello"));
+        let session = engine.session().await.expect("session build");
+        let mut rx = session.hook_bus().subscribe();
+        let _ = expect_event(&mut rx, "SessionStart").await;
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        session.close(true).await.unwrap();
+
+        let event = expect_event(&mut rx, "SessionEnd").await;
+        match event {
+            HookEvent::SessionEnd { duration_ms, .. } => {
+                assert!(
+                    duration_ms >= 10,
+                    "duration_ms should be >= 10, got {duration_ms}"
+                );
+            }
+            other => panic!("expected SessionEnd, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn session_end_turn_count_matches_turns() {
+        // Three successive send() calls — each completes one turn.
+        let provider = StatefulProvider::new(vec![
+            vec![
+                AssistantMessageEvent::TextDelta("a".into()),
+                AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                AssistantMessageEvent::TextDelta("b".into()),
+                AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                AssistantMessageEvent::TextDelta("c".into()),
+                AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Stop,
+                },
+            ],
+        ]);
+        let engine = lifecycle_engine(provider);
+        let mut session = engine.session().await.expect("session build");
+        let mut rx = session.hook_bus().subscribe();
+        let _ = expect_event(&mut rx, "SessionStart").await;
+
+        struct NoopSink;
+        #[async_trait::async_trait]
+        impl AgentEventSink for NoopSink {
+            async fn emit(&self, _event: AgentEvent) {}
+        }
+
+        for _ in 0..3 {
+            session.send("hi", &NoopSink).await.unwrap();
+        }
+        session.close(true).await.unwrap();
+
+        // Drain until we find SessionEnd.
+        loop {
+            let ev = expect_event(&mut rx, "SessionEnd").await;
+            match ev {
+                HookEvent::SessionEnd { turn_count, .. } => {
+                    assert_eq!(
+                        turn_count, 3,
+                        "expected turn_count=3 across three send() calls, got {turn_count}"
+                    );
+                    break;
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    // ── PreCompact / PostCompact emission ────────────────────────────
+    //
+    // Wiring: the session-level HookBus needs to be threaded through
+    // run_agent_loop and into try_compact. The implementer of S6.2b will
+    // either (a) carry an Option<HookBus> in AgentLoopConfig, or (b) pass it
+    // alongside the AgentEventSink. Tests below assume the bus is reachable
+    // from the compaction code path and that both events fire on a real
+    // compact trigger (small context_window + many short messages).
+    //
+    // These tests are marked #[ignore] because triggering real compaction
+    // requires crafting the provider to respond with enough context tokens
+    // to cross the 90% threshold — doable but fragile without helper
+    // infrastructure. The red-phase contract is encoded in the assertions;
+    // S6.2b should flip the ignores off once the wiring lands.
+
+    #[tokio::test]
+    #[ignore = "S6.2b: enable once HookBus is wired into compaction path"]
+    async fn pre_compact_emitted_before_post_compact() {
+        // Expected behavior: trigger compaction → observe PreCompact followed
+        // by PostCompact (Pre must come first).
+        let engine = lifecycle_engine(simple_provider("hello"));
+        let session = engine.session().await.expect("session build");
+        let mut rx = session.hook_bus().subscribe();
+        let _ = expect_event(&mut rx, "SessionStart").await;
+
+        // Placeholder: an implementer-provided hook should trigger compaction.
+        // For now, the test body intentionally fails fast if the ignored gate
+        // is lifted without wiring. The actual trigger mechanism (e.g. a
+        // test-only `force_compact()` on SageSession, or a tiny-context
+        // model config) is left to the implementer.
+
+        let mut saw_pre = false;
+        while let Ok(Ok(ev)) = timeout(Duration::from_millis(50), rx.recv()).await {
+            match ev {
+                HookEvent::PreCompact { .. } => saw_pre = true,
+                HookEvent::PostCompact { .. } => {
+                    assert!(saw_pre, "PostCompact arrived before PreCompact");
+                    return;
+                }
+                _ => {}
+            }
+        }
+        panic!("expected PreCompact then PostCompact");
+    }
+
+    #[tokio::test]
+    #[ignore = "S6.2b: enable once HookBus is wired into compaction path"]
+    async fn pre_compact_payload_has_tokens_before_and_message_count() {
+        let engine = lifecycle_engine(simple_provider("hello"));
+        let session = engine.session().await.expect("session build");
+        let mut rx = session.hook_bus().subscribe();
+        let _ = expect_event(&mut rx, "SessionStart").await;
+
+        // Trigger compaction (see comment on pre_compact_emitted_before_post_compact).
+        while let Ok(Ok(ev)) = timeout(Duration::from_millis(50), rx.recv()).await {
+            if let HookEvent::PreCompact {
+                tokens_before,
+                message_count,
+                ..
+            } = ev
+            {
+                assert!(
+                    tokens_before > 0,
+                    "tokens_before must be populated, got {tokens_before}"
+                );
+                assert!(
+                    message_count > 0,
+                    "message_count must be populated, got {message_count}"
+                );
+                return;
+            }
+        }
+        panic!("expected PreCompact event");
+    }
+
+    #[tokio::test]
+    #[ignore = "S6.2b: enable once HookBus is wired into compaction path"]
+    async fn post_compact_payload_has_tokens_after_and_messages_compacted() {
+        let engine = lifecycle_engine(simple_provider("hello"));
+        let session = engine.session().await.expect("session build");
+        let mut rx = session.hook_bus().subscribe();
+        let _ = expect_event(&mut rx, "SessionStart").await;
+
+        while let Ok(Ok(ev)) = timeout(Duration::from_millis(50), rx.recv()).await {
+            if let HookEvent::PostCompact {
+                tokens_before,
+                tokens_after,
+                messages_compacted,
+                ..
+            } = ev
+            {
+                assert!(tokens_before > 0, "tokens_before must be populated");
+                assert!(
+                    tokens_after <= tokens_before,
+                    "tokens_after {tokens_after} must not exceed tokens_before {tokens_before}"
+                );
+                assert!(
+                    messages_compacted > 0,
+                    "messages_compacted must be positive after a real compact"
+                );
+                return;
+            }
+        }
+        panic!("expected PostCompact event");
+    }
+
+    // ── HookBus accessibility ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn hook_bus_accessible_via_session_getter() {
+        let engine = lifecycle_engine(simple_provider("hello"));
+        let session = engine.session().await.expect("session build");
+        // The subscribe() call itself is the contract — it must succeed and
+        // the bus must remain live across the session's lifetime.
+        let rx = session.hook_bus().subscribe();
+        assert_eq!(
+            session.hook_bus().subscriber_count(),
+            1,
+            "subscribe() should register exactly one receiver"
+        );
+        drop(rx);
+        assert_eq!(
+            session.hook_bus().subscriber_count(),
+            0,
+            "dropping the receiver should decrement the subscriber count"
+        );
+    }
+
+    #[tokio::test]
+    async fn hook_bus_subscriber_sees_all_lifecycle_events_in_order() {
+        // Red-phase contract: a single subscriber that attaches early enough
+        // observes SessionStart → SessionEnd in order. (PreCompact / PostCompact
+        // are covered by the dedicated #[ignore]'d tests above.)
+        let engine = lifecycle_engine(simple_provider("hello"));
+        let session = engine.session().await.expect("session build");
+        let mut rx = session.hook_bus().subscribe();
+
+        let first = expect_event(&mut rx, "SessionStart").await;
+        assert!(
+            matches!(first, HookEvent::SessionStart { .. }),
+            "first event must be SessionStart, got {first:?}"
+        );
+
+        session.close(true).await.unwrap();
+        let last = expect_event(&mut rx, "SessionEnd").await;
+        assert!(
+            matches!(last, HookEvent::SessionEnd { .. }),
+            "last event must be SessionEnd, got {last:?}"
         );
     }
 }

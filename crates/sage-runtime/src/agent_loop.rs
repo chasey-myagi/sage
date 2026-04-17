@@ -443,6 +443,16 @@ async fn try_compact(
     })
     .await;
 
+    // TODO S6.2a: emit HookEvent::PreCompact on the session's HookBus here,
+    // parallel to AgentEvent::CompactionStart above. Requires threading an
+    // `Option<HookBus>` reference into try_compact (e.g. via AgentLoopConfig
+    // or a new parameter alongside `emit`).
+    //   bus.emit(HookEvent::PreCompact {
+    //       session_id: <session_id>,
+    //       tokens_before: context_tokens,
+    //       message_count: agent.messages().len(),
+    //   });
+
     let first_kept = prep.first_kept_index;
     let model = agent.config().model.clone();
     match compaction::compact(prep, agent.provider(), &model).await {
@@ -457,6 +467,15 @@ async fn try_compact(
                 messages_compacted: first_kept,
             })
             .await;
+
+            // TODO S6.2a: emit HookEvent::PostCompact on the session's HookBus
+            // here, parallel to AgentEvent::CompactionEnd above.
+            //   bus.emit(HookEvent::PostCompact {
+            //       session_id: <session_id>,
+            //       tokens_before,
+            //       tokens_after: estimate_context_tokens(agent.messages()) as u64,
+            //       messages_compacted: first_kept,
+            //   });
             true
         }
         Err(e) => {
@@ -469,6 +488,10 @@ async fn try_compact(
                 messages_compacted: 0,
             })
             .await;
+
+            // TODO S6.2a: emit HookEvent::PostCompact with the fallback-truncation
+            // tokens_after (computed from the truncated message vector) so
+            // subscribers always see a matched Pre/Post pair.
             false
         }
     }
