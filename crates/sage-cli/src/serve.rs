@@ -468,8 +468,14 @@ pub async fn build_engine_for_agent(config: &AgentConfig, dev: bool) -> anyhow::
         builder = builder.api_key_env(env);
     }
 
-    if !dev {
-        if let Some(sandbox) = &config.sandbox {
+    if let Some(sandbox) = &config.sandbox {
+        // Task #76: use `with_dev_override` so `sandbox.mode: host` in the
+        // YAML config is equivalent to passing `--dev`. Previously `--dev`
+        // was the only way to skip the microVM; the config-level escape
+        // hatch existed but was wired only into the deprecated
+        // build_engine_from_config.
+        let effective_mode = sandbox.mode.with_dev_override(dev);
+        if effective_mode == sage_runner::config::SandboxMode::Microvm {
             match &sandbox.network {
                 NetworkPolicy::Full => {
                     anyhow::bail!(
@@ -553,11 +559,16 @@ pub async fn run(runtime_addr: String, _caster_id: String, _max_concurrent: usiz
 }
 
 /// Run a local test: load config → build SageEngine → run → print events.
+///
+/// When `dev` is `true`, or the config sets `sandbox.mode: host`, the engine
+/// runs without a microVM sandbox (host filesystem directly). Task #76: the
+/// `--dev` flag is the escape hatch for machines without libkrunfw.
 pub async fn run_local_test(
     config_path: &str,
     message: &str,
     provider_override: Option<&str>,
     model_override: Option<&str>,
+    dev: bool,
 ) -> Result<()> {
     // 1. Load agent config
     let yaml = tokio::fs::read_to_string(config_path)
@@ -571,7 +582,7 @@ pub async fn run_local_test(
     tracing::info!(agent = %config.name, "loaded config");
 
     // 2. Build SageEngine from AgentConfig fields
-    let engine = build_engine_from_config(&config, provider_override, model_override)?;
+    let engine = build_engine_from_config(&config, provider_override, model_override, dev)?;
 
     // 3. Run and consume events
     let mut rx = engine.run(message).await?;
@@ -666,6 +677,7 @@ fn build_engine_from_config(
     config: &AgentConfig,
     provider_override: Option<&str>,
     model_override: Option<&str>,
+    dev: bool,
 ) -> Result<SageEngine> {
     let tool_names = config.tools.tool_names();
     let tool_name_refs: Vec<&str> = tool_names.iter().map(|s| s.as_str()).collect();
@@ -711,45 +723,53 @@ fn build_engine_from_config(
         builder = builder.api_key_env(env);
     }
     if let Some(sandbox) = &config.sandbox {
-        match &sandbox.network {
-            NetworkPolicy::Full => {
-                anyhow::bail!(
-                    "network policy 'full' is not yet implemented — use 'airgapped' (default)"
-                );
+        // Task #76: `--dev` CLI flag and `sandbox.mode: host` both route
+        // through `SandboxMode::with_dev_override` → `Host` skips the microVM.
+        // Previously `sage run` unconditionally honored `config.sandbox` and
+        // had no way to bypass, so machines without libkrunfw couldn't run
+        // any agent that declared a sandbox.
+        let effective_mode = sandbox.mode.with_dev_override(dev);
+        if effective_mode == sage_runner::config::SandboxMode::Microvm {
+            match &sandbox.network {
+                NetworkPolicy::Full => {
+                    anyhow::bail!(
+                        "network policy 'full' is not yet implemented — use 'airgapped' (default)"
+                    );
+                }
+                NetworkPolicy::Whitelist => {
+                    anyhow::bail!(
+                        "network policy 'whitelist' is not yet implemented — use 'airgapped' (default)"
+                    );
+                }
+                NetworkPolicy::Airgapped => {}
             }
-            NetworkPolicy::Whitelist => {
-                anyhow::bail!(
-                    "network policy 'whitelist' is not yet implemented — use 'airgapped' (default)"
-                );
-            }
-            NetworkPolicy::Airgapped => {}
-        }
 
-        // Build volume mounts: workspace_host → /workspace (read-write)
-        let mut volumes = Vec::new();
-        if let Some(host_path) = &sandbox.workspace_host {
-            volumes.push(sage_sandbox::VolumeMount {
-                host_path: host_path.to_string_lossy().into_owned(),
-                guest_path: "/workspace".to_string(),
-                read_only: false,
+            // Build volume mounts: workspace_host → /workspace (read-write)
+            let mut volumes = Vec::new();
+            if let Some(host_path) = &sandbox.workspace_host {
+                volumes.push(sage_sandbox::VolumeMount {
+                    host_path: host_path.to_string_lossy().into_owned(),
+                    guest_path: "/workspace".to_string(),
+                    read_only: false,
+                });
+            }
+
+            // Convert runner SecurityConfig → protocol GuestSecurityConfig for the guest.
+            // Include /workspace in landlock allowed paths when a workspace is mounted.
+            let extra_paths: Vec<&str> = volumes
+                .iter()
+                .map(|v| v.guest_path.as_str())
+                .collect();
+            let guest_security = to_guest_security(&sandbox.security, &extra_paths);
+
+            builder = builder.sandbox(SandboxSettings {
+                cpus: sandbox.cpus,
+                memory_mib: sandbox.memory_mib,
+                volumes,
+                network_enabled: false,
+                security: Some(guest_security),
             });
         }
-
-        // Convert runner SecurityConfig → protocol GuestSecurityConfig for the guest.
-        // Include /workspace in landlock allowed paths when a workspace is mounted.
-        let extra_paths: Vec<&str> = volumes
-            .iter()
-            .map(|v| v.guest_path.as_str())
-            .collect();
-        let guest_security = to_guest_security(&sandbox.security, &extra_paths);
-
-        builder = builder.sandbox(SandboxSettings {
-            cpus: sandbox.cpus,
-            memory_mib: sandbox.memory_mib,
-            volumes,
-            network_enabled: false,
-            security: Some(guest_security),
-        });
     }
 
     Ok(builder.build()?)
@@ -836,7 +856,7 @@ sandbox:
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
 
-        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let engine = build_engine_from_config(&config, None, None, false).unwrap();
         let sandbox = engine
             .sandbox_settings()
             .expect("sandbox settings should be wired from YAML");
@@ -858,7 +878,7 @@ constraints: { max_turns: 5, timeout_secs: 47 }
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
 
-        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let engine = build_engine_from_config(&config, None, None, false).unwrap();
         assert_eq!(engine.timeout_secs(), Some(47));
     }
 
@@ -876,7 +896,7 @@ sandbox:
   memory_mib: 512
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
-        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let engine = build_engine_from_config(&config, None, None, false).unwrap();
         let sandbox = engine.sandbox_settings().expect("sandbox should be set");
 
         let security = sandbox.security.as_ref().expect("security should be wired");
@@ -908,7 +928,7 @@ sandbox:
     tmpfs_size_mb: 256
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
-        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let engine = build_engine_from_config(&config, None, None, false).unwrap();
         let sandbox = engine.sandbox_settings().expect("sandbox should be set");
 
         let security = sandbox.security.as_ref().expect("security should be wired");
@@ -934,7 +954,7 @@ sandbox:
   network: false
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
-        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let engine = build_engine_from_config(&config, None, None, false).unwrap();
         let sandbox = engine.sandbox_settings().expect("sandbox should be set");
 
         // SecurityConfig defaults to all enabled
@@ -954,7 +974,7 @@ tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
-        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let engine = build_engine_from_config(&config, None, None, false).unwrap();
         assert!(engine.sandbox_settings().is_none());
     }
 
@@ -980,7 +1000,7 @@ sandbox:
     max_processes: 96
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
-        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let engine = build_engine_from_config(&config, None, None, false).unwrap();
         let sandbox = engine.sandbox_settings().unwrap();
         let security = sandbox.security.as_ref().unwrap();
 
@@ -1015,7 +1035,7 @@ sandbox:
   memory_mib: 512
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
-        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let engine = build_engine_from_config(&config, None, None, false).unwrap();
         let security = engine.sandbox_settings().unwrap().security.as_ref().unwrap();
         assert_eq!(security.allowed_paths, vec!["/tmp"]);
     }
@@ -1036,7 +1056,7 @@ sandbox:
   workspace_host: /tmp/test-workspace
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
-        let engine = build_engine_from_config(&config, None, None).unwrap();
+        let engine = build_engine_from_config(&config, None, None, false).unwrap();
         let security = engine.sandbox_settings().unwrap().security.as_ref().unwrap();
         assert!(
             security.allowed_paths.contains(&"/workspace".to_string()),
@@ -1063,7 +1083,7 @@ sandbox:
   network: full
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
-        let result = build_engine_from_config(&config, None, None);
+        let result = build_engine_from_config(&config, None, None, false);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not yet implemented"), "error was: {err}");
@@ -1085,7 +1105,7 @@ sandbox:
   allowed_hosts: ["api.example.com"]
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
-        let result = build_engine_from_config(&config, None, None);
+        let result = build_engine_from_config(&config, None, None, false);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not yet implemented"), "error was: {err}");
@@ -1107,8 +1127,72 @@ sandbox:
   network: true
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
-        let result = build_engine_from_config(&config, None, None);
+        let result = build_engine_from_config(&config, None, None, false);
         assert!(result.is_err());
+    }
+
+    // ── Task #76: --dev flag + sandbox.mode bypass ────────────────────
+
+    #[test]
+    fn dev_flag_bypasses_sandbox_when_microvm_config_declared() {
+        // --dev must let `sage run` skip the microVM even when the YAML
+        // explicitly sets `mode: microvm`. Previously this scenario
+        // unconditionally tried to spin up libkrunfw and failed on hosts
+        // without the shared lib. Build success with `dev=true` + airgapped
+        // network proves the bypass kicks in (otherwise the build would try
+        // to validate other sandbox fields).
+        let yaml = r#"
+name: dev-bypass
+description: "bypass with --dev"
+llm: { provider: openai, model: gpt-4o, max_tokens: 256 }
+system_prompt: "test"
+tools: {}
+constraints: { max_turns: 5, timeout_secs: 90 }
+sandbox:
+  mode: microvm
+  cpus: 1
+  memory_mib: 512
+  network: full
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        // Without --dev, `network: full` makes the build fail with "not yet
+        // implemented". With --dev, the sandbox block is skipped and build
+        // succeeds, proving the gate short-circuits before network validation.
+        let res = build_engine_from_config(&config, None, None, true);
+        assert!(
+            res.is_ok(),
+            "dev=true must skip entire sandbox block even when config declares microvm+full network; got {:?}",
+            res.err().map(|e| e.to_string())
+        );
+    }
+
+    #[test]
+    fn sandbox_mode_host_in_yaml_bypasses_without_dev_flag() {
+        // Equivalent escape hatch: YAML `mode: host` should skip the
+        // microVM path without needing `--dev`. Previously only `--dev`
+        // was wired; this change makes `with_dev_override` the single
+        // source of truth.
+        let yaml = r#"
+name: yaml-host-mode
+description: "yaml host"
+llm: { provider: openai, model: gpt-4o, max_tokens: 256 }
+system_prompt: "test"
+tools: {}
+constraints: { max_turns: 5, timeout_secs: 90 }
+sandbox:
+  mode: host
+  cpus: 1
+  memory_mib: 512
+  network: whitelist
+  allowed_hosts: ["x.example.com"]
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let res = build_engine_from_config(&config, None, None, false);
+        assert!(
+            res.is_ok(),
+            "config-declared host mode must skip sandbox validation (including network whitelist not-yet-implemented), got {:?}",
+            res.err().map(|e| e.to_string())
+        );
     }
 
     #[tokio::test]

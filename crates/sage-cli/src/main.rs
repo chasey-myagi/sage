@@ -101,6 +101,14 @@ enum Commands {
         /// Override model ID (e.g., qwen-plus, deepseek-chat)
         #[arg(long)]
         model: Option<String>,
+
+        /// Run without the microVM sandbox (use host filesystem directly).
+        ///
+        /// Useful on machines without libkrunfw installed, or for fast
+        /// iteration during development. Equivalent to setting
+        /// `sandbox.mode: host` in the config. Task #76.
+        #[arg(long)]
+        dev: bool,
     },
 
     /// Initialise a new agent workspace at ~/.sage/agents/<name>/
@@ -310,9 +318,17 @@ async fn main() -> Result<()> {
             message,
             provider,
             model,
+            dev,
         } => {
-            tracing::info!(config = %config, "running local agent");
-            serve::run_local_test(&config, &message, provider.as_deref(), model.as_deref()).await
+            tracing::info!(config = %config, dev, "running local agent");
+            serve::run_local_test(
+                &config,
+                &message,
+                provider.as_deref(),
+                model.as_deref(),
+                dev,
+            )
+            .await
         }
         Commands::Serve {
             runtime,
@@ -534,12 +550,33 @@ mod tests {
                 message,
                 provider,
                 model,
+                dev,
             } => {
                 assert_eq!(config, "test.yaml");
                 assert_eq!(message, "hi");
                 assert_eq!(provider.as_deref(), Some("qwen"));
                 assert_eq!(model.as_deref(), Some("qwen-plus"));
+                assert!(!dev, "--dev must default to false when flag is absent");
             }
+            _ => panic!("expected Run subcommand"),
+        }
+    }
+
+    #[test]
+    fn cli_run_with_dev_flag_parses() {
+        // Task #76: --dev flag toggles Sandbox::Host for machines without
+        // libkrunfw. The flag is a bool presence switch (clap default).
+        let cli = Cli::parse_from([
+            "sage",
+            "run",
+            "--config",
+            "test.yaml",
+            "--message",
+            "hi",
+            "--dev",
+        ]);
+        match cli.command {
+            Commands::Run { dev, .. } => assert!(dev, "--dev must parse to true"),
             _ => panic!("expected Run subcommand"),
         }
     }
