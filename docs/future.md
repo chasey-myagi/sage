@@ -2,11 +2,11 @@
 
 ## 一句话
 
-**可嵌入的 AI Agent 执行引擎 — 空白 Agent 内核，通过配置和扩展被上层项目定制。**
+**本地领域专家 Agent 平台 — 在你自己的机器上配置持续运行的专员，可扩展至生产多租户部署。**
 
-Sage 是一个 primitive，不是一个 product。它提供 Agent Loop + LLM + Tools + microVM Sandbox 的完整执行能力，但不管 UI、不管消息平台、不管业务逻辑。上层项目（Runeforge、AgentOS、第三方应用）嵌入 Sage 来获得安全的 AI Agent 执行能力。
+在你的 Mac 或服务器上运行飞书专员、GitHub Review 专员、信息调研专员……每个 Agent 有独立的持久化 workspace 和不断积累的领域记忆。本地开箱即用，工具环境和 Claude Code 一样直接；需要多租户隔离时，一行配置升级到 microVM 沙箱。
 
-类比：SQLite 之于数据库，Sage 之于 AI Agent。
+Sage 同时也是一个可嵌入的执行引擎：Runeforge / AgentOS 等上层平台通过 `sage-runtime` Rust crate 嵌入 Sage，获得完整的 Agent 执行能力。
 
 ## 定位
 
@@ -14,47 +14,59 @@ Sage 是一个 primitive，不是一个 product。它提供 Agent Loop + LLM + T
                     ┌─────────────────────────────────────────┐
                     │          不是什么                         │
                     │                                         │
-                    │  ✗ 面向终端用户的 Agent 产品               │
-                    │    （那是 Runeforge / AgentOS 的事）       │
-                    │  ✗ Agent 平台                             │
-                    │    （不管消息网关、不管学习闭环、不管 UI）    │
+                    │  ✗ 必须在云上跑的 Agent 服务               │
+                    │    （本地即可运行，云是可选的扩展）          │
+                    │  ✗ 每次对话都从零开始的 AI 助手             │
+                    │    （Memory 让它越用越懂你）               │
                     │  ✗ LLM 网关（不是 LiteLLM / OpenRouter）  │
                     └─────────────────────────────────────────┘
 
                     ┌─────────────────────────────────────────┐
                     │            是什么                         │
                     │                                         │
-                    │  ✓ 可嵌入的 AI Agent 执行引擎（primitive） │
-                    │  ✓ 空白 Agent：最小核心，被上层项目定制     │
-                    │  ✓ 沙箱隔离：每个任务在 microVM 中执行     │
+                    │  ✓ 本地领域专家 Agent 平台                 │
+                    │    （飞书专员 / 代码专员 / 调研专员……）     │
+                    │  ✓ Daemon 常驻：一直在线，等你找它          │
+                    │  ✓ Memory 驱动：Agent 主动积累领域知识      │
                     │  ✓ Config-Driven：YAML 声明一切            │
-                    │  ✓ 自带 CLI 验证界面（sage run / test）    │
+                    │  ✓ 双模式：本地(none) / 生产(microVM)      │
                     └─────────────────────────────────────────┘
 ```
 
 ### 参考项目对标
 
-| 项目 | 角色 | 消费者 |
+| 项目 | 角色 | 早期用户 |
 |------|------|--------|
-| SQLite | 嵌入式数据库引擎 | Firefox、iOS、Electron 应用 |
-| pi-mono | Agent 核心（TypeScript） | Claude Code、openclaw 等上层产品 |
-| **Sage** | Agent 核心（Rust）+ 沙箱 | Runeforge、AgentOS、第三方项目 |
+| Claude Code | 本地编码专家 Agent | 开发者个人 |
+| Hermes Agent | 本地多平台助手（多后端） | 个人 / 小团队 |
+| **Sage** | 本地领域专家 Agent 平台（可扩展生产） | 个人 / 小团队 → 企业多租户 |
 
-## 为什么要沙箱
+## 两种运行模式
 
-传统 coding agent（如 Claude Code、Cursor）跑在用户自己的笔记本上，用户看着它干什么，出事了自己负责。
+Sage 从第一天就支持两种模式，面向不同场景：
 
-Sage 的使用场景不同：任务可能从远程派发，LLM 生成的代码不可信，多个 Agent 可能共享同一台机器。
+| 模式 | 配置 | 适用 | 工具环境 |
+|------|------|------|---------|
+| **本地模式** | `sandbox: none` | 个人、小团队、可信环境 | 宿主机 PATH，brew / npm / pip 全部直接可用 |
+| **生产模式** | `sandbox: microvm` | 多租户、企业、不可信任务 | Linux microVM + tools/ 持久化卷 |
 
-| | 传统 Coding Agent | Sage |
+早期用户绝大多数用**本地模式**：开箱即用，工具环境无需额外配置，和 Claude Code 体验一致。当需要在共享服务器上部署、或需要多 Agent 安全隔离时，切换到生产模式。
+
+## 为什么 Daemon 比沙箱更重要（早期）
+
+Claude Code / Codex 的核心问题：每次对话都从零开始，用户需要反复解释背景。
+
+Sage 的核心价值在于 **Daemon 常驻 + Memory 积累**：
+
+| | Claude Code / Codex | Sage |
 |---|---|---|
-| 运行环境 | 用户笔记本 | 共享服务器 / 本地 |
-| 谁在看 | 用户盯着终端 | 可能无人值守 |
-| 信任模型 | 自己的机器，自己负责 | 不信任 LLM 产出的代码 |
-| 多租户 | 不存在 | 多 Agent 并发 |
-| 隔离需求 | 不需要 | **必须** |
+| 运行模型 | 会话式（退出清空） | **Daemon 常驻**（一直在线） |
+| 知识持久化 | CLAUDE.md（用户手动维护） | **MEMORY.md（Agent 主动更新）** |
+| 领域 | 固定（编码） | **可配置（任意领域）** |
+| 多 Agent | 不支持 | **支持（统一 TUI 管理）** |
+| 沙箱 | 宿主机直接运行 | 本地 none / 生产 microVM |
 
-**沙箱不是可选的附加功能，是 Sage 存在的理由之一。** 没有沙箱，Sage 就只是又一个 Agent 框架。有了沙箱，它才是一个能在生产环境跑的 Agent 引擎。
+**沙箱是生产升级路径，不是早期用户的门槛。** 对本地部署的早期用户而言，Daemon + Memory + Skills + Hook 才是核心价值。
 
 ## 核心公式
 
@@ -953,3 +965,32 @@ graph LR
 | sage-guest | 已完成 | ~230 |
 | sage-runner | 已完成 + toolset | ~500 |
 | **合计** | | **~19,600** |
+
+---
+
+## 领域专家 Agent 扩展架构
+
+在可嵌入引擎之上，Sage 独立 Agent 产品层围绕五层知识体系构建领域专家能力：
+
+| 层 | 机制 | 由谁维护 | 存储位置 |
+|---|---|---|---|
+| **Hook** | 确定性质量门控（代码层 Harness） | 开发者 | agent.yaml / hooks.yaml |
+| **Skill** | 全局只读 Markdown SOP | 开发者/领域专家 | ~/.sage/skills/ |
+| **Craft** | Agent 自管理可复用产物（任意类型） | Agent 自管理 | workspace/craft/ |
+| **Wiki** | LLM 维护的结构化领域知识库 | Agent（IDLE 时自动） | workspace/wiki/ |
+| **Memory** | 操作性短期记忆 | Agent + 用户 | workspace/memory/ |
+
+常驻 Daemon 模式让 Agent 在任务间隙自动维护 Wiki、评估 Craft 效率、积累 TaskRecord 评测数据。
+
+---
+
+## 文档导航
+
+| 文档 | 内容 |
+|------|------|
+| [design/knowledge-system.md](design/knowledge-system.md) | 四层知识架构 + Wiki 维护机制（What & Why） |
+| [design/daemon.md](design/daemon.md) | Daemon 运行模型 + VM Pool + Channel + 触发系统 |
+| [design/hook-craft.md](design/hook-craft.md) | Hook 机制 + Skill/Craft 两级架构 |
+| [design/eval.md](design/eval.md) | TaskRecord 评测系统 + MetricsCollector |
+| [design/harness.md](design/harness.md) | Harness 工程设计：Eval 脚本契约 + sage test + CI 集成 |
+| [roadmap.md](roadmap.md) | v0.7–v0.9 产品路线图（When & How） |
