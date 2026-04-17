@@ -126,4 +126,39 @@ mod tests {
         let cfg = enabled_cfg(1, 60);
         assert!(should_trigger_wiki_maintenance(&cfg, 1, None, 100));
     }
+
+    // ── Sprint 7 review follow-up (task #59): clock-rollback dedicated tests ──
+
+    /// Clock rollback: `last_maintenance_ts > now_unix_secs`. Without the
+    /// explicit guard at line 46, `saturating_sub` would yield 0 and the
+    /// cooldown check would spuriously pass, letting maintenance fire on
+    /// every call. This regression test pins the guard so a future refactor
+    /// that replaces the `if last > now` check with `saturating_sub` fails.
+    #[test]
+    fn clock_rollback_past_last_maintenance_does_not_trigger() {
+        let cfg = enabled_cfg(3, 60);
+        // last at t=500, now at t=100 (ntp snapped backwards 400 seconds)
+        assert!(
+            !should_trigger_wiki_maintenance(&cfg, 5, Some(500), 100),
+            "clock rollback (last > now) must not trigger even with enough unprocessed"
+        );
+    }
+
+    #[test]
+    fn clock_exactly_at_last_maintenance_ts_respects_cooldown() {
+        let cfg = enabled_cfg(3, 60);
+        // now == last (zero elapsed) and cooldown not elapsed → no trigger
+        assert!(
+            !should_trigger_wiki_maintenance(&cfg, 5, Some(1000), 1000),
+            "zero elapsed cooldown must not trigger"
+        );
+    }
+
+    #[test]
+    fn clock_rollback_one_second_does_not_trigger() {
+        // Minimal rollback: last=t, now=t-1. Still must short-circuit, not
+        // fall through to `elapsed < cooldown` comparison.
+        let cfg = enabled_cfg(3, 60);
+        assert!(!should_trigger_wiki_maintenance(&cfg, 5, Some(1000), 999));
+    }
 }

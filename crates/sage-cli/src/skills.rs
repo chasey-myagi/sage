@@ -136,14 +136,22 @@ pub async fn scan_skills(
 
     merged
         .into_iter()
-        .filter(|s| match &s.agent {
-            None => true,
-            // Strict: empty current_agent only matches `agent = None`,
-            // never `agent = Some("")`.
-            Some(_) if current_agent.is_empty() => false,
-            Some(a) => a == current_agent,
-        })
+        .filter(|s| agent_matches(&s.agent, current_agent))
         .collect()
+}
+
+/// Return true when a skill/craft with `agent` field should be visible to the
+/// named `current_agent`. Strict semantics: empty `current_agent` only matches
+/// `agent = None`, never `agent = Some("")`.
+///
+/// Extracted (Sprint 12 / S10.2 Linus review #3) to avoid repeating the match
+/// in `scan_skills` and `scan_skills_and_crafts`'s post-filter for crafts.
+fn agent_matches(agent: &Option<String>, current_agent: &str) -> bool {
+    match agent {
+        None => true,
+        Some(_) if current_agent.is_empty() => false,
+        Some(a) => a == current_agent,
+    }
 }
 
 /// Render a compact skill index block for the system prompt.
@@ -1347,14 +1355,10 @@ pub async fn scan_skills_and_crafts(
     let skills = scan_skills(global_skills_dir, workspace_skills_dir, current_agent).await;
     let crafts = scan_crafts(workspace_craft_dir).await;
 
-    // Apply agent filter to crafts (same logic as scan_skills).
+    // Apply agent filter to crafts (shared helper with scan_skills).
     let filtered_crafts: Vec<SkillMeta> = crafts
         .into_iter()
-        .filter(|s| match &s.agent {
-            None => true,
-            Some(_) if current_agent.is_empty() => false,
-            Some(a) => a == current_agent,
-        })
+        .filter(|s| agent_matches(&s.agent, current_agent))
         .collect();
 
     // Merge: skills first, then crafts that don't collide with a skill name.
