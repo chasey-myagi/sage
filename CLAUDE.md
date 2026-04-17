@@ -1,6 +1,6 @@
 # Sage
 
-Embeddable AI Agent execution engine — Rust workspace，基于 msb_krun microVM 沙箱。
+领域专家 Agent 应用 — 给任意领域配置一个有独立工作空间、有记忆沉淀的专员。基于 msb_krun microVM 沙箱，通过 TUI 交互或 Runeforge Caster 调度。
 
 ## 项目结构
 

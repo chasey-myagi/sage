@@ -1,81 +1,94 @@
 # Sage
 
-Embeddable AI Agent execution engine — 在 msb_krun microVM 沙箱中安全执行 AI Agent 任务。
-
-基于 [msb_krun](https://crates.io/crates/msb_krun) (纯 Rust microVM) 构建硬件级隔离沙箱，通过 [Rune Runtime](https://github.com/chasey-myagi/rune) 注册为分布式 Caster。
-
-## 架构
-
-```
-Rune Runtime (gRPC :50070)
-       │
-       ��
-Sage CLI (crates/sage-cli)
-  ├─ 注册 agents.execute rune (Phase 2)
-  ├─ 接收 { config: AgentConfig, message: string }
-  ├─ 根据 config.tools 生成 ToolPolicy
-  │
-  ▼
-Sage Runtime (crates/sage-runtime)
-  ├─ Agent Loop (LLM + Tools + Event Stream)
-  ├─ LLM Providers (Anthropic, OpenAI, Google, etc.)
-  │
-  ▼
-Sandbox (crates/sage-sandbox)
-  ├─ msb_krun VmBuilder → 创建 microVM
-  ├─ AgentRelay ← virtio-console → Guest Agent
-  │
-  ▼
-Guest Agent (crates/sage-guest)        ← 运行在 VM 内部
-  ├─ PID 1 init (mount, security)
-  ├─ 接收 ExecRequest / FsRequest
-  ├─ 执行命令 (白名单校验)
-  └─ 返回结果
-```
-
-## ��目结构
-
-```
-sage/ (原 agent-caster)
-├── Cargo.toml                   # Workspace
-├── crates/
-│   ├── sage-cli/                # CLI 入口 (clap + Rune SDK stub)
-│   ├── sage-runtime/            # Agent 执行引擎 (LLM + Tools + Events)
-│   ├── sage-sandbox/            # Host 端沙箱 SDK (msb_krun)
-│   ├── sage-protocol/           # Host↔Guest 线协议 (CBOR)
-│   ├── sage-guest/              # Guest Agent (VM 内 PID 1)
-│   └── sage-runner/             # AgentConfig + ToolPolicy
-├── configs/
-│   ├── coding-assistant.yaml
-│   ├── deepseek-coder.yaml
-│   └── feishu-assistant.yaml
-└── docs/
-    └── future.md                # 定位 & 规划
-```
-
-## 前置条件
-
-- Rust 1.85+
-- [Rune Runtime](https://github.com/chasey-myagi/rune) (可选，serve 模式需要)
-- macOS Apple Silicon 或 Linux (KVM)
-- LLM API Key 环境变量 (如 `ANTHROPIC_API_KEY`)
+Sage is an embeddable AI agent execution engine with CLI, daemon mode, TUI, and trigger scheduler. It runs agents defined by YAML configs against configurable LLM providers and tool sets.
 
 ## Quick Start
 
 ```bash
-cargo build
-cargo run -p sage-cli -- run --config configs/coding-assistant.yaml --message "hello"
+# Install (from source)
+cargo install --path crates/sage-cli
+
+# Initialise a config
+sage init --name my-agent > config.yaml
+
+# Chat
+sage run --config config.yaml --message "hello"
 ```
 
-## 开发
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `sage run` | Run a single agent turn (non-interactive) |
+| `sage chat` | Interactive TUI chat session |
+| `sage start` | Start daemon (background agent socket) |
+| `sage connect` | Attach TUI to a running daemon |
+| `sage send` | Send a message to a running daemon |
+| `sage stop` | Shut down the daemon |
+| `sage init` | Scaffold a minimal config file |
+| `sage serve` | Register as a Rune Runtime Caster |
+
+## Config Format
+
+```yaml
+name: my-agent
+system_prompt: "You are a helpful assistant."
+llm:
+  provider: anthropic          # anthropic | openai | google | bedrock
+  model: claude-haiku-4-5-20251001
+  max_tokens: 4096
+constraints:
+  max_turns: 10
+  timeout_secs: 120
+tools:
+  toolset: coding              # coding | web | none | custom
+hooks:
+  pre_tool_use:
+    - command: 'echo "tool: $SAGE_TOOL_NAME" >&2'
+  stop:
+    - command: './evals/check_output.sh'
+      timeout_secs: 10
+```
+
+Required environment variables depend on provider:
+
+| Provider | Variable |
+|----------|----------|
+| `anthropic` | `ANTHROPIC_API_KEY` |
+| `openai` | `OPENAI_API_KEY` |
+| `google` | `GOOGLE_API_KEY` |
+| `bedrock` | `AWS_*` (standard AWS credentials) |
+
+## Architecture
+
+```
+sage-cli          CLI entry point (clap), daemon socket, TUI
+     │
+sage-runner       AgentConfig (YAML), ToolPolicy, hooks, channel adapters
+     │
+sage-runtime      Agent loop, LLM providers, tool dispatch, event stream
+     │
+sage-sandbox      Host-side microVM SDK (msb_krun)
+     │   virtio-console
+sage-guest        Guest agent — PID 1 inside VM, executes tool commands
+sage-protocol     Host↔Guest wire protocol (length-prefixed CBOR)
+```
+
+Daemon mode exposes a Unix socket (`~/.sage/daemon.sock`). `sage connect` / `sage send` communicate over that socket. The trigger scheduler runs periodic agents via cron-style expressions in config.
+
+## Building from Source
 
 ```bash
-cargo build
-cargo test --workspace
-cargo clippy --workspace
-```
+# Prerequisites: Rust 1.85+, macOS Apple Silicon or Linux (KVM)
+cargo build --workspace
+cargo build -p sage-cli --release
 
-详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+# Run tests
+cargo test --workspace
+
+# Lint
+cargo clippy --workspace -- -D warnings
+```
 
 ## License
 
