@@ -399,12 +399,12 @@ pub async fn build_engine_for_agent(config: &AgentConfig, dev: bool) -> anyhow::
 
     if let Some(hooks) = &config.hooks {
         if !hooks.pre_tool_use.is_empty() {
-            builder = builder.on_before_tool_call(ScriptPreToolUseHook {
+            builder = builder.on_pre_tool_use(ScriptPreToolUseHook {
                 hooks: hooks.pre_tool_use.clone(),
             });
         }
         if !hooks.post_tool_use.is_empty() {
-            builder = builder.on_after_tool_call(ScriptPostToolUseHook {
+            builder = builder.on_post_tool_use(ScriptPostToolUseHook {
                 hooks: hooks.post_tool_use.clone(),
             });
         }
@@ -632,12 +632,12 @@ fn build_engine_from_config(
     // Wire lifecycle hooks from config
     if let Some(hooks) = &config.hooks {
         if !hooks.pre_tool_use.is_empty() {
-            builder = builder.on_before_tool_call(ScriptPreToolUseHook {
+            builder = builder.on_pre_tool_use(ScriptPreToolUseHook {
                 hooks: hooks.pre_tool_use.clone(),
             });
         }
         if !hooks.post_tool_use.is_empty() {
-            builder = builder.on_after_tool_call(ScriptPostToolUseHook {
+            builder = builder.on_post_tool_use(ScriptPostToolUseHook {
                 hooks: hooks.post_tool_use.clone(),
             });
         }

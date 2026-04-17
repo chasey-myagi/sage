@@ -991,14 +991,40 @@ impl SageEngineBuilder {
 
     // ── Hooks ──
 
-    pub fn on_before_tool_call(mut self, hook: impl BeforeToolCallHook + 'static) -> Self {
+    /// Register a hook invoked just before every tool call.
+    ///
+    /// The name follows the PreToolUse / PostToolUse lifecycle nomenclature
+    /// used by `HookEvent` (Sprint 6). The older `on_before_tool_call` name
+    /// is preserved as a `#[deprecated]` alias.
+    pub fn on_pre_tool_use(mut self, hook: impl BeforeToolCallHook + 'static) -> Self {
         self.before_hook = Some(Arc::new(hook));
         self
     }
 
-    pub fn on_after_tool_call(mut self, hook: impl AfterToolCallHook + 'static) -> Self {
+    /// Register a hook invoked just after every tool call.
+    ///
+    /// See `on_pre_tool_use` for the naming rationale.
+    pub fn on_post_tool_use(mut self, hook: impl AfterToolCallHook + 'static) -> Self {
         self.after_hook = Some(Arc::new(hook));
         self
+    }
+
+    /// Deprecated alias for [`SageEngineBuilder::on_pre_tool_use`].
+    #[deprecated(
+        since = "0.5.0",
+        note = "renamed to `on_pre_tool_use` to align with HookEvent lifecycle naming"
+    )]
+    pub fn on_before_tool_call(self, hook: impl BeforeToolCallHook + 'static) -> Self {
+        self.on_pre_tool_use(hook)
+    }
+
+    /// Deprecated alias for [`SageEngineBuilder::on_post_tool_use`].
+    #[deprecated(
+        since = "0.5.0",
+        note = "renamed to `on_post_tool_use` to align with HookEvent lifecycle naming"
+    )]
+    pub fn on_after_tool_call(self, hook: impl AfterToolCallHook + 'static) -> Self {
+        self.on_post_tool_use(hook)
     }
 
     /// Set a hook called before each LLM call to transform the message history.
@@ -1287,11 +1313,31 @@ mod tests {
             .system_prompt("test")
             .provider("test")
             .model("test-model")
-            .on_before_tool_call(BlockAllHook)
-            .on_after_tool_call(NoopAfterHook)
+            .on_pre_tool_use(BlockAllHook)
+            .on_post_tool_use(NoopAfterHook)
             .build();
         assert!(result.is_ok());
         let e = result.unwrap();
+        assert!(e.before_hook.is_some());
+        assert!(e.after_hook.is_some());
+    }
+
+    /// Regression test for S6.4: the deprecated aliases
+    /// `on_before_tool_call` / `on_after_tool_call` must still route hooks
+    /// into the same slots as the new `on_pre_tool_use` / `on_post_tool_use`.
+    /// We keep this test forever (or until the aliases are removed) so
+    /// existing downstream code compiled against the old names keeps working.
+    #[test]
+    #[allow(deprecated)]
+    fn builder_deprecated_hook_aliases_still_work() {
+        let e = SageEngine::builder()
+            .system_prompt("test")
+            .provider("test")
+            .model("test-model")
+            .on_before_tool_call(BlockAllHook)
+            .on_after_tool_call(NoopAfterHook)
+            .build()
+            .unwrap();
         assert!(e.before_hook.is_some());
         assert!(e.after_hook.is_some());
     }
@@ -1322,8 +1368,8 @@ mod tests {
             .register_tool(EchoTool)
             .base_url("http://custom.api")
             .api_key_env("MY_KEY")
-            .on_before_tool_call(BlockAllHook)
-            .on_after_tool_call(NoopAfterHook)
+            .on_pre_tool_use(BlockAllHook)
+            .on_post_tool_use(NoopAfterHook)
             .build();
         assert!(result.is_ok());
         let e = result.unwrap();
@@ -1459,7 +1505,7 @@ mod tests {
             .system_prompt("test")
             .llm_provider(tool_call_provider("echo", r#"{"input":"test"}"#))
             .register_tool(EchoTool)
-            .on_before_tool_call(BlockAllHook)
+            .on_pre_tool_use(BlockAllHook)
             .build()
             .unwrap();
 
