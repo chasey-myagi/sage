@@ -6,6 +6,7 @@ members = [
     "crates/sage-guest",
     "crates/sage-runner",
     "crates/sage-runtime",
+    "crates/sage-channel-feishu",
 ]
 resolver = "2"
 

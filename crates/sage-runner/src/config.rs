@@ -65,6 +65,10 @@ pub struct AgentConfig {
     /// Wiki self-maintenance configuration (Sprint 7).
     #[serde(default)]
     pub wiki: Option<WikiConfig>,
+    /// Outbound/inbound channel adapter (Sprint 8).
+    /// `None` means the agent runs headless (CLI / daemon socket only).
+    #[serde(default)]
+    pub channel: Option<ChannelConfig>,
 }
 
 /// LLM provider and model selection.
@@ -599,6 +603,52 @@ fn default_wiki_trigger_sessions() -> u32 {
 }
 fn default_wiki_cooldown_secs() -> u64 {
     1800
+}
+
+/// Channel adapter configuration (Sprint 8).
+///
+/// A channel plugs the agent into an external messaging platform (Feishu,
+/// Slack, …). The variant selects the platform; fields inside carry the
+/// platform-specific credentials and webhook server settings.
+///
+/// Serialized form uses an explicit `type:` tag so future variants can be
+/// added without breaking existing YAML:
+///
+/// ```yaml
+/// channel:
+///   type: feishu
+///   app_id: cli_xxx
+///   app_secret: ${FEISHU_APP_SECRET}
+///   verification_token: optional
+///   webhook_port: 3400
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ChannelConfig {
+    /// Feishu / Lark channel.
+    Feishu {
+        /// App ID from the Feishu developer console.
+        app_id: String,
+        /// App secret. Supports `${ENV_VAR}` expansion at load time so
+        /// secrets don't have to live in the YAML verbatim.
+        app_secret: String,
+        /// Verification token used to validate inbound webhook signatures
+        /// (HMAC-SHA256).
+        ///
+        /// **PRODUCTION: always set this.** `None` disables signature
+        /// checking and the webhook will accept any payload — dev/testing
+        /// only. The handler logs a warning on every unverified request so
+        /// the risk is visible in logs.
+        #[serde(default)]
+        verification_token: Option<String>,
+        /// Local port the webhook HTTP server binds to.
+        #[serde(default = "default_webhook_port")]
+        webhook_port: u16,
+    },
+}
+
+fn default_webhook_port() -> u16 {
+    3400
 }
 
 impl Default for WikiConfig {
@@ -4428,6 +4478,141 @@ constraints: { max_turns: 1, timeout_secs: 1 }
         assert!(
             config.hooks.is_none(),
             "missing hooks section must deserialize to None"
+        );
+    }
+
+    // ========================================================================
+    // Sprint 8: ChannelConfig (Feishu)
+    // ========================================================================
+
+    const CHANNEL_BASE_YAML: &str = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+"#;
+
+    #[test]
+    fn channel_config_default_webhook_port_is_3400() {
+        // default_webhook_port() is exercised indirectly via serde default.
+        let yaml = format!(
+            r#"{CHANNEL_BASE_YAML}
+channel:
+  type: feishu
+  app_id: cli_abc
+  app_secret: secret123
+"#
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        match config.channel.expect("channel must be Some") {
+            ChannelConfig::Feishu { webhook_port, .. } => {
+                assert_eq!(webhook_port, 3400);
+            }
+        }
+    }
+
+    #[test]
+    fn channel_config_parse_feishu_full_fields() {
+        let yaml = format!(
+            r#"{CHANNEL_BASE_YAML}
+channel:
+  type: feishu
+  app_id: cli_abc
+  app_secret: "secret-xyz"
+  verification_token: "vtok-1"
+  webhook_port: 4500
+"#
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let ch = config.channel.expect("channel must be Some");
+        match ch {
+            ChannelConfig::Feishu {
+                app_id,
+                app_secret,
+                verification_token,
+                webhook_port,
+            } => {
+                assert_eq!(app_id, "cli_abc");
+                assert_eq!(app_secret, "secret-xyz");
+                assert_eq!(verification_token.as_deref(), Some("vtok-1"));
+                assert_eq!(webhook_port, 4500);
+            }
+        }
+    }
+
+    #[test]
+    fn channel_config_verification_token_optional() {
+        let yaml = format!(
+            r#"{CHANNEL_BASE_YAML}
+channel:
+  type: feishu
+  app_id: cli_abc
+  app_secret: "secret-xyz"
+  webhook_port: 3400
+"#
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        match config.channel.unwrap() {
+            ChannelConfig::Feishu {
+                verification_token, ..
+            } => {
+                assert!(verification_token.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn channel_config_webhook_port_defaults_to_3400_when_omitted() {
+        let yaml = format!(
+            r#"{CHANNEL_BASE_YAML}
+channel:
+  type: feishu
+  app_id: cli_abc
+  app_secret: s
+  verification_token: v
+"#
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        match config.channel.unwrap() {
+            ChannelConfig::Feishu { webhook_port, .. } => assert_eq!(webhook_port, 3400),
+        }
+    }
+
+    #[test]
+    fn channel_config_serde_roundtrip_preserves_fields() {
+        let original = ChannelConfig::Feishu {
+            app_id: "cli_round".into(),
+            app_secret: "rts".into(),
+            verification_token: Some("vt".into()),
+            webhook_port: 8080,
+        };
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let decoded: ChannelConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn agent_config_without_channel_section_defaults_to_none() {
+        let config: AgentConfig = serde_yaml::from_str(CHANNEL_BASE_YAML).unwrap();
+        assert!(config.channel.is_none());
+    }
+
+    #[test]
+    fn channel_config_unknown_type_fails_to_parse() {
+        let yaml = format!(
+            r#"{CHANNEL_BASE_YAML}
+channel:
+  type: mirc
+  app_id: x
+  app_secret: y
+"#
+        );
+        let result: Result<AgentConfig, _> = serde_yaml::from_str(&yaml);
+        assert!(
+            result.is_err(),
+            "unknown channel type must fail to deserialize"
         );
     }
 }
