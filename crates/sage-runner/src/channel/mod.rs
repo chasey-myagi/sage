@@ -56,12 +56,20 @@ pub trait ChannelAdapter: Send + Sync {
 /// verification) lives in the `sage-channel-feishu` crate. This stub exists
 /// so that the trait extensions are exercised by unit tests without pulling
 /// the full networking stack into `sage-runner`.
+///
+/// **Deprecated** for production use — any non-test caller should depend on
+/// `sage_channel_feishu::FeishuChannel` which actually sends via webhook.
+#[deprecated(
+    since = "0.0.2",
+    note = "Test-only stub; use sage_channel_feishu::FeishuChannel for real webhook delivery"
+)]
 pub struct FeishuChannel {
     /// Outbound webhook URL for sending messages.
     pub webhook_url: String,
 }
 
 #[async_trait]
+#[allow(deprecated)] // impl for stub is expected; callers outside crate see the warn
 impl ChannelAdapter for FeishuChannel {
     fn name(&self) -> &str {
         "feishu"
@@ -80,6 +88,7 @@ impl ChannelAdapter for FeishuChannel {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // tests intentionally exercise the stub
 mod tests {
     use super::*;
     use sage_runtime::event::{AgentEvent, Visibility};
