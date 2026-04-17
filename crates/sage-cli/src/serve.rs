@@ -101,6 +101,7 @@ pub(crate) async fn init_agent_at(
     name: &str,
     provider_override: Option<&str>,
     model_override: Option<&str>,
+    goal: Option<&str>,
 ) -> Result<()> {
     validate_agent_name(name)?;
 
@@ -162,7 +163,12 @@ pub(crate) async fn init_agent_at(
     write_if_new(&skills_dir.join("INDEX.md"), skills_index_seed).await?;
 
     let config_template = include_str!("templates/config.yaml");
-    let mut config_content = config_template.replace("__NAME__", name);
+    let goal_text = goal
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("(describe what you want {name} to do for you)"));
+    let mut config_content = config_template
+        .replace("__NAME__", name)
+        .replace("__GOAL__", &goal_text);
     // Sprint 12 M4: `--provider` / `--model` CLI flag override. Uses literal
     // string replacement, so the template MUST contain these exact defaults.
     // The debug_assert catches drift: if someone edits templates/config.yaml
@@ -227,9 +233,17 @@ pub async fn init_agent(
     agent: &str,
     provider_override: Option<&str>,
     model_override: Option<&str>,
+    goal: Option<&str>,
 ) -> Result<()> {
     let agents_dir = sage_agents_dir()?;
-    init_agent_at(&agents_dir, agent, provider_override, model_override).await?;
+    init_agent_at(
+        &agents_dir,
+        agent,
+        provider_override,
+        model_override,
+        goal,
+    )
+    .await?;
     println!(
         "✓ Initialized agent '{agent}' at {}",
         agents_dir.join(agent).display()
@@ -466,7 +480,12 @@ pub async fn load_agent_config_with_hash(
 /// `sage chat --dev` and the daemon started with `sage start --dev`.
 pub async fn build_engine_for_agent(config: &AgentConfig, dev: bool) -> anyhow::Result<SageEngine> {
     let agent_dir = sage_agents_dir()?.join(&config.name);
-    let system_prompt = build_system_prompt(&config.system_prompt, config, &agent_dir).await;
+    // Compose SAGE_CORE_PROMPT (platform methodology) + agent's goal into
+    // the base system prompt, then let build_system_prompt prepend memory
+    // sections. Per-agent config only owns the goal — the "how to work"
+    // skeleton is platform-level and applies to every Sage agent uniformly.
+    let base = sage_runtime::compose_sage_prompt(&config.goal);
+    let system_prompt = build_system_prompt(&base, config, &agent_dir).await;
 
     let tool_names = config.tools.tool_names();
     let tool_name_refs: Vec<&str> = tool_names.iter().map(|s| s.as_str()).collect();
@@ -725,9 +744,10 @@ fn build_engine_from_config(
     let tool_names = config.tools.tool_names();
     let tool_name_refs: Vec<&str> = tool_names.iter().map(|s| s.as_str()).collect();
 
+    let composed = sage_runtime::compose_sage_prompt(&config.goal);
     let mut builder = SageEngine::builder()
         .name(&config.name)
-        .system_prompt(&config.system_prompt)
+        .system_prompt(&composed)
         .provider(provider_override.unwrap_or(&config.llm.provider))
         .model(model_override.unwrap_or(&config.llm.model))
         // Sprint 12 M1: pass Option<u32> straight through — the builder and
@@ -935,7 +955,7 @@ mod tests {
 name: sandboxed
 description: "sandboxed"
 llm: { provider: test, model: test-model, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 sandbox:
@@ -961,7 +981,7 @@ sandbox:
 name: timed
 description: "timed"
 llm: { provider: test, model: test-model, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 47 }
 "#;
@@ -977,7 +997,7 @@ constraints: { max_turns: 5, timeout_secs: 47 }
 name: secured
 description: "secured"
 llm: { provider: test, model: test-model, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 sandbox:
@@ -1002,7 +1022,7 @@ sandbox:
 name: custom-sec
 description: "custom"
 llm: { provider: test, model: test-model, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 sandbox:
@@ -1034,7 +1054,7 @@ sandbox:
 name: no-sec-section
 description: "no explicit security"
 llm: { provider: test, model: test-model, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 sandbox:
@@ -1058,7 +1078,7 @@ sandbox:
 name: no-sandbox
 description: "no sandbox"
 llm: { provider: test, model: test-model, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 "#;
@@ -1074,7 +1094,7 @@ constraints: { max_turns: 5, timeout_secs: 90 }
 name: pipeline-test
 description: "full pipeline"
 llm: { provider: test, model: test-model, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 sandbox:
@@ -1116,7 +1136,7 @@ sandbox:
 name: paths-test
 description: "test"
 llm: { provider: test, model: test-model, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 sandbox:
@@ -1136,7 +1156,7 @@ sandbox:
 name: ws-paths-test
 description: "test"
 llm: { provider: test, model: test-model, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 sandbox:
@@ -1163,7 +1183,7 @@ sandbox:
 name: net-full
 description: "full network"
 llm: { provider: test, model: test-model, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 sandbox:
@@ -1184,7 +1204,7 @@ sandbox:
 name: net-whitelist
 description: "whitelist network"
 llm: { provider: test, model: test-model, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 sandbox:
@@ -1207,7 +1227,7 @@ sandbox:
 name: net-true
 description: "bool network"
 llm: { provider: test, model: test-model, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 sandbox:
@@ -1234,7 +1254,7 @@ sandbox:
 name: dev-bypass
 description: "bypass with --dev"
 llm: { provider: openai, model: gpt-4o, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 sandbox:
@@ -1265,7 +1285,7 @@ sandbox:
 name: yaml-host-mode
 description: "yaml host"
 llm: { provider: openai, model: gpt-4o, max_tokens: 256 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 90 }
 sandbox:
@@ -1319,7 +1339,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_creates_full_skeleton() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None, None).await.unwrap();
 
         let agent_root = tmp.path().join("agent1");
         for path in expected_skeleton_paths(&agent_root) {
@@ -1330,7 +1350,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_schema_md_matches_template_bytes() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None, None).await.unwrap();
 
         let schema_path = tmp.path().join("agent1").join("workspace").join("SCHEMA.md");
         let written = tokio::fs::read(&schema_path).await.unwrap();
@@ -1344,7 +1364,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_schema_md_utf8_roundtrip() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None, None).await.unwrap();
 
         let schema_path = tmp.path().join("agent1").join("workspace").join("SCHEMA.md");
         let written = tokio::fs::read_to_string(&schema_path).await.unwrap();
@@ -1355,7 +1375,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_wiki_index_has_marker() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None, None).await.unwrap();
 
         let path = tmp.path().join("agent1").join("workspace").join("wiki").join("index.md");
         let content = tokio::fs::read_to_string(&path).await.unwrap();
@@ -1368,7 +1388,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_wiki_log_has_append_only_marker() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None, None).await.unwrap();
 
         let path = tmp.path().join("agent1").join("workspace").join("wiki").join("log.md");
         let content = tokio::fs::read_to_string(&path).await.unwrap();
@@ -1381,7 +1401,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_wiki_overview_has_synthesis_marker() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None, None).await.unwrap();
 
         let path = tmp.path().join("agent1").join("workspace").join("wiki").join("overview.md");
         let content = tokio::fs::read_to_string(&path).await.unwrap();
@@ -1394,7 +1414,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_gitkeep_files_are_empty() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None, None).await.unwrap();
 
         let ws = tmp.path().join("agent1").join("workspace");
         let gitkeeps = [
@@ -1419,7 +1439,7 @@ sandbox:
         // that `init_agent` used to create (AGENT.md / MEMORY.md / config.yaml
         // / workspace/).
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None, None).await.unwrap();
 
         let agent_root = tmp.path().join("agent1");
         assert!(agent_root.join("AGENT.md").is_file());
@@ -1439,7 +1459,7 @@ sandbox:
         tokio::fs::create_dir_all(schema_path.parent().unwrap()).await.unwrap();
         tokio::fs::write(&schema_path, b"custom content").await.unwrap();
 
-        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None, None).await.unwrap();
 
         let got = tokio::fs::read(&schema_path).await.unwrap();
         assert_eq!(
@@ -1456,7 +1476,7 @@ sandbox:
         let agent_root = tmp.path().join("agent1");
         tokio::fs::create_dir_all(agent_root.join("workspace")).await.unwrap();
 
-        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None, None).await.unwrap();
 
         for path in expected_skeleton_paths(&agent_root) {
             assert!(
@@ -1470,21 +1490,21 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_rejects_empty_name() {
         let tmp = tempfile::TempDir::new().unwrap();
-        assert!(init_agent_at(tmp.path(), "", None, None).await.is_err());
+        assert!(init_agent_at(tmp.path(), "", None, None, None).await.is_err());
     }
 
     #[tokio::test]
     async fn test_init_agent_at_rejects_dotdot_name() {
         let tmp = tempfile::TempDir::new().unwrap();
-        assert!(init_agent_at(tmp.path(), "../evil", None, None).await.is_err());
-        assert!(init_agent_at(tmp.path(), "good/../evil", None, None).await.is_err());
+        assert!(init_agent_at(tmp.path(), "../evil", None, None, None).await.is_err());
+        assert!(init_agent_at(tmp.path(), "good/../evil", None, None, None).await.is_err());
     }
 
     #[tokio::test]
     async fn test_init_agent_at_rejects_slash_name() {
         let tmp = tempfile::TempDir::new().unwrap();
-        assert!(init_agent_at(tmp.path(), "/etc/passwd", None, None).await.is_err());
-        assert!(init_agent_at(tmp.path(), "nested/name", None, None).await.is_err());
+        assert!(init_agent_at(tmp.path(), "/etc/passwd", None, None, None).await.is_err());
+        assert!(init_agent_at(tmp.path(), "nested/name", None, None, None).await.is_err());
     }
 
     // ── Sprint 12 task #72 sub-path 2: record_session_model wiring ────────
@@ -1573,7 +1593,7 @@ sandbox:
 name: t
 description: ""
 llm: { provider: openai, model: gpt-4o }
-system_prompt: "BASE"
+goal: "BASE"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 60 }
 "#;

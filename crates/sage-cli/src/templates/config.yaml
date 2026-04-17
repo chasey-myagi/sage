@@ -4,8 +4,8 @@ llm:
   provider: anthropic
   model: claude-haiku-4-5-20251001
   max_tokens: 4096
-system_prompt: |
-  你是 __NAME__ 专员。
+goal: |
+  __GOAL__
 tools:
   toolset: coding
 constraints:

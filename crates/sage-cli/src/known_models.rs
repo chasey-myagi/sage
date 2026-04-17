@@ -489,7 +489,7 @@ mod tests {
         std::fs::create_dir_all(&a1).unwrap();
         std::fs::write(
             a1.join("config.yaml"),
-            "name: agent1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: kimi-k1\nsystem_prompt: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
+            "name: agent1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: kimi-k1\ngoal: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
         )
         .unwrap();
 
@@ -498,7 +498,7 @@ mod tests {
         std::fs::create_dir_all(&a2).unwrap();
         std::fs::write(
             a2.join("config.yaml"),
-            "name: agent2\ndescription: \"\"\nllm:\n  provider: openai\n  model: gpt-4\nsystem_prompt: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
+            "name: agent2\ndescription: \"\"\nllm:\n  provider: openai\n  model: gpt-4\ngoal: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
         )
         .unwrap();
 
@@ -551,7 +551,7 @@ mod tests {
 
         std::fs::write(
             a1.join("config.yaml"),
-            "name: agent1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: kimi-k1\nsystem_prompt: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
+            "name: agent1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: kimi-k1\ngoal: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
         )
         .unwrap();
         std::fs::write(
@@ -614,7 +614,7 @@ mod tests {
         std::fs::create_dir_all(&good).unwrap();
         std::fs::write(
             good.join("config.yaml"),
-            "name: good\ndescription: \"\"\nllm:\n  provider: kimi\n  model: kimi-k1\nsystem_prompt: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
+            "name: good\ndescription: \"\"\nllm:\n  provider: kimi\n  model: kimi-k1\ngoal: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
         )
         .unwrap();
 
@@ -652,7 +652,7 @@ mod tests {
         std::fs::create_dir_all(&a1).unwrap();
         std::fs::write(
             a1.join("config.yaml"),
-            "name: agent1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: k2\nsystem_prompt: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
+            "name: agent1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: k2\ngoal: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
         )
         .unwrap();
 
@@ -704,14 +704,14 @@ mod tests {
         std::fs::create_dir_all(&a1).unwrap();
         std::fs::write(
             a1.join("config.yaml"),
-            "name: agent1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: m-model\nsystem_prompt: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
+            "name: agent1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: m-model\ngoal: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
         )
         .unwrap();
         let a2 = agents_dir.join("agent2");
         std::fs::create_dir_all(&a2).unwrap();
         std::fs::write(
             a2.join("config.yaml"),
-            "name: agent2\ndescription: \"\"\nllm:\n  provider: kimi\n  model: a-model\nsystem_prompt: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
+            "name: agent2\ndescription: \"\"\nllm:\n  provider: kimi\n  model: a-model\ngoal: test\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
         )
         .unwrap();
 
@@ -778,7 +778,7 @@ mod tests {
         std::fs::create_dir_all(&a1).unwrap();
         std::fs::write(
             a1.join("config.yaml"),
-            "name: agent1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: history-only-model\nsystem_prompt: t\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
+            "name: agent1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: history-only-model\ngoal: t\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
         )
         .unwrap();
 
@@ -799,7 +799,7 @@ mod tests {
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(
                 dir.join("config.yaml"),
-                format!("name: {name}\ndescription: \"\"\nllm:\n  provider: {prov}\n  model: {model}\nsystem_prompt: t\ntools: {{}}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n"),
+                format!("name: {name}\ndescription: \"\"\nllm:\n  provider: {prov}\n  model: {model}\ngoal: t\ntools: {{}}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n"),
             ).unwrap();
         }
 
@@ -862,7 +862,7 @@ mod tests {
         std::fs::create_dir_all(&a1).unwrap();
         std::fs::write(
             a1.join("config.yaml"),
-            "name: a1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: shared-k\nsystem_prompt: t\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
+            "name: a1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: shared-k\ngoal: t\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
         ).unwrap();
 
         let candidates = candidates_for_provider(&home, &agents_dir, "kimi");
@@ -889,7 +889,7 @@ mod tests {
         std::fs::create_dir_all(&a1).unwrap();
         std::fs::write(
             a1.join("config.yaml"),
-            "name: agent1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: history-model\nsystem_prompt: t\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
+            "name: agent1\ndescription: \"\"\nllm:\n  provider: kimi\n  model: history-model\ngoal: t\ntools: {}\nconstraints:\n  max_turns: 5\n  timeout_secs: 60\n",
         ).unwrap();
 
         // Must not panic, must fall back to history

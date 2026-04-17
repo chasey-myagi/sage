@@ -43,8 +43,12 @@ pub struct AgentConfig {
     pub description: String,
     /// LLM provider and model selection.
     pub llm: LlmConfig,
-    /// Base system prompt. Memory and skill sections are prepended/appended at runtime.
-    pub system_prompt: String,
+    /// One-line domain identity — "what this agent is for". The full
+    /// system prompt fed to the LLM is composed at runtime by prepending
+    /// [`sage_runtime::SAGE_CORE_PROMPT`] (the platform-level "how to
+    /// work" methodology) and appending memory sections. Per-agent
+    /// config only owns this domain line, not the methodology.
+    pub goal: String,
     /// Tool access policy.
     pub tools: ToolsConfig,
     /// Operational limits (max turns, timeout).
@@ -817,7 +821,7 @@ llm:
   provider: anthropic
   model: claude-haiku-4-5-20251001
   max_tokens: 4096
-system_prompt: |
+goal: |
   你是飞书助手。
 tools:
   bash:
@@ -837,7 +841,7 @@ constraints:
         assert_eq!(config.llm.provider, "anthropic");
         assert_eq!(config.llm.model, "claude-haiku-4-5-20251001");
         assert_eq!(config.llm.max_tokens, Some(4096));
-        assert!(config.system_prompt.contains("飞书助手"));
+        assert!(config.goal.contains("飞书助手"));
         assert!(config.tools.bash.is_some());
         assert!(config.tools.read.is_some());
         assert!(config.tools.write.is_none());
@@ -858,7 +862,7 @@ llm:
   provider: openai
   model: gpt-4
   max_tokens: 2048
-system_prompt: "test"
+goal: "test"
 tools:
   bash:
     allowed_binaries: [python, node]
@@ -894,7 +898,7 @@ llm:
   provider: anthropic
   model: claude-sonnet-4-20250514
   max_tokens: 1024
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints:
   max_turns: 5
@@ -912,7 +916,7 @@ constraints:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   bash:
     allowed_binaries: [python, cargo]
@@ -931,7 +935,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   grep: {}
   find: {}
@@ -951,7 +955,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   read:
     allowed_paths: ["/home/user/docs"]
@@ -971,7 +975,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   edit:
     allowed_paths: ["/src"]
@@ -989,7 +993,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   bash:
     allowed_binaries: [feishu]
@@ -1037,7 +1041,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   read:
     allowed_paths: ["~/Documents"]
@@ -1069,7 +1073,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   read:
     allowed_paths: ["/workspace/src"]
@@ -1095,7 +1099,7 @@ llm:
   max_tokens: 4096
   base_url: "https://custom.api.example.com/v1"
   api_key_env: "MY_CUSTOM_KEY"
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 10, timeout_secs: 120 }
 "#;
@@ -1117,7 +1121,7 @@ llm:
   provider: deepseek
   model: deepseek-chat
   max_tokens: 2048
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 5, timeout_secs: 60 }
 "#;
@@ -1136,7 +1140,7 @@ constraints: { max_turns: 5, timeout_secs: 60 }
 name: sandbox-agent
 description: "with sandbox config"
 llm: { provider: qwen, model: qwen-plus, max_tokens: 4096 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 10, timeout_secs: 120 }
 sandbox:
@@ -1157,7 +1161,7 @@ sandbox:
 name: sandbox-defaults
 description: "sandbox with defaults"
 llm: { provider: qwen, model: qwen-plus, max_tokens: 4096 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 10, timeout_secs: 120 }
 sandbox: {}
@@ -1176,7 +1180,7 @@ sandbox: {}
 name: no-sandbox
 description: "no sandbox config"
 llm: { provider: qwen, model: qwen-plus, max_tokens: 4096 }
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 10, timeout_secs: 120 }
 "#;
@@ -1194,7 +1198,7 @@ constraints: { max_turns: 10, timeout_secs: 120 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   bash: { allowed_binaries: [python] }
   read: { allowed_paths: ["/"] }
@@ -1223,7 +1227,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   bash: { allowed_binaries: [cargo] }
   grep: {}
@@ -1280,7 +1284,7 @@ llm:
   model: qwen-plus
   max_tokens: 8192
   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-system_prompt: |
+goal: |
   你是一个代码助手。帮助用户编写、调试和优化代码。
   工作目录是 /workspace，请在该目录下操作。
 tools:
@@ -1330,7 +1334,7 @@ llm:
   model: deepseek-chat
   max_tokens: 8192
   api_key_env: "DEEPSEEK_API_KEY"
-system_prompt: |
+goal: |
   You are a coding assistant powered by DeepSeek.
 tools:
   bash:
@@ -1369,7 +1373,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: coding
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1388,7 +1392,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: coding
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1404,7 +1408,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: readonly
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1426,7 +1430,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: minimal
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1444,7 +1448,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: ops
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1467,7 +1471,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: ops
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1491,7 +1495,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: web
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1510,7 +1514,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: web
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1533,7 +1537,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: coding
   bash:
@@ -1554,7 +1558,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: coding
   read:
@@ -1576,7 +1580,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: nonexistent
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1592,7 +1596,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   bash:
     allowed_binaries: [cargo]
@@ -1612,7 +1616,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 "#;
@@ -1704,7 +1708,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: readonly
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1726,7 +1730,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: minimal
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1743,7 +1747,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: web
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1770,7 +1774,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: readonly
   bash:
@@ -1793,7 +1797,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: coding
   write:
@@ -1813,7 +1817,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: coding
   edit:
@@ -1833,7 +1837,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: ops
   bash:
@@ -1856,7 +1860,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: ""
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1870,7 +1874,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: CODING
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1884,7 +1888,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: Coding
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1898,7 +1902,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: 42
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1912,7 +1916,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: [coding, ops]
 constraints: { max_turns: 1, timeout_secs: 1 }
@@ -1926,7 +1930,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: ~
   bash:
@@ -1967,7 +1971,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -1983,7 +1987,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -1999,7 +2003,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2015,7 +2019,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2039,7 +2043,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2056,7 +2060,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2072,7 +2076,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2093,7 +2097,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2133,7 +2137,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2157,7 +2161,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2177,7 +2181,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2197,7 +2201,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox: {}
@@ -2226,7 +2230,7 @@ sandbox: {}
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2253,7 +2257,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2275,7 +2279,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2294,7 +2298,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2311,7 +2315,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2334,7 +2338,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2351,7 +2355,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2386,7 +2390,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox: {}
@@ -2401,7 +2405,7 @@ sandbox: {}
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2418,7 +2422,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2443,7 +2447,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2463,7 +2467,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox: {}
@@ -2484,7 +2488,7 @@ sandbox: {}
 name: secure-agent
 description: "fully secured agent"
 llm: { provider: anthropic, model: claude-sonnet-4-20250514, max_tokens: 4096 }
-system_prompt: "secure test"
+goal: "secure test"
 tools:
   toolset: coding
 constraints: { max_turns: 30, timeout_secs: 600 }
@@ -2535,7 +2539,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2554,7 +2558,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2583,7 +2587,7 @@ sandbox:
 name: t
 description: "t"
 llm: {{ provider: a, model: b, max_tokens: 1 }}
-system_prompt: "t"
+goal: "t"
 tools: {{}}
 constraints: {{ max_turns: 1, timeout_secs: 1 }}
 sandbox:
@@ -2604,7 +2608,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2629,7 +2633,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2644,7 +2648,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2660,7 +2664,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2676,7 +2680,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2692,7 +2696,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2710,7 +2714,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2737,7 +2741,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2796,7 +2800,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2812,7 +2816,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -2836,7 +2840,7 @@ sandbox:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools:
   toolset: coding
   write: ~
@@ -2857,7 +2861,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 "#;
@@ -2924,7 +2928,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: coding-assistant
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 sandbox:
@@ -3326,7 +3330,7 @@ llm:
   provider: anthropic
   model: claude-haiku-4-5-20251001
   max_tokens: 4096
-system_prompt: "你是知识管理专员。"
+goal: "你是知识管理专员。"
 tools:
   toolset: coding
 constraints: { max_turns: 20, timeout_secs: 300 }
@@ -3356,7 +3360,7 @@ memory:
 
     // ── Sprint 3 — v0.8: SandboxMode ─────────────────────────────────────────
 
-    const S3_BASE_YAML: &str = "name: t\ndescription: \"\"\nllm: { provider: test, model: m, max_tokens: 256 }\nsystem_prompt: test\ntools: {}\nconstraints: { max_turns: 5, timeout_secs: 60 }";
+    const S3_BASE_YAML: &str = "name: t\ndescription: \"\"\nllm: { provider: test, model: m, max_tokens: 256 }\ngoal: test\ntools: {}\nconstraints: { max_turns: 5, timeout_secs: 60 }";
 
     fn minimal_yaml_with_sandbox(sandbox_extra: &str) -> String {
         format!("{S3_BASE_YAML}\nsandbox:\n  cpus: 1\n  memory_mib: 512\n{sandbox_extra}")
@@ -3584,7 +3588,7 @@ memory:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -3603,7 +3607,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -3622,7 +3626,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -3643,7 +3647,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -3665,7 +3669,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -3689,7 +3693,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -3716,7 +3720,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks: {}
@@ -3754,7 +3758,7 @@ hooks: {}
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 harness:
@@ -3771,7 +3775,7 @@ harness:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 harness:
@@ -3790,7 +3794,7 @@ harness:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 harness:
@@ -3835,7 +3839,7 @@ harness:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -3859,7 +3863,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -3881,7 +3885,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -3905,7 +3909,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks: "invalid string value"
@@ -3923,7 +3927,7 @@ hooks: "invalid string value"
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -3944,7 +3948,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -3965,7 +3969,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 harness: {}
@@ -3982,7 +3986,7 @@ harness: {}
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 harness:
@@ -4003,7 +4007,7 @@ harness:
 name: eval-agent
 description: "Agent with sprint4 hooks + harness"
 llm: { provider: anthropic, model: claude-haiku-4-5-20251001, max_tokens: 4096 }
-system_prompt: "evaluator agent"
+goal: "evaluator agent"
 tools:
   bash: { allowed_binaries: [python3] }
   read: { allowed_paths: ["/workspace"] }
@@ -4172,7 +4176,7 @@ harness:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -4218,7 +4222,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks: {}
@@ -4254,7 +4258,7 @@ hooks: {}
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -4274,7 +4278,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -4295,7 +4299,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -4318,7 +4322,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -4339,7 +4343,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -4363,7 +4367,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -4409,7 +4413,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -4439,7 +4443,7 @@ hooks:
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 hooks:
@@ -4465,7 +4469,7 @@ hooks:
 name: full-agent
 description: "Agent with all 8 lifecycle hook events"
 llm: { provider: anthropic, model: claude-haiku-4-5-20251001, max_tokens: 4096 }
-system_prompt: "full agent"
+goal: "full agent"
 tools:
   bash: { allowed_binaries: [python3] }
 constraints: { max_turns: 10, timeout_secs: 120 }
@@ -4509,7 +4513,7 @@ hooks:
 name: no-hooks-agent
 description: "Agent without any hooks section"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 "#;
@@ -4528,7 +4532,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 name: t
 description: "t"
 llm: { provider: a, model: b, max_tokens: 1 }
-system_prompt: "t"
+goal: "t"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 1 }
 "#;
@@ -4662,7 +4666,7 @@ channel:
     const M1_BASE_YAML: &str = r#"
 name: m1-test
 description: "M1 test agent"
-system_prompt: "test"
+goal: "test"
 tools: {}
 constraints: { max_turns: 1, timeout_secs: 30 }
 "#;

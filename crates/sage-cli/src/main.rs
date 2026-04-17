@@ -144,6 +144,12 @@ enum Commands {
     Skill(SkillAction),
 
     /// Initialise a new agent workspace at ~/.sage/agents/<name>/
+    ///
+    /// The `--goal` flag answers "what is this agent for me?" — one short
+    /// paragraph, e.g. `"替我完成飞书上的日常操作（多维表格 / 日历 / 消息）"`.
+    /// The platform-level "how to work" methodology (discover → execute →
+    /// sediment → evolve) is baked into the Sage runtime and applies to
+    /// every agent, so you do NOT need to spell it out here.
     Init {
         /// Agent name (becomes the workspace directory name under ~/.sage/agents/)
         #[arg(long)]
@@ -156,6 +162,12 @@ enum Commands {
         /// Override model id written into config.yaml (e.g., kimi-k1, gpt-4o)
         #[arg(long)]
         model: Option<String>,
+
+        /// One-line domain identity — what this agent exists to do for
+        /// you. Written verbatim into config.yaml's `goal` field. Omit
+        /// to leave a placeholder you fill in later.
+        #[arg(long)]
+        goal: Option<String>,
     },
 
     /// List all registered agents in ~/.sage/agents/
@@ -348,9 +360,20 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { agent, provider, model } => {
+        Commands::Init {
+            agent,
+            provider,
+            model,
+            goal,
+        } => {
             tracing::info!(agent = %agent, "initializing agent workspace");
-            serve::init_agent(&agent, provider.as_deref(), model.as_deref()).await
+            serve::init_agent(
+                &agent,
+                provider.as_deref(),
+                model.as_deref(),
+                goal.as_deref(),
+            )
+            .await
         }
         Commands::Skill(action) => match action {
             SkillAction::Add {
@@ -925,7 +948,7 @@ mod tests {
     fn cli_init_provider_flag_parsed() {
         let cli = Cli::parse_from(["sage", "init", "--agent", "feishu", "--provider", "kimi"]);
         match cli.command {
-            Commands::Init { agent, provider, model } => {
+            Commands::Init { agent, provider, model, .. } => {
                 assert_eq!(agent, "feishu");
                 assert_eq!(provider.as_deref(), Some("kimi"));
                 assert!(model.is_none(), "model must be None when not supplied");
@@ -938,7 +961,7 @@ mod tests {
     fn cli_init_model_flag_parsed() {
         let cli = Cli::parse_from(["sage", "init", "--agent", "feishu", "--model", "kimi-k1"]);
         match cli.command {
-            Commands::Init { agent, provider, model } => {
+            Commands::Init { agent, provider, model, .. } => {
                 assert_eq!(agent, "feishu");
                 assert_eq!(model.as_deref(), Some("kimi-k1"));
                 assert!(provider.is_none(), "provider must be None when not supplied");
@@ -954,7 +977,7 @@ mod tests {
             "--provider", "openai", "--model", "gpt-4o",
         ]);
         match cli.command {
-            Commands::Init { agent, provider, model } => {
+            Commands::Init { agent, provider, model, .. } => {
                 assert_eq!(agent, "feishu");
                 assert_eq!(provider.as_deref(), Some("openai"));
                 assert_eq!(model.as_deref(), Some("gpt-4o"));
