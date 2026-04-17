@@ -438,9 +438,52 @@ Sprint 8   Channel 接入     2.0w              ▓▓▓▓
 Sprint 9   Harness 增强     1.5w                  ▓▓▓
 Sprint 10  Craft 体系       2.0w                     ▓▓▓▓
 Sprint 11  技术债清理       1.0w  (分散穿插)
+Sprint 12  Provider/Model 解耦 1.5w    ▓▓▓
 ------------------------------------------
-合计约 12 周（单人，含 buffer）
+合计约 13.5 周（单人，含 buffer）
 ```
+
+## Sprint 12 — Provider / Model ID 解耦
+
+**目标**：Sage 代码不再维护 model ID 权威列表；只强绑 Provider，Model ID 由 YAML 任意字符串配置，透传到 Provider 端。
+
+**设计文档**：[docs/design/model-id-policy.md](design/model-id-policy.md)
+
+### 任务拆解
+
+- **M1 — Provider 提取 + model 弱绑**
+  - 新增 `llm/providers.rs`：`ProviderSpec { id, base_url, api_key_env, api_kind, default_compat, hint_docs_url }` + `list_providers()` + `resolve_provider(id)`
+  - `AgentConfig.llm` 解析：强验 provider 落在 ProviderSpec 集合；model_id 非空即可；`context_window` / `max_tokens` / `base_url` 变可选从 YAML 读
+  - Provider HTTP 调用里 `model` 字段直接透传 YAML 字符串
+  - `llm/models.rs` 5500 行 → 缩到几百行（删 Model 字面量，保留 ApiKind / CompatConfig）
+- **M2 — 错误提示**
+  - `SageError::InvalidModel { provider, model_id, provider_error, hint }`
+  - Provider 层 4xx + "model_not_found" / "invalid_model" 响应 → 映射到 InvalidModel
+  - 每个 ProviderSpec 静态绑定 hint（厂商 /v1/models 文档 URL）
+- **M3 — Metrics 解耦**
+  - `TaskRecord` 加 `provider: String` 字段
+  - `cost` 字段改 `Option<Cost>`，仅当 YAML 显式声明 `cost_per_million` 时算
+  - 离线 `cost_schedule.yaml` 补算脚本（`scripts/backfill_cost.rs` 或 Python）
+- **M4 — Known models cache + TUI 补全**
+  - `~/.sage/known_models.json` 读写 + 聚合 metrics / configs
+  - `sage init` TUI：Provider 下拉（从 list_providers），Model 输入 + 历史建议
+  - 每次 Provider 调用成功（200）→ 追加 model 到 known_models cache
+  - 可选：`Press 'p' to probe /v1/models` 在线列表（v1.0.1 nice-to-have）
+
+### 验收
+
+- 用户 YAML 写 `model: kimi-k2.6-preview`（虚构，Kimi 未上线）→ 调用时 Provider 返回 `invalid_model` → Sage 日志清晰展示 "Provider 'kimi' rejected model 'kimi-k2.6-preview' — check api.moonshot.cn/v1/models"
+- `sage init` TUI 列出所有代码级 Provider + 过去用过的 model 历史
+- `TaskRecord` 同时记 provider + model 两个独立字段；metrics/*.json 字段向后兼容
+
+### 工作量估算：~1.5 周
+
+### 风险
+
+- **Bedrock / Vertex 特殊情况**：model_id 是完整 ARN 或 region-qualified，url_template 占位符机制需测过
+- **现有 configs / metrics 迁移**：Runeforge / Usage 看板依赖 Sage 算 cost，下游需同步改用 cost_schedule
+
+---
 
 并行度提示：Sprint 6 H1 Hook 扩展可以和 Sprint 5 的 S5.1 MetricsCollector 并行（MetricsCollector 可以先订阅现有 AgentEvent，Sprint 6 完成后再切到 HookEvent broadcast）。Sprint 9 与 Sprint 10 也可以并行（Harness criteria 主要动 CLI 层，Craft 主要动 runner / 工具层）。
 
