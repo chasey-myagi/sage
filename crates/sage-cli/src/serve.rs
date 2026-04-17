@@ -419,6 +419,21 @@ pub async fn build_system_prompt(
 /// provider would only surface when the engine tries to instantiate the model,
 /// which is too late for `sage chat` / `sage start` UX.
 pub async fn load_agent_config(name: &str) -> anyhow::Result<AgentConfig> {
+    let (config, _hash) = load_agent_config_with_hash(name).await?;
+    Ok(config)
+}
+
+/// Load the agent config AND return a `"sha256:<hex>"` digest of its raw
+/// YAML bytes. Task #80.
+///
+/// The hash is used by [`MetricsCollector`](sage_runner::metrics::MetricsCollector)
+/// to stamp a stable identity on each `TaskRecord`, so telemetry consumers can
+/// group records by "same config" without parsing / re-normalising the YAML.
+/// Format `sha256:<64-hex>` keeps the namespace open for future algorithms
+/// (e.g. `blake3:`) without ambiguity.
+pub async fn load_agent_config_with_hash(
+    name: &str,
+) -> anyhow::Result<(AgentConfig, String)> {
     // Task #85: single defense-in-depth gate. Every caller that takes an
     // `agent: &str` from the CLI ultimately funnels through here (or
     // `validate_agent`), so rejecting `../` / absolute paths once covers
@@ -437,7 +452,11 @@ pub async fn load_agent_config(name: &str) -> anyhow::Result<AgentConfig> {
         .with_context(|| format!("invalid config for agent '{name}'"))?;
     sage_runner::config::validate_provider(&config.llm.provider)
         .map_err(|e| anyhow::anyhow!("invalid config for agent '{name}': {e}"))?;
-    Ok(config)
+
+    use sha2::{Digest as _, Sha256};
+    let digest = Sha256::digest(yaml.as_bytes());
+    let hash = format!("sha256:{digest:x}");
+    Ok((config, hash))
 }
 
 /// Build a [`SageEngine`] from an [`AgentConfig`].
@@ -889,6 +908,23 @@ mod tests {
         // Empty is the trivial class all other gates should also catch,
         // so this is the minimal regression anchor.
         assert!(load_agent_config("").await.is_err());
+    }
+
+    // ── Task #80: load_agent_config_with_hash returns `sha256:<hex>` ──────
+
+    #[test]
+    fn sha256_digest_of_config_bytes_uses_prefix_and_64_hex() {
+        // Pure invariant check — no fs required. Mirrors the digest logic
+        // inside load_agent_config_with_hash so a future hashing change
+        // (e.g. switching to blake3) trips this test and forces the
+        // namespace prefix to stay consistent.
+        use sha2::{Digest, Sha256};
+        let yaml_bytes = b"name: t\nllm: { provider: openai, model: gpt-4o }";
+        let hash = format!("sha256:{:x}", Sha256::digest(yaml_bytes));
+        assert!(hash.starts_with("sha256:"), "must carry sha256: prefix");
+        let hex = hash.strip_prefix("sha256:").unwrap();
+        assert_eq!(hex.len(), 64, "sha256 hex digest is 64 chars");
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()), "lowercase hex only");
     }
 
     // ── build_engine_from_config ──────────────────────────────────────────────

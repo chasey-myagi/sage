@@ -34,15 +34,18 @@ fn ok_output(msg: &str) -> ToolOutput {
     }
 }
 
-/// Validate that a craft name is safe.
+/// Validate that a skill name is safe.
 ///
 /// Rejects:
 ///   - empty
 ///   - path separators / traversal: `/` `\` `..` `.` `.trash`
-///   - YAML structural characters: `\n` `\r` `:` `#` — without these a
-///     malicious name like `"evil\nversion: 999"` would inject fake
-///     frontmatter fields (code-review Critical #1). MVP uses hand-rolled
-///     YAML so the writer can't defend via proper escaping.
+///   - YAML-reserved indicator characters. Even though the writer now uses
+///     `serde_yaml::to_string` (which would escape these into a quoted
+///     scalar), keeping them out of names is a belt-and-suspenders defence:
+///     it prevents any future writer regression from re-opening the
+///     injection surface, and keeps the on-disk directory name readable.
+///     Covers the original set (`\n \r : #`) plus the broader YAML indicator
+///     set called out in the v0.0.3 #81 plan.
 fn validate_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err("name must not be empty".to_string());
@@ -56,8 +59,11 @@ fn validate_name(name: &str) -> Result<(), String> {
     if name.contains("..") {
         return Err(format!("invalid name '{}': must not contain '..'", name));
     }
-    // YAML frontmatter injection guard (code-review C1).
-    for ch in ['\n', '\r', ':', '#'] {
+    // YAML indicator characters — expanded set per v0.0.3 #81.
+    const YAML_RESERVED: &[char] = &[
+        '\n', '\r', ':', '#', '&', '*', '!', '|', '>', '?', '[', ']', '{', '}', '%', '@',
+    ];
+    for &ch in YAML_RESERVED {
         if name.contains(ch) {
             return Err(format!(
                 "invalid name '{}': must not contain YAML-reserved character '{}'",
@@ -69,64 +75,33 @@ fn validate_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Entry returned by the list action.
+/// Frontmatter + list-entry shape. One struct serves both directions —
+/// `serde_yaml::to_string` writes the SKILL.md frontmatter and
+/// `serde_yaml::from_str` on the same shape reads it back. Keeping writer
+/// and reader on the same type closes the schema-drift gap that the
+/// hand-rolled parser couldn't catch.
+///
+/// `created_at` defaults to 0 so pre-#81 SKILL.md files (no timestamp line)
+/// still parse without crashing list.
 #[derive(Debug, Serialize, Deserialize)]
 struct CraftEntry {
     name: String,
     #[serde(rename = "type")]
     craft_type: String,
     tags: Vec<String>,
+    #[serde(default)]
+    created_at: u64,
     version: u64,
 }
 
-/// Parse frontmatter from SKILL.md content.
-/// Returns None if frontmatter is malformed or missing required fields.
+/// Extract and deserialize the YAML frontmatter block between the opening
+/// `---\n` fence and the closing `\n---` fence. Returns None when either
+/// fence is missing or when the block is not valid YAML for [`CraftEntry`].
 fn parse_frontmatter(content: &str) -> Option<CraftEntry> {
-    // Must start with "---\n"
-    if !content.starts_with("---\n") {
-        return None;
-    }
-    // Find the closing ---
-    let rest = &content[4..];
+    let rest = content.strip_prefix("---\n")?;
     let end = rest.find("\n---")?;
     let fm = &rest[..end];
-
-    let mut name: Option<String> = None;
-    let mut craft_type: Option<String> = None;
-    let mut tags: Option<Vec<String>> = None;
-    let mut version: Option<u64> = None;
-
-    for line in fm.lines() {
-        if let Some(val) = line.strip_prefix("name: ") {
-            name = Some(val.trim().to_string());
-        } else if let Some(val) = line.strip_prefix("type: ") {
-            craft_type = Some(val.trim().to_string());
-        } else if let Some(val) = line.strip_prefix("tags: ") {
-            // Parse YAML flow sequence: [tag1, tag2] or []
-            let val = val.trim();
-            let inner = val.strip_prefix('[')?.strip_suffix(']')?;
-            let inner = inner.trim();
-            if inner.is_empty() {
-                tags = Some(vec![]);
-            } else {
-                let parsed: Vec<String> = inner
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                tags = Some(parsed);
-            }
-        } else if let Some(val) = line.strip_prefix("version: ") {
-            version = val.trim().parse::<u64>().ok();
-        }
-    }
-
-    Some(CraftEntry {
-        name: name?,
-        craft_type: craft_type?,
-        tags: tags?,
-        version: version?,
-    })
+    serde_yaml::from_str::<CraftEntry>(fm).ok()
 }
 
 #[async_trait::async_trait]
@@ -174,15 +149,15 @@ impl AgentTool for CraftManageTool {
         };
 
         match action {
-            "create" => self.execute_create(&args),
-            "list" => self.execute_list(),
+            "create" => self.execute_create(&args).await,
+            "list" => self.execute_list().await,
             other => error_output(&format!("unknown action '{}'", other)),
         }
     }
 }
 
 impl CraftManageTool {
-    fn execute_create(&self, args: &serde_json::Value) -> ToolOutput {
+    async fn execute_create(&self, args: &serde_json::Value) -> ToolOutput {
         // Validate name
         let name = match args.get("name").and_then(|v| v.as_str()) {
             Some(n) => n,
@@ -213,53 +188,62 @@ impl CraftManageTool {
             })
             .unwrap_or_default();
 
-        let craft_dir = self.workspace_dir.join("skills").join(name);
-        let craft_md_path = craft_dir.join("SKILL.md");
+        let skill_dir = self.workspace_dir.join("skills").join(name);
+        let skill_md_path = skill_dir.join("SKILL.md");
 
-        if let Err(e) = std::fs::create_dir_all(&craft_dir) {
-            return error_output(&format!("failed to create craft directory: {}", e));
+        if let Err(e) = tokio::fs::create_dir_all(&skill_dir).await {
+            return error_output(&format!("failed to create skill directory: {}", e));
         }
 
-        // Build frontmatter + body
-        let now = now_secs();
-        let tags_str = if tags.is_empty() {
-            "[]".to_string()
-        } else {
-            format!("[{}]", tags.join(", "))
+        // Build the frontmatter via serde_yaml so future field additions
+        // round-trip automatically and quoting is handled for us.
+        let entry = CraftEntry {
+            name: name.to_string(),
+            craft_type: craft_type.to_string(),
+            tags,
+            created_at: now_secs(),
+            version: 1,
         };
-        let file_content = format!(
-            "---\nname: {}\ntype: {}\ntags: {}\ncreated_at: {}\nversion: 1\n---\n\n{}",
-            name, craft_type, tags_str, now, content
-        );
+        let yaml_body = match serde_yaml::to_string(&entry) {
+            Ok(s) => s,
+            Err(e) => {
+                return error_output(&format!("failed to encode frontmatter: {}", e));
+            }
+        };
+        // serde_yaml 0.9 emits a bare document (no leading `---\n`) and a
+        // trailing newline; strip defensively so a future library rev that
+        // changes either detail can't double our fences.
+        let yaml_body = yaml_body.trim_start_matches("---\n").trim_end();
+        let file_content = format!("---\n{yaml_body}\n---\n\n{content}");
 
-        // Atomic create-or-fail — avoids the TOCTOU race of checking
-        // `.exists()` and then `write()`. Two concurrent `create` of the
-        // same name are guaranteed to produce exactly one winner.
-        // (Linus v1 blocker #1)
-        use std::io::Write as _;
-        match std::fs::OpenOptions::new()
+        // Atomic create-or-fail via tokio::fs::OpenOptions — avoids the
+        // TOCTOU race of checking `.exists()` and then `write()`. Two
+        // concurrent `create` of the same name are guaranteed to produce
+        // exactly one winner (Linus v1 blocker #1; #81 concurrent regression
+        // test locks this in).
+        use tokio::io::AsyncWriteExt as _;
+        match tokio::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&craft_md_path)
+            .open(&skill_md_path)
+            .await
         {
             Ok(mut f) => {
-                if let Err(e) = f.write_all(file_content.as_bytes()) {
+                // tokio::fs::File buffers writes in an internal state and
+                // drops pending data unless `flush` / `shutdown` runs before
+                // the handle goes out of scope — an O_EXCL success with no
+                // explicit flush would leave a zero-byte SKILL.md on disk.
+                let write_res = f.write_all(file_content.as_bytes()).await;
+                let flush_res = if write_res.is_ok() { f.flush().await } else { Ok(()) };
+                if let Err(e) = write_res.or(flush_res) {
                     // Code-review I2: partial write leaves a zero-byte file
                     // whose `AlreadyExists` on next `create` would mislead
                     // the user. Best-effort remove — if cleanup itself fails
                     // (read-only FS?), the original write error still wins.
-                    //
-                    // Sprint 12 task #77 (7): log cleanup failures so
-                    // operators tracking disk-full / permission-denied
-                    // incidents see a paper trail rather than a silent
-                    // half-successful filesystem state. Future multi-file
-                    // crafts (artifacts, examples under the craft dir) will
-                    // need tmpdir+rename pattern instead of per-file
-                    // remove; for now a single SKILL.md keeps it simple.
                     drop(f);
-                    if let Err(cleanup_err) = std::fs::remove_file(&craft_md_path) {
+                    if let Err(cleanup_err) = tokio::fs::remove_file(&skill_md_path).await {
                         tracing::warn!(
-                            path = %craft_md_path.display(),
+                            path = %skill_md_path.display(),
                             orig_write_error = %e,
                             cleanup_error = %cleanup_err,
                             "failed to clean up zero-byte SKILL.md after write error"
@@ -269,11 +253,11 @@ impl CraftManageTool {
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                return error_output(&format!("craft '{}' already exists", name));
+                return error_output(&format!("skill '{}' already exists", name));
             }
             Err(e) => {
                 tracing::warn!(
-                    path = %craft_md_path.display(),
+                    path = %skill_md_path.display(),
                     error = %e,
                     "failed to O_EXCL create SKILL.md"
                 );
@@ -287,11 +271,15 @@ impl CraftManageTool {
         ))
     }
 
-    fn execute_list(&self) -> ToolOutput {
-        let craft_base = self.workspace_dir.join("skills");
+    async fn execute_list(&self) -> ToolOutput {
+        let skills_base = self.workspace_dir.join("skills");
 
-        // Collect all SKILL.md paths via glob
-        let pattern = format!("{}/*/SKILL.md", craft_base.display());
+        // Collect all SKILL.md paths via glob. `glob` is a synchronous
+        // directory walker; at workspace scale (tens of skills) the blocking
+        // readdir is cheap enough that `spawn_blocking` would add more
+        // overhead than it saves. The actual file reads below go through
+        // `tokio::fs`.
+        let pattern = format!("{}/*/SKILL.md", skills_base.display());
         let paths = match glob::glob(&pattern) {
             Ok(p) => p,
             Err(_) => {
@@ -305,13 +293,13 @@ impl CraftManageTool {
                 Ok(p) => p,
                 Err(_) => continue,
             };
-            let file_content = match std::fs::read_to_string(&path) {
+            let file_content = match tokio::fs::read_to_string(&path).await {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::warn!(
                         path = %path.display(),
                         error = %e,
-                        "skipping unreadable craft file in list",
+                        "skipping unreadable skill file in list",
                     );
                     continue;
                 }
@@ -319,19 +307,14 @@ impl CraftManageTool {
             match parse_frontmatter(&file_content) {
                 Some(entry) => entries.push(entry),
                 None => {
-                    // Linus v1 blocker #3: malformed frontmatter is a silent
-                    // skip without observability. Warn-log so operators can
-                    // see their craft file is broken instead of wondering
-                    // why the dropdown is missing an entry.
                     tracing::warn!(
                         path = %path.display(),
-                        "skipping craft with malformed frontmatter",
+                        "skipping skill with malformed frontmatter",
                     );
                 }
             }
         }
 
-        // Sort by name for stable output
         entries.sort_by(|a, b| a.name.cmp(&b.name));
 
         let json = serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string());
@@ -757,7 +740,7 @@ mod tests {
         tool.execute(json!({"action": "create", "name": "good", "content": "ok"}))
             .await;
         // Manually plant a broken craft (no frontmatter).
-        let broken = dir.path().join("craft/broken");
+        let broken = dir.path().join("skills/broken");
         fs::create_dir_all(&broken).unwrap();
         fs::write(broken.join("SKILL.md"), "no frontmatter here").unwrap();
         // list should return the good craft only, not crash.
@@ -776,7 +759,7 @@ mod tests {
         tool.execute(json!({"action": "create", "name": "good", "content": "ok"}))
             .await;
         // Create a directory without SKILL.md.
-        let empty = dir.path().join("craft/empty");
+        let empty = dir.path().join("skills/empty");
         fs::create_dir_all(&empty).unwrap();
         // list should return only the good craft.
         let output = tool.execute(json!({"action": "list"})).await;
@@ -810,6 +793,97 @@ mod tests {
             !craft_dir.exists() || std::fs::read_dir(&craft_dir).unwrap().next().is_none(),
             "no craft directory should have been created"
         );
+    }
+
+    // ── #81 v0.0.3: expanded YAML-injection guard + concurrency + serde_yaml ─
+
+    /// #81: validate_name must also reject the YAML-reserved characters that
+    /// weren't in the original blocker list. An attacker choosing
+    /// `name = "safe & tags: [pwned]"` would otherwise produce a frontmatter
+    /// block that re-opens the injection surface we closed for `\n:#`.
+    /// Each char is tested independently so a regression narrows to one.
+    #[tokio::test]
+    async fn create_rejects_expanded_yaml_reserved_characters_in_name() {
+        let dir = TempDir::new().unwrap();
+        let tool = make_tool(&dir);
+        for ch in ['&', '*', '!', '|', '>', '?', '[', ']', '{', '}', '%', '@'] {
+            let bad = format!("foo{ch}bar");
+            let out = tool
+                .execute(json!({ "action": "create", "name": bad, "content": "body" }))
+                .await;
+            assert!(
+                out.is_error,
+                "name containing '{ch}' must be rejected (expanded YAML guard)"
+            );
+        }
+        // Nothing wrote to disk.
+        let skills_dir = dir.path().join("skills");
+        assert!(
+            !skills_dir.exists() || std::fs::read_dir(&skills_dir).unwrap().next().is_none(),
+            "no skill directory should have been created"
+        );
+    }
+
+    /// #81 plan: 10 concurrent `create` calls for the same name must collapse
+    /// to exactly one winner via the O_EXCL path. This is the regression
+    /// test for the create_new(true) race-safety claim — mocking concurrency
+    /// against a real tempdir catches any drift to a check-then-write pattern.
+    #[tokio::test]
+    async fn concurrent_create_same_name_exactly_one_wins() {
+        let dir = TempDir::new().unwrap();
+        // Arc the tool so 10 tasks share the same workspace.
+        let tool = std::sync::Arc::new(make_tool(&dir));
+        let mut handles = Vec::with_capacity(10);
+        for i in 0..10 {
+            let tool = std::sync::Arc::clone(&tool);
+            handles.push(tokio::spawn(async move {
+                tool.execute(json!({
+                    "action": "create",
+                    "name": "race",
+                    "content": format!("body-{i}"),
+                }))
+                .await
+            }));
+        }
+        let mut ok = 0usize;
+        let mut err = 0usize;
+        for h in handles {
+            let out = h.await.unwrap();
+            if out.is_error { err += 1; } else { ok += 1; }
+        }
+        assert_eq!(ok, 1, "exactly one create must win");
+        assert_eq!(err, 9, "the other nine must report AlreadyExists");
+    }
+
+    /// #81: the frontmatter produced by create must be a YAML document that
+    /// serde_yaml can parse back. Protects against accidental regressions
+    /// (e.g. unescaped special chars in tags) once the writer switches to
+    /// serde_yaml::to_string.
+    #[tokio::test]
+    async fn create_writes_valid_yaml_frontmatter_parseable_by_serde_yaml() {
+        let dir = TempDir::new().unwrap();
+        let tool = make_tool(&dir);
+        tool.execute(json!({
+            "action": "create",
+            "name": "deploy",
+            "content": "body",
+            "type": "recipe",
+            "tags": ["devops", "ci"],
+        }))
+        .await;
+        let content = fs::read_to_string(dir.path().join("skills/deploy/SKILL.md")).unwrap();
+        // Extract the frontmatter block between the first two --- lines.
+        assert!(content.starts_with("---\n"), "must start with YAML fence");
+        let rest = &content[4..];
+        let end = rest.find("\n---").expect("closing --- missing");
+        let fm = &rest[..end];
+        let parsed: serde_yaml::Value = serde_yaml::from_str(fm)
+            .expect("frontmatter must be a valid YAML document");
+        assert_eq!(parsed["name"], serde_yaml::Value::String("deploy".into()));
+        assert_eq!(parsed["type"], serde_yaml::Value::String("recipe".into()));
+        assert_eq!(parsed["version"], serde_yaml::Value::Number(1.into()));
+        let tags = parsed["tags"].as_sequence().unwrap();
+        assert_eq!(tags.len(), 2);
     }
 
     /// Code-review Important #1: round-trip guard — create → list must return

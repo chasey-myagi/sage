@@ -30,6 +30,24 @@ pub trait AgentTool: Send + Sync {
     async fn execute(&self, args: serde_json::Value) -> ToolOutput;
 }
 
+// Task #71: blanket impl so `Arc<dyn AgentTool>` satisfies
+// `Box::new(…): Box<dyn AgentTool>` without the old `ArcTool` wrapper.
+#[async_trait::async_trait]
+impl<T: ?Sized + AgentTool> AgentTool for std::sync::Arc<T> {
+    fn name(&self) -> &str {
+        (**self).name()
+    }
+    fn description(&self) -> &str {
+        (**self).description()
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        (**self).parameters_schema()
+    }
+    async fn execute(&self, args: serde_json::Value) -> ToolOutput {
+        (**self).execute(args).await
+    }
+}
+
 /// Registry holding all available tools.
 pub struct ToolRegistry {
     tools: Vec<Box<dyn AgentTool>>,

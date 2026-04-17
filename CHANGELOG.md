@@ -3,6 +3,71 @@
 所有值得记录的变更按倒序列在这里。版本遵循 semver，但在 v0.1.0 之前
 不保证 API / CLI / 磁盘布局稳定。
 
+## [0.0.3] — 2026-04-18
+
+### 新功能
+
+- **`sage skill evaluate --agent X --skill Y`** — 自演化手动触发。
+  备份 `SKILL.md.bak.<ts>` → 构建 agent 自己的 engine → 发 system
+  prompt 让 agent 用 `write` 工具重写 → 检查产物 → 失败回滚。
+  sandbox 模式从 agent config 读,microVM 契约不被绕过。EvalSink
+  把 `RunError` 和 tool error 转 stderr 可见;write tool 是否成功
+  通过 AtomicBool 追踪,"model 没调 write" vs "model 重写后不变" vs
+  "真的重写" 三路输出分流。**v0.0.4 将接 daemon 自动 tick 触发**
+  (task #83)。
+- **npm-style skill install** — `sage skill add --agent foo
+  @scope/name` 或 `owner/repo`。走 `npx --yes skills add <spec>`
+  shell-out。Windows 自动落 `npx.cmd` shim;`npx` 不在 PATH 时给
+  Node.js 安装引导。
+- **跨平台 release CI** — build.yml 从 3 matrix 扩到 5:macOS
+  arm64 / macOS Intel x86_64 / Linux x86_64 musl / Windows x86_64
+  msvc / sage-guest aarch64。全产物附 SHA256 sidecar。
+
+### 修复 / 重构
+
+- **craft_manage 并发 O_EXCL 回归测试**(task #81) — 10 tokio task
+  同时 create 同名 skill,测试锁死"exactly one wins"契约。顺带发现
+  并修复 `tokio::fs::File` 不显式 flush 会丢 write 的 data-loss bug
+  —— `create_new(true) + write_all + flush` 三步走才是正解。
+- **craft_manage 切 tokio::fs + serde_yaml**。手写 YAML frontmatter
+  替换为 `serde_yaml::to_string(&CraftEntry)`;同一 `CraftEntry`
+  结构双向用(写 + 读),减少 writer/parser 漂移。`validate_name`
+  扩到 16 个 YAML-reserved 字符(原 4 个 + `& * ! | > ? [ ] { } % @`)。
+- **daemon MetricsSink wiring**(task #79)— daemon 生命周期一条
+  TaskRecord,finalize 触发点 = Shutdown 消息或 accept loop Err。
+  单 client 断连不 finalize(下 client 续用同 record)。SIGKILL /
+  OOM 丢 record 已文档化为 known limitation。
+- **`config_hash` 真 sha256**(task #80)— TaskRecord 的 `config_hash`
+  从 `""` 占位换成 `sha256:<64-hex>`,从 YAML bytes 算出。
+- **CJK / 全角字符列对齐**(task #84)— `sage skill-score` 报表的
+  `truncate_for_column` 和 padding 用 `unicode-width` 的 display
+  width 而非 char count,中文 skill 名表格终于对齐。
+- **Arc blanket impl 取代 6 个 newtype wrapper**(task #71)。
+  `impl<T: ?Sized + Trait> Trait for Arc<T>` 配 5 个 hook trait +
+  LlmProvider + AgentTool。
+- **Agent `attach_session / detach_session` API**(task #86)。
+  4 个分散 setter 收敛为一对原子操作。
+- **agent_loop 的 orphan `generate_session_id` 清理**(task #87)。
+  重命名为 `generate_loop_trace_id`;消费点优先用 agent 自己的
+  session_id。
+- **skill_install P2/P3 review 跟进** — `default_name_for` 对
+  `.` / `..` 正确 canonicalize;`run_skill_add` 前置检查 agent 已
+  初始化(防 typo 留垃圾 workspace 目录);fetch 失败(copy / git /
+  npx)统一在入口 `remove_dir_all(dst)` 兜底回滚。
+
+### 工具 / CI
+
+- **provider_specs 黄金快照**(task #74 sub 4)— 锁死 v0.0.3 的 18
+  个 provider 的 `(id, api_kind)` 二元组全集。漂移打印"去 pi-mono
+  核对"三步修复指引。对齐 CLAUDE.md 强制要求。
+
+### 测试 / 文档
+
+- **+16 net new tests**(2229 → 2247)。并发 race、expanded YAML
+  guard、serde_yaml roundtrip、daemon finalize Ok/Err/idempotent、
+  provider snapshot、skill_evaluate backup/rollback、npm-style
+  detect、dot-path resolve、mid-fetch rollback 等。
+
 ## [0.0.2] — 2026-04-17
 
 ### 架构落地

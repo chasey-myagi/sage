@@ -149,9 +149,15 @@ pub fn format_skill_score_report(
     out.push_str("craft               usage  tokens_best  tokens_avg  score\n");
     out.push_str("─────               ─────  ───────────  ──────────  ─────\n");
     for (name, s) in &sorted {
+        // Task #84: `{name:<19}` only pads by char count, not terminal
+        // display width. CJK / full-width craft names (e.g. "接入飞书")
+        // take 2 columns per char, so char-count padding misaligns. We
+        // truncate by display width and hand-pad with ASCII spaces.
+        let trimmed = truncate_for_column(name, 19);
+        let pad = 19usize.saturating_sub(unicode_display_width(&trimmed));
+        let spaces = " ".repeat(pad);
         let line = format!(
-            "{name:<19} {usage:>5}  {best:>11}  {avg:>10}  {score:.2}\n",
-            name = truncate_for_column(name, 19),
+            "{trimmed}{spaces} {usage:>5}  {best:>11}  {avg:>10}  {score:.2}\n",
             usage = s.usage_count,
             best = s.tokens_best,
             avg = s.tokens_avg,
@@ -162,17 +168,38 @@ pub fn format_skill_score_report(
     out
 }
 
+/// Terminal display width of `s` via `unicode-width` (task #84).
+///
+/// Wraps `UnicodeWidthStr::width` so callers don't import the crate. CJK /
+/// full-width / emoji measure correctly; control chars measure 0.
+fn unicode_display_width(s: &str) -> usize {
+    use unicode_width::UnicodeWidthStr;
+    s.width()
+}
+
 /// Clip a craft name to fit the report's first column without breaking
-/// alignment. Keeps the head + `…` so long names are still recognisable.
-fn truncate_for_column(name: &str, max: usize) -> String {
-    let chars: Vec<char> = name.chars().collect();
-    if chars.len() <= max {
-        name.to_string()
-    } else {
-        // Leave 1 char for the ellipsis.
-        let head: String = chars.iter().take(max - 1).collect();
-        format!("{head}…")
+/// alignment. Task #84: truncation is by **display width** (CJK counted as
+/// 2), not char count — so a name like "接入飞书客服" (12 columns / 6 chars)
+/// truncates at the display-width boundary.
+fn truncate_for_column(name: &str, max_width: usize) -> String {
+    use unicode_width::UnicodeWidthChar;
+    if unicode_display_width(name) <= max_width {
+        return name.to_string();
     }
+    // Reserve 1 column for the ellipsis.
+    let budget = max_width.saturating_sub(1);
+    let mut acc = String::new();
+    let mut used = 0usize;
+    for ch in name.chars() {
+        let w = ch.width().unwrap_or(0);
+        if used + w > budget {
+            break;
+        }
+        acc.push(ch);
+        used += w;
+    }
+    acc.push('…');
+    acc
 }
 
 /// Aggregate records by craft name: a record with `crafts_active = [a, b]`
@@ -676,6 +703,77 @@ mod tests {
         assert!(
             report.to_lowercase().contains("no"),
             "empty needs-eval report must include an explicit 'no' hint, got: {report:?}"
+        );
+    }
+
+    // ── Task #84: CJK / full-width column alignment ──────────────────────
+
+    #[test]
+    fn truncate_for_column_leaves_pure_ascii_under_budget_untouched() {
+        assert_eq!(truncate_for_column("alpha", 19), "alpha");
+    }
+
+    #[test]
+    fn truncate_for_column_counts_cjk_as_two_columns_for_truncation_boundary() {
+        // "接入飞书" is 4 chars × 2-column = 8 display width. Under 19 it
+        // must not be truncated.
+        let name = "接入飞书";
+        assert_eq!(unicode_display_width(name), 8);
+        assert_eq!(truncate_for_column(name, 19), name);
+    }
+
+    #[test]
+    fn truncate_for_column_truncates_at_display_width_with_ellipsis() {
+        // "接入飞书客服工具" = 8 chars × 2-column = 16 display. Budget 10
+        // → reserve 1 for "…" → 9 display columns of body → fits 4 CJK
+        // chars (8 display) — truncated string is "接入飞书…" with total
+        // display width 9.
+        let name = "接入飞书客服工具";
+        let out = truncate_for_column(name, 10);
+        assert!(out.ends_with('…'), "ellipsis must be tail marker");
+        assert!(
+            unicode_display_width(&out) <= 10,
+            "truncated width must fit max_width, got {} for {:?}",
+            unicode_display_width(&out),
+            out
+        );
+    }
+
+    #[test]
+    fn format_skill_score_report_cjk_name_column_stays_aligned() {
+        // Two rows, one ASCII one CJK — their usage columns must start at
+        // the same column position (20-21st display column counting from
+        // start of line). We test by finding the "usage" column header in
+        // the header row vs a row's usage digit alignment.
+        let mut stats = HashMap::new();
+        stats.insert("alpha".into(), make_stats(5, 500, 50, 100));
+        stats.insert("接入飞书".into(), make_stats(7, 700, 60, 100));
+        let report = format_skill_score_report(&stats, false);
+        // Every data line must contain the usage count at the same display
+        // column position — compare the display width of the line's prefix
+        // up to the first digit of usage across the two data rows.
+        let lines: Vec<&str> = report.lines().collect();
+        // Skip 2 header lines
+        let row_alpha = lines.iter().find(|l| l.contains("alpha")).unwrap();
+        let row_cjk = lines.iter().find(|l| l.contains("接入飞书")).unwrap();
+        // First digit position (in display columns) must match.
+        let prefix_width = |line: &str| -> usize {
+            use unicode_width::UnicodeWidthChar;
+            let mut w = 0;
+            for ch in line.chars() {
+                if ch.is_ascii_digit() {
+                    return w;
+                }
+                w += ch.width().unwrap_or(0);
+            }
+            w
+        };
+        assert_eq!(
+            prefix_width(row_alpha),
+            prefix_width(row_cjk),
+            "CJK row must align with ASCII row — got alpha={} cjk={} in:\n{report}",
+            prefix_width(row_alpha),
+            prefix_width(row_cjk)
         );
     }
 }

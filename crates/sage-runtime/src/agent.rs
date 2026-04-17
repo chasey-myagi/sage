@@ -100,6 +100,38 @@ pub trait StopHook: Send + Sync {
     async fn on_stop(&self, ctx: &StopContext) -> StopAction;
 }
 
+// ── Task #71: blanket impls so `Arc<dyn Trait>` can be used anywhere
+//              `Box<dyn Trait>` is accepted. Replaces 4 `ArcXxxHook`
+//              wrapper structs that just forwarded each method.
+
+#[async_trait::async_trait]
+impl<T: ?Sized + BeforeToolCallHook> BeforeToolCallHook for std::sync::Arc<T> {
+    async fn before_tool_call(&self, ctx: &BeforeToolCallContext) -> BeforeToolCallResult {
+        (**self).before_tool_call(ctx).await
+    }
+}
+
+#[async_trait::async_trait]
+impl<T: ?Sized + AfterToolCallHook> AfterToolCallHook for std::sync::Arc<T> {
+    async fn after_tool_call(&self, ctx: &AfterToolCallContext) -> AfterToolCallResult {
+        (**self).after_tool_call(ctx).await
+    }
+}
+
+#[async_trait::async_trait]
+impl<T: ?Sized + TransformContextHook> TransformContextHook for std::sync::Arc<T> {
+    async fn transform_context(&self, messages: &mut Vec<AgentMessage>) {
+        (**self).transform_context(messages).await
+    }
+}
+
+#[async_trait::async_trait]
+impl<T: ?Sized + StopHook> StopHook for std::sync::Arc<T> {
+    async fn on_stop(&self, ctx: &StopContext) -> StopAction {
+        (**self).on_stop(ctx).await
+    }
+}
+
 /// The Agent — owns config, provider, tools, message history, queues, and hooks.
 pub struct Agent {
     config: AgentLoopConfig,
@@ -155,21 +187,37 @@ impl Agent {
         }
     }
 
-    /// Attach a session-scoped [`HookBus`] used by the compaction path to
-    /// emit `HookEvent::PreCompact` / `PostCompact`.
-    pub fn set_hook_bus(&mut self, bus: Option<HookBus>) {
-        self.hook_bus = bus;
+    /// Attach a session — HookBus + session id — as a single atomic step.
+    ///
+    /// Task #86: replaces the old `set_hook_bus(Some(...))` +
+    /// `set_session_id(Some(...))` pair. Having two separate setters
+    /// allowed half-attached states (bus without id or vice versa) that
+    /// downstream code never expected. The invariant is now structural:
+    /// either both are set or neither is.
+    pub fn attach_session(&mut self, bus: HookBus, id: String) {
+        self.hook_bus = Some(bus);
+        self.session_id = Some(id);
     }
 
+    /// Detach the currently attached session. Clears both bus and id.
+    /// Safe to call when no session is attached (idempotent).
+    pub fn detach_session(&mut self) {
+        self.hook_bus = None;
+        self.session_id = None;
+    }
+
+    /// Whether a session is currently attached. True iff both bus and
+    /// id are present (structural invariant — they're never split).
+    pub fn is_session_attached(&self) -> bool {
+        self.hook_bus.is_some() && self.session_id.is_some()
+    }
+
+    /// Borrow the attached [`HookBus`], if any.
     pub fn hook_bus(&self) -> Option<&HookBus> {
         self.hook_bus.as_ref()
     }
 
-    /// Attach the session identifier stamped onto compaction hook events.
-    pub fn set_session_id(&mut self, id: Option<String>) {
-        self.session_id = id;
-    }
-
+    /// Borrow the attached session id, if any.
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
     }

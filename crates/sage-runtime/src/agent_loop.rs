@@ -587,9 +587,16 @@ pub(crate) async fn try_compact(
     }
 }
 
-/// Generate a compact hex session identifier from the current wall-clock time.
-/// Not cryptographically unique, but sufficient for log correlation within a run.
-fn generate_session_id() -> String {
+/// Generate a compact hex trace id for a standalone `run_agent_loop` that has
+/// no engine-level session attached.
+///
+/// Task #87: renamed from `generate_session_id` to avoid confusion with
+/// [`crate::engine::generate_session_id`] (which is authoritative for
+/// `SageSession.session_id` / HookEvent payloads). When the agent has an
+/// attached session, its id always wins — this fallback fires only in
+/// direct `run_agent_loop(&mut agent, …)` callers (unit tests, one-shot
+/// scripts) where no `SageSession` exists.
+fn generate_loop_trace_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -629,7 +636,14 @@ pub async fn run_agent_loop_with_cancel(
 ) -> Result<Vec<AgentMessage>, AgentLoopError> {
     let mut new_messages: Vec<AgentMessage> = Vec::new();
     let mut turn_count: usize = 0;
-    let session_id = generate_session_id();
+    // Task #87: prefer the attached engine-level session id (what HookBus
+    // subscribers and metrics correlate on). Fall back to a local trace
+    // id only when the agent was started without an engine session —
+    // direct `run_agent_loop` callers in unit tests, etc.
+    let session_id = agent
+        .session_id()
+        .map(str::to_string)
+        .unwrap_or_else(generate_loop_trace_id);
 
     // Stop-hook state: updated after each assistant message, consumed at natural stop.
     let mut last_stop_reason = crate::types::StopReason::Stop;
