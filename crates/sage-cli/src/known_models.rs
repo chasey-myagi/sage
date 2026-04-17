@@ -894,3 +894,82 @@ mod tests {
         );
     }
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// Sprint 12 M5 — /v1/models online probe (optional)
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Probe a provider's `/v1/models` endpoint for its current live model
+/// catalogue, returning a sorted unique list of model ids.
+///
+/// Delegates to `sage_runtime::llm::models::discover_models` and projects
+/// the `DiscoveredModel` structs down to bare ids. Errors propagate
+/// (HTTP / API error / parse) so the caller can surface them to the user.
+///
+/// Intended use (v0.0.2+): TUI hotkey 'p' in `sage init` refreshes the
+/// candidate list by calling this, then merging results into
+/// `~/.sage/known_models.json` via `record_used_model` (one entry per
+/// discovered model).
+///
+/// `api_key` is optional — some local providers (Ollama / vLLM) don't
+/// require auth on `/v1/models`. For cloud providers, pass
+/// `Some(resolve_api_key_from_env(...))` per ProviderSpec.
+pub async fn probe_provider_models(
+    base_url: &str,
+    api_key: Option<&str>,
+) -> Result<Vec<String>, ProbeError> {
+    let discovered =
+        sage_runtime::llm::models::discover_models(base_url, api_key)
+            .await
+            .map_err(|e| ProbeError::Discover(e.to_string()))?;
+    let mut ids: Vec<String> = discovered.into_iter().map(|m| m.id).collect();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
+/// Error returned by [`probe_provider_models`]. Thin wrapper around the
+/// underlying `DiscoveryError` to avoid leaking reqwest types across the
+/// crate boundary.
+#[derive(Debug)]
+pub enum ProbeError {
+    /// Any failure in the underlying HTTP / parse flow.
+    Discover(String),
+}
+
+impl std::fmt::Display for ProbeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProbeError::Discover(msg) => write!(f, "probe failed: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for ProbeError {}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn probe_error_display_contains_reason() {
+        let e = ProbeError::Discover("HTTP 401 Unauthorized".to_string());
+        let msg = e.to_string();
+        assert!(msg.contains("probe failed"));
+        assert!(msg.contains("401"));
+    }
+
+    #[tokio::test]
+    async fn probe_unreachable_host_returns_discover_err() {
+        // Use a port nothing listens on; reqwest will fail to connect.
+        // This test proves the wire error is converted to ProbeError, not panicking.
+        let result = probe_provider_models("http://127.0.0.1:1/v1", None).await;
+        assert!(result.is_err(), "unreachable host must return Err");
+        match result {
+            Err(ProbeError::Discover(msg)) => {
+                assert!(!msg.is_empty(), "error message should describe failure");
+            }
+            _ => panic!("expected ProbeError::Discover"),
+        }
+    }
+}
