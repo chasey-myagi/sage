@@ -153,8 +153,6 @@ impl sage_runtime::event::AgentEventSink for TerminalSink {
 /// Loads the agent config, builds a [`SageSession`], and enters a read-eval loop.
 /// Built-in slash commands: `/exit` to quit, `/reset` to clear history.
 pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
-    use tokio::io::AsyncBufReadExt as _;
-
     let config = crate::serve::load_agent_config(agent).await?;
     let engine = crate::serve::build_engine_for_agent(&config, dev).await?;
 
@@ -170,7 +168,67 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("failed to start session: {e}"))?;
 
-    let sink = TerminalSink;
+    // Sprint 12 task #75: stand up the metrics pipeline. MetricsCollector
+    // accumulates AgentEvents into a TaskRecord, written to
+    // `<workspace>/metrics/<task_id>.json` + summary.json at session end
+    // (UserDriven sessions only). TerminalSink is wrapped in MetricsSink so
+    // the tee happens transparently inside session.send().
+    let agent_dir = crate::serve::sage_agents_dir()?.join(agent);
+    let workspace_dir = config
+        .sandbox
+        .as_ref()
+        .and_then(|s| s.workspace_host.clone())
+        .unwrap_or_else(|| agent_dir.join("workspace"));
+    let session_type = config
+        .memory
+        .as_ref()
+        .and_then(|m| m.session_type.clone())
+        .unwrap_or(sage_runner::config::SessionType::UserDriven);
+    let collector = sage_runner::metrics::MetricsCollector::new(
+        config.name.clone(),
+        config.llm.provider.clone(),
+        config.llm.model.clone(),
+        session_type,
+        workspace_dir,
+        String::new(),
+    );
+    let shared_metrics = sage_runner::metrics::share_collector(collector);
+    let sink = sage_runner::metrics::MetricsSink::new(shared_metrics.clone(), TerminalSink);
+
+    // Sprint 12 task #75 (Linus v1 blocker): run the chat loop inside a
+    // separate async fn whose result we always observe before finalizing.
+    // Previously `send_with_cancel(...).await?` would bubble anyhow::Err
+    // out of run_chat and skip finalize entirely, silently losing the
+    // TaskRecord on every failed turn. Now the Result flows here and the
+    // metrics record accurately reflects success vs. the failure reason.
+    let loop_result = chat_loop(agent, &agent_dir, &mut session, &sink, &cancel_token).await;
+
+    let (success, failure_reason) = match &loop_result {
+        Ok(()) => (true, None),
+        Err(e) => (false, Some(e.to_string())),
+    };
+    if let Some(collector) = sage_runner::metrics::take_collector(&shared_metrics).await {
+        if let Err(e) = collector.finalize(success, failure_reason).await {
+            tracing::warn!(error = %e, "metrics finalize failed at chat close");
+        }
+    }
+
+    loop_result
+}
+
+/// Inner chat loop — everything between session construction and metrics
+/// finalize. Returns `Ok(())` on clean exit (`/exit`, EOF, readline Ctrl+C)
+/// and `Err(...)` on any failure; [`run_chat`] always observes this result
+/// before calling `finalize` so the TaskRecord reflects reality.
+async fn chat_loop(
+    agent: &str,
+    agent_dir: &std::path::Path,
+    session: &mut sage_runtime::SageSession,
+    sink: &dyn sage_runtime::event::AgentEventSink,
+    cancel_token: &tokio_util::sync::CancellationToken,
+) -> anyhow::Result<()> {
+    use tokio::io::AsyncBufReadExt as _;
+
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin());
 
     println!("Connected to '{agent}'. Type /exit to quit, /reset to clear history.");
@@ -186,10 +244,6 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
         let n = tokio::select! {
             res = stdin.read_line(&mut line) => res?,
             _ = tokio::signal::ctrl_c() => {
-                // Signal any downstream wiring to abort, then exit the
-                // chat loop. MVP: this fires only while waiting for input
-                // (not mid-turn). Mid-turn Ctrl+C abort is v0.0.2 follow-up
-                // once the token is wired into agent_loop/tool/LLM stream.
                 cancel_token.cancel();
                 println!();
                 println!("^C received; closing chat session.");
@@ -208,11 +262,10 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
             }
             ChatInput::Empty => {}
             ChatInput::Skill { name, args } => {
-                let agent_dir = crate::serve::sage_agents_dir()?.join(agent);
-                match load_skill_content(&name, &agent_dir).await {
+                match load_skill_content(&name, agent_dir).await {
                     Some(template) => {
                         let text = substitute_arguments(&template, &args);
-                        send_with_cancel(&mut session, &sink, text.trim(), &cancel_token).await?;
+                        send_with_cancel(session, sink, text.trim(), cancel_token).await?;
                     }
                     None => {
                         eprintln!(
@@ -223,7 +276,7 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
                 }
             }
             ChatInput::Message(text) => {
-                send_with_cancel(&mut session, &sink, text.trim(), &cancel_token).await?;
+                send_with_cancel(session, sink, text.trim(), cancel_token).await?;
             }
         }
     }
@@ -239,7 +292,7 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
 /// non-fatal message so the chat loop continues to the next readline.
 async fn send_with_cancel(
     session: &mut sage_runtime::SageSession,
-    sink: &TerminalSink,
+    sink: &dyn sage_runtime::event::AgentEventSink,
     text: &str,
     cancel_token: &tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {

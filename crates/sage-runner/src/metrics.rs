@@ -1,7 +1,11 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context as _;
+use async_trait::async_trait;
+use sage_runtime::event::{AgentEvent, AgentEventSink};
+use tokio::sync::Mutex;
 
 use crate::config::SessionType;
 
@@ -63,7 +67,11 @@ pub struct TaskRecord {
     pub provider: String,
     /// LLM model identifier (e.g. `"claude-haiku-4-5-20251001"`).
     pub model: String,
-    /// sha256 of the agent config bytes (provided externally).
+    /// sha256 of the agent config bytes, prefixed with `sha256:` when
+    /// computed. Empty string is the canonical "not computed" sentinel —
+    /// real hashes always carry the `sha256:` prefix so grep-based tooling
+    /// can distinguish old/unwired records from hashed ones without false
+    /// positives on accidentally-empty digests.
     pub config_hash: String,
     /// Unix epoch milliseconds when the collector started observing.
     pub started_at: u64,
@@ -260,6 +268,76 @@ impl MetricsCollector {
         if !self.record.crafts_active.iter().any(|n| n == &name) {
             self.record.crafts_active.push(name);
         }
+    }
+}
+
+/// Shared handle to a [`MetricsCollector`] that can be fed from an
+/// [`AgentEventSink`] side without giving up ownership for `finalize`.
+///
+/// Sprint 12 task #75: the collector's `observe(&mut self, ev)` needs `&mut`
+/// so wrapping it in `Arc<Mutex<Option<_>>>` lets the event-sink side take a
+/// lock for each event and the owner side `.take()` for the final `finalize`
+/// call. `Option` so the collector can be moved out cleanly without
+/// `Arc::try_unwrap` acrobatics at session close.
+pub type SharedMetrics = Arc<Mutex<Option<MetricsCollector>>>;
+
+/// Wrap a [`MetricsCollector`] in the shared cell used by [`MetricsSink`].
+pub fn share_collector(c: MetricsCollector) -> SharedMetrics {
+    Arc::new(Mutex::new(Some(c)))
+}
+
+/// Take the collector out of the shared cell for `finalize`.
+///
+/// Returns `None` if someone already took it (idempotent in the sense that
+/// double-finalize is impossible). Callers race-free because the lock is
+/// held while extracting.
+pub async fn take_collector(shared: &SharedMetrics) -> Option<MetricsCollector> {
+    shared.lock().await.take()
+}
+
+/// `AgentEventSink` wrapper that forwards every event to an inner sink and
+/// simultaneously calls [`MetricsCollector::observe`] on the shared cell.
+///
+/// Sprint 12 task #75: tees AgentEvents into the metrics pipeline without
+/// modifying the engine. The inner sink (typically `TerminalSink` in chat or
+/// `ChannelSink` in daemons) sees the events unchanged; the collector sees
+/// them in parallel.
+///
+/// If the shared cell has already been drained (via [`take_collector`]), the
+/// observation is silently skipped — emission continues to the inner sink as
+/// usual. This matches the contract that `finalize` can happen any time and
+/// subsequent events are no-ops for metrics.
+pub struct MetricsSink<S> {
+    shared: SharedMetrics,
+    inner: S,
+}
+
+impl<S> MetricsSink<S> {
+    pub fn new(shared: SharedMetrics, inner: S) -> Self {
+        Self { shared, inner }
+    }
+}
+
+#[async_trait]
+impl<S> AgentEventSink for MetricsSink<S>
+where
+    S: AgentEventSink + Send + Sync,
+{
+    async fn emit(&self, event: AgentEvent) {
+        // Ordering contract: we observe BEFORE forwarding, and the lock is
+        // released BEFORE the inner sink's .emit(). Consequences:
+        //
+        // 1. Panic safety — a panicking inner sink still leaves the counter
+        //    state updated, so metrics can't silently under-report.
+        // 2. Caller visibility — anything reading `record()` from the
+        //    MetricsCollector side may observe the counter bump before the
+        //    downstream UI has rendered the event. That's deliberate;
+        //    metrics are the primary consumer and the inner sink is
+        //    effectively a sibling tap, not a serial dependency.
+        if let Some(c) = self.shared.lock().await.as_mut() {
+            c.observe(&event);
+        }
+        self.inner.emit(event).await;
     }
 }
 
@@ -1346,6 +1424,203 @@ mod tests {
             records[0].get("provider").and_then(|v| v.as_str()),
             Some("openai"),
             "summary.json roundtrip must preserve provider field"
+        );
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // Sprint 12 task #75: MetricsSink wiring
+    // ────────────────────────────────────────────────────────────────────
+
+    /// AgentEventSink that records emitted events so tests can assert the
+    /// MetricsSink forwarded them unmodified.
+    struct RecordingSink {
+        events: std::sync::Arc<tokio::sync::Mutex<Vec<AgentEvent>>>,
+    }
+
+    impl RecordingSink {
+        fn new() -> (Self, std::sync::Arc<tokio::sync::Mutex<Vec<AgentEvent>>>) {
+            let events = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+            (
+                Self {
+                    events: events.clone(),
+                },
+                events,
+            )
+        }
+    }
+
+    #[async_trait]
+    impl AgentEventSink for RecordingSink {
+        async fn emit(&self, event: AgentEvent) {
+            self.events.lock().await.push(event);
+        }
+    }
+
+    fn sample_assistant_msg(input: u64, output: u64) -> sage_runtime::types::AssistantMessage {
+        sage_runtime::types::AssistantMessage {
+            content: vec![],
+            provider: "test".into(),
+            model: "test".into(),
+            usage: Usage {
+                input,
+                output,
+                cache_read: 0,
+                cache_write: 0,
+                total_tokens: input + output,
+                cost: Cost::default(),
+            },
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn metrics_sink_forwards_events_unchanged_to_inner() {
+        // Contract: MetricsSink must not swallow, reorder, or mutate events
+        // passed to the inner sink. It's a tee, not a filter.
+        let collector = MetricsCollector::new(
+            "a".into(),
+            "anthropic".into(),
+            "claude-sonnet".into(),
+            SessionType::UserDriven,
+            PathBuf::from("/tmp/ws"),
+            "hash".into(),
+        );
+        let shared = share_collector(collector);
+        let (inner, recorded) = RecordingSink::new();
+        let sink = MetricsSink::new(shared.clone(), inner);
+
+        sink.emit(AgentEvent::AgentStart).await;
+        sink.emit(AgentEvent::TurnStart).await;
+
+        let got = recorded.lock().await;
+        assert_eq!(got.len(), 2, "inner sink must see all events");
+        assert!(matches!(got[0], AgentEvent::AgentStart));
+        assert!(matches!(got[1], AgentEvent::TurnStart));
+    }
+
+    #[tokio::test]
+    async fn metrics_sink_observe_updates_shared_collector_state() {
+        // The raison d'être of MetricsSink: events tee into the collector
+        // so counters advance.
+        let collector = MetricsCollector::new(
+            "a".into(),
+            "anthropic".into(),
+            "claude-sonnet".into(),
+            SessionType::UserDriven,
+            PathBuf::from("/tmp/ws"),
+            "hash".into(),
+        );
+        let shared = share_collector(collector);
+        let (inner, _) = RecordingSink::new();
+        let sink = MetricsSink::new(shared.clone(), inner);
+
+        sink.emit(AgentEvent::TurnEnd {
+            message: sample_assistant_msg(100, 50),
+            tool_results: vec![],
+        })
+        .await;
+        sink.emit(AgentEvent::ToolExecutionEnd {
+            tool_call_id: "t1".into(),
+            tool_name: "bash".into(),
+            is_error: false,
+        })
+        .await;
+        sink.emit(AgentEvent::ToolExecutionEnd {
+            tool_call_id: "t2".into(),
+            tool_name: "bash".into(),
+            is_error: true,
+        })
+        .await;
+
+        let guard = shared.lock().await;
+        let rec = guard.as_ref().unwrap().record();
+        assert_eq!(rec.turn_count, 1);
+        assert_eq!(rec.input_tokens, 100);
+        assert_eq!(rec.output_tokens, 50);
+        assert_eq!(rec.tool_call_count, 2);
+        assert_eq!(rec.tool_error_count, 1);
+    }
+
+    #[tokio::test]
+    async fn metrics_sink_is_noop_after_take_collector() {
+        // Invariant for graceful shutdown: once the owner has pulled the
+        // collector out for finalize, later stray events (edge case where
+        // an AgentEnd emission races past finalize) must not panic and
+        // must still forward to the inner sink.
+        let collector = MetricsCollector::new(
+            "a".into(),
+            "anthropic".into(),
+            "claude-sonnet".into(),
+            SessionType::UserDriven,
+            PathBuf::from("/tmp/ws"),
+            "hash".into(),
+        );
+        let shared = share_collector(collector);
+        let (inner, recorded) = RecordingSink::new();
+        let sink = MetricsSink::new(shared.clone(), inner);
+
+        let taken = take_collector(&shared).await;
+        assert!(taken.is_some(), "first take returns the collector");
+        assert!(
+            take_collector(&shared).await.is_none(),
+            "second take is None — idempotent drain"
+        );
+
+        // Post-take events still forward to the inner sink.
+        sink.emit(AgentEvent::AgentEnd {
+            messages: vec![],
+        })
+        .await;
+        assert_eq!(recorded.lock().await.len(), 1, "inner sink still gets events");
+    }
+
+    #[tokio::test]
+    async fn metrics_sink_finalize_roundtrip_writes_task_record() {
+        // End-to-end: observe + take + finalize produces a persisted
+        // TaskRecord with the counters the tee accumulated.
+        let tmp = TempDir::new().unwrap();
+        let collector = MetricsCollector::new(
+            "feishu".into(),
+            "anthropic".into(),
+            "claude-sonnet".into(),
+            SessionType::UserDriven,
+            tmp.path().to_path_buf(),
+            "sha256:deadbeef".into(),
+        );
+        let shared = share_collector(collector);
+        let (inner, _) = RecordingSink::new();
+        let sink = MetricsSink::new(shared.clone(), inner);
+
+        sink.emit(AgentEvent::TurnEnd {
+            message: sample_assistant_msg(42, 17),
+            tool_results: vec![],
+        })
+        .await;
+
+        let taken = take_collector(&shared)
+            .await
+            .expect("collector must be present");
+        let rec = taken.finalize(true, None).await.unwrap();
+        assert_eq!(rec.input_tokens, 42);
+        assert_eq!(rec.output_tokens, 17);
+        assert_eq!(rec.turn_count, 1);
+
+        // On-disk verification: per-task JSON + summary.json both written.
+        let task_path = tmp
+            .path()
+            .join("metrics")
+            .join(format!("{}.json", rec.task_id));
+        assert!(
+            Path::new(&task_path).exists(),
+            "per-task record must be persisted at {}",
+            task_path.display()
+        );
+        let summary_path = tmp.path().join("metrics").join("summary.json");
+        assert!(
+            Path::new(&summary_path).exists(),
+            "summary.json must be persisted"
         );
     }
 }
