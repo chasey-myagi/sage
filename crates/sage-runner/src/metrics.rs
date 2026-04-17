@@ -56,6 +56,11 @@ pub struct TaskRecord {
     pub task_id: String,
     /// Agent name from `AgentConfig.name`.
     pub agent_name: String,
+    /// LLM provider identifier (e.g. `"anthropic"`, `"openai"`). Strongly bound —
+    /// must come from the known provider set. Defaults to `""` when deserializing
+    /// old records that predate this field (backward compat via `serde(default)`).
+    #[serde(default)]
+    pub provider: String,
     /// LLM model identifier (e.g. `"claude-haiku-4-5-20251001"`).
     pub model: String,
     /// sha256 of the agent config bytes (provided externally).
@@ -95,13 +100,15 @@ pub struct TaskRecord {
 impl TaskRecord {
     /// Create a new `TaskRecord` with a fresh ULID task ID and zeroed counters.
     ///
-    /// Identity fields (`agent_name`, `model`, `config_hash`) are stored verbatim.
-    /// `session_type` defaults to `UserDriven`; callers that need a different
-    /// classification should construct the record through [`MetricsCollector::new`].
-    pub fn new(agent_name: String, model: String) -> Self {
+    /// Identity fields `agent_name`, `provider`, `model` are stored verbatim.
+    /// `config_hash` is set separately by [`MetricsCollector::new`]; `session_type`
+    /// defaults to `UserDriven` and callers that need a different classification
+    /// should construct the record through [`MetricsCollector::new`].
+    pub fn new(agent_name: String, provider: String, model: String) -> Self {
         Self {
             task_id: ulid::Ulid::new().to_string(),
             agent_name,
+            provider,
             model,
             config_hash: String::new(),
             started_at: 0,
@@ -142,12 +149,13 @@ impl MetricsCollector {
     /// `started_at` is stamped immediately with the current unix-ms clock.
     pub fn new(
         agent_name: String,
+        provider: String,
         model: String,
         session_type: SessionType,
         workspace_dir: PathBuf,
         config_hash: String,
     ) -> Self {
-        let mut record = TaskRecord::new(agent_name, model);
+        let mut record = TaskRecord::new(agent_name, provider, model);
         record.session_type = session_type;
         record.config_hash = config_hash;
         record.started_at = now_unix_ms();
@@ -269,6 +277,13 @@ mod tests {
 
     use super::*;
 
+    // Sprint 12 M3 note: pre-wiring test fixtures use `""` as the provider
+    // string. `""` is the legitimate legacy-record sentinel (see
+    // `task_record_provider_defaults_to_empty_when_missing_in_deserialize`) —
+    // real production call sites will pass a non-empty provider from
+    // `AgentConfig.llm.provider` once the AgentEvent emitter lands (tracked as
+    // the MetricsCollector wiring item in docs/TODO.md).
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     fn is_ulid(s: &str) -> bool {
@@ -291,6 +306,7 @@ mod tests {
     fn make_collector(session_type: SessionType, workspace_dir: PathBuf) -> MetricsCollector {
         MetricsCollector::new(
             "feishu".to_string(),
+            "anthropic".to_string(),
             "claude-haiku-4-5-20251001".to_string(),
             session_type,
             workspace_dir,
@@ -356,6 +372,7 @@ mod tests {
     fn task_record_task_id_not_empty() {
         let rec = TaskRecord::new(
             "feishu".to_string(),
+            "anthropic".to_string(),
             "claude-haiku-4-5-20251001".to_string(),
         );
         assert!(!rec.task_id.is_empty());
@@ -365,6 +382,7 @@ mod tests {
     fn task_record_task_id_is_ulid_format() {
         let rec = TaskRecord::new(
             "feishu".to_string(),
+            "anthropic".to_string(),
             "claude-haiku-4-5-20251001".to_string(),
         );
         assert!(
@@ -376,8 +394,8 @@ mod tests {
 
     #[test]
     fn task_record_two_records_have_distinct_ids() {
-        let a = TaskRecord::new("agent".to_string(), "model".to_string());
-        let b = TaskRecord::new("agent".to_string(), "model".to_string());
+        let a = TaskRecord::new("agent".to_string(), "".to_string(), "model".to_string());
+        let b = TaskRecord::new("agent".to_string(), "".to_string(), "model".to_string());
         assert_ne!(
             a.task_id, b.task_id,
             "every TaskRecord must receive a unique ULID"
@@ -388,6 +406,7 @@ mod tests {
     fn task_record_new_stores_identity_and_zeros_counters() {
         let rec = TaskRecord::new(
             "feishu".to_string(),
+            "anthropic".to_string(),
             "claude-haiku-4-5-20251001".to_string(),
         );
         assert_eq!(rec.agent_name, "feishu");
@@ -405,7 +424,7 @@ mod tests {
 
     #[test]
     fn task_record_empty_strings_produce_valid_ulid() {
-        let rec = TaskRecord::new("".to_string(), "".to_string());
+        let rec = TaskRecord::new("".to_string(), "".to_string(), "".to_string());
         assert!(
             is_ulid(&rec.task_id),
             "empty field inputs must still produce a valid ULID, got: '{}'",
@@ -417,7 +436,11 @@ mod tests {
 
     #[test]
     fn task_record_unicode_agent_name() {
-        let rec = TaskRecord::new("飞书助手".to_string(), "claude-haiku".to_string());
+        let rec = TaskRecord::new(
+            "飞书助手".to_string(),
+            "anthropic".to_string(),
+            "claude-haiku".to_string(),
+        );
         assert!(is_ulid(&rec.task_id));
         assert_eq!(rec.agent_name, "飞书助手");
     }
@@ -426,8 +449,8 @@ mod tests {
 
     #[test]
     fn task_record_new_task_id_is_ulid_and_unique() {
-        let a = TaskRecord::new("agent".to_string(), "model".to_string());
-        let b = TaskRecord::new("agent".to_string(), "model".to_string());
+        let a = TaskRecord::new("agent".to_string(), "".to_string(), "model".to_string());
+        let b = TaskRecord::new("agent".to_string(), "".to_string(), "model".to_string());
         assert!(is_ulid(&a.task_id));
         assert!(is_ulid(&b.task_id));
         assert_ne!(a.task_id, b.task_id);
@@ -437,6 +460,7 @@ mod tests {
     fn task_record_new_extended_fields_default_to_zero_empty_or_none() {
         let rec = TaskRecord::new(
             "feishu".to_string(),
+            "anthropic".to_string(),
             "claude-haiku-4-5-20251001".to_string(),
         );
         assert_eq!(rec.config_hash, "");
@@ -455,6 +479,7 @@ mod tests {
     fn task_record_new_zeros_legacy_counters() {
         let rec = TaskRecord::new(
             "feishu".to_string(),
+            "anthropic".to_string(),
             "claude-haiku-4-5-20251001".to_string(),
         );
         assert_eq!(rec.agent_name, "feishu");
@@ -471,6 +496,7 @@ mod tests {
     fn task_record_serde_roundtrip_preserves_all_fields() {
         let mut rec = TaskRecord::new(
             "feishu".to_string(),
+            "anthropic".to_string(),
             "claude-haiku-4-5-20251001".to_string(),
         );
         rec.config_hash = "deadbeef".into();
@@ -521,6 +547,7 @@ mod tests {
         let (_tmp, ws) = workspace();
         let collector = MetricsCollector::new(
             "feishu".into(),
+            "anthropic".into(),
             "claude-haiku-4-5-20251001".into(),
             SessionType::WikiMaintenance,
             ws,
@@ -763,6 +790,7 @@ mod tests {
         let (_tmp, ws) = workspace();
         let collector = MetricsCollector::new(
             "feishu".into(),
+            "anthropic".into(),
             "claude".into(),
             SessionType::UserDriven,
             ws,
@@ -995,6 +1023,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut c = MetricsCollector::new(
             "a".into(),
+            "unknown".into(),
             "m".into(),
             SessionType::UserDriven,
             tmp.path().into(),
@@ -1009,6 +1038,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut c = MetricsCollector::new(
             "a".into(),
+            "unknown".into(),
             "m".into(),
             SessionType::UserDriven,
             tmp.path().into(),
@@ -1029,6 +1059,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut c = MetricsCollector::new(
             "a".into(),
+            "unknown".into(),
             "m".into(),
             SessionType::UserDriven,
             tmp.path().into(),
@@ -1049,6 +1080,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut c = MetricsCollector::new(
             "a".into(),
+            "unknown".into(),
             "m".into(),
             SessionType::UserDriven,
             tmp.path().into(),
@@ -1065,6 +1097,7 @@ mod tests {
         let ws: PathBuf = tmp.path().into();
         let mut c = MetricsCollector::new(
             "a".into(),
+            "unknown".into(),
             "m".into(),
             SessionType::UserDriven,
             ws.clone(),
@@ -1091,5 +1124,228 @@ mod tests {
         let crafts = parsed["crafts_active"].as_array().unwrap();
         let names: Vec<&str> = crafts.iter().map(|v| v.as_str().unwrap()).collect();
         assert_eq!(names, vec!["deploy-rune", "review-diff"]);
+    }
+
+    // ── Sprint 12 M3 — provider field ────────────────────────────────────────
+
+    /// TaskRecord::new 的新三参数签名：provider 存入 record.provider，model 存入 record.model。
+    #[test]
+    fn task_record_new_takes_provider_and_stores_it() {
+        let rec = TaskRecord::new(
+            "agent".to_string(),
+            "anthropic".to_string(),
+            "claude-opus".to_string(),
+        );
+        assert_eq!(rec.provider, "anthropic");
+        assert_eq!(rec.model, "claude-opus");
+        assert_eq!(rec.agent_name, "agent");
+    }
+
+    /// 反序列化不含 provider 字段的旧 JSON → record.provider == ""（serde default 向后兼容）。
+    #[test]
+    fn task_record_provider_defaults_to_empty_when_missing_in_deserialize() {
+        // 旧 JSON 格式：没有 provider 字段
+        let old_json = r#"{
+            "task_id": "01JQZG000000000000000000",
+            "agent_name": "feishu",
+            "model": "claude-haiku-4-5",
+            "config_hash": "",
+            "started_at": 0,
+            "ended_at": 0,
+            "duration_ms": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "turn_count": 0,
+            "tool_call_count": 0,
+            "tool_error_count": 0,
+            "compaction_count": 0,
+            "success": true,
+            "failure_reason": null,
+            "session_type": "user_driven",
+            "crafts_active": []
+        }"#;
+        let rec: TaskRecord = serde_json::from_str(old_json).expect("deserialize old JSON");
+        assert_eq!(
+            rec.provider, "",
+            "missing provider field must deserialize as empty string via serde(default)"
+        );
+        assert_eq!(rec.model, "claude-haiku-4-5");
+    }
+
+    /// 序列化含 provider="anthropic" 的 record，JSON 字符串中存在 `"provider":"anthropic"` 键值。
+    #[test]
+    fn task_record_provider_serializes_to_json_field_provider() {
+        let rec = TaskRecord::new(
+            "agent".to_string(),
+            "anthropic".to_string(),
+            "claude-sonnet".to_string(),
+        );
+        let json = serde_json::to_string(&rec).expect("serialize");
+        assert!(
+            json.contains(r#""provider":"anthropic""#),
+            "serialized JSON must contain provider field, got: {json}"
+        );
+    }
+
+    /// provider 和 model 是独立字段，互不影响，model 原样透传不校验。
+    #[test]
+    fn task_record_provider_and_model_are_independent_fields() {
+        let rec = TaskRecord::new(
+            "agent".to_string(),
+            "openai".to_string(),
+            "kimi-k99-anything".to_string(),
+        );
+        assert_eq!(rec.provider, "openai");
+        assert_eq!(rec.model, "kimi-k99-anything");
+        // 两个字段完全独立
+        assert_ne!(rec.provider, rec.model);
+    }
+
+    /// provider="" 是合法状态，可以 serialize + deserialize 往返无损。
+    #[test]
+    fn task_record_empty_provider_is_valid_state_for_serde() {
+        let rec = TaskRecord::new(
+            "agent".to_string(),
+            "".to_string(),
+            "some-model".to_string(),
+        );
+        let json = serde_json::to_string(&rec).expect("serialize empty provider");
+        let back: TaskRecord = serde_json::from_str(&json).expect("deserialize empty provider");
+        assert_eq!(back.provider, "");
+        assert_eq!(back.model, "some-model");
+    }
+
+    /// MetricsCollector::new 新签名含 provider 参数，成功构造。
+    #[test]
+    fn metrics_collector_new_takes_provider_parameter() {
+        let (_tmp, ws) = workspace();
+        let collector = MetricsCollector::new(
+            "my-agent".into(),
+            "kimi".into(),
+            "kimi-k2".into(),
+            SessionType::UserDriven,
+            ws,
+            "hash-xyz".into(),
+        );
+        assert_eq!(collector.record().provider, "kimi");
+        assert_eq!(collector.record().model, "kimi-k2");
+    }
+
+    /// finalize 后 record.provider 非空（传入了真实 provider）。
+    #[tokio::test]
+    async fn metrics_collector_records_provider_in_final_record() {
+        let (_tmp, ws) = workspace();
+        let collector = MetricsCollector::new(
+            "agent".into(),
+            "anthropic".into(),
+            "claude-opus-4-5".into(),
+            SessionType::HarnessRun,
+            ws,
+            String::new(),
+        );
+        let rec = collector.finalize(true, None).await.expect("finalize");
+        assert_eq!(rec.provider, "anthropic");
+        assert!(
+            !rec.provider.is_empty(),
+            "finalized record.provider must not be empty"
+        );
+    }
+
+    /// UserDriven finalize 写盘后，读回 JSON 文件应含 "provider":"kimi" 字段。
+    #[tokio::test]
+    async fn metrics_collector_provider_is_persisted_to_disk_in_user_driven_session() {
+        let (_tmp, ws) = workspace();
+        let collector = MetricsCollector::new(
+            "agent".into(),
+            "kimi".into(),
+            "kimi-k2".into(),
+            SessionType::UserDriven,
+            ws.clone(),
+            String::new(),
+        );
+        let rec = collector.finalize(true, None).await.expect("finalize");
+
+        let path = ws.join("metrics").join(format!("{}.json", rec.task_id));
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read task record file {path:?}: {e}"));
+        // serde_json::to_vec_pretty 生成带空格的格式：`"provider": "kimi"`
+        assert!(
+            content.contains(r#""provider": "kimi""#),
+            "persisted JSON must contain provider field, got: {content}"
+        );
+    }
+
+    /// 旧 summary.json（records 里每条缺 provider 字段）反序列化成功且 provider=""。
+    #[test]
+    fn old_summary_json_without_provider_field_loads_with_empty_provider() {
+        let old_summary = r#"{
+            "records": [
+                {
+                    "task_id": "01JQZG000000000000000001",
+                    "agent_name": "feishu",
+                    "model": "claude-haiku-4-5",
+                    "config_hash": "abc",
+                    "started_at": 1000,
+                    "ended_at": 2000,
+                    "duration_ms": 1000,
+                    "input_tokens": 50,
+                    "output_tokens": 30,
+                    "cache_read_tokens": 0,
+                    "cache_write_tokens": 0,
+                    "turn_count": 1,
+                    "tool_call_count": 0,
+                    "tool_error_count": 0,
+                    "compaction_count": 0,
+                    "success": true,
+                    "failure_reason": null,
+                    "session_type": "user_driven",
+                    "crafts_active": []
+                }
+            ]
+        }"#;
+        #[derive(serde::Deserialize)]
+        struct OldSummary {
+            records: Vec<TaskRecord>,
+        }
+        let summary: OldSummary =
+            serde_json::from_str(old_summary).expect("deserialize old summary");
+        assert_eq!(summary.records.len(), 1);
+        assert_eq!(
+            summary.records[0].provider, "",
+            "old record without provider must deserialize to empty string"
+        );
+        assert_eq!(summary.records[0].model, "claude-haiku-4-5");
+    }
+
+    /// 写 summary → 读 summary → provider 字段保留（新格式 roundtrip）。
+    #[tokio::test]
+    async fn new_summary_json_roundtrip_preserves_provider() {
+        let (_tmp, ws) = workspace();
+
+        // 写第一条含 provider="openai" 的 record
+        let collector = MetricsCollector::new(
+            "agent".into(),
+            "openai".into(),
+            "gpt-4o".into(),
+            SessionType::UserDriven,
+            ws.clone(),
+            String::new(),
+        );
+        let _rec = collector.finalize(true, None).await.expect("finalize");
+
+        // 读回 summary.json，检查 provider 字段保留
+        let value = read_summary(&ws);
+        let records = value
+            .get("records")
+            .and_then(|v| v.as_array())
+            .expect("records array");
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].get("provider").and_then(|v| v.as_str()),
+            Some("openai"),
+            "summary.json roundtrip must preserve provider field"
+        );
     }
 }
