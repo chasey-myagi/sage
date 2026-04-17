@@ -199,4 +199,4 @@ Pre-release（v0.0.x）。API / CLI 命令 / 磁盘布局可能在 v0.1.0 前变
 
 ## License
 
-Private.
+MIT — see [LICENSE](./LICENSE).

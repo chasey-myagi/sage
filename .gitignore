@@ -16,3 +16,6 @@ Cargo.lock
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code / agent working dirs
+.claude/

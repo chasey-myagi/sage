@@ -76,7 +76,11 @@ pub fn init_tracing() {
 }
 
 #[derive(Parser)]
-#[command(name = "sage", about = "Sage — embeddable AI agent execution engine")]
+#[command(
+    name = "sage",
+    about = "Sage — embeddable AI agent execution engine",
+    version = env!("CARGO_PKG_VERSION"),
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
