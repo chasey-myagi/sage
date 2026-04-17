@@ -465,6 +465,21 @@ fn last_assistant_text(messages: &[AgentMessage]) -> String {
         .unwrap_or_default()
 }
 
+/// Sum `input` / `output` token usage across every assistant turn in the
+/// conversation. Used to wire TokenBudget criteria against real numbers
+/// instead of the hardcoded `0` stub Sprint 9 shipped with.
+fn sum_assistant_tokens(messages: &[AgentMessage]) -> (u64, u64) {
+    let mut input = 0u64;
+    let mut output = 0u64;
+    for m in messages {
+        if let AgentMessage::Assistant(a) = m {
+            input += a.usage.input;
+            output += a.usage.output;
+        }
+    }
+    (input, output)
+}
+
 // ── run_single_case ───────────────────────────────────────────────────────────
 
 /// Run a single test case and return the outcome.
@@ -520,6 +535,12 @@ async fn run_single_case(
 
     let last_text = last_assistant_text(session.messages());
 
+    // Sum assistant-turn token usage across the whole session so TokenBudget
+    // criteria get a real number to compare against (was hardcoded 0 before,
+    // making the criterion trivially pass — Linus flagged this in Sprint 9
+    // review and marked it "urgent").
+    let (input_tokens, output_tokens) = sum_assistant_tokens(session.messages());
+
     // Evaluate declarative criteria first (if any).
     let criteria_result = if !case.criteria.is_empty() {
         evaluate_criteria(
@@ -527,8 +548,8 @@ async fn run_single_case(
             &last_text,
             &[], // tool_calls: not yet wired; tests mock this
             turns,
-            0,
-            0,
+            input_tokens,
+            output_tokens,
             None,
         )
     } else {
@@ -649,6 +670,59 @@ mod tests {
 
     fn tools(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn assistant_with_usage(input: u64, output: u64) -> AgentMessage {
+        use sage_runtime::types::{AssistantMessage, Usage};
+        let mut a = AssistantMessage::new("stub".into());
+        a.usage = Usage {
+            input,
+            output,
+            ..Usage::default()
+        };
+        AgentMessage::Assistant(a)
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // sum_assistant_tokens — token wiring for TokenBudget criterion
+    // ════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn sum_assistant_tokens_empty_messages_returns_zero() {
+        let (i, o) = sum_assistant_tokens(&[]);
+        assert_eq!((i, o), (0, 0));
+    }
+
+    #[test]
+    fn sum_assistant_tokens_sums_multiple_assistant_turns() {
+        let msgs = vec![
+            assistant_with_usage(100, 50),
+            assistant_with_usage(80, 40),
+            assistant_with_usage(120, 60),
+        ];
+        let (i, o) = sum_assistant_tokens(&msgs);
+        assert_eq!(i, 300);
+        assert_eq!(o, 150);
+    }
+
+    #[test]
+    fn sum_assistant_tokens_ignores_user_and_tool_messages() {
+        use sage_runtime::types::{ToolResultMessage, UserMessage};
+        let msgs = vec![
+            AgentMessage::User(UserMessage::from_text("hi")),
+            assistant_with_usage(100, 50),
+            AgentMessage::ToolResult(ToolResultMessage {
+                tool_call_id: "t1".into(),
+                tool_name: "stub".into(),
+                content: vec![],
+                is_error: false,
+                timestamp: 0,
+            }),
+            assistant_with_usage(200, 80),
+        ];
+        let (i, o) = sum_assistant_tokens(&msgs);
+        assert_eq!(i, 300, "user/tool messages must not contribute");
+        assert_eq!(o, 130);
     }
 
     // ════════════════════════════════════════════════════════════════════════

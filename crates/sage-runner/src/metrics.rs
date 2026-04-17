@@ -237,6 +237,22 @@ impl MetricsCollector {
     pub fn record(&self) -> &TaskRecord {
         &self.record
     }
+
+    /// Mark a craft slug as active during this session.
+    ///
+    /// Called when the agent invokes a craft via slash-command or tool. The
+    /// resulting `crafts_active` list feeds the offline efficiency scorer
+    /// (Sprint 10 S10.3): `score = best_tokens / avg_tokens` across runs that
+    /// exercised the same craft.
+    ///
+    /// Duplicates are silently ignored so callers can invoke this idempotently
+    /// each time a craft is touched without filtering upstream.
+    pub fn record_craft_used(&mut self, name: impl Into<String>) {
+        let name = name.into();
+        if !self.record.crafts_active.iter().any(|n| n == &name) {
+            self.record.crafts_active.push(name);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -970,5 +986,110 @@ mod tests {
             !ws.join("metrics").join("summary.json").exists(),
             "HarnessRun must not touch summary.json"
         );
+    }
+
+    // ── Sprint 10 S10.3 — record_craft_used ─────────────────────────────────
+
+    #[test]
+    fn record_craft_used_appends_fresh_slug() {
+        let tmp = TempDir::new().unwrap();
+        let mut c = MetricsCollector::new(
+            "a".into(),
+            "m".into(),
+            SessionType::UserDriven,
+            tmp.path().into(),
+            String::new(),
+        );
+        c.record_craft_used("deploy-rune");
+        assert_eq!(c.record().crafts_active, vec!["deploy-rune".to_string()]);
+    }
+
+    #[test]
+    fn record_craft_used_is_idempotent() {
+        let tmp = TempDir::new().unwrap();
+        let mut c = MetricsCollector::new(
+            "a".into(),
+            "m".into(),
+            SessionType::UserDriven,
+            tmp.path().into(),
+            String::new(),
+        );
+        c.record_craft_used("deploy-rune");
+        c.record_craft_used("deploy-rune");
+        c.record_craft_used("deploy-rune");
+        assert_eq!(
+            c.record().crafts_active.len(),
+            1,
+            "duplicate craft slug must not be appended twice"
+        );
+    }
+
+    #[test]
+    fn record_craft_used_preserves_insertion_order_for_distinct_slugs() {
+        let tmp = TempDir::new().unwrap();
+        let mut c = MetricsCollector::new(
+            "a".into(),
+            "m".into(),
+            SessionType::UserDriven,
+            tmp.path().into(),
+            String::new(),
+        );
+        c.record_craft_used("a");
+        c.record_craft_used("b");
+        c.record_craft_used("c");
+        c.record_craft_used("a"); // dup, still at head
+        assert_eq!(
+            c.record().crafts_active,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+    }
+
+    #[test]
+    fn record_craft_used_accepts_string_and_str() {
+        let tmp = TempDir::new().unwrap();
+        let mut c = MetricsCollector::new(
+            "a".into(),
+            "m".into(),
+            SessionType::UserDriven,
+            tmp.path().into(),
+            String::new(),
+        );
+        c.record_craft_used("literal");
+        c.record_craft_used(String::from("owned"));
+        assert_eq!(c.record().crafts_active.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn crafts_active_persists_into_finalized_task_record_file() {
+        let tmp = TempDir::new().unwrap();
+        let ws: PathBuf = tmp.path().into();
+        let mut c = MetricsCollector::new(
+            "a".into(),
+            "m".into(),
+            SessionType::UserDriven,
+            ws.clone(),
+            String::new(),
+        );
+        c.record_craft_used("deploy-rune");
+        c.record_craft_used("review-diff");
+        let _rec = c.finalize(true, None).await.unwrap();
+
+        let metrics_dir = ws.join("metrics");
+        let files: Vec<_> = std::fs::read_dir(&metrics_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let n = e.file_name();
+                let s = n.to_string_lossy();
+                s.ends_with(".json") && !s.starts_with("summary")
+            })
+            .collect();
+        assert_eq!(files.len(), 1, "expected exactly one task record file");
+
+        let content = std::fs::read_to_string(files[0].path()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let crafts = parsed["crafts_active"].as_array().unwrap();
+        let names: Vec<&str> = crafts.iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(names, vec!["deploy-rune", "review-diff"]);
     }
 }

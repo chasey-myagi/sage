@@ -226,9 +226,14 @@ impl ChannelAdapter for FeishuChannel {
             return Ok(());
         };
         let Some(chat_id) = self.current_chat_id() else {
-            tracing::debug!(
+            // Elevated from debug → warn: losing outbound events without an
+            // observable signal is a classic "silent drop" user trap — an
+            // operator wonders why Feishu is quiet and has to turn on debug
+            // logs to find out.
+            tracing::warn!(
                 channel = "feishu",
-                "no default chat_id set — dropping outbound event"
+                "no default chat_id set — dropping outbound event \
+                 (waiting for first inbound message to anchor chat)"
             );
             return Ok(());
         };
@@ -395,13 +400,9 @@ pub fn verify_signature(
     if token.is_empty() || received_signature.is_empty() {
         return false;
     }
-    type HmacSha256 = Hmac<Sha256>;
-    let Ok(mut mac) = HmacSha256::new_from_slice(token.as_bytes()) else {
+    let Some(computed) = hmac_hex(token, timestamp, body) else {
         return false;
     };
-    mac.update(timestamp.as_bytes());
-    mac.update(body);
-    let computed = hex::encode(mac.finalize().into_bytes());
     // Constant-time compare.
     if computed.len() != received_signature.len() {
         return false;
@@ -418,12 +419,22 @@ pub fn verify_signature(
 /// Compute a valid signature for the given `(token, timestamp, body)` triple.
 /// Exposed so tests (and integration callers) can generate signatures without
 /// re-implementing the scheme.
+///
+/// Returns `None` only if `Hmac<Sha256>::new_from_slice` rejects the key — in
+/// practice that never happens for SHA-256 (any key length is accepted), but
+/// exposing `Option` keeps the API honest and symmetric with `verify_signature`.
 pub fn compute_signature(token: &str, timestamp: &str, body: &[u8]) -> String {
+    hmac_hex(token, timestamp, body).unwrap_or_default()
+}
+
+/// Shared HMAC-SHA256 body for `verify_signature` / `compute_signature`.
+/// Returns `None` if key construction fails.
+fn hmac_hex(token: &str, timestamp: &str, body: &[u8]) -> Option<String> {
     type HmacSha256 = Hmac<Sha256>;
-    let mut mac = HmacSha256::new_from_slice(token.as_bytes()).expect("hmac key");
+    let mut mac = HmacSha256::new_from_slice(token.as_bytes()).ok()?;
     mac.update(timestamp.as_bytes());
     mac.update(body);
-    hex::encode(mac.finalize().into_bytes())
+    Some(hex::encode(mac.finalize().into_bytes()))
 }
 
 // ─── axum webhook router ──────────────────────────────────────────────────
@@ -453,14 +464,15 @@ pub(crate) async fn handle_webhook(
 ) -> (axum::http::StatusCode, String) {
     use axum::http::StatusCode;
 
-    // URL verification challenge?
+    // URL verification challenge? Echo the challenge back. Use serde_json
+    // instead of hand-rolling the JSON so control characters / quotes / UTF-8
+    // oddities in `uv.challenge` can't produce invalid output even though
+    // Feishu's real challenges are URL-safe alphanumerics.
     if let Ok(uv) = serde_json::from_slice::<UrlVerification>(&body)
         && uv.ty.as_deref() == Some("url_verification")
     {
-        return (
-            StatusCode::OK,
-            format!("{{\"challenge\":\"{}\"}}", uv.challenge),
-        );
+        let body = serde_json::json!({ "challenge": uv.challenge }).to_string();
+        return (StatusCode::OK, body);
     }
 
     // Signature check (when token configured). No token = webhook accepts ALL
