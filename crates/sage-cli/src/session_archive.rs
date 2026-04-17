@@ -1,5 +1,11 @@
 // Sprint 7 — S7.1: Session archival for wiki self-maintenance.
 //
+// NOTE (v0.0.3): these helpers are fully implemented + tested but the
+// daemon's IDLE-time wiki tick that consumes them is parked until v0.0.4
+// along with the SkillEvaluation daemon tick. Keeping the API + tests
+// alive means v0.0.4 wire-up is a pure call-site addition.
+#![allow(dead_code)]
+//
 // Responsibilities:
 // - Persist a completed `UserDriven` session's message history to
 //   `<workspace>/raw/sessions/<session_id>.jsonl`.

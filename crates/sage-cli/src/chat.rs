@@ -41,27 +41,6 @@ pub fn parse_user_input(input: &str) -> ChatInput {
     ChatInput::Message(input.to_string())
 }
 
-/// Format a tool execution start notification for the TUI.
-///
-/// Output: `  [tool: <name>] <input_summary>`
-pub fn format_tool_start(tool_name: &str, input_summary: &str) -> String {
-    if input_summary.is_empty() {
-        format!("  [tool: {tool_name}]")
-    } else {
-        format!("  [tool: {tool_name}] {input_summary}")
-    }
-}
-
-/// Format a tool execution end notification for the TUI.
-///
-/// Success: `  ✓ <name> (0.3s)`
-/// Error:   `  ✗ <name> (1.5s)`
-pub fn format_tool_end(tool_name: &str, is_error: bool, elapsed_ms: u64) -> String {
-    let marker = if is_error { '✗' } else { '✓' };
-    let elapsed = format_elapsed(elapsed_ms);
-    format!("  {marker} {tool_name} ({elapsed})")
-}
-
 // ── TerminalSink ─────────────────────────────────────────────────────
 
 /// An [`AgentEventSink`] that prints events to stdout/stderr in real time.
@@ -297,28 +276,6 @@ async fn send_with_cancel(
     }
 }
 
-/// Format an elapsed duration in a human-readable form.
-///
-/// - < 1000ms → `NNNms`
-/// - ≥ 1000ms → `N.Ns` (one decimal place)
-/// - ≥ 60_000ms → `Nm Ns`
-/// - Passing `u64::MAX` is safe — `u64` integer division never panics.
-fn format_elapsed(ms: u64) -> String {
-    if ms < 1_000 {
-        return format!("{ms}ms");
-    }
-    let secs_total = ms / 1_000;
-    let frac = (ms % 1_000) / 100; // one decimal place, truncated
-    if secs_total < 60 {
-        format!("{secs_total}.{frac}s")
-    } else {
-        let mins = secs_total / 60;
-        let secs = secs_total % 60;
-        format!("{mins}m {secs}s")
-    }
-}
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,86 +466,6 @@ mod tests {
     fn parse_input_slash_exit_with_trailing_space_still_exit() {
         // " /exit " — trimmed to "/exit" — must stay Exit.
         assert_eq!(parse_user_input(" /exit "), ChatInput::Exit);
-    }
-
-    // ── format_tool_start ────────────────────────────────────────────────────
-
-    #[test]
-    fn format_tool_start_with_summary() {
-        let s = format_tool_start("bash", "ls -la");
-        assert!(s.contains("bash"), "tool start line must show the tool name, got: {s:?}");
-        assert!(s.contains("ls -la"), "tool start line should include input summary, got: {s:?}");
-    }
-
-    #[test]
-    fn format_tool_start_empty_input_summary_does_not_panic() {
-        let s = format_tool_start("bash", "");
-        assert!(!s.is_empty(), "format_tool_start must not return empty string for empty input_summary");
-        assert!(s.contains("bash"), "tool name must still appear when input_summary is empty");
-    }
-
-    // ── format_tool_end ──────────────────────────────────────────────────────
-
-    #[test]
-    fn format_tool_end_success_sub_second() {
-        // 300ms success: shows ✓, shows ms, shows tool name, no error marker
-        let s = format_tool_end("bash", false, 300);
-        assert!(s.contains('✓'), "success must show ✓, got: {s:?}");
-        assert!(!s.contains('✗') && !s.contains('✘'), "success must not show error marker, got: {s:?}");
-        assert!(s.contains("300ms"), "300ms should display as '300ms', got: {s:?}");
-        assert!(s.contains("bash"), "end line should show tool name, got: {s:?}");
-    }
-
-    #[test]
-    fn format_tool_end_error_sub_second() {
-        // 100ms error: shows ✗, no success marker, shows tool name
-        let s = format_tool_end("bash", true, 100);
-        assert!(s.contains('✗'), "error must show ✗, got: {s:?}");
-        assert!(!s.contains('✓') && !s.contains('✔'), "error must not show success marker, got: {s:?}");
-        assert!(s.contains("bash"), "end line should show tool name, got: {s:?}");
-    }
-
-    #[test]
-    fn format_tool_end_shows_elapsed_time() {
-        // 1234ms → format_elapsed truncates to one decimal place → "1.2s"
-        let s = format_tool_end("bash", false, 1234);
-        assert!(s.contains("1.2s"), "1234ms should display as '1.2s', got: {s:?}");
-    }
-
-    #[test]
-    fn format_tool_end_zero_elapsed_time() {
-        // 0ms — must not panic, must return valid non-empty string
-        let s = format_tool_end("bash", false, 0);
-        assert!(!s.is_empty(), "format_tool_end must not return empty string for 0ms");
-    }
-
-    #[test]
-    fn format_tool_end_large_elapsed_time() {
-        // 62000ms → 1 minute 2 seconds → "1m 2s"
-        let s = format_tool_end("bash", false, 62_000);
-        assert!(s.contains("1m 2s"), "62000ms should display as '1m 2s', got: {s:?}");
-    }
-
-    #[test]
-    fn format_tool_end_boundary_59999ms() {
-        // 59_999ms → secs_total=59, frac=9 → "59.9s" (below the 60s minutes threshold)
-        let s = format_tool_end("bash", false, 59_999);
-        assert!(s.contains("59.9s"), "59999ms should display as '59.9s', got: {s:?}");
-        assert!(!s.contains("1m"), "59999ms must not display as '1m', got: {s:?}");
-    }
-
-    #[test]
-    fn format_tool_end_max_elapsed_time_does_not_panic() {
-        // u64::MAX — must not panic (saturating display is acceptable)
-        let s = format_tool_end("bash", false, u64::MAX);
-        assert!(!s.is_empty(), "u64::MAX elapsed_ms must produce non-empty output, must not panic");
-    }
-
-    #[test]
-    fn format_tool_end_just_over_one_minute_drops_subsecond() {
-        // 61_234ms → "1m 1s" — sub-second precision is dropped intentionally for ≥ 60s
-        let s = format_tool_end("bash", false, 61_234);
-        assert!(s.contains("1m 1s"), "61234ms should display as '1m 1s', got: {s:?}");
     }
 
 }

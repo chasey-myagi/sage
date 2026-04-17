@@ -2,8 +2,7 @@
 // "SQLite of AI Agents" — zero-config embed, single crate dependency.
 
 use crate::agent::{
-    AfterToolCallHook, Agent, AgentLoopConfig, BeforeToolCallHook, StopAction, StopContext,
-    StopHook, TransformContextHook,
+    AfterToolCallHook, Agent, AgentLoopConfig, BeforeToolCallHook, StopHook, TransformContextHook,
 };
 use crate::agent_loop::{AgentLoopError, run_agent_loop_with_cancel};
 use crate::event::{AgentEvent, AgentEventSink, EventReceiver, EventSender, EventStream};

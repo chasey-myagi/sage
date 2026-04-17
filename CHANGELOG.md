@@ -5,6 +5,28 @@
 
 ## [0.0.3] — 2026-04-18
 
+### 发布阻断修复(pre-tag hotfix)
+
+- **agent_loop 空参 tool call 无限循环 bug**。Kimi(以及任何
+  OpenAI-completions 类 provider)对零参 tool call 会发 `arguments: ""`,
+  而 `MessageAccumulator::finalize` 一边静默用 `{}` 写进 assistant
+  message 历史、另一边 `prepare_tool_call` 走 "blocking call" 分支
+  返回 `"Invalid tool call arguments: EOF"` —— 模型看到的 tool_result
+  和它"自己发送的调用"(`{}`)对不上,进入循环:调 ls → blocked →
+  "我再试一次" → blocked ... 20 turns max_turns 才兜住。
+  新加 `coerce_tool_args(&str)` pure helper 统一语义:空/空白 → `{}`,
+  非空合法 → 解析,非空非法 → `Err`。两个调用点走同一路径。regression
+  test +4 锁死四种输入。
+- **清零所有 release build warnings**(13 条): 删 chat.rs 死代码
+  (`format_tool_start`/`format_tool_end`/`format_elapsed` 及其 10 条
+  测试,被 `TerminalSink::emit` 内联替代);session_archive / wiki_trigger
+  加模块级 `#![allow(dead_code)]` 并注释 v0.0.4 wire-up 目标;tui.rs
+  protocol enum 加 `#[allow(dead_code)]`(schema 对称需要保留);
+  engine.rs 删 unused `StopAction, StopContext` imports;config.rs 删
+  unused `std::path::Path`;openai_responses.rs `get_service_tier_cost_multiplier`
+  + harness.rs `TestCase.max_turns` 加 `#[allow(dead_code)]` 标
+  pi-mono 对齐 / 前瞻字段。`cargo check --workspace` 现在 **零 warning**。
+
 ### 新功能
 
 - **`sage skill evaluate --agent X --skill Y`** — 自演化手动触发。

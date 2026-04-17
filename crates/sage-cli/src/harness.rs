@@ -37,6 +37,7 @@ pub struct TestCase {
     /// Optional path to eval script. If absent and criteria is empty, always Pass.
     pub eval: Option<String>,
     /// Optional per-case max turns override (currently advisory; future use).
+    #[allow(dead_code)]
     pub max_turns: Option<usize>,
     /// Declarative criteria evaluated before the eval script (if any).
     #[serde(default)]
