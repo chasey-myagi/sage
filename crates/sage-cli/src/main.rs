@@ -6,6 +6,7 @@ mod chat;
 mod context;
 mod daemon;
 mod harness;
+mod known_models;
 mod serve;
 mod session_archive;
 mod skills;
@@ -106,6 +107,14 @@ enum Commands {
         /// Agent name (becomes the workspace directory name under ~/.sage/agents/)
         #[arg(long)]
         agent: String,
+
+        /// Override LLM provider written into config.yaml (e.g., kimi, openai)
+        #[arg(long)]
+        provider: Option<String>,
+
+        /// Override model id written into config.yaml (e.g., kimi-k1, gpt-4o)
+        #[arg(long)]
+        model: Option<String>,
     },
 
     /// List all registered agents in ~/.sage/agents/
@@ -253,9 +262,9 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { agent } => {
+        Commands::Init { agent, provider, model } => {
             tracing::info!(agent = %agent, "initializing agent workspace");
-            serve::init_agent(&agent).await
+            serve::init_agent(&agent, provider.as_deref(), model.as_deref()).await
         }
         Commands::List => {
             tracing::info!("listing agents");
@@ -540,7 +549,7 @@ mod tests {
     fn cli_init_subcommand_parses() {
         let cli = Cli::parse_from(["sage", "init", "--agent", "feishu"]);
         match cli.command {
-            Commands::Init { agent } => assert_eq!(agent, "feishu"),
+            Commands::Init { agent, .. } => assert_eq!(agent, "feishu"),
             _ => panic!("expected Init subcommand"),
         }
     }
@@ -576,7 +585,7 @@ mod tests {
     fn cli_init_agent_name_with_hyphens() {
         let cli = Cli::parse_from(["sage", "init", "--agent", "my-coding-agent"]);
         match cli.command {
-            Commands::Init { agent } => assert_eq!(agent, "my-coding-agent"),
+            Commands::Init { agent, .. } => assert_eq!(agent, "my-coding-agent"),
             _ => panic!("expected Init"),
         }
     }
@@ -585,7 +594,7 @@ mod tests {
     fn cli_init_agent_name_with_underscores() {
         let cli = Cli::parse_from(["sage", "init", "--agent", "coding_agent"]);
         match cli.command {
-            Commands::Init { agent } => assert_eq!(agent, "coding_agent"),
+            Commands::Init { agent, .. } => assert_eq!(agent, "coding_agent"),
             _ => panic!("expected Init"),
         }
     }
@@ -604,7 +613,7 @@ mod tests {
         // Unicode/Chinese agent names pass through the CLI layer unchanged
         let cli = Cli::parse_from(["sage", "init", "--agent", "飞书助手"]);
         match cli.command {
-            Commands::Init { agent } => assert_eq!(agent, "飞书助手"),
+            Commands::Init { agent, .. } => assert_eq!(agent, "飞书助手"),
             _ => panic!("expected Init"),
         }
     }
@@ -626,7 +635,7 @@ mod tests {
         // the validation boundary is.
         let cli = Cli::parse_from(["sage", "init", "--agent", "../../etc/passwd"]);
         match cli.command {
-            Commands::Init { agent } => assert_eq!(agent, "../../etc/passwd"),
+            Commands::Init { agent, .. } => assert_eq!(agent, "../../etc/passwd"),
             _ => panic!("expected Init"),
         }
     }
@@ -636,7 +645,7 @@ mod tests {
         // Empty string passes the parser — validation is the handler's responsibility
         let cli = Cli::parse_from(["sage", "init", "--agent", ""]);
         match cli.command {
-            Commands::Init { agent } => assert_eq!(agent, ""),
+            Commands::Init { agent, .. } => assert_eq!(agent, ""),
             _ => panic!("expected Init"),
         }
     }
@@ -645,7 +654,63 @@ mod tests {
     fn cli_init_numeric_only_agent_name() {
         let cli = Cli::parse_from(["sage", "init", "--agent", "42"]);
         match cli.command {
-            Commands::Init { agent } => assert_eq!(agent, "42"),
+            Commands::Init { agent, .. } => assert_eq!(agent, "42"),
+            _ => panic!("expected Init"),
+        }
+    }
+
+    // ── M4: init --provider / --model flags ──────────────────────────────────
+
+    #[test]
+    fn cli_init_provider_flag_parsed() {
+        let cli = Cli::parse_from(["sage", "init", "--agent", "feishu", "--provider", "kimi"]);
+        match cli.command {
+            Commands::Init { agent, provider, model } => {
+                assert_eq!(agent, "feishu");
+                assert_eq!(provider.as_deref(), Some("kimi"));
+                assert!(model.is_none(), "model must be None when not supplied");
+            }
+            _ => panic!("expected Init"),
+        }
+    }
+
+    #[test]
+    fn cli_init_model_flag_parsed() {
+        let cli = Cli::parse_from(["sage", "init", "--agent", "feishu", "--model", "kimi-k1"]);
+        match cli.command {
+            Commands::Init { agent, provider, model } => {
+                assert_eq!(agent, "feishu");
+                assert_eq!(model.as_deref(), Some("kimi-k1"));
+                assert!(provider.is_none(), "provider must be None when not supplied");
+            }
+            _ => panic!("expected Init"),
+        }
+    }
+
+    #[test]
+    fn cli_init_provider_and_model_flags_parsed() {
+        let cli = Cli::parse_from([
+            "sage", "init", "--agent", "feishu",
+            "--provider", "openai", "--model", "gpt-4o",
+        ]);
+        match cli.command {
+            Commands::Init { agent, provider, model } => {
+                assert_eq!(agent, "feishu");
+                assert_eq!(provider.as_deref(), Some("openai"));
+                assert_eq!(model.as_deref(), Some("gpt-4o"));
+            }
+            _ => panic!("expected Init"),
+        }
+    }
+
+    #[test]
+    fn cli_init_without_provider_model_defaults_to_none() {
+        let cli = Cli::parse_from(["sage", "init", "--agent", "feishu"]);
+        match cli.command {
+            Commands::Init { provider, model, .. } => {
+                assert!(provider.is_none(), "provider must default to None");
+                assert!(model.is_none(), "model must default to None");
+            }
             _ => panic!("expected Init"),
         }
     }

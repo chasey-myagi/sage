@@ -89,7 +89,15 @@ fn validate_agent_name(name: &str) -> Result<()> {
 /// `workspace/metrics/`, `workspace/craft/`, `workspace/skills/`). All writes
 /// use [`write_if_new`] semantics — re-running against an existing agent dir
 /// is idempotent and never overwrites user edits.
-pub(crate) async fn init_agent_at(agents_dir: &std::path::Path, name: &str) -> Result<()> {
+///
+/// `provider_override` and `model_override` are written into `config.yaml` in
+/// place of the template defaults when supplied (M4 non-interactive init).
+pub(crate) async fn init_agent_at(
+    agents_dir: &std::path::Path,
+    name: &str,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
+) -> Result<()> {
     validate_agent_name(name)?;
 
     let agent_dir = agents_dir.join(name);
@@ -139,11 +147,31 @@ pub(crate) async fn init_agent_at(agents_dir: &std::path::Path, name: &str) -> R
     write_if_new(&memory_dir.join("MEMORY.md"), format!("# {name} Memory\n\n")).await?;
 
     let config_template = include_str!("templates/config.yaml");
-    write_if_new(
-        &agent_dir.join("config.yaml"),
-        config_template.replace("__NAME__", name),
-    )
-    .await?;
+    let mut config_content = config_template.replace("__NAME__", name);
+    // Sprint 12 M4: `--provider` / `--model` CLI flag override. Uses literal
+    // string replacement, so the template MUST contain these exact defaults.
+    // The debug_assert catches drift: if someone edits templates/config.yaml
+    // to a different default provider/model, the override would silently
+    // no-op in release builds. Tracked as tech debt #59 — proper fix is to
+    // parse + mutate + re-serialize via serde_yaml.
+    if let Some(p) = provider_override {
+        debug_assert!(
+            config_content.contains("provider: anthropic"),
+            "templates/config.yaml no longer contains 'provider: anthropic'; --provider override would no-op",
+        );
+        config_content = config_content.replace("provider: anthropic", &format!("provider: {p}"));
+    }
+    if let Some(m) = model_override {
+        debug_assert!(
+            config_content.contains("model: claude-haiku-4-5-20251001"),
+            "templates/config.yaml no longer contains 'model: claude-haiku-4-5-20251001'; --model override would no-op",
+        );
+        config_content = config_content.replace(
+            "model: claude-haiku-4-5-20251001",
+            &format!("model: {m}"),
+        );
+    }
+    write_if_new(&agent_dir.join("config.yaml"), config_content).await?;
 
     let schema_template = include_str!("templates/schema.md");
     write_if_new(&workspace_dir.join("SCHEMA.md"), schema_template).await?;
@@ -182,9 +210,16 @@ pub(crate) async fn init_agent_at(agents_dir: &std::path::Path, name: &str) -> R
 /// Thin wrapper over [`init_agent_at`] that resolves the default agents root
 /// and prints a confirmation line. All filesystem work lives in `init_agent_at`
 /// so tests can drive it against a `TempDir`.
-pub async fn init_agent(agent: &str) -> Result<()> {
+///
+/// `provider_override` and `model_override` are forwarded to `init_agent_at`
+/// for non-interactive M4 flag support (`sage init --provider <id> --model <id>`).
+pub async fn init_agent(
+    agent: &str,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
+) -> Result<()> {
     let agents_dir = sage_agents_dir()?;
-    init_agent_at(&agents_dir, agent).await?;
+    init_agent_at(&agents_dir, agent, provider_override, model_override).await?;
     println!(
         "✓ Initialized agent '{agent}' at {}",
         agents_dir.join(agent).display()
@@ -1109,7 +1144,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_creates_full_skeleton() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1").await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
 
         let agent_root = tmp.path().join("agent1");
         for path in expected_skeleton_paths(&agent_root) {
@@ -1120,7 +1155,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_schema_md_matches_template_bytes() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1").await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
 
         let schema_path = tmp.path().join("agent1").join("workspace").join("SCHEMA.md");
         let written = tokio::fs::read(&schema_path).await.unwrap();
@@ -1134,7 +1169,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_schema_md_utf8_roundtrip() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1").await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
 
         let schema_path = tmp.path().join("agent1").join("workspace").join("SCHEMA.md");
         let written = tokio::fs::read_to_string(&schema_path).await.unwrap();
@@ -1145,7 +1180,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_wiki_index_has_marker() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1").await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
 
         let path = tmp.path().join("agent1").join("workspace").join("wiki").join("index.md");
         let content = tokio::fs::read_to_string(&path).await.unwrap();
@@ -1158,7 +1193,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_wiki_log_has_append_only_marker() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1").await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
 
         let path = tmp.path().join("agent1").join("workspace").join("wiki").join("log.md");
         let content = tokio::fs::read_to_string(&path).await.unwrap();
@@ -1171,7 +1206,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_wiki_overview_has_synthesis_marker() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1").await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
 
         let path = tmp.path().join("agent1").join("workspace").join("wiki").join("overview.md");
         let content = tokio::fs::read_to_string(&path).await.unwrap();
@@ -1184,7 +1219,7 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_gitkeep_files_are_empty() {
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1").await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
 
         let ws = tmp.path().join("agent1").join("workspace");
         let gitkeeps = [
@@ -1211,7 +1246,7 @@ sandbox:
         // that `init_agent` used to create (AGENT.md / MEMORY.md / config.yaml
         // / workspace/).
         let tmp = tempfile::TempDir::new().unwrap();
-        init_agent_at(tmp.path(), "agent1").await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
 
         let agent_root = tmp.path().join("agent1");
         assert!(agent_root.join("AGENT.md").is_file());
@@ -1231,7 +1266,7 @@ sandbox:
         tokio::fs::create_dir_all(schema_path.parent().unwrap()).await.unwrap();
         tokio::fs::write(&schema_path, b"custom content").await.unwrap();
 
-        init_agent_at(tmp.path(), "agent1").await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
 
         let got = tokio::fs::read(&schema_path).await.unwrap();
         assert_eq!(
@@ -1248,7 +1283,7 @@ sandbox:
         let agent_root = tmp.path().join("agent1");
         tokio::fs::create_dir_all(agent_root.join("workspace")).await.unwrap();
 
-        init_agent_at(tmp.path(), "agent1").await.unwrap();
+        init_agent_at(tmp.path(), "agent1", None, None).await.unwrap();
 
         for path in expected_skeleton_paths(&agent_root) {
             assert!(
@@ -1262,20 +1297,20 @@ sandbox:
     #[tokio::test]
     async fn test_init_agent_at_rejects_empty_name() {
         let tmp = tempfile::TempDir::new().unwrap();
-        assert!(init_agent_at(tmp.path(), "").await.is_err());
+        assert!(init_agent_at(tmp.path(), "", None, None).await.is_err());
     }
 
     #[tokio::test]
     async fn test_init_agent_at_rejects_dotdot_name() {
         let tmp = tempfile::TempDir::new().unwrap();
-        assert!(init_agent_at(tmp.path(), "../evil").await.is_err());
-        assert!(init_agent_at(tmp.path(), "good/../evil").await.is_err());
+        assert!(init_agent_at(tmp.path(), "../evil", None, None).await.is_err());
+        assert!(init_agent_at(tmp.path(), "good/../evil", None, None).await.is_err());
     }
 
     #[tokio::test]
     async fn test_init_agent_at_rejects_slash_name() {
         let tmp = tempfile::TempDir::new().unwrap();
-        assert!(init_agent_at(tmp.path(), "/etc/passwd").await.is_err());
-        assert!(init_agent_at(tmp.path(), "nested/name").await.is_err());
+        assert!(init_agent_at(tmp.path(), "/etc/passwd", None, None).await.is_err());
+        assert!(init_agent_at(tmp.path(), "nested/name", None, None).await.is_err());
     }
 }
