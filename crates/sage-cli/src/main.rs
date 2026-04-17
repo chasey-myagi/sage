@@ -4,6 +4,7 @@ use tracing_subscriber::EnvFilter;
 
 mod chat;
 mod context;
+mod craft_scorer;
 mod daemon;
 mod harness;
 mod known_models;
