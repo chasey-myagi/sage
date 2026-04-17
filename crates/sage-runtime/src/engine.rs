@@ -66,6 +66,23 @@ pub enum SageError {
 
     #[error("agent timed out after {0}s")]
     Timeout(u64),
+
+    /// Provider returned a 4xx response whose body indicates the `model_id` is
+    /// unknown to the provider. Carries enough context for the user to look up
+    /// the correct id from `hint` (the ProviderSpec.hint_docs_url).
+    ///
+    /// This variant is the **canonical format source** for invalid-model
+    /// errors — `provider_errors::format_provider_error` returns
+    /// `self.to_string()` so the `#[error(...)]` template below is the only
+    /// place the layout lives. Change once, reflected everywhere.
+    #[error("Provider '{provider}' rejected model '{model_id}' (HTTP {status}): {provider_error}\n  see docs: {hint}")]
+    InvalidModel {
+        provider: String,
+        model_id: String,
+        status: u16,
+        provider_error: String,
+        hint: String,
+    },
 }
 
 // ── Constants ─────────────────────────────────────────────────────────
@@ -3194,5 +3211,86 @@ mod tests {
             model.id, "xxx@@@###",
             "garbage model_id must pass through as-is"
         );
+    }
+
+    // =================================================================
+    // SageError::InvalidModel — Sprint 12 M2
+    // =================================================================
+
+    #[test]
+    fn sage_error_invalid_model_display_format() {
+        let err = SageError::InvalidModel {
+            provider: "kimi".to_string(),
+            model_id: "kimi-k99".to_string(),
+            status: 400,
+            provider_error: "model_not_found".to_string(),
+            hint: "https://platform.moonshot.cn/docs/api/models".to_string(),
+        };
+        let s = err.to_string();
+        assert!(s.contains("kimi"), "display must contain provider, got: {s}");
+        assert!(s.contains("kimi-k99"), "display must contain model_id, got: {s}");
+        assert!(
+            s.contains("model_not_found"),
+            "display must contain provider_error, got: {s}"
+        );
+        assert!(
+            s.contains("moonshot.cn"),
+            "display must contain hint URL (moonshot.cn), got: {s}"
+        );
+        assert!(s.contains("400"), "display must contain status code, got: {s}");
+    }
+
+    #[test]
+    fn sage_error_invalid_model_debug_derivable() {
+        let err = SageError::InvalidModel {
+            provider: "openai".to_string(),
+            model_id: "gpt-99".to_string(),
+            status: 404,
+            provider_error: "The model does not exist".to_string(),
+            hint: "https://platform.openai.com/docs/models".to_string(),
+        };
+        let s = format!("{err:?}");
+        assert!(!s.is_empty(), "Debug output must not be empty");
+    }
+
+    #[test]
+    fn sage_error_invalid_model_implements_error_trait() {
+        let err = SageError::InvalidModel {
+            provider: "deepseek".to_string(),
+            model_id: "deepseek-xxx".to_string(),
+            status: 400,
+            provider_error: "Model Not Exist".to_string(),
+            hint: "https://api-docs.deepseek.com/".to_string(),
+        };
+        let _: &dyn std::error::Error = &err;
+    }
+
+    #[test]
+    fn sage_error_invalid_model_source_is_none() {
+        let err = SageError::InvalidModel {
+            provider: "anthropic".to_string(),
+            model_id: "claude-foo-bar".to_string(),
+            status: 404,
+            provider_error: "not_found_error".to_string(),
+            hint: "https://docs.anthropic.com/en/docs/about-claude/models".to_string(),
+        };
+        use std::error::Error;
+        assert!(err.source().is_none(), ".source() should be None — no chained error");
+    }
+
+    #[test]
+    fn sage_error_invalid_model_is_debug_printable_without_hint() {
+        // 空 hint 不 panic
+        let err = SageError::InvalidModel {
+            provider: "kimi".to_string(),
+            model_id: "kimi-k99".to_string(),
+            status: 400,
+            provider_error: "invalid_model".to_string(),
+            hint: String::new(),
+        };
+        let s = format!("{err:?}");
+        assert!(!s.is_empty());
+        let display = err.to_string();
+        assert!(display.contains("kimi"), "display should still contain provider name: {display}");
     }
 }

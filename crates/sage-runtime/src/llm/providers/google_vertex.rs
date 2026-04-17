@@ -199,11 +199,7 @@ impl ApiProvider for GoogleVertexProvider {
         };
 
         if !response.status().is_success() {
-            let status = response.status();
-            let body_text = response.text().await.unwrap_or_default();
-            return vec![AssistantMessageEvent::Error(format!(
-                "Vertex AI error {status}: {body_text}"
-            ))];
+            return vec![crate::llm::provider_errors::handle_error_response(response, model).await];
         }
 
         // Parse SSE stream (shared with Google AI)
