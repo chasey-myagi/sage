@@ -359,6 +359,11 @@ pub async fn build_system_prompt(
 // ── Agent Registry CLI ────────────────────────────────────────────────────────
 
 /// Load the agent config from `~/.sage/agents/<name>/config.yaml`.
+///
+/// Rejects configs whose `llm.provider` is not in `list_providers()` — this is
+/// the **load-time provider gate** (Sprint 12 M1). Without it, an unknown
+/// provider would only surface when the engine tries to instantiate the model,
+/// which is too late for `sage chat` / `sage start` UX.
 pub async fn load_agent_config(name: &str) -> anyhow::Result<AgentConfig> {
     let config_path = sage_agents_dir()?.join(name).join("config.yaml");
     let yaml = tokio::fs::read_to_string(&config_path)
@@ -369,8 +374,11 @@ pub async fn load_agent_config(name: &str) -> anyhow::Result<AgentConfig> {
                 config_path.display()
             )
         })?;
-    serde_yaml::from_str(&yaml)
-        .with_context(|| format!("invalid config for agent '{name}'"))
+    let config: AgentConfig = serde_yaml::from_str(&yaml)
+        .with_context(|| format!("invalid config for agent '{name}'"))?;
+    sage_runner::config::validate_provider(&config.llm.provider)
+        .map_err(|e| anyhow::anyhow!("invalid config for agent '{name}': {e}"))?;
+    Ok(config)
 }
 
 /// Build a [`SageEngine`] from an [`AgentConfig`].
@@ -390,7 +398,10 @@ pub async fn build_engine_for_agent(config: &AgentConfig, dev: bool) -> anyhow::
         .system_prompt(&system_prompt)
         .provider(&config.llm.provider)
         .model(&config.llm.model)
-        .max_tokens(config.llm.max_tokens)
+        // Sprint 12 M1: pass Option<u32> straight through — the builder and
+        // ProviderSpec decide the default. No more DEFAULT_MAX_TOKENS leak.
+        .max_tokens_opt(config.llm.max_tokens)
+        .context_window_opt(config.llm.context_window)
         .max_turns(config.constraints.max_turns as usize)
         .timeout_secs(config.constraints.timeout_secs as u64)
         .tool_execution_mode(ToolExecutionMode::Parallel)
@@ -477,7 +488,11 @@ pub async fn validate_agent(agent: &str) -> Result<()> {
         .with_context(|| format!("cannot read config at {}", config_path.display()))?;
 
     match serde_yaml::from_str::<AgentConfig>(&yaml) {
-        Ok(_) => {
+        Ok(config) => {
+            // Sprint 12 M1: provider must be in the known-provider set.
+            if let Err(msg) = sage_runner::config::validate_provider(&config.llm.provider) {
+                anyhow::bail!("invalid config for agent '{agent}': {msg}");
+            }
             println!("✓ Agent '{agent}' config is valid.");
             Ok(())
         }
@@ -515,6 +530,9 @@ pub async fn run_local_test(
         .with_context(|| format!("cannot read config at {config_path}"))?;
     let config: AgentConfig = serde_yaml::from_str(&yaml)
         .with_context(|| format!("invalid config at {config_path}"))?;
+    // Sprint 12 M1: fail fast if provider is unknown.
+    sage_runner::config::validate_provider(&config.llm.provider)
+        .map_err(|e| anyhow::anyhow!("invalid config at {config_path}: {e}"))?;
     tracing::info!(agent = %config.name, "loaded config");
 
     // 2. Build SageEngine from AgentConfig fields
@@ -622,7 +640,10 @@ fn build_engine_from_config(
         .system_prompt(&config.system_prompt)
         .provider(provider_override.unwrap_or(&config.llm.provider))
         .model(model_override.unwrap_or(&config.llm.model))
-        .max_tokens(config.llm.max_tokens)
+        // Sprint 12 M1: pass Option<u32> straight through — the builder and
+        // ProviderSpec decide the default. No more DEFAULT_MAX_TOKENS leak.
+        .max_tokens_opt(config.llm.max_tokens)
+        .context_window_opt(config.llm.context_window)
         .max_turns(config.constraints.max_turns as usize)
         .timeout_secs(config.constraints.timeout_secs as u64)
         .tool_execution_mode(ToolExecutionMode::Parallel)

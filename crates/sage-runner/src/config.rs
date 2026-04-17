@@ -79,13 +79,53 @@ pub struct LlmConfig {
     /// Model identifier (e.g. `"claude-opus-4-6"`, `"gpt-4o"`).
     pub model: String,
     /// Maximum tokens to generate per turn.
-    pub max_tokens: u32,
+    ///
+    /// `None` ⇒ use `ProviderSpec.default_max_tokens` (Sprint 12 M1). The
+    /// ProviderSpec default is guaranteed non-zero by a test invariant, so
+    /// `None` never means "unlimited" — it means "defer to the per-provider
+    /// default".
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    /// Context window size in tokens (used to size the token budget for
+    /// compaction).
+    ///
+    /// `None` ⇒ use `ProviderSpec.default_context_window` (Sprint 12 M1,
+    /// non-zero by invariant). Compaction stays enabled either way — to
+    /// disable compaction, supply a custom `ContextBudget` via the engine
+    /// builder rather than leaving this field off.
+    #[serde(default)]
+    pub context_window: Option<u32>,
     /// Override base URL for the LLM API endpoint.
     #[serde(default)]
     pub base_url: Option<String>,
     /// Override environment variable name for the API key.
     #[serde(default)]
     pub api_key_env: Option<String>,
+}
+
+// ── Provider validation (M1) ──────────────────────────────────────────────
+
+/// Validate that the given provider string is one of the known providers
+/// listed in `sage_runtime::llm::provider_specs::list_providers()`.
+/// Returns `Ok(())` on success, `Err` with a helpful message listing valid providers.
+///
+/// Called from `load_agent_config` / `validate_agent` / `run_local_test` in
+/// `sage-cli::serve` after YAML parsing. The error message lists candidates
+/// sorted alphabetically so users can scan the list for the correct spelling.
+pub fn validate_provider(provider: &str) -> Result<(), String> {
+    if sage_runtime::llm::provider_specs::resolve_provider(provider).is_some() {
+        return Ok(());
+    }
+    let mut valid: Vec<&str> = sage_runtime::llm::provider_specs::list_providers()
+        .iter()
+        .map(|s| s.id)
+        .collect();
+    valid.sort_unstable();
+    Err(format!(
+        "unknown provider '{}'; valid providers: {}",
+        provider,
+        valid.join(", ")
+    ))
 }
 
 /// Execution mode for the sandbox.
@@ -797,7 +837,7 @@ constraints:
         assert_eq!(config.description, "飞书助手");
         assert_eq!(config.llm.provider, "anthropic");
         assert_eq!(config.llm.model, "claude-haiku-4-5-20251001");
-        assert_eq!(config.llm.max_tokens, 4096);
+        assert_eq!(config.llm.max_tokens, Some(4096));
         assert!(config.system_prompt.contains("飞书助手"));
         assert!(config.tools.bash.is_some());
         assert!(config.tools.read.is_some());
@@ -1268,7 +1308,7 @@ sandbox:
         assert_eq!(config.name, "coding-assistant");
         assert_eq!(config.llm.provider, "qwen");
         assert_eq!(config.llm.model, "qwen-plus");
-        assert_eq!(config.llm.max_tokens, 8192);
+        assert_eq!(config.llm.max_tokens, Some(8192));
         assert_eq!(
             config.llm.base_url.as_deref(),
             Some("https://dashscope.aliyuncs.com/compatible-mode/v1")
@@ -4614,5 +4654,195 @@ channel:
             result.is_err(),
             "unknown channel type must fail to deserialize"
         );
+    }
+
+    // ========================================================================
+    // M1: LlmConfig field changes — max_tokens Optional + context_window
+    // ========================================================================
+
+    const M1_BASE_YAML: &str = r#"
+name: m1-test
+description: "M1 test agent"
+system_prompt: "test"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 30 }
+"#;
+
+    #[test]
+    fn llm_config_max_tokens_optional_defaults_to_none() {
+        // max_tokens field omitted entirely — should parse and give Option::None
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: kimi
+  model: kimi-k2.5
+"#,
+            M1_BASE_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(
+            config.llm.max_tokens.is_none(),
+            "max_tokens omitted should be None, got: {:?}",
+            config.llm.max_tokens
+        );
+    }
+
+    #[test]
+    fn llm_config_max_tokens_read_when_present() {
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: kimi
+  model: kimi-k2.5
+  max_tokens: 8192
+"#,
+            M1_BASE_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(
+            config.llm.max_tokens,
+            Some(8192),
+            "max_tokens: 8192 should parse to Some(8192)"
+        );
+    }
+
+    #[test]
+    fn llm_config_context_window_optional_defaults_to_none() {
+        // context_window omitted — should parse and give None
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: kimi
+  model: kimi-k2.5
+"#,
+            M1_BASE_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(
+            config.llm.context_window.is_none(),
+            "context_window omitted should be None, got: {:?}",
+            config.llm.context_window
+        );
+    }
+
+    #[test]
+    fn llm_config_context_window_read_when_present() {
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: kimi
+  model: kimi-k2.5
+  context_window: 262144
+"#,
+            M1_BASE_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(
+            config.llm.context_window,
+            Some(262144),
+            "context_window: 262144 should parse to Some(262144)"
+        );
+    }
+
+    #[test]
+    fn llm_config_arbitrary_model_string_accepted_at_serde_layer() {
+        // Serde layer does NOT validate model string — weak binding
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: kimi
+  model: "literally-anything-xyz-123"
+"#,
+            M1_BASE_YAML
+        );
+        let result: Result<AgentConfig, _> = serde_yaml::from_str(&yaml);
+        assert!(
+            result.is_ok(),
+            "arbitrary model string must parse at serde layer (weak binding)"
+        );
+        let config = result.unwrap();
+        assert_eq!(config.llm.model, "literally-anything-xyz-123");
+    }
+
+    #[test]
+    fn llm_config_empty_model_still_parses_at_serde_layer() {
+        // Empty model string — serde must not reject it (post-validation handles this)
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: kimi
+  model: ""
+"#,
+            M1_BASE_YAML
+        );
+        let result: Result<AgentConfig, _> = serde_yaml::from_str(&yaml);
+        assert!(
+            result.is_ok(),
+            "empty model string must parse at serde layer; post-validation rejects it later"
+        );
+    }
+
+    #[test]
+    fn llm_config_unknown_provider_parses_at_serde_layer() {
+        // Serde layer does NOT validate provider — only validate_provider() does
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: "not-a-real-provider-xyz"
+  model: some-model
+"#,
+            M1_BASE_YAML
+        );
+        let result: Result<AgentConfig, _> = serde_yaml::from_str(&yaml);
+        assert!(
+            result.is_ok(),
+            "unknown provider must parse at serde layer (validation is post-parse)"
+        );
+    }
+
+    #[test]
+    fn load_config_rejects_unknown_provider_with_helpful_error() {
+        // validate_provider("not-a-real-provider-xyz") must return Err with hint
+        let result = validate_provider("not-a-real-provider-xyz");
+        assert!(
+            result.is_err(),
+            "validate_provider should reject unknown provider"
+        );
+        let msg = result.unwrap_err();
+        // Error message must hint at valid providers
+        assert!(
+            msg.contains("valid providers") || msg.contains("provider"),
+            "error message should mention valid providers, got: {msg}"
+        );
+        // Should mention the bad provider id
+        assert!(
+            msg.contains("not-a-real-provider-xyz"),
+            "error message should echo back the invalid provider id, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn load_config_rejects_empty_provider() {
+        let result = validate_provider("");
+        assert!(
+            result.is_err(),
+            "validate_provider should reject empty string provider"
+        );
+    }
+
+    #[test]
+    fn validate_provider_accepts_every_known_provider_from_spec_table() {
+        // Data-driven: new providers in list_providers() auto-covered.
+        // Hardcoding 17 ids would drift when Sprint 12 M1 v2 added the 18th
+        // (openrouter) and the test would silently skip it.
+        for spec in sage_runtime::llm::provider_specs::list_providers() {
+            let result = validate_provider(spec.id);
+            assert!(
+                result.is_ok(),
+                "validate_provider(\"{}\") should succeed but got: {:?}",
+                spec.id,
+                result
+            );
+        }
     }
 }

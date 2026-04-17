@@ -2,6 +2,7 @@
 pub mod keys;
 pub mod models;
 pub mod openai_compat;
+pub mod provider_specs;
 pub mod providers;
 pub mod registry;
 pub mod stream;

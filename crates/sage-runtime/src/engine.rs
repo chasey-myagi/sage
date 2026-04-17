@@ -68,50 +68,84 @@ pub enum SageError {
     Timeout(u64),
 }
 
+// ── Constants ─────────────────────────────────────────────────────────
+
+/// Fallback max_tokens when none is specified in YAML and none is available from the spec.
+/// Sprint 12 M1: global constant shared with serve.rs.
+pub const DEFAULT_MAX_TOKENS: u32 = 4096;
+
+/// Fallback context_window when none is specified in YAML.
+/// Conservative default to avoid inadvertently disabling compaction.
+pub const DEFAULT_CONTEXT_WINDOW: u32 = 128_000;
+
 // ── resolve_or_construct_model ────────────────────────────────────────
 
-/// Resolve or construct a Model.
-/// Tries the built-in catalog first; on miss, constructs from provided fields.
+/// Resolve or construct a Model using the ProviderSpec-based path (Sprint 12 M1).
+///
+/// MODEL_CATALOG is NOT consulted. Flow:
+///   1. `resolve_provider(provider)` — Err if provider not in the known set
+///   2. Construct Model from ProviderSpec defaults
+///   3. Apply YAML overrides: base_url / api_key_env / max_tokens / context_window
+///   4. `model.id = model_id` (arbitrary string, not validated)
+///
+/// Override precedence (two layers):
+///   1. YAML override (the argument, if `Some`)
+///   2. `ProviderSpec.default_max_tokens` / `default_context_window` — guaranteed
+///      non-zero by the `all_providers_have_non_zero_defaults` test invariant,
+///      so there is no third "global fallback" layer in practice
 pub fn resolve_or_construct_model(
     provider: &str,
     model_id: &str,
-    max_tokens: u32,
+    max_tokens: Option<u32>,
+    context_window: Option<u32>,
     base_url: Option<&str>,
     api_key_env: Option<&str>,
 ) -> Result<Model, SageError> {
-    // 1. Try built-in catalog
-    if let Some(mut model) = llm::models::resolve_model(provider, model_id) {
-        // Apply overrides on catalog hit
-        model.max_tokens = max_tokens;
-        if let Some(url) = base_url {
-            model.base_url = url.to_string();
-        }
-        if let Some(env) = api_key_env {
-            model.api_key_env = env.to_string();
-        }
-        return Ok(model);
-    }
-
-    // 2. Catalog miss — construct from provided fields
-    let url = base_url.ok_or_else(|| {
+    let spec = llm::provider_specs::resolve_provider(provider).ok_or_else(|| {
         SageError::ModelResolution(format!(
-            "model '{model_id}' not in catalog; base_url required"
+            "unknown provider '{}'; use a known provider id (see list_providers())",
+            provider
         ))
     })?;
 
-    let mut model = custom_model(provider, model_id, max_tokens, Some(url), api_key_env);
-    if model.api_key_env.is_empty() {
-        model.api_key_env = llm::keys::api_key_env_var(provider);
-    }
-    Ok(model)
+    Ok(Model {
+        id: model_id.to_string(),
+        name: model_id.to_string(),
+        api: spec.api_kind.to_string(),
+        provider: provider.to_string(),
+        base_url: base_url
+            .map(|u| u.to_string())
+            .unwrap_or_else(|| spec.base_url.to_string()),
+        api_key_env: api_key_env
+            .map(|k| k.to_string())
+            .unwrap_or_else(|| spec.api_key_env.to_string()),
+        reasoning: false,
+        input: vec![InputType::Text],
+        max_tokens: max_tokens.unwrap_or(spec.default_max_tokens),
+        context_window: context_window.unwrap_or(spec.default_context_window),
+        cost: ModelCost {
+            input_per_million: 0.0,
+            output_per_million: 0.0,
+            cache_read_per_million: 0.0,
+            cache_write_per_million: 0.0,
+        },
+        headers: vec![],
+        compat: Some(spec.default_compat.clone()),
+    })
 }
 
-/// Construct a minimal Model for custom/injected providers.
-/// Shares defaults with `resolve_or_construct_model`'s catalog-miss path.
+/// Construct a minimal `Model` for injected custom providers (mocks, tests,
+/// adapters that speak a non-standard protocol). This path is reached only when
+/// `SageEngineBuilder::llm_provider(...)` was called — it bypasses ProviderSpec.
+///
+/// Defaults fall back to the same `DEFAULT_MAX_TOKENS` / `DEFAULT_CONTEXT_WINDOW`
+/// constants used elsewhere, so `.context_window(n)` on the builder still flows
+/// into the custom-model path (Sprint 12 M1 v2 — previously silently dropped).
 fn custom_model(
     provider: &str,
     model_id: &str,
     max_tokens: u32,
+    context_window: Option<u32>,
     base_url: Option<&str>,
     api_key_env: Option<&str>,
 ) -> Model {
@@ -135,7 +169,7 @@ fn custom_model(
         reasoning: false,
         input: vec![InputType::Text],
         max_tokens,
-        context_window: 128000,
+        context_window: context_window.unwrap_or(DEFAULT_CONTEXT_WINDOW),
         cost: ModelCost {
             input_per_million: 0.0,
             output_per_million: 0.0,
@@ -243,7 +277,10 @@ pub struct SageEngine {
     // LLM
     provider_name: String,
     model_id: String,
-    max_tokens: u32,
+    /// YAML-supplied max_tokens override. `None` ⇒ defer to ProviderSpec default.
+    max_tokens: Option<u32>,
+    /// YAML-supplied context_window override. `None` ⇒ defer to ProviderSpec default.
+    context_window: Option<u32>,
     base_url: Option<String>,
     api_key_env: Option<String>,
     custom_llm_provider: Option<Arc<dyn LlmProvider>>,
@@ -270,6 +307,7 @@ impl std::fmt::Debug for SageEngine {
             .field("max_turns", &self.max_turns)
             .field("timeout_secs", &self.timeout_secs)
             .field("max_tokens", &self.max_tokens)
+            .field("context_window", &self.context_window)
             .finish_non_exhaustive()
     }
 }
@@ -290,6 +328,7 @@ impl SageEngine {
             provider_name: None,
             model_id: None,
             max_tokens: None,
+            context_window: None,
             base_url: None,
             api_key_env: None,
             custom_llm_provider: None,
@@ -316,7 +355,8 @@ impl SageEngine {
                 let model = custom_model(
                     &self.provider_name,
                     &self.model_id,
-                    self.max_tokens,
+                    self.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+                    self.context_window,
                     self.base_url.as_deref(),
                     self.api_key_env.as_deref(),
                 );
@@ -327,6 +367,7 @@ impl SageEngine {
                     &self.provider_name,
                     &self.model_id,
                     self.max_tokens,
+                    self.context_window,
                     self.base_url.as_deref(),
                     self.api_key_env.as_deref(),
                 )?;
@@ -498,7 +539,8 @@ impl SageEngine {
                 let model = custom_model(
                     &self.provider_name,
                     &self.model_id,
-                    self.max_tokens,
+                    self.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+                    self.context_window,
                     self.base_url.as_deref(),
                     self.api_key_env.as_deref(),
                 );
@@ -509,6 +551,7 @@ impl SageEngine {
                     &self.provider_name,
                     &self.model_id,
                     self.max_tokens,
+                    self.context_window,
                     self.base_url.as_deref(),
                     self.api_key_env.as_deref(),
                 )?;
@@ -864,6 +907,8 @@ pub struct SageEngineBuilder {
     provider_name: Option<String>,
     model_id: Option<String>,
     max_tokens: Option<u32>,
+    /// Context window size override (Sprint 12 M1). `None` ⇒ use ProviderSpec default.
+    context_window: Option<u32>,
     base_url: Option<String>,
     api_key_env: Option<String>,
     custom_llm_provider: Option<Arc<dyn LlmProvider>>,
@@ -971,6 +1016,29 @@ impl SageEngineBuilder {
 
     pub fn max_tokens(mut self, n: u32) -> Self {
         self.max_tokens = Some(n);
+        self
+    }
+
+    /// Set the context window size (used for token budget / compaction threshold).
+    ///
+    /// Sprint 12 M1: if not called, [`resolve_or_construct_model`] uses the
+    /// `ProviderSpec.default_context_window` from `llm/provider_specs.rs`.
+    pub fn context_window(mut self, n: u32) -> Self {
+        self.context_window = Some(n);
+        self
+    }
+
+    /// Wire an optional `context_window` value straight from YAML. `None` keeps
+    /// the ProviderSpec default active.
+    pub fn context_window_opt(mut self, n: Option<u32>) -> Self {
+        self.context_window = n;
+        self
+    }
+
+    /// Wire an optional `max_tokens` value straight from YAML. `None` keeps the
+    /// ProviderSpec default active.
+    pub fn max_tokens_opt(mut self, n: Option<u32>) -> Self {
+        self.max_tokens = n;
         self
     }
 
@@ -1091,10 +1159,11 @@ impl SageEngineBuilder {
             sandbox_settings: self.sandbox_settings,
             provider_name,
             model_id: self.model_id.unwrap_or_else(|| "custom".to_string()),
-            max_tokens: self.max_tokens.unwrap_or(4096),
+            max_tokens: self.max_tokens,
             base_url: self.base_url,
             api_key_env: self.api_key_env,
             custom_llm_provider: self.custom_llm_provider,
+            context_window: self.context_window,
             before_hook: self.before_hook,
             after_hook: self.after_hook,
             transform_context_hook: self.transform_context_hook,
@@ -1252,7 +1321,9 @@ mod tests {
         let e = engine.unwrap();
         assert_eq!(e.system_prompt, "test");
         assert_eq!(e.max_turns, 10);
-        assert_eq!(e.max_tokens, 4096);
+        // Sprint 12 M1: builder leaves max_tokens as None when YAML doesn't
+        // supply one; the ProviderSpec default kicks in at resolve time.
+        assert_eq!(e.max_tokens, None);
         assert_eq!(e.tool_execution_mode, ToolExecutionMode::Parallel);
     }
 
@@ -1377,7 +1448,7 @@ mod tests {
         assert_eq!(e.provider_name, "qwen");
         assert_eq!(e.model_id, "qwen-plus");
         assert_eq!(e.max_turns, 5);
-        assert_eq!(e.max_tokens, 8192);
+        assert_eq!(e.max_tokens, Some(8192));
         assert_eq!(e.tool_execution_mode, ToolExecutionMode::Sequential);
         assert_eq!(e.builtin_tool_names, vec!["bash", "read"]);
         assert_eq!(e.extra_tools.len(), 1);
@@ -1632,14 +1703,22 @@ mod tests {
     }
 
     // =================================================================
-    // resolve_or_construct_model tests (~3)
+    // resolve_or_construct_model — legacy tests (parameters updated for M1 signature)
+    // NOTE: these tests will also panic via todo!() until M1 is implemented.
     // =================================================================
 
     #[test]
     fn resolve_catalog_hit() {
-        // "deepseek" + "deepseek-chat" is in the built-in catalog
-        let result = resolve_or_construct_model("deepseek", "deepseek-chat", 4096, None, None);
-        assert!(result.is_ok(), "catalog model should resolve: {:?}", result);
+        // After M1: "deepseek" is a known provider → should resolve with any model_id
+        let result = resolve_or_construct_model(
+            "deepseek",
+            "deepseek-chat",
+            Some(4096),
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_ok(), "known provider should resolve: {:?}", result);
         let model = result.unwrap();
         assert_eq!(model.id, "deepseek-chat");
         assert_eq!(model.provider, "deepseek");
@@ -1647,32 +1726,40 @@ mod tests {
 
     #[test]
     fn resolve_catalog_miss_with_base_url() {
+        // After M1: unknown provider always fails regardless of base_url
+        // (this test documents the behaviour change from old catalog-miss path)
         let result = resolve_or_construct_model(
             "custom-provider",
             "custom-model",
-            8192,
+            Some(8192),
+            None,
             Some("http://my-api.com/v1"),
             Some("MY_API_KEY"),
         );
-        assert!(result.is_ok());
-        let model = result.unwrap();
-        assert_eq!(model.id, "custom-model");
-        assert_eq!(model.provider, "custom-provider");
-        assert_eq!(model.base_url, "http://my-api.com/v1");
-        assert_eq!(model.api_key_env, "MY_API_KEY");
-        assert_eq!(model.max_tokens, 8192);
+        // M1 new behaviour: unknown provider → Err (not Ok)
+        assert!(
+            result.is_err(),
+            "unknown provider should fail in M1 — got Ok unexpectedly"
+        );
     }
 
     #[test]
     fn resolve_catalog_miss_no_base_url_fails() {
-        let result =
-            resolve_or_construct_model("unknown-provider", "unknown-model", 4096, None, None);
+        let result = resolve_or_construct_model(
+            "unknown-provider",
+            "unknown-model",
+            Some(4096),
+            None,
+            None,
+            None,
+        );
         assert!(result.is_err());
+        // M1: error should mention unknown provider (not "base_url required")
         let err = result.unwrap_err();
+        let msg = err.to_string();
         assert!(
-            err.to_string().contains("base_url required"),
-            "error should mention base_url: {}",
-            err
+            msg.contains("unknown-provider") || msg.contains("unknown provider"),
+            "error should mention the unknown provider id: {msg}"
         );
     }
 
@@ -1919,7 +2006,7 @@ mod tests {
     #[serial]
     async fn routing_provider_missing_api_returns_error_and_done() {
         let provider = RoutingProvider;
-        let model = custom_model("fake", "fake-model", 4096, None, None);
+        let model = custom_model("fake", "fake-model", 4096, None, None, None);
         let context = LlmContext {
             messages: vec![],
             system_prompt: "test".into(),
@@ -2469,14 +2556,17 @@ mod tests {
 
     /// Build an engine whose `.name()` and `.model()` are explicit — used to
     /// assert payload fields on SessionStart.
+    ///
+    /// NOTE (M1): Uses `llm_provider()` injection to bypass `resolve_or_construct_model`
+    /// (which is `todo!()` in M1 red phase). The `.provider()` / `.model()` fields are
+    /// still set so SessionStart emits the correct name and model strings.
     fn named_engine(name: &str, provider_name: &str, model: &str) -> SageEngine {
         SageEngine::builder()
             .name(name)
             .system_prompt("test")
             .provider(provider_name)
             .model(model)
-            .base_url("http://localhost")
-            .api_key_env("TEST_KEY")
+            .llm_provider(simple_provider("hello"))
             .build()
             .expect("engine builder should succeed")
     }
@@ -2907,5 +2997,202 @@ mod tests {
         } else {
             panic!("matched branch is unreachable");
         }
+    }
+
+    // =================================================================
+    // M1: resolve_or_construct_model — new ProviderSpec-based semantics
+    // =================================================================
+
+    #[test]
+    fn resolve_model_unknown_provider_returns_invalid_provider_error() {
+        let result = resolve_or_construct_model("unknown", "some-model", None, None, None, None);
+        assert!(
+            result.is_err(),
+            "unknown provider should return Err, got Ok"
+        );
+        let msg = result.unwrap_err().to_string();
+        // Error should mention "unknown" somewhere (provider id or "unknown provider")
+        assert!(
+            msg.contains("unknown") || msg.contains("provider"),
+            "error should mention unknown provider: {msg}"
+        );
+    }
+
+    #[test]
+    fn resolve_model_arbitrary_model_id_passes_through() {
+        // Proves weak binding: any model_id string is accepted for a known provider
+        let result = resolve_or_construct_model(
+            "kimi",
+            "kimi-k99-futuristic",
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_ok(), "kimi is a known provider; should succeed: {:?}", result);
+        let model = result.unwrap();
+        assert_eq!(
+            model.id, "kimi-k99-futuristic",
+            "model.id must be the arbitrary model_id string, got: {}",
+            model.id
+        );
+    }
+
+    #[test]
+    fn resolve_model_provider_defaults_base_url_from_spec() {
+        let result = resolve_or_construct_model("kimi", "kimi-k2.5", None, None, None, None);
+        let model = result.expect("kimi should resolve");
+        assert!(
+            model.base_url.starts_with("https://api.moonshot.cn"),
+            "kimi base_url default should come from ProviderSpec (moonshot.cn), got: {}",
+            model.base_url
+        );
+    }
+
+    #[test]
+    fn resolve_model_base_url_override_wins_over_spec() {
+        let result = resolve_or_construct_model(
+            "kimi",
+            "kimi-k2.5",
+            None,
+            None,
+            Some("https://proxy.example.com/v1"),
+            None,
+        );
+        let model = result.expect("kimi with override should resolve");
+        assert_eq!(
+            model.base_url, "https://proxy.example.com/v1",
+            "YAML base_url override must win over ProviderSpec default"
+        );
+    }
+
+    #[test]
+    fn resolve_model_api_key_env_defaults_from_spec() {
+        let result = resolve_or_construct_model("kimi", "kimi-k2.5", None, None, None, None);
+        let model = result.expect("kimi should resolve");
+        assert_eq!(
+            model.api_key_env, "MOONSHOT_API_KEY",
+            "kimi api_key_env default should come from ProviderSpec"
+        );
+    }
+
+    #[test]
+    fn resolve_model_api_key_env_override_wins() {
+        let result = resolve_or_construct_model(
+            "kimi",
+            "kimi-k2.5",
+            None,
+            None,
+            None,
+            Some("MY_CUSTOM_KEY"),
+        );
+        let model = result.expect("kimi with api_key_env override should resolve");
+        assert_eq!(
+            model.api_key_env, "MY_CUSTOM_KEY",
+            "YAML api_key_env override must win over ProviderSpec default"
+        );
+    }
+
+    #[test]
+    fn resolve_model_max_tokens_override_applied() {
+        let result = resolve_or_construct_model(
+            "kimi",
+            "kimi-k2.5",
+            Some(12345),
+            None,
+            None,
+            None,
+        );
+        let model = result.expect("kimi with max_tokens override should resolve");
+        assert_eq!(
+            model.max_tokens, 12345,
+            "max_tokens override must be applied to Model"
+        );
+    }
+
+    #[test]
+    fn resolve_model_max_tokens_none_uses_spec_default_or_global() {
+        let result = resolve_or_construct_model("kimi", "kimi-k2.5", None, None, None, None);
+        let model = result.expect("kimi should resolve");
+        assert!(
+            model.max_tokens > 0,
+            "max_tokens should be a non-zero default when None is passed, got: {}",
+            model.max_tokens
+        );
+    }
+
+    #[test]
+    fn resolve_model_context_window_applied_when_present() {
+        let result = resolve_or_construct_model(
+            "kimi",
+            "kimi-k2.5",
+            None,
+            Some(262144),
+            None,
+            None,
+        );
+        let model = result.expect("kimi with context_window should resolve");
+        assert_eq!(
+            model.context_window, 262144,
+            "context_window override must be applied to Model"
+        );
+    }
+
+    #[test]
+    fn resolve_model_context_window_none_uses_a_default_non_zero() {
+        let result = resolve_or_construct_model("kimi", "kimi-k2.5", None, None, None, None);
+        let model = result.expect("kimi should resolve");
+        assert!(
+            model.context_window > 0,
+            "context_window should be a positive default when None is passed, got: {}",
+            model.context_window
+        );
+    }
+
+    #[test]
+    fn resolve_model_anthropic_provider_picks_anthropic_messages_api() {
+        let result =
+            resolve_or_construct_model("anthropic", "claude-sonnet-4-20250514", None, None, None, None);
+        let model = result.expect("anthropic should resolve");
+        assert_eq!(
+            model.api,
+            crate::llm::types::api::ANTHROPIC_MESSAGES,
+            "anthropic provider must use anthropic-messages API kind"
+        );
+    }
+
+    #[test]
+    fn resolve_model_kimi_provider_picks_openai_completions_api() {
+        let result = resolve_or_construct_model("kimi", "kimi-k2.5", None, None, None, None);
+        let model = result.expect("kimi should resolve");
+        assert_eq!(
+            model.api,
+            crate::llm::types::api::OPENAI_COMPLETIONS,
+            "kimi provider must use openai-completions API kind"
+        );
+    }
+
+    #[test]
+    fn resolve_model_drops_mention_of_catalog_miss_heuristic() {
+        // Negative test: garbage model_id with a known provider must NOT require base_url
+        // M1 no longer uses the catalog-miss heuristic (base_url requirement is gone)
+        let result = resolve_or_construct_model(
+            "kimi",
+            "xxx@@@###",
+            None,
+            None,
+            None, // no base_url provided
+            None,
+        );
+        assert!(
+            result.is_ok(),
+            "garbage model_id with known provider must succeed (weak binding, no catalog check): {:?}",
+            result
+        );
+        let model = result.unwrap();
+        assert_eq!(
+            model.id, "xxx@@@###",
+            "garbage model_id must pass through as-is"
+        );
     }
 }
