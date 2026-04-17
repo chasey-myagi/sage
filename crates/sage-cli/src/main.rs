@@ -9,6 +9,7 @@ mod harness;
 mod known_models;
 mod serve;
 mod session_archive;
+mod skill_install;
 mod skill_scorer;
 mod triggers;
 mod tui;
@@ -126,6 +127,16 @@ enum Commands {
         #[arg(long)]
         needs_evaluation: bool,
     },
+
+    /// Install / list skills for an agent's workspace. Task #82.
+    ///
+    /// Skills live under `~/.sage/agents/<agent>/workspace/skills/<name>/`
+    /// and are the agent's on-demand knowledge base (SKILL.md + optional
+    /// references/). The agent consults `workspace/skills/INDEX.md` to
+    /// discover what's available, then reads specific `<name>/SKILL.md`
+    /// bodies via its Read tool.
+    #[command(subcommand)]
+    Skill(SkillAction),
 
     /// Initialise a new agent workspace at ~/.sage/agents/<name>/
     Init {
@@ -280,6 +291,36 @@ enum TriggerAction {
     List,
 }
 
+#[derive(Subcommand)]
+enum SkillAction {
+    /// Install a skill from a local path or git URL into the agent's workspace.
+    ///
+    /// Examples:
+    ///   sage skill add --agent feishu ~/Dev/cc/lark-base
+    ///   sage skill add --agent feishu https://github.com/larksuite/skill-base.git
+    ///   sage skill add --agent feishu ~/Dev/cc/foo --name foo-alias
+    Add {
+        /// Agent whose workspace to install into.
+        #[arg(long)]
+        agent: String,
+
+        /// Source: local path (./, /, ~), git URL (https://…, git@…, or .git).
+        source: String,
+
+        /// Override the installed skill's directory name. Default is derived
+        /// from the source basename.
+        #[arg(long)]
+        name: Option<String>,
+    },
+
+    /// List skills installed in the agent's workspace.
+    List {
+        /// Agent whose workspace to scan.
+        #[arg(long)]
+        agent: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
@@ -291,6 +332,20 @@ async fn main() -> Result<()> {
             tracing::info!(agent = %agent, "initializing agent workspace");
             serve::init_agent(&agent, provider.as_deref(), model.as_deref()).await
         }
+        Commands::Skill(action) => match action {
+            SkillAction::Add {
+                agent,
+                source,
+                name,
+            } => {
+                tracing::info!(agent = %agent, source = %source, "installing skill");
+                skill_install::run_skill_add(&agent, &source, name.as_deref()).await
+            }
+            SkillAction::List { agent } => {
+                tracing::info!(agent = %agent, "listing skills");
+                skill_install::run_skill_list(&agent).await
+            }
+        },
         Commands::List => {
             tracing::info!("listing agents");
             serve::list_agents().await
@@ -638,6 +693,70 @@ mod tests {
                 assert!(needs_evaluation, "--needs-evaluation flag must parse to true");
             }
             _ => panic!("expected CraftScore subcommand"),
+        }
+    }
+
+    // ── Task #82: `sage skill add` / `sage skill list` clap parsing ──────
+
+    #[test]
+    fn cli_skill_add_parses_agent_and_source() {
+        let cli = Cli::parse_from([
+            "sage",
+            "skill",
+            "add",
+            "--agent",
+            "feishu",
+            "~/Dev/cc/lark-base",
+        ]);
+        match cli.command {
+            Commands::Skill(SkillAction::Add {
+                agent,
+                source,
+                name,
+            }) => {
+                assert_eq!(agent, "feishu");
+                assert_eq!(source, "~/Dev/cc/lark-base");
+                assert!(name.is_none(), "--name must default to None");
+            }
+            _ => panic!("expected Skill::Add subcommand"),
+        }
+    }
+
+    #[test]
+    fn cli_skill_add_parses_name_override() {
+        let cli = Cli::parse_from([
+            "sage",
+            "skill",
+            "add",
+            "--agent",
+            "feishu",
+            "https://github.com/u/r.git",
+            "--name",
+            "nice-alias",
+        ]);
+        match cli.command {
+            Commands::Skill(SkillAction::Add { name, .. }) => {
+                assert_eq!(name.as_deref(), Some("nice-alias"));
+            }
+            _ => panic!("expected Skill::Add"),
+        }
+    }
+
+    #[test]
+    fn cli_skill_list_requires_agent() {
+        // `sage skill list` without --agent must be a clap parse error.
+        let res = Cli::try_parse_from(["sage", "skill", "list"]);
+        assert!(res.is_err(), "skill list without --agent must fail clap");
+    }
+
+    #[test]
+    fn cli_skill_list_parses_agent() {
+        let cli = Cli::parse_from(["sage", "skill", "list", "--agent", "feishu"]);
+        match cli.command {
+            Commands::Skill(SkillAction::List { agent }) => {
+                assert_eq!(agent, "feishu");
+            }
+            _ => panic!("expected Skill::List"),
         }
     }
 
