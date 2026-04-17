@@ -516,7 +516,7 @@ pub enum SessionType {
     /// Automated wiki maintenance and knowledge distillation session.
     WikiMaintenance,
     /// Craft/skill self-evaluation session.
-    CraftEvaluation,
+    SkillEvaluation,
     /// Test harness evaluation run.
     HarnessRun,
 }
@@ -536,7 +536,7 @@ impl SessionType {
         match self {
             SessionType::UserDriven => "UserDriven",
             SessionType::WikiMaintenance => "WikiMaintenance",
-            SessionType::CraftEvaluation => "CraftEvaluation",
+            SessionType::SkillEvaluation => "SkillEvaluation",
             SessionType::HarnessRun => "HarnessRun",
         }
     }
@@ -3056,15 +3056,15 @@ sandbox:
     }
 
     #[test]
-    fn session_type_craft_evaluation_parses() {
+    fn session_type_skill_evaluation_parses() {
         let yaml = format!(
-            "{}\nmemory:\n  inject_as: prepend_system\n  session_type: craft_evaluation\n",
+            "{}\nmemory:\n  inject_as: prepend_system\n  session_type: skill_evaluation\n",
             MINIMAL_YAML
         );
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         assert!(matches!(
             config.memory.unwrap().session_type.unwrap(),
-            SessionType::CraftEvaluation
+            SessionType::SkillEvaluation
         ));
     }
 

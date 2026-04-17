@@ -983,13 +983,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finalize_craft_evaluation_does_not_write_any_files() {
+    async fn finalize_skill_evaluation_does_not_write_any_files() {
         let (_tmp, ws) = workspace();
-        let collector = make_collector(SessionType::CraftEvaluation, ws.clone());
+        let collector = make_collector(SessionType::SkillEvaluation, ws.clone());
         let _ = collector.finalize(true, None).await.expect("finalize");
         assert!(
             !ws.join("metrics").exists(),
-            "CraftEvaluation must not create metrics/"
+            "SkillEvaluation must not create metrics/"
         );
     }
 

@@ -86,9 +86,13 @@ fn validate_agent_name(name: &str) -> Result<()> {
 /// Creates `<agents_dir>/<name>/…` with `AGENT.md`, `config.yaml`,
 /// `memory/MEMORY.md`, and the extended wiki/workspace skeleton
 /// (`workspace/SCHEMA.md`, `workspace/wiki/…`, `workspace/raw/sessions/`,
-/// `workspace/metrics/`, `workspace/craft/`, `workspace/skills/`). All writes
-/// use [`write_if_new`] semantics — re-running against an existing agent dir
-/// is idempotent and never overwrites user edits.
+/// `workspace/metrics/`, `workspace/skills/`). All writes use [`write_if_new`]
+/// semantics — re-running against an existing agent dir is idempotent and
+/// never overwrites user edits.
+///
+/// Task #88: the `workspace/craft/` path is gone — `workspace/skills/` is the
+/// single locus for invocable patterns. `workspace/skills/INDEX.md` is seeded
+/// as the agent's self-maintained table of contents.
 ///
 /// `provider_override` and `model_override` are written into `config.yaml` in
 /// place of the template defaults when supplied (M4 non-interactive init).
@@ -118,7 +122,6 @@ pub(crate) async fn init_agent_at(
     let wiki_dir = workspace_dir.join("wiki");
     let wiki_pages_dir = wiki_dir.join("pages");
     let metrics_dir = workspace_dir.join("metrics");
-    let craft_dir = workspace_dir.join("craft");
     let skills_dir = workspace_dir.join("skills");
 
     for dir in [
@@ -127,7 +130,6 @@ pub(crate) async fn init_agent_at(
         &wiki_dir,
         &wiki_pages_dir,
         &metrics_dir,
-        &craft_dir,
         &skills_dir,
     ] {
         tokio::fs::create_dir_all(dir)
@@ -135,16 +137,29 @@ pub(crate) async fn init_agent_at(
             .with_context(|| format!("failed to create directory {}", dir.display()))?;
     }
 
+    // Task #88: AGENT.md is minimal — just tells the agent how to find the
+    // rest. The skill corpus is navigated via `workspace/skills/INDEX.md`.
     let agent_md_content = format!(
         "# {name}\n\n\
-         ## Description\n\n\
-         TODO: describe this agent's purpose.\n\n\
          ## Instructions\n\n\
-         TODO: add agent-specific instructions and context.\n"
+         需要工具 / 资料 / 过往经验时，先读 `workspace/skills/INDEX.md` 查可用 skill，\n\
+         再按需 `Read workspace/skills/<name>/SKILL.md` 取详情。每完成一个任务，\n\
+         主动更新 INDEX.md 和涉及的 SKILL.md，沉淀经验。\n"
     );
     write_if_new(&agent_dir.join("AGENT.md"), agent_md_content).await?;
 
     write_if_new(&memory_dir.join("MEMORY.md"), format!("# {name} Memory\n\n")).await?;
+
+    // Seed the self-maintained skill index. Agents are free to rewrite this
+    // file; `sage skill add` (task B, not yet implemented) appends new
+    // entries when a skill is installed.
+    let skills_index_seed = "# Skills Index\n\n\
+         <!-- agent-maintained: one entry per installed skill. Format:\n\
+              - `<name>` — one-line description. Body at `<name>/SKILL.md`.\n\
+         -->\n\n\
+         _(empty — install skills via `sage skill add <source>` or drop\n\
+         a directory containing `<name>/SKILL.md` under `workspace/skills/`.)_\n";
+    write_if_new(&skills_dir.join("INDEX.md"), skills_index_seed).await?;
 
     let config_template = include_str!("templates/config.yaml");
     let mut config_content = config_template.replace("__NAME__", name);
@@ -192,13 +207,8 @@ pub(crate) async fn init_agent_at(
     )
     .await?;
 
-    for gitkeep_dir in [
-        &raw_sessions_dir,
-        &wiki_pages_dir,
-        &metrics_dir,
-        &craft_dir,
-        &skills_dir,
-    ] {
+    // skills_dir has INDEX.md seed, so no .gitkeep needed there.
+    for gitkeep_dir in [&raw_sessions_dir, &wiki_pages_dir, &metrics_dir] {
         write_if_new(&gitkeep_dir.join(".gitkeep"), b"" as &[u8]).await?;
     }
 
@@ -300,41 +310,6 @@ async fn load_memory_sections(agent_dir: &PathBuf, auto_load: &[String]) -> Vec<
     sections
 }
 
-/// Scan a directory for `*.md` skill files and return `(name, content)` pairs.
-///
-/// `name` is the stem of the filename (e.g. `"calendar"` for `calendar.md`).
-/// Files that can't be read are silently skipped.
-async fn load_skill_files(dir: &PathBuf) -> Vec<(String, String)> {
-    let mut skills = Vec::new();
-    let Ok(mut rd) = tokio::fs::read_dir(dir).await else {
-        return skills;
-    };
-    loop {
-        let entry = match rd.next_entry().await {
-            Ok(Some(e)) => e,
-            Ok(None) => break,
-            Err(e) => {
-                tracing::warn!("error reading skill dir entry: {e}");
-                continue;
-            }
-        };
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("md") {
-            continue;
-        }
-        let name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_default()
-            .to_string();
-        if let Ok(content) = tokio::fs::read_to_string(&path).await {
-            skills.push((name, content));
-        }
-    }
-    skills.sort_by(|a, b| a.0.cmp(&b.0));
-    skills
-}
-
 /// Record a successful (provider, model) pair into the known-models cache
 /// at `path`, creating parent directories as needed. Errors are swallowed
 /// and logged via `tracing::warn` — the chat loop must never panic on a
@@ -377,62 +352,28 @@ pub(crate) fn record_session_model(provider: &str, model: &str) {
     }
 }
 
-/// `sage craft-score` entry point — Sprint 12 task #72 sub-path 3.
+/// `sage skill-score` entry point — Sprint 12 task #72 sub-path 3.
 ///
 /// Resolves `<home>/.sage/agents/<agent>/workspace/metrics/`, loads every
 /// per-task record, aggregates by craft, and prints a report to stdout.
 /// `needs_only` filters to crafts that qualify for an automatic
-/// CraftEvaluation session.
-pub async fn run_craft_score(agent: &str, needs_only: bool) -> Result<()> {
+/// SkillEvaluation session.
+pub async fn run_skill_score(agent: &str, needs_only: bool) -> Result<()> {
     let agent_dir = sage_agents_dir()?.join(agent);
     let metrics_dir = agent_dir.join("workspace").join("metrics");
-    let records = crate::craft_scorer::load_task_records(&metrics_dir);
-    let stats = crate::craft_scorer::aggregate_by_craft(&records);
-    let report = crate::craft_scorer::format_craft_score_report(&stats, needs_only);
+    let records = crate::skill_scorer::load_task_records(&metrics_dir);
+    let stats = crate::skill_scorer::aggregate_by_craft(&records);
+    let report = crate::skill_scorer::format_skill_score_report(&stats, needs_only);
     println!("{report}");
     Ok(())
 }
 
-/// Load every `<name>/CRAFT.md` file under `craft_root` into `(name, body)`
-/// pairs, sorted by name.
+/// Build the final system prompt by injecting memory.
 ///
-/// Sprint 12 task #72 sub-path 5. Parallel to [`load_skill_files`] but
-/// navigates one level deeper because crafts are *directories* containing
-/// a `CRAFT.md` plus optional artefacts, whereas skills are flat markdown
-/// files. Subdirectories without a `CRAFT.md` are silently skipped —
-/// operational dirs like `.trash/` naturally coexist with real crafts.
-pub(crate) async fn load_craft_files(craft_root: &std::path::Path) -> Vec<(String, String)> {
-    let mut entries = match tokio::fs::read_dir(craft_root).await {
-        Ok(e) => e,
-        Err(_) => return Vec::new(),
-    };
-    let mut crafts = Vec::new();
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let path = entry.path();
-        // Only directories with a CRAFT.md qualify as crafts.
-        let is_dir = match entry.file_type().await {
-            Ok(ft) => ft.is_dir(),
-            Err(_) => continue,
-        };
-        if !is_dir {
-            continue;
-        }
-        let craft_md = path.join("CRAFT.md");
-        let body = match tokio::fs::read_to_string(&craft_md).await {
-            Ok(b) => b,
-            Err(_) => continue, // Missing / unreadable CRAFT.md — not a craft.
-        };
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        crafts.push((name, body));
-    }
-    crafts.sort_by(|a, b| a.0.cmp(&b.0));
-    crafts
-}
-
-/// Build the final system prompt by injecting memory and skills.
+/// Task #88: skill / craft body injection removed. Agents now discover and
+/// load skills on their own by reading `workspace/skills/INDEX.md` and the
+/// individual `<name>/SKILL.md` files on demand via the file tool. The only
+/// always-on context is memory (AGENT.md + auto_load entries).
 pub async fn build_system_prompt(
     base: &str,
     config: &AgentConfig,
@@ -463,45 +404,6 @@ pub async fn build_system_prompt(
                 prompt = crate::context::prepend_memory_sections(&prompt, &section_refs);
             }
         }
-    }
-
-    // ── Skill + Craft injection ──────────────────────────────────────
-    // Sprint 12 task #72 sub-path 5: crafts live under `workspace/craft/`
-    // as <name>/CRAFT.md and are injected into the same "Available Skills"
-    // section as skills — functionally they're both invocable patterns.
-    // Skills win on same-name collisions (matching scan_skills_and_crafts).
-    //
-    // NOTE: no agent-filter is applied here. The `agent:` frontmatter
-    // field is only consulted by the *indexing* path
-    // ([`skills::scan_skills_and_crafts`]) used for TUI / wiki listings.
-    // The chat prompt path injects every skill + craft the agent can see
-    // on disk; filtering here would defeat `/slash` invocation for
-    // cross-agent crafts the user explicitly loaded into the workspace.
-    let workspace_skills_dir = agent_dir.join("workspace").join("skills");
-    let workspace_craft_dir = agent_dir.join("workspace").join("craft");
-
-    let mut all_skill_pairs = Vec::new();
-    if let Some(home) = sage_runner::home_dir() {
-        all_skill_pairs.extend(load_skill_files(&home.join(".sage").join("skills")).await);
-    }
-    all_skill_pairs.extend(load_skill_files(&workspace_skills_dir).await);
-
-    // Append crafts, de-duping by name (skills seen above take precedence).
-    for (name, body) in load_craft_files(&workspace_craft_dir).await {
-        if !all_skill_pairs.iter().any(|(n, _)| n == &name) {
-            all_skill_pairs.push((name, body));
-        }
-    }
-
-    if !all_skill_pairs.is_empty() {
-        let skill_entries: Vec<crate::context::SkillEntry> = all_skill_pairs
-            .iter()
-            .map(|(name, content)| crate::context::SkillEntry {
-                name: name.as_str(),
-                content: content.as_str(),
-            })
-            .collect();
-        prompt = crate::context::append_skill_sections(&prompt, &skill_entries);
     }
 
     prompt
@@ -1324,8 +1226,11 @@ sandbox:
 
     // ── S5.3: init_agent_at wiki/workspace skeleton ───────────────────────────
 
-    /// The 9 paths that `init_agent_at` must create in addition to the
-    /// pre-existing `AGENT.md` / `memory/MEMORY.md` / `config.yaml` / `workspace/`.
+    /// Paths that `init_agent_at` must create in addition to the pre-existing
+    /// `AGENT.md` / `memory/MEMORY.md` / `config.yaml` / `workspace/`.
+    ///
+    /// Task #88: `workspace/craft/` path removed; `workspace/skills/INDEX.md`
+    /// replaces `workspace/skills/.gitkeep` as the seed file.
     fn expected_skeleton_paths(agent_root: &std::path::Path) -> Vec<std::path::PathBuf> {
         let ws = agent_root.join("workspace");
         vec![
@@ -1336,8 +1241,7 @@ sandbox:
             ws.join("wiki").join("overview.md"),
             ws.join("wiki").join("pages").join(".gitkeep"),
             ws.join("metrics").join(".gitkeep"),
-            ws.join("craft").join(".gitkeep"),
-            ws.join("skills").join(".gitkeep"),
+            ws.join("skills").join("INDEX.md"),
         ]
     }
 
@@ -1426,8 +1330,6 @@ sandbox:
             ws.join("raw").join("sessions").join(".gitkeep"),
             ws.join("wiki").join("pages").join(".gitkeep"),
             ws.join("metrics").join(".gitkeep"),
-            ws.join("craft").join(".gitkeep"),
-            ws.join("skills").join(".gitkeep"),
         ];
         for path in &gitkeeps {
             let meta = tokio::fs::metadata(path).await.unwrap();
@@ -1572,135 +1474,29 @@ sandbox:
         // Absence of panic is the contract — no further assertions needed.
     }
 
-    // ── Sprint 12 task #72 sub-path 5: crafts in build_system_prompt ──────
-
-    /// Create a `workspace/craft/<name>/CRAFT.md` file with the given body.
-    fn write_craft(workspace: &std::path::Path, name: &str, body: &str) {
-        let dir = workspace.join("craft").join(name);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("CRAFT.md"), body).unwrap();
-    }
+    // ── Task #88: build_system_prompt only injects memory (no skill body) ─
 
     #[tokio::test]
-    async fn load_craft_files_returns_name_and_body_pairs() {
-        // Pure helper under test: given a craft_root with one CRAFT.md
-        // file nested under <name>/, return [("<name>", body)].
+    #[serial_test::serial]
+    async fn build_system_prompt_does_not_inject_workspace_skills_body() {
+        // Regression guard for task #88: even when workspace/skills/<name>/
+        // SKILL.md files exist, their bodies MUST NOT be auto-injected into
+        // the system prompt. Agents discover skills on demand via
+        // workspace/skills/INDEX.md + file-read tool.
         let tmp = tempfile::TempDir::new().unwrap();
-        let craft_root = tmp.path().join("craft");
-        std::fs::create_dir_all(craft_root.join("alpha")).unwrap();
+        let prev_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let agent_dir = tmp.path().join("agent");
+        let skills_dir = agent_dir.join("workspace").join("skills").join("lark-base");
+        std::fs::create_dir_all(&skills_dir).unwrap();
         std::fs::write(
-            craft_root.join("alpha").join("CRAFT.md"),
-            "alpha craft body here",
+            skills_dir.join("SKILL.md"),
+            "UNIQUE-SKILL-BODY-MUST-NOT-APPEAR-IN-PROMPT",
         )
         .unwrap();
-
-        let pairs = load_craft_files(&craft_root).await;
-        assert_eq!(pairs.len(), 1, "expect one craft pair, got {pairs:?}");
-        assert_eq!(pairs[0].0, "alpha");
-        assert!(pairs[0].1.contains("alpha craft body"));
-    }
-
-    #[tokio::test]
-    async fn load_craft_files_missing_root_returns_empty() {
-        // Missing craft dir must not error — just returns empty like
-        // load_skill_files does for a missing skills dir.
-        let tmp = tempfile::TempDir::new().unwrap();
-        let pairs = load_craft_files(&tmp.path().join("nonexistent")).await;
-        assert!(pairs.is_empty());
-    }
-
-    #[tokio::test]
-    async fn load_craft_files_sorts_alphabetically_and_skips_non_craft_subdirs() {
-        // Deterministic ordering for diff-friendly system prompts; dirs
-        // without a CRAFT.md are silently skipped (not every subdir is a
-        // craft — `.trash/` and friends exist in production workspaces).
-        let tmp = tempfile::TempDir::new().unwrap();
-        let craft_root = tmp.path().join("craft");
-        for (name, has_file) in &[
-            ("zebra", true),
-            ("alpha", true),
-            ("mango", true),
-            (".trash", false),
-        ] {
-            std::fs::create_dir_all(craft_root.join(name)).unwrap();
-            if *has_file {
-                std::fs::write(
-                    craft_root.join(name).join("CRAFT.md"),
-                    format!("body of {name}"),
-                )
-                .unwrap();
-            }
-        }
-
-        let pairs = load_craft_files(&craft_root).await;
-        let names: Vec<&str> = pairs.iter().map(|p| p.0.as_str()).collect();
-        assert_eq!(
-            names,
-            vec!["alpha", "mango", "zebra"],
-            "must be sorted and skip entries lacking CRAFT.md"
-        );
-    }
-
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn build_system_prompt_includes_workspace_craft_bodies() {
-        // Integration: craft entries are appended to the system prompt
-        // alongside skills so the LLM actually sees them. Uses a temp
-        // HOME to keep the test isolated from the user's real ~/.sage.
-        let tmp = tempfile::TempDir::new().unwrap();
-        let prev_home = std::env::var("HOME").ok();
-        unsafe {
-            std::env::set_var("HOME", tmp.path());
-        }
-
-        let agent_dir = tmp.path().join("agent");
-        let workspace = agent_dir.join("workspace");
-        std::fs::create_dir_all(&workspace).unwrap();
-        write_craft(&workspace, "wiki-maintenance", "steps to tidy the wiki");
-
-        let yaml = r#"
-name: t
-description: ""
-llm: { provider: openai, model: gpt-4o }
-system_prompt: "BASE-PROMPT"
-tools: {}
-constraints: { max_turns: 5, timeout_secs: 60 }
-"#;
-        let cfg: AgentConfig = serde_yaml::from_str(yaml).unwrap();
-        let prompt = build_system_prompt("BASE-PROMPT", &cfg, &agent_dir).await;
-
-        assert!(
-            prompt.contains("wiki-maintenance"),
-            "prompt must mention craft name, got:\n{prompt}"
-        );
-        assert!(
-            prompt.contains("steps to tidy the wiki"),
-            "prompt must include craft body, got:\n{prompt}"
-        );
-
-        // Restore HOME.
-        unsafe {
-            match prev_home {
-                Some(h) => std::env::set_var("HOME", h),
-                None => std::env::remove_var("HOME"),
-            }
-        }
-    }
-
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn build_system_prompt_without_craft_dir_is_unchanged() {
-        // Backward-compat regression: agents without a craft/ subdir must
-        // produce the exact same system prompt as pre-task-#72.
-        let tmp = tempfile::TempDir::new().unwrap();
-        let prev_home = std::env::var("HOME").ok();
-        unsafe {
-            std::env::set_var("HOME", tmp.path());
-        }
-
-        let agent_dir = tmp.path().join("agent");
-        // No craft dir at all — just workspace itself.
-        std::fs::create_dir_all(agent_dir.join("workspace")).unwrap();
 
         let yaml = r#"
 name: t
@@ -1713,12 +1509,11 @@ constraints: { max_turns: 5, timeout_secs: 60 }
         let cfg: AgentConfig = serde_yaml::from_str(yaml).unwrap();
         let prompt = build_system_prompt("BASE", &cfg, &agent_dir).await;
 
-        // With no skills and no crafts, the prompt is just the base.
-        assert_eq!(
-            prompt.trim(),
-            "BASE",
-            "empty workspace must yield untouched base prompt, got:\n{prompt}"
+        assert!(
+            !prompt.contains("UNIQUE-SKILL-BODY-MUST-NOT-APPEAR-IN-PROMPT"),
+            "task #88 contract violated: skill body leaked into system prompt\n{prompt}"
         );
+        assert_eq!(prompt.trim(), "BASE", "prompt must be just the base, got:\n{prompt}");
 
         unsafe {
             match prev_home {

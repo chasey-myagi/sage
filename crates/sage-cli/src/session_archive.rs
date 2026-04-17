@@ -233,17 +233,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn archive_session_skips_craft_evaluation() {
+    async fn archive_session_skips_skill_evaluation() {
         let tmp = tempfile::TempDir::new().unwrap();
         let ws = tmp.path();
         archive_session(
             ws,
             "sess-c",
-            SessionType::CraftEvaluation,
+            SessionType::SkillEvaluation,
             &sample_messages(),
         )
         .await
-        .expect("CraftEvaluation must not error");
+        .expect("SkillEvaluation must not error");
         assert!(!ws.join("raw").join("sessions").join("sess-c.jsonl").exists());
     }
 

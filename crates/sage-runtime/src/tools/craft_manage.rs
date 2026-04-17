@@ -79,7 +79,7 @@ struct CraftEntry {
     version: u64,
 }
 
-/// Parse frontmatter from CRAFT.md content.
+/// Parse frontmatter from SKILL.md content.
 /// Returns None if frontmatter is malformed or missing required fields.
 fn parse_frontmatter(content: &str) -> Option<CraftEntry> {
     // Must start with "---\n"
@@ -213,8 +213,8 @@ impl CraftManageTool {
             })
             .unwrap_or_default();
 
-        let craft_dir = self.workspace_dir.join("craft").join(name);
-        let craft_md_path = craft_dir.join("CRAFT.md");
+        let craft_dir = self.workspace_dir.join("skills").join(name);
+        let craft_md_path = craft_dir.join("SKILL.md");
 
         if let Err(e) = std::fs::create_dir_all(&craft_dir) {
             return error_output(&format!("failed to create craft directory: {}", e));
@@ -255,17 +255,17 @@ impl CraftManageTool {
                     // half-successful filesystem state. Future multi-file
                     // crafts (artifacts, examples under the craft dir) will
                     // need tmpdir+rename pattern instead of per-file
-                    // remove; for now a single CRAFT.md keeps it simple.
+                    // remove; for now a single SKILL.md keeps it simple.
                     drop(f);
                     if let Err(cleanup_err) = std::fs::remove_file(&craft_md_path) {
                         tracing::warn!(
                             path = %craft_md_path.display(),
                             orig_write_error = %e,
                             cleanup_error = %cleanup_err,
-                            "failed to clean up zero-byte CRAFT.md after write error"
+                            "failed to clean up zero-byte SKILL.md after write error"
                         );
                     }
-                    return error_output(&format!("failed to write CRAFT.md: {}", e));
+                    return error_output(&format!("failed to write SKILL.md: {}", e));
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -275,23 +275,23 @@ impl CraftManageTool {
                 tracing::warn!(
                     path = %craft_md_path.display(),
                     error = %e,
-                    "failed to O_EXCL create CRAFT.md"
+                    "failed to O_EXCL create SKILL.md"
                 );
-                return error_output(&format!("failed to create CRAFT.md: {}", e));
+                return error_output(&format!("failed to create SKILL.md: {}", e));
             }
         }
 
         ok_output(&format!(
-            "created craft '{}' at craft/{}/CRAFT.md",
+            "created skill '{}' at skills/{}/SKILL.md",
             name, name
         ))
     }
 
     fn execute_list(&self) -> ToolOutput {
-        let craft_base = self.workspace_dir.join("craft");
+        let craft_base = self.workspace_dir.join("skills");
 
-        // Collect all CRAFT.md paths via glob
-        let pattern = format!("{}/*/CRAFT.md", craft_base.display());
+        // Collect all SKILL.md paths via glob
+        let pattern = format!("{}/*/SKILL.md", craft_base.display());
         let paths = match glob::glob(&pattern) {
             Ok(p) => p,
             Err(_) => {
@@ -414,8 +414,8 @@ mod tests {
         }))
         .await; // panics (todo!())
         // After implementation:
-        let craft_path = dir.path().join("craft/deploy/CRAFT.md");
-        assert!(craft_path.exists(), "CRAFT.md should exist at expected path");
+        let craft_path = dir.path().join("skills/deploy/SKILL.md");
+        assert!(craft_path.exists(), "SKILL.md should exist at expected path");
     }
 
     #[tokio::test]
@@ -428,7 +428,7 @@ mod tests {
             "content": "## Deploy steps"
         }))
         .await;
-        let craft_path = dir.path().join("craft/deploy/CRAFT.md");
+        let craft_path = dir.path().join("skills/deploy/SKILL.md");
         let content = fs::read_to_string(&craft_path).unwrap();
         assert!(content.contains("name: deploy"), "frontmatter must contain name");
         assert!(content.contains("type: prompt"), "frontmatter must contain default type");
@@ -454,7 +454,7 @@ mod tests {
             "content": body
         }))
         .await;
-        let craft_path = dir.path().join("craft/deploy/CRAFT.md");
+        let craft_path = dir.path().join("skills/deploy/SKILL.md");
         let content = fs::read_to_string(&craft_path).unwrap();
         // After closing ---, there should be a blank line, then the body.
         let after_fence = content.splitn(3, "---").nth(2).unwrap();
@@ -489,9 +489,9 @@ mod tests {
             "output must contain craft name, got: {}",
             t
         );
-        // relative path like "craft/deploy/CRAFT.md"
+        // relative path like "skills/deploy/SKILL.md"
         assert!(
-            t.contains("craft/deploy"),
+            t.contains("skills/deploy"),
             "output must contain relative path, got: {}",
             t
         );
@@ -508,7 +508,7 @@ mod tests {
             "tags": ["devops", "ci"]
         }))
         .await;
-        let content = fs::read_to_string(dir.path().join("craft/deploy/CRAFT.md")).unwrap();
+        let content = fs::read_to_string(dir.path().join("skills/deploy/SKILL.md")).unwrap();
         assert!(
             content.contains("devops"),
             "frontmatter tags should contain 'devops', got: {}",
@@ -532,7 +532,7 @@ mod tests {
             "type": "recipe"
         }))
         .await;
-        let content = fs::read_to_string(dir.path().join("craft/deploy/CRAFT.md")).unwrap();
+        let content = fs::read_to_string(dir.path().join("skills/deploy/SKILL.md")).unwrap();
         assert!(
             content.contains("type: recipe"),
             "frontmatter should have type: recipe, got: {}",
@@ -550,7 +550,7 @@ mod tests {
             "content": "steps"
         }))
         .await;
-        let content = fs::read_to_string(dir.path().join("craft/deploy/CRAFT.md")).unwrap();
+        let content = fs::read_to_string(dir.path().join("skills/deploy/SKILL.md")).unwrap();
         assert!(
             content.contains("type: prompt"),
             "missing type should default to 'prompt', got: {}",
@@ -568,7 +568,7 @@ mod tests {
             "content": "steps"
         }))
         .await;
-        let content = fs::read_to_string(dir.path().join("craft/deploy/CRAFT.md")).unwrap();
+        let content = fs::read_to_string(dir.path().join("skills/deploy/SKILL.md")).unwrap();
         assert!(
             content.contains("tags: []"),
             "missing tags should default to empty array, got: {}",
@@ -759,7 +759,7 @@ mod tests {
         // Manually plant a broken craft (no frontmatter).
         let broken = dir.path().join("craft/broken");
         fs::create_dir_all(&broken).unwrap();
-        fs::write(broken.join("CRAFT.md"), "no frontmatter here").unwrap();
+        fs::write(broken.join("SKILL.md"), "no frontmatter here").unwrap();
         // list should return the good craft only, not crash.
         let output = tool.execute(json!({"action": "list"})).await;
         assert!(!output.is_error, "list should not error on broken craft");
@@ -775,14 +775,14 @@ mod tests {
         // Create a valid craft.
         tool.execute(json!({"action": "create", "name": "good", "content": "ok"}))
             .await;
-        // Create a directory without CRAFT.md.
+        // Create a directory without SKILL.md.
         let empty = dir.path().join("craft/empty");
         fs::create_dir_all(&empty).unwrap();
         // list should return only the good craft.
         let output = tool.execute(json!({"action": "list"})).await;
-        assert!(!output.is_error, "list should not error when CRAFT.md is missing");
+        assert!(!output.is_error, "list should not error when SKILL.md is missing");
         let arr: Vec<serde_json::Value> = serde_json::from_str(text_of(&output)).unwrap();
-        assert_eq!(arr.len(), 1, "craft without CRAFT.md should be skipped");
+        assert_eq!(arr.len(), 1, "craft without SKILL.md should be skipped");
         assert_eq!(arr[0]["name"], "good");
     }
 

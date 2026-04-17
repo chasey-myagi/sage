@@ -1,7 +1,7 @@
 //! Offline craft efficiency scorer (Sprint 10 S10.3 lib layer).
 //!
-//! Wired into the CLI by Sprint 12 task #72 — `sage craft-score` calls
-//! `load_task_records` → `aggregate_by_craft` → `format_craft_score_report`.
+//! Wired into the CLI by Sprint 12 task #72 — `sage skill-score` calls
+//! `load_task_records` → `aggregate_by_craft` → `format_skill_score_report`.
 //! The `crafts_needing_evaluation` helper is still waiting on a
 //! daemon-side scheduler (task #83) so its call site is absent for now.
 
@@ -74,7 +74,7 @@ pub fn load_task_records(metrics_dir: &Path) -> Vec<ScoringRecord> {
     records
 }
 
-/// Thresholds for triggering automatic CraftEvaluation session.
+/// Thresholds for triggering automatic SkillEvaluation session.
 ///
 /// A craft needs both low efficiency (score < SCORE_THRESHOLD) AND enough
 /// samples (usage_count >= MIN_USAGE) before the scheduler spawns a
@@ -83,7 +83,7 @@ pub fn load_task_records(metrics_dir: &Path) -> Vec<ScoringRecord> {
 pub const SCORE_THRESHOLD: f32 = 0.5;
 pub const MIN_USAGE_FOR_EVALUATION: u32 = 5;
 
-/// Return craft names that qualify for automatic CraftEvaluation session.
+/// Return craft names that qualify for automatic SkillEvaluation session.
 ///
 /// Selection criteria (both required):
 ///   - score() < SCORE_THRESHOLD (inefficient)
@@ -102,7 +102,7 @@ pub fn crafts_needing_evaluation(
     names
 }
 
-/// Render a human-readable report for `sage craft-score`.
+/// Render a human-readable report for `sage skill-score`.
 ///
 /// Output format is fixed: a two-decimal score (`0.80`) so tests can grep
 /// for it and operators can grep historic reports. Crafts are sorted by
@@ -113,7 +113,7 @@ pub fn crafts_needing_evaluation(
 /// [`crafts_needing_evaluation`] are shown (low-score + sufficient-usage).
 /// Empty results produce a friendly "no data" / "no candidates" hint rather
 /// than a blank table.
-pub fn format_craft_score_report(
+pub fn format_skill_score_report(
     stats: &HashMap<String, CraftStats>,
     needs_only: bool,
 ) -> String {
@@ -576,16 +576,16 @@ mod tests {
         assert_eq!(result, vec!["bad1", "bad2"], "both qualifying crafts returned, sorted");
     }
 
-    // ── Sprint 12 task #72 sub-path 3: format_craft_score_report ──────────
+    // ── Sprint 12 task #72 sub-path 3: format_skill_score_report ──────────
 
     #[test]
-    fn format_craft_score_report_empty_stats_shows_no_data_message() {
-        // User guidance: the `sage craft-score` CLI must not return a scary
+    fn format_skill_score_report_empty_stats_shows_no_data_message() {
+        // User guidance: the `sage skill-score` CLI must not return a scary
         // error when metrics haven't been collected yet. A newly initialised
         // agent has zero records; the tool should print a friendly hint
         // instead of an empty table.
         let stats: HashMap<String, CraftStats> = HashMap::new();
-        let report = format_craft_score_report(&stats, false);
+        let report = format_skill_score_report(&stats, false);
         assert!(
             report.contains("no data"),
             "empty report must mention 'no data', got: {report:?}"
@@ -593,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn format_craft_score_report_lists_each_craft_with_score() {
+    fn format_skill_score_report_lists_each_craft_with_score() {
         // Happy path: two crafts with known stats produce a report that
         // includes both names and their numeric score.
         let mut stats = HashMap::new();
@@ -605,7 +605,7 @@ mod tests {
             "beta".to_string(),
             make_stats(3, 300, 80, 100),
         );
-        let report = format_craft_score_report(&stats, false);
+        let report = format_skill_score_report(&stats, false);
         assert!(report.contains("alpha"), "report must include craft name 'alpha'");
         assert!(report.contains("beta"), "report must include craft name 'beta'");
         // alpha score = 40/50 = 0.80; beta = 80/100 = 0.80.
@@ -616,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn format_craft_score_report_sorts_crafts_deterministically() {
+    fn format_skill_score_report_sorts_crafts_deterministically() {
         // HashMap iteration is non-deterministic — the report must sort by
         // name so the CLI output is stable across invocations (diff-friendly
         // for operators comparing weeks of data).
@@ -624,7 +624,7 @@ mod tests {
         stats.insert("zzz".into(), make_stats(5, 100, 10, 20));
         stats.insert("aaa".into(), make_stats(5, 100, 10, 20));
         stats.insert("mmm".into(), make_stats(5, 100, 10, 20));
-        let report = format_craft_score_report(&stats, false);
+        let report = format_skill_score_report(&stats, false);
         let aaa_pos = report.find("aaa").unwrap();
         let mmm_pos = report.find("mmm").unwrap();
         let zzz_pos = report.find("zzz").unwrap();
@@ -635,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn format_craft_score_report_needs_only_filters_to_evaluation_candidates() {
+    fn format_skill_score_report_needs_only_filters_to_evaluation_candidates() {
         // `--needs-evaluation` flag: report should list only crafts that
         // pass `crafts_needing_evaluation` (score < 0.5 AND usage >= 5).
         let mut stats = HashMap::new();
@@ -646,7 +646,7 @@ mod tests {
         // doesn't need eval: low usage
         stats.insert("new".into(), make_stats(2, 200, 10, 100));
 
-        let report = format_craft_score_report(&stats, /* needs_only */ true);
+        let report = format_skill_score_report(&stats, /* needs_only */ true);
         assert!(
             report.contains("lazy"),
             "needs-eval report must include 'lazy' (low score + sufficient usage)"
@@ -662,13 +662,13 @@ mod tests {
     }
 
     #[test]
-    fn format_craft_score_report_needs_only_with_zero_candidates_is_empty_hint() {
+    fn format_skill_score_report_needs_only_with_zero_candidates_is_empty_hint() {
         // When no craft qualifies for evaluation, the filtered report should
         // explicitly say so (not print a blank body the user can't interpret).
         let mut stats = HashMap::new();
         stats.insert("good1".into(), make_stats(10, 1000, 80, 100));
         stats.insert("good2".into(), make_stats(10, 1000, 90, 100));
-        let report = format_craft_score_report(&stats, true);
+        let report = format_skill_score_report(&stats, true);
         // Report mentions "no" (as in "no crafts need evaluation" or
         // "no candidates") and does not list the healthy crafts.
         assert!(!report.contains("good1"));

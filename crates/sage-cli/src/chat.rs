@@ -1,15 +1,17 @@
 // Chat TUI — interactive foreground session with a SageSession.
+//
+// Task #88: `/slash` skill invocation removed. Agents discover and load
+// skills on their own via `workspace/skills/INDEX.md` + Read tool; the TUI
+// no longer dispatches `/<name>` as a skill shortcut. Only two built-ins
+// remain (`/exit`, `/reset`).
 
 /// Chat input parsed from the user's TUI prompt.
 #[derive(Debug, PartialEq)]
 pub enum ChatInput {
-    /// A regular message to forward to the agent.
+    /// A regular message to forward to the agent. Any line beginning with `/`
+    /// that isn't `/exit` or `/reset` flows here verbatim — the agent decides
+    /// whether to treat it as a command.
     Message(String),
-    /// A skill invocation: `/name [args]`.
-    ///
-    /// `name` is the skill identifier (e.g. `"wiki"` for `/wiki`).
-    /// `args` is everything after the name, leading whitespace stripped.
-    Skill { name: String, args: String },
     /// The user typed `/exit` — close the session.
     Exit,
     /// The user typed `/reset` — clear conversation history and start fresh.
@@ -23,13 +25,8 @@ pub enum ChatInput {
 /// Rules (applied to the trimmed value):
 /// - `/exit` → [`ChatInput::Exit`] (case-insensitive, must stand alone)
 /// - `/reset` → [`ChatInput::Reset`] (case-insensitive, must stand alone)
-/// - `/name [args]` → [`ChatInput::Skill`] for any other single-word slash prefix
-/// - Bare `/` → [`ChatInput::Message`] (no skill name)
 /// - Whitespace-only → [`ChatInput::Empty`]
 /// - Everything else → [`ChatInput::Message`] with the **original** input preserved
-///
-/// `/exit extra` and `/reset now` remain [`ChatInput::Message`] so the built-in commands
-/// cannot accidentally shadow a skill named `exit` or `reset`.
 pub fn parse_user_input(input: &str) -> ChatInput {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -41,53 +38,7 @@ pub fn parse_user_input(input: &str) -> ChatInput {
     if trimmed.eq_ignore_ascii_case("/reset") {
         return ChatInput::Reset;
     }
-    // Skill invocation: /name [optional args]
-    // Guard: /exit .../reset ... keep their Message semantics so built-ins can't be shadowed.
-    if let Some(rest) = trimmed.strip_prefix('/') {
-        let name_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-        let name = &rest[..name_end];
-        if !name.is_empty()
-            && !name.eq_ignore_ascii_case("exit")
-            && !name.eq_ignore_ascii_case("reset")
-        {
-            let args = rest[name_end..].trim_start().to_string();
-            return ChatInput::Skill {
-                name: name.to_string(),
-                args,
-            };
-        }
-    }
     ChatInput::Message(input.to_string())
-}
-
-/// Replace every occurrence of `$ARGUMENTS` in `template` with `args`.
-///
-/// If `template` contains no `$ARGUMENTS` placeholder the string is returned unchanged.
-pub fn substitute_arguments(template: &str, args: &str) -> String {
-    template.replace("$ARGUMENTS", args)
-}
-
-/// Load a skill file by name for the given agent, returning its raw content.
-///
-/// Search order: workspace-local skill first, then global `~/.sage/skills/`.
-/// Returns `None` if the skill is not found in either location.
-async fn load_skill_content(skill_name: &str, agent_dir: &std::path::Path) -> Option<String> {
-    // 1. Workspace-local: <agent_dir>/workspace/skills/<name>.md
-    let workspace_path = agent_dir
-        .join("workspace")
-        .join("skills")
-        .join(format!("{skill_name}.md"));
-    if let Ok(c) = tokio::fs::read_to_string(&workspace_path).await {
-        return Some(c);
-    }
-    // 2. Global: ~/.sage/skills/<name>.md
-    if let Some(home) = sage_runner::home_dir() {
-        let global_path = home.join(".sage").join("skills").join(format!("{skill_name}.md"));
-        if let Ok(c) = tokio::fs::read_to_string(&global_path).await {
-            return Some(c);
-        }
-    }
-    None
 }
 
 /// Format a tool execution start notification for the TUI.
@@ -276,33 +227,22 @@ async fn chat_loop(
                 println!("  [session reset]");
             }
             ChatInput::Empty => {}
-            ChatInput::Skill { name, args } => {
-                match load_skill_content(&name, agent_dir).await {
-                    Some(template) => {
-                        let text = substitute_arguments(&template, &args);
-                        send_with_cancel(session, sink, text.trim(), cancel_token).await?;
-                        // Task #72 sub-path 2: record on each successful
-                        // send so the known_models cache reflects which
-                        // (provider, model) the user has actually used.
-                        // Idempotent — duplicates collapse inside the
-                        // record_used_model set semantics.
-                        crate::serve::record_session_model(provider, model);
-                    }
-                    None => {
-                        eprintln!(
-                            "  [skill '/{name}' not found — \
-                             add {name}.md to ~/.sage/skills/ or workspace/skills/]"
-                        );
-                    }
-                }
-            }
             ChatInput::Message(text) => {
                 send_with_cancel(session, sink, text.trim(), cancel_token).await?;
+                // Task #72 sub-path 2: record on each successful send so
+                // the known_models cache reflects which (provider, model)
+                // the user has actually used. Idempotent — duplicates
+                // collapse inside the record_used_model set semantics.
                 crate::serve::record_session_model(provider, model);
             }
         }
     }
 
+    // `agent_dir` is retained on the signature for future wiring points
+    // (e.g. session archive path, workspace-scoped commands). Suppress
+    // the unused-param warning without renaming it since callers pass it
+    // positionally.
+    let _ = agent_dir;
     Ok(())
 }
 
@@ -411,23 +351,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_input_unknown_slash_command_is_skill() {
-        // Unknown /commands become Skill invocations (no args)
+    fn parse_input_unknown_slash_command_is_message_post_task_88() {
+        // Task #88: `/<name>` no longer special-cased. Unknown slash input
+        // is forwarded to the agent as a regular message; the agent decides
+        // whether to treat it as a skill invocation by consulting
+        // `workspace/skills/INDEX.md`.
         assert_eq!(
             parse_user_input("/unknown"),
-            ChatInput::Skill { name: "unknown".to_string(), args: "".to_string() }
+            ChatInput::Message("/unknown".to_string())
         );
     }
 
     #[test]
-    fn parse_input_slash_with_content_is_skill() {
-        // /word [args] is a skill invocation
+    fn parse_input_slash_with_content_is_message_post_task_88() {
+        // Task #88: same rationale — `/help me debug this` becomes a plain
+        // message, not a skill invocation. No /slash argument extraction.
         assert_eq!(
             parse_user_input("/help me debug this"),
-            ChatInput::Skill {
-                name: "help".to_string(),
-                args: "me debug this".to_string(),
-            }
+            ChatInput::Message("/help me debug this".to_string())
         );
     }
 
@@ -452,12 +393,13 @@ mod tests {
 
     #[test]
     fn parse_input_reset_with_args_stays_message() {
-        // "/reset now" — built-in commands with trailing text stay as Message to prevent
-        // accidental shadowing; they are NOT treated as skill invocations.
+        // "/reset now" — built-in commands with trailing text stay as Message
+        // so the agent sees the literal user intent rather than silently
+        // swallowing the tail.
         assert_eq!(
             parse_user_input("/reset now"),
             ChatInput::Message("/reset now".to_string()),
-            "/reset with trailing text should be a Message, not a Reset command or Skill"
+            "/reset with trailing text should be a Message, not a Reset command"
         );
     }
 
@@ -466,7 +408,7 @@ mod tests {
         assert_eq!(
             parse_user_input("/exit immediately"),
             ChatInput::Message("/exit immediately".to_string()),
-            "/exit with trailing text should be a Message, not an Exit command or Skill"
+            "/exit with trailing text should be a Message, not an Exit command"
         );
     }
 
@@ -533,95 +475,33 @@ mod tests {
         );
     }
 
-    // ── parse_user_input: skill commands ─────────────────────────────────────
+    // ── Task #88: /slash skill invocation removed ─────────────────────────
+    //
+    // Pre-task-#88 parse_user_input mapped `/<name>` to ChatInput::Skill and
+    // loaded a template file. The agent now owns skill discovery (via
+    // workspace/skills/INDEX.md + Read tool). We keep a handful of
+    // regression tests proving `/<name>` flows through as a plain Message.
 
     #[test]
-    fn parse_input_skill_no_args() {
+    fn parse_input_slash_memory_is_message() {
         assert_eq!(
             parse_user_input("/memory"),
-            ChatInput::Skill { name: "memory".to_string(), args: "".to_string() },
-            "/memory should be a Skill with no args"
+            ChatInput::Message("/memory".to_string())
         );
     }
 
     #[test]
-    fn parse_input_skill_with_args() {
-        assert_eq!(
-            parse_user_input("/wiki search dogs"),
-            ChatInput::Skill {
-                name: "wiki".to_string(),
-                args: "search dogs".to_string(),
-            },
-            "/wiki with args should parse name and args separately"
-        );
-    }
-
-    #[test]
-    fn parse_input_skill_with_hyphen_in_name() {
+    fn parse_input_slash_with_hyphen_is_message() {
         assert_eq!(
             parse_user_input("/my-skill"),
-            ChatInput::Skill { name: "my-skill".to_string(), args: "".to_string() },
+            ChatInput::Message("/my-skill".to_string())
         );
     }
 
     #[test]
-    fn parse_input_skill_args_leading_whitespace_stripped() {
-        // Leading whitespace between name and args is stripped from args
-        assert_eq!(
-            parse_user_input("/wiki   search term"),
-            ChatInput::Skill {
-                name: "wiki".to_string(),
-                args: "search term".to_string(),
-            },
-        );
-    }
-
-    #[test]
-    fn parse_input_skill_exit_with_trailing_space_still_exit() {
-        // " /exit " — trimmed to "/exit" — must stay Exit (whitespace-only strip before match)
+    fn parse_input_slash_exit_with_trailing_space_still_exit() {
+        // " /exit " — trimmed to "/exit" — must stay Exit.
         assert_eq!(parse_user_input(" /exit "), ChatInput::Exit);
-    }
-
-    // ── substitute_arguments ─────────────────────────────────────────────────
-
-    #[test]
-    fn substitute_args_no_placeholder_unchanged() {
-        assert_eq!(
-            substitute_arguments("hello world", "ignored"),
-            "hello world"
-        );
-    }
-
-    #[test]
-    fn substitute_args_replaces_placeholder() {
-        assert_eq!(
-            substitute_arguments("search for $ARGUMENTS please", "rust docs"),
-            "search for rust docs please"
-        );
-    }
-
-    #[test]
-    fn substitute_args_empty_args_replaces_with_empty() {
-        assert_eq!(
-            substitute_arguments("find $ARGUMENTS", ""),
-            "find "
-        );
-    }
-
-    #[test]
-    fn substitute_args_multiple_occurrences_all_replaced() {
-        assert_eq!(
-            substitute_arguments("$ARGUMENTS and $ARGUMENTS", "x"),
-            "x and x"
-        );
-    }
-
-    #[test]
-    fn substitute_args_preserves_surrounding_text() {
-        assert_eq!(
-            substitute_arguments("prefix $ARGUMENTS suffix", "middle"),
-            "prefix middle suffix"
-        );
     }
 
     // ── format_tool_start ────────────────────────────────────────────────────

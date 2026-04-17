@@ -43,44 +43,12 @@ pub fn prepend_memory_sections(base: &str, sections: &[(&str, &str)]) -> String 
 }
 
 // ── Skill injection ───────────────────────────────────────────────────────────
-
-/// A loaded skill file.
-pub struct SkillEntry<'a> {
-    pub name: &'a str,
-    pub content: &'a str,
-}
-
-/// Append skill definitions to a base system prompt.
-///
-/// Each entry provides a skill name (derived from the filename without extension)
-/// and its markdown content. Skills with empty/whitespace-only content are skipped.
-/// When skills are present, they are appended after the base prompt under a
-/// `## Available Skills` section header.
-///
-/// Returns the base prompt unchanged when `skills` is empty (after filtering).
-pub fn append_skill_sections<'a>(base: &str, skills: &[SkillEntry<'a>]) -> String {
-    let non_empty: Vec<&SkillEntry<'a>> = skills
-        .iter()
-        .filter(|s| !s.content.trim().is_empty())
-        .collect();
-
-    if non_empty.is_empty() {
-        return base.to_string();
-    }
-
-    let skill_blocks: Vec<String> = non_empty
-        .iter()
-        .map(|s| format!("### {}\n\n{}", s.name, s.content.trim()))
-        .collect();
-
-    let skills_section = format!("## Available Skills\n\n{}", skill_blocks.join("\n\n---\n\n"));
-
-    if base.is_empty() {
-        skills_section
-    } else {
-        format!("{base}\n\n---\n\n{skills_section}")
-    }
-}
+//
+// Task #88: removed. Skills are no longer auto-injected into the system
+// prompt. Agents navigate `workspace/skills/INDEX.md` + read SKILL.md
+// bodies on demand via the file tool. If a future design wants to surface
+// a skill index in the prompt, add a new helper here — don't resurrect
+// the always-on body-injection path.
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -226,136 +194,7 @@ mod tests {
         assert!(result.contains(base), "base prompt must still be present");
     }
 
-    // ── append_skill_sections ────────────────────────────────────────────────
-
-    #[test]
-    fn no_skills_returns_base_prompt_unchanged() {
-        let base = "You are a helpful assistant.";
-        let result = append_skill_sections(base, &[]);
-        assert_eq!(result, base);
-    }
-
-    #[test]
-    fn single_skill_appended_after_base_prompt() {
-        let base = "You are a helpful assistant.";
-        let skills = [SkillEntry { name: "calendar", content: "Use this to check schedules." }];
-        let result = append_skill_sections(base, &skills);
-        let base_pos = result.find("helpful assistant").unwrap();
-        let skill_pos = result.find("calendar").unwrap();
-        assert!(skill_pos > base_pos, "skill must come after base prompt");
-    }
-
-    #[test]
-    fn skill_section_has_available_skills_header() {
-        let base = "base";
-        let skills = [SkillEntry { name: "my-skill", content: "skill content" }];
-        let result = append_skill_sections(base, &skills);
-        // Must have the standard "Available Skills" section header
-        assert!(
-            result.contains("Available Skills"),
-            "skill section must contain 'Available Skills' header"
-        );
-    }
-
-    #[test]
-    fn skill_name_appears_in_output() {
-        let base = "base";
-        let skills = [SkillEntry { name: "feishu-reply", content: "reply to feishu" }];
-        let result = append_skill_sections(base, &skills);
-        assert!(result.contains("feishu-reply"), "skill name must appear in output");
-    }
-
-    #[test]
-    fn skill_content_appears_in_output() {
-        let base = "base";
-        let skills = [SkillEntry { name: "skill", content: "UNIQUE_SKILL_CONTENT_ABC" }];
-        let result = append_skill_sections(base, &skills);
-        assert!(result.contains("UNIQUE_SKILL_CONTENT_ABC"));
-    }
-
-    #[test]
-    fn empty_skill_content_is_skipped() {
-        let base = "base";
-        let skills = [
-            SkillEntry { name: "empty-skill", content: "" },
-            SkillEntry { name: "real-skill", content: "real content" },
-        ];
-        let result = append_skill_sections(base, &skills);
-        assert!(!result.contains("empty-skill"), "empty skill must be omitted");
-        assert!(result.contains("real-skill"), "non-empty skill must appear");
-    }
-
-    #[test]
-    fn whitespace_only_skill_content_is_skipped() {
-        let base = "base";
-        let skills = [SkillEntry { name: "blank", content: "\n  \t  \n" }];
-        let result = append_skill_sections(base, &skills);
-        assert_eq!(result, base, "whitespace-only skill should leave prompt unchanged");
-    }
-
-    #[test]
-    fn multiple_skills_all_appear_in_result() {
-        let base = "base";
-        let skills = [
-            SkillEntry { name: "skill-a", content: "content-a" },
-            SkillEntry { name: "skill-b", content: "content-b" },
-        ];
-        let result = append_skill_sections(base, &skills);
-        assert!(result.contains("skill-a") && result.contains("content-a"));
-        assert!(result.contains("skill-b") && result.contains("content-b"));
-    }
-
-    #[test]
-    fn base_prompt_preserved_with_skills() {
-        let base = "UNIQUE_PRESERVED_BASE";
-        let skills = [SkillEntry { name: "s", content: "c" }];
-        let result = append_skill_sections(base, &skills);
-        assert!(result.contains(base));
-    }
-
-    #[test]
-    fn multiple_skills_preserve_input_order() {
-        let base = "base";
-        let skills = [
-            SkillEntry { name: "alpha-skill", content: "alpha content" },
-            SkillEntry { name: "beta-skill", content: "beta content" },
-        ];
-        let result = append_skill_sections(base, &skills);
-        let alpha_pos = result.find("alpha-skill").unwrap();
-        let beta_pos = result.find("beta-skill").unwrap();
-        assert!(alpha_pos < beta_pos, "skills must preserve input order");
-    }
-
-    #[test]
-    fn available_skills_header_appears_exactly_once_with_multiple_skills() {
-        let base = "base";
-        let skills = [
-            SkillEntry { name: "skill-a", content: "content a" },
-            SkillEntry { name: "skill-b", content: "content b" },
-            SkillEntry { name: "skill-c", content: "content c" },
-        ];
-        let result = append_skill_sections(base, &skills);
-        let count = result.matches("Available Skills").count();
-        assert_eq!(count, 1, "'Available Skills' header must appear exactly once, found {count}");
-    }
-
-    #[test]
-    fn all_empty_skills_returns_base_unchanged() {
-        let base = "base prompt";
-        let skills = [
-            SkillEntry { name: "a", content: "" },
-            SkillEntry { name: "b", content: "  \n  " },
-        ];
-        let result = append_skill_sections(base, &skills);
-        assert_eq!(result, base, "all empty skills must leave base prompt unchanged");
-    }
-
-    #[test]
-    fn empty_base_with_skills_produces_skills_content() {
-        let base = "";
-        let skills = [SkillEntry { name: "my-skill", content: "useful skill" }];
-        let result = append_skill_sections(base, &skills);
-        assert!(result.contains("my-skill"), "skill name must appear even with empty base");
-        assert!(result.contains("useful skill"), "skill content must appear");
-    }
+    // ── append_skill_sections: removed in task #88 ────────────────────────
+    // The auto-injection path is gone. Memory/prepend tests above are the
+    // only contract `build_system_prompt` still honours.
 }

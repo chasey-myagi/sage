@@ -4,13 +4,12 @@ use tracing_subscriber::EnvFilter;
 
 mod chat;
 mod context;
-mod craft_scorer;
 mod daemon;
 mod harness;
 mod known_models;
 mod serve;
 mod session_archive;
-mod skills;
+mod skill_scorer;
 mod triggers;
 mod tui;
 mod wiki_trigger;
@@ -111,18 +110,18 @@ enum Commands {
         dev: bool,
     },
 
-    /// Show craft efficiency scores for an agent's collected metrics.
+    /// Show skill efficiency scores for an agent's collected metrics.
     ///
     /// Reads `~/.sage/agents/<name>/workspace/metrics/*.json` (per-task
-    /// records written by MetricsCollector), aggregates them by craft, and
-    /// prints a per-craft stats table with score = tokens_best / tokens_avg.
-    /// Task #72 sub-path 3.
-    CraftScore {
+    /// records written by MetricsCollector), aggregates them by skill, and
+    /// prints a per-skill stats table with score = tokens_best / tokens_avg.
+    /// Task #72 sub-path 3 (renamed under task #88).
+    SkillScore {
         /// Agent whose metrics directory to score.
         #[arg(long)]
         agent: String,
 
-        /// Show only crafts that qualify for an automatic CraftEvaluation
+        /// Show only skills that qualify for an automatic SkillEvaluation
         /// session (score < 0.5 AND usage_count >= 5).
         #[arg(long)]
         needs_evaluation: bool,
@@ -308,12 +307,12 @@ async fn main() -> Result<()> {
             tracing::info!(agent = %agent, "starting daemon");
             daemon::start_daemon(&agent, false).await
         }
-        Commands::CraftScore {
+        Commands::SkillScore {
             agent,
             needs_evaluation,
         } => {
             tracing::info!(agent = %agent, needs_evaluation, "scoring crafts");
-            serve::run_craft_score(&agent, needs_evaluation).await
+            serve::run_skill_score(&agent, needs_evaluation).await
         }
         Commands::Connect { agent } => {
             tracing::info!(agent = %agent, "connecting to daemon");
@@ -586,13 +585,13 @@ mod tests {
         }
     }
 
-    // ── Sprint 12 task #72 sub-path 3: `sage craft-score` subcommand ──────
+    // ── Sprint 12 task #72 sub-path 3: `sage skill-score` subcommand ──────
 
     #[test]
-    fn cli_craft_score_requires_agent_name() {
-        // `sage craft-score` without --agent must be a clap parse error;
+    fn cli_skill_score_requires_agent_name() {
+        // `sage skill-score` without --agent must be a clap parse error;
         // the command would be meaningless without pointing at a workspace.
-        let res = Cli::try_parse_from(["sage", "craft-score"]);
+        let res = Cli::try_parse_from(["sage", "skill-score"]);
         assert!(
             res.is_err(),
             "craft-score without --agent must fail clap parsing"
@@ -600,12 +599,12 @@ mod tests {
     }
 
     #[test]
-    fn cli_craft_score_parses_with_agent_only() {
+    fn cli_skill_score_parses_with_agent_only() {
         // Happy path: single --agent flag, no --needs-evaluation, dispatches
         // to the CraftScore variant with the expected defaults.
-        let cli = Cli::parse_from(["sage", "craft-score", "--agent", "feishu"]);
+        let cli = Cli::parse_from(["sage", "skill-score", "--agent", "feishu"]);
         match cli.command {
-            Commands::CraftScore {
+            Commands::SkillScore {
                 agent,
                 needs_evaluation,
             } => {
@@ -620,18 +619,18 @@ mod tests {
     }
 
     #[test]
-    fn cli_craft_score_parses_needs_evaluation_flag() {
+    fn cli_skill_score_parses_needs_evaluation_flag() {
         // Filtered output mode: only print crafts that qualify for an
-        // automatic CraftEvaluation session.
+        // automatic SkillEvaluation session.
         let cli = Cli::parse_from([
             "sage",
-            "craft-score",
+            "skill-score",
             "--agent",
             "knowledge",
             "--needs-evaluation",
         ]);
         match cli.command {
-            Commands::CraftScore {
+            Commands::SkillScore {
                 agent,
                 needs_evaluation,
             } => {
