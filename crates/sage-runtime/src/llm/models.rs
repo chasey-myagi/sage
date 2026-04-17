@@ -275,6 +275,27 @@ static MODEL_CATALOG: LazyLock<Vec<Model>> = LazyLock::new(|| {
             compat: None,
         },
         // ── Qwen ──
+        // Default Qwen model (DashScope direct, Qwen3 generation).
+        Model {
+            id: "qwen3.6-plus".into(),
+            name: "Qwen 3.6 Plus".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::QWEN.into(),
+            base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1".into(),
+            api_key_env: "DASHSCOPE_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 131072,
+            cost: ModelCost {
+                input_per_million: 0.8,
+                output_per_million: 2.0,
+                cache_read_per_million: 0.2,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: default_compat(),
+        },
         Model {
             id: "qwen-plus".into(),
             name: "Qwen Plus".into(),
@@ -377,6 +398,27 @@ static MODEL_CATALOG: LazyLock<Vec<Model>> = LazyLock::new(|| {
             compat: default_compat(),
         },
         // ── Kimi ──
+        // Default Kimi model (Moonshot direct, K2.5 generation).
+        Model {
+            id: "kimi-k2.5".into(),
+            name: "Kimi K2.5".into(),
+            api: api::OPENAI_COMPLETIONS.into(),
+            provider: provider::KIMI.into(),
+            base_url: "https://api.moonshot.cn/v1".into(),
+            api_key_env: "MOONSHOT_API_KEY".into(),
+            reasoning: false,
+            input: vec![InputType::Text],
+            max_tokens: 8192,
+            context_window: 262144,
+            cost: ModelCost {
+                input_per_million: 1.0,
+                output_per_million: 3.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: default_compat(),
+        },
         Model {
             id: "moonshot-v1-auto".into(),
             name: "Moonshot v1 Auto".into(),
@@ -5424,6 +5466,18 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_qwen_3_6_plus() {
+        let model = resolve_model("qwen", "qwen3.6-plus").unwrap();
+        assert_eq!(model.id, "qwen3.6-plus");
+        assert_eq!(model.provider, "qwen");
+        assert_eq!(model.api_key_env, "DASHSCOPE_API_KEY");
+        assert_eq!(
+            model.base_url,
+            "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        );
+    }
+
+    #[test]
     fn test_resolve_qwen_max() {
         let model = resolve_model("qwen", "qwen-max").unwrap();
         assert_eq!(model.id, "qwen-max");
@@ -5450,6 +5504,15 @@ mod tests {
         assert_eq!(model.id, "moonshot-v1-auto");
         assert_eq!(model.provider, "kimi");
         assert_eq!(model.api_key_env, "MOONSHOT_API_KEY");
+    }
+
+    #[test]
+    fn test_resolve_kimi_k2_5() {
+        let model = resolve_model("kimi", "kimi-k2.5").unwrap();
+        assert_eq!(model.id, "kimi-k2.5");
+        assert_eq!(model.provider, "kimi");
+        assert_eq!(model.api_key_env, "MOONSHOT_API_KEY");
+        assert_eq!(model.base_url, "https://api.moonshot.cn/v1");
     }
 
     #[test]

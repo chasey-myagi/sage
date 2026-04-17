@@ -2,7 +2,7 @@ name: coding-assistant
 description: "Qwen-based coding assistant"
 llm:
   provider: qwen
-  model: qwen-plus
+  model: qwen3.6-plus
   max_tokens: 8192
   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
 system_prompt: |
