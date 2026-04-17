@@ -12,6 +12,7 @@ categories = ["asynchronous", "development-tools"]
 sage-protocol = { workspace = true }
 sage-sandbox = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

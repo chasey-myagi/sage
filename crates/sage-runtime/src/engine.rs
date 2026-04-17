@@ -16,6 +16,7 @@ use crate::tools::{self, AgentTool, ToolRegistry};
 use crate::types::*;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 // ── SandboxSettings ──────────────────────────────────────────────────
 
@@ -313,6 +314,15 @@ pub struct SageEngine {
 
     // Context budget override
     context_budget: Option<crate::compaction::ContextBudget>,
+
+    /// Sprint 11 task #53 — cancellation token for `engine.cancel()` and
+    /// `Ctrl+C` graceful abort. Clone-cheap (`Arc` internally) so downstream
+    /// code in agent_loop / tool backend / LLM stream can `.child_token()`
+    /// and `.await` on `.cancelled()` without owning the root.
+    ///
+    /// MVP: the field is plumbed through `SageEngine`, but the actual wiring
+    /// into agent_loop/tool/LLM-stream select points is a v0.0.2+ PR.
+    cancel_token: CancellationToken,
 }
 
 impl std::fmt::Debug for SageEngine {
@@ -1186,7 +1196,39 @@ impl SageEngineBuilder {
             transform_context_hook: self.transform_context_hook,
             stop_hook: self.stop_hook,
             context_budget: self.context_budget,
+            cancel_token: CancellationToken::new(),
         })
+    }
+}
+
+impl SageEngine {
+    /// Request graceful cancellation of any in-flight `run()` call.
+    ///
+    /// Sprint 11 task #53: the token is plumbed into `SageEngine`. The
+    /// actual propagation into `agent_loop` → tool backend → LLM stream
+    /// `.select!` points is a v0.0.2+ wiring PR. Current MVP: calling
+    /// `cancel()` on an engine marks the token cancelled; downstream
+    /// consumers that `.child_token()` will observe it once wired.
+    ///
+    /// Calling `cancel()` after the engine has finished a run is a no-op.
+    pub fn cancel(&self) {
+        self.cancel_token.cancel();
+    }
+
+    /// Expose the root cancellation token for wiring points to derive child
+    /// tokens from. Returned by reference to keep the engine as the single
+    /// owner of the root signal; callers that need an owned handle should
+    /// call `.child_token()` on the result.
+    pub fn cancel_token(&self) -> &CancellationToken {
+        &self.cancel_token
+    }
+
+    /// Whether `cancel()` has been called on this engine.
+    ///
+    /// Cheap — reads an atomic inside the token. Useful for tests and
+    /// for wiring points to early-exit without `.await`ing the signal.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_token.is_cancelled()
     }
 }
 
@@ -1342,6 +1384,62 @@ mod tests {
         // supply one; the ProviderSpec default kicks in at resolve time.
         assert_eq!(e.max_tokens, None);
         assert_eq!(e.tool_execution_mode, ToolExecutionMode::Parallel);
+        // Sprint 11 #53: new engine starts not-cancelled
+        assert!(!e.is_cancelled());
+    }
+
+    // ── Sprint 11 #53: CancellationToken API ─────────────────────────────
+
+    fn minimal_engine() -> SageEngine {
+        SageEngine::builder()
+            .system_prompt("t")
+            .provider("test")
+            .model("m")
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn engine_is_not_cancelled_on_creation() {
+        assert!(!minimal_engine().is_cancelled());
+    }
+
+    #[test]
+    fn engine_cancel_sets_is_cancelled_true() {
+        let e = minimal_engine();
+        e.cancel();
+        assert!(e.is_cancelled(), "cancel() must flip is_cancelled to true");
+    }
+
+    #[test]
+    fn engine_cancel_is_idempotent() {
+        let e = minimal_engine();
+        e.cancel();
+        e.cancel();
+        e.cancel();
+        assert!(e.is_cancelled(), "repeated cancel() must remain cancelled");
+    }
+
+    #[tokio::test]
+    async fn engine_cancel_token_child_observes_cancel() {
+        // The whole point of using tokio_util::CancellationToken: wiring
+        // points can .child_token() and .await .cancelled(). Prove that
+        // model works on this engine.
+        let e = minimal_engine();
+        let child = e.cancel_token().child_token();
+        assert!(!child.is_cancelled());
+        e.cancel();
+        child.cancelled().await; // must not hang
+        assert!(child.is_cancelled());
+    }
+
+    #[test]
+    fn engine_cancel_token_exposed_for_wiring() {
+        // Future agent_loop / tool / LLM-stream call sites need a reference
+        // to the root token so they can .child_token() for scoped cancel.
+        let e = minimal_engine();
+        let tok_ref: &tokio_util::sync::CancellationToken = e.cancel_token();
+        assert!(!tok_ref.is_cancelled());
     }
 
     #[test]

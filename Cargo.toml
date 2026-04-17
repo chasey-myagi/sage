@@ -54,6 +54,9 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 msb_krun = "0.1"
 libc = "0.2"
 
+# Cancellation propagation (Sprint 11 task #53 — async Ctrl+C + engine.cancel())
+tokio-util = "0.7"
+
 # HTTP / crypto (Sprint 12 tech debt: originally inlined in
 # sage-channel-feishu/Cargo.toml, promoted here so future channel crates
 # share versions).
