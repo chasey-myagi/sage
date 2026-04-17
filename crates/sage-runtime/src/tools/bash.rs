@@ -15,7 +15,11 @@ impl super::AgentTool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute shell commands"
+        "Execute a shell command. Use this to reach external systems via \
+         their CLIs (e.g. `lark-cli` for 飞书/Lark, `kubectl` for \
+         Kubernetes, `git`, `curl`, domain scripts in workspace/skills/). \
+         This is the ONLY route to data outside the local workspace — \
+         grep/ls/find/read only inspect local files."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

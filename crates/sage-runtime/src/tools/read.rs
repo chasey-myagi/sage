@@ -40,7 +40,10 @@ impl super::AgentTool for ReadTool {
     }
 
     fn description(&self) -> &str {
-        "Read file contents with line numbers"
+        "Read the contents of a LOCAL workspace file with line numbers. \
+         Use this for SKILL.md / INDEX.md / AGENT.md / workspace files. \
+         Does NOT fetch remote content (URLs, cloud docs, APIs); for \
+         those use `bash <cli>` (e.g. `bash lark-cli doc get …`)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

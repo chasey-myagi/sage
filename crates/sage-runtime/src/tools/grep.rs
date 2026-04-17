@@ -75,7 +75,10 @@ impl super::AgentTool for GrepTool {
     }
 
     fn description(&self) -> &str {
-        "Search file contents using regex patterns"
+        "Search the contents of LOCAL workspace files by regex. Does NOT \
+         reach external services (Lark/飞书, databases, APIs); for those \
+         use `bash <cli>` (e.g. `bash lark-cli ...`). Returns matching \
+         lines with file paths and line numbers."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

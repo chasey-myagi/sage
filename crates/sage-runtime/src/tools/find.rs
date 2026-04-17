@@ -64,7 +64,8 @@ impl super::AgentTool for FindTool {
     }
 
     fn description(&self) -> &str {
-        "Find files matching glob patterns"
+        "Find LOCAL workspace files by glob pattern (e.g. `**/*.md`). \
+         Does NOT search external systems; for those use `bash <cli>`."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

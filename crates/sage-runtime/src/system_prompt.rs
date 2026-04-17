@@ -233,9 +233,16 @@ mod tests {
     fn sage_core_prompt_is_non_empty_and_mentions_pillars() {
         // The methodology is load-bearing — any regression that guts it
         // should fail fast at test time rather than silently ship an
-        // empty skeleton.
+        // empty skeleton. Checks canonical section headers; rewording
+        // inside a section won't break the test, but dropping a whole
+        // pillar will.
         assert!(!SAGE_CORE_PROMPT.is_empty());
-        for pillar in ["发现信息", "执行任务", "沉淀信息", "根据用户历史优化"] {
+        for pillar in [
+            "第一步",
+            "执行任务",
+            "沉淀信息",
+            "根据用户历史优化",
+        ] {
             assert!(
                 SAGE_CORE_PROMPT.contains(pillar),
                 "core prompt must keep the '{pillar}' pillar"
@@ -245,20 +252,29 @@ mod tests {
 
     #[test]
     fn compose_sage_prompt_includes_core_and_goal() {
-        let out = compose_sage_prompt("替我完成飞书上的日常操作");
-        assert!(out.contains("发现信息"), "core skeleton must be present");
+        let goal = "替我完成飞书上的日常操作";
+        let out = compose_sage_prompt(goal);
+        assert!(out.contains("第一步"), "core skeleton must be present");
+        // Goal text is rendered verbatim after the synthesized header,
+        // which must appear between the core prompt and the goal body.
         assert!(out.contains("## Your goal"), "goal section header present");
-        assert!(out.contains("替我完成飞书上的日常操作"), "goal text appears");
+        assert!(out.contains(goal), "goal text appears");
     }
 
     #[test]
-    fn compose_sage_prompt_empty_goal_returns_core_only() {
+    fn compose_sage_prompt_empty_goal_renders_core_only_without_goal_header() {
         // Defensive — if a caller forgets to set goal the core skeleton
-        // still ships, rather than emitting a stray "## Your goal" header
-        // with no body.
+        // still ships, and the synthesized "## Your goal" header is NOT
+        // emitted (so we don't produce a goal section with no body).
+        // We look specifically for the header at end-of-prompt rather
+        // than anywhere in the text, since the core may legitimately
+        // mention "Your goal" in prose.
         let out = compose_sage_prompt("   ");
-        assert!(!out.contains("## Your goal"));
-        assert!(out.contains("发现信息"));
+        assert!(out.contains("第一步"), "core skeleton still present");
+        assert!(
+            !out.ends_with("## Your goal"),
+            "empty-goal path must not emit a trailing Your-goal header"
+        );
     }
 
     #[test]

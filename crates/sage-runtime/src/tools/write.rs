@@ -24,7 +24,10 @@ impl super::AgentTool for WriteTool {
     }
 
     fn description(&self) -> &str {
-        "Write content to a file"
+        "Write (create or overwrite) a LOCAL workspace file with the \
+         given content. Use this to sediment knowledge into SKILL.md / \
+         INDEX.md / AGENT.md after a task. Does NOT upload to external \
+         services; for those use `bash <cli>`."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

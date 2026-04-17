@@ -219,7 +219,9 @@ impl super::AgentTool for EditTool {
     }
 
     fn description(&self) -> &str {
-        "Precise text replacement with fuzzy matching"
+        "Replace a precise text range in a LOCAL workspace file (fuzzy \
+         match supported). Use this for surgical edits to SKILL.md etc. \
+         Does NOT edit remote documents; for those use `bash <cli>`."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

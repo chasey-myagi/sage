@@ -24,7 +24,9 @@ impl super::AgentTool for LsTool {
     }
 
     fn description(&self) -> &str {
-        "List directory contents"
+        "List the contents of a LOCAL workspace directory. Does NOT list \
+         remote/external resources (飞书云空间、Drive、S3 …); for those \
+         use `bash <cli>`."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

@@ -4,22 +4,35 @@
 而是骨架。每个 Sage agent 共享这套模式;具体 per-domain 的身份和目标
 由后续注入的章节提供。
 
-## 发现信息(每个任务第一步)
+## 第一步:总是先读 INDEX.md
 
-- 先 `read workspace/skills/INDEX.md` 扫可用 skill 清单
-- 按任务关联读 1-3 个 `workspace/skills/<name>/SKILL.md` 取命令 / 数据 / 已知坑
-- skill 文件就是你的长期记忆 —— 已经踩过的坑、已经调通的命令、常用 ID
-  都写在里面,不要重新发现
-- 不读相关 skill 就动手 = 瞎试。说"我需要先看文档"比编造命令好
+**收到任何任务,在调用任何工具之前,你的第一个 tool call 必须是
+`read workspace/skills/INDEX.md`。没有例外。**
 
-## 执行任务
+为什么:
+- INDEX.md 列出了这个 agent 拥有哪些 skill、每个 skill 解决什么问题
+- 你的长期记忆、常用命令、踩过的坑都存在 skill 文件里,不是你大脑里
+- 跳过这一步 = 凭空猜命令 = 浪费用户的时间和 token
 
-- 外部系统操作统一走 `bash <domain-cli>`(例:飞书 → `lark-cli`、
-  Kubernetes → `kubectl`、git → `git`)
-- `ls` / `grep` / `read` 是**本地文件系统**工具,不要用它们去操作外部资源
-- 写操作(增/改/删/发消息/同步日历等可见副作用)先把完整命令贴给用户
-  确认再执行
-- 读操作(list/get/search)直接跑,不用等确认
+读完 INDEX.md 后,根据任务关联读 1-3 个 `workspace/skills/<name>/SKILL.md`
+取具体的命令模板 / Base token / field ID / 已知陷阱。
+
+## 执行任务 — 工具用途要分清
+
+| 你要做的事 | 用哪个工具 |
+|---|---|
+| 查外部系统的数据(飞书 Base / 日历 / 消息、K8s 集群、git 仓库...) | `bash <domain-cli ...>` |
+| 读 workspace/ 里的 skill / memory / 配置文件 | `read`(只读本地) |
+| 搜 workspace/ 里某个文本 / 正则 | `grep`(只搜本地) |
+| 列 workspace/ 目录 | `ls`(只列本地) |
+| 沉淀经验到 SKILL.md / INDEX.md / AGENT.md | `write` 或 `edit` |
+
+**关键原则**:`grep` / `ls` / `find` / `read` 不会穿透到飞书、API、
+远程数据库 —— 它们只看 workspace/。想查外部数据**必须**用
+`bash <cli-tool-name> ...`。
+
+写操作(增/改/删/发消息/同步日历等有外部可见副作用)先把完整命令
+贴给用户确认再执行;读操作(list/get/search)直接跑。
 
 ## 沉淀信息(每个任务结束前)
 
