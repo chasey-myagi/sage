@@ -646,11 +646,11 @@ v0.2.0 — Sandboxed           ✅  microVM + 工具沙箱
 v0.3.0 — Full LLM            ✅  20+ Provider
 v0.4.0 — Production Runtime  ✅  压缩 + 上下文工程 + 安全加固
 v0.6.0 — Observability       ◐   P10 构建流水线 ✅ / P9 仅 JSON 日志（OTel + 健康上报仍缺）
-v0.7.0 — Agent Registry      ◐   M1/M2 ✅ / M3 部分（TaskRecord 采集缺、wiki 骨架缺、Skill frontmatter 缺）
-v0.8.0 — TUI + Daemon        ◐   sage chat + daemon + SandboxMode ✅ / Standard rootfs + Wiki 自动维护 + PreCompact 缺
-v0.9.0 — Hook & Skill        ◐   3/12 Hook ✅ / Harness 基础 ✅ / Craft 体系整体未实现
-v0.9.x — Multi-Agent + Chan. ◐   Visibility + TUI + cron triggers ✅ / Channel 完整接入缺（仅 stub）
-v1.0.0 — Release             ○   文档 + 示例 + crates.io 发布
+v0.7.0 — Agent Registry      ✅  M1/M2 ✅ / M3 ✅（Sprint 5: MetricsCollector + Skill frontmatter + init_agent wiki 骨架）
+v0.8.0 — TUI + Daemon        ◐   sage chat + daemon + SandboxMode ✅ + PreCompact ✅（Sprint 6）+ Wiki 自维护触发 ✅（Sprint 7）/ Standard rootfs 缺
+v0.9.0 — Hook & Skill        ◐   Hook 体系 8/12 ✅（Sprint 6）/ Harness criteria + parallel + junit ✅（Sprint 9）/ Craft S10.3 crafts_active 数据面 ✅ / S10.1/S10.2/S10.4 工具面缺（v1.0.1 follow-up）
+v0.9.x — Multi-Agent + Chan. ✅  Visibility + TUI + cron triggers ✅ / Channel 真实 Feishu 接入 ✅（Sprint 8: webhook + HMAC 签名 + card send）
+v1.0.0 — Release             ○   文档 + 示例 + crates.io 发布（核心功能已就绪，仅剩文档打磨）
 v1.x   — Advanced Sandbox    ○   OCI + VM 预热池 + 快照（多租户生产）
 ```
 
