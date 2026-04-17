@@ -2,6 +2,10 @@
 name = "sage-guest"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "VM guest process (PID 1) for Sage microVM sandbox"
+publish = false
 
 [dependencies]
 sage-protocol = { workspace = true }

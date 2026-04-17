@@ -263,13 +263,18 @@ impl SandboxBuilder {
 
 /// Generate a unique suffix for temp directory names (timestamp + pid).
 fn unique_suffix() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let t = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     let pid = std::process::id();
-    format!("{t:x}-{pid:x}")
+    // Include a per-process atomic counter so concurrent test threads (same PID,
+    // same nanosecond) always get distinct paths.
+    format!("{t:x}-{pid:x}-{n:x}")
 }
 
 /// Set a file as executable (chmod +x).

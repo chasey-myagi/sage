@@ -2,6 +2,11 @@
 name = "sage-protocol"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Host↔guest wire protocol (length-prefixed CBOR) for Sage sandbox communication"
+keywords = ["protocol", "cbor", "ipc", "sandbox", "agent"]
+categories = ["encoding", "network-programming"]
 
 [dependencies]
 serde = { workspace = true }

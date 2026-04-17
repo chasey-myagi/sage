@@ -24,7 +24,7 @@ serde_yaml = "0.9"
 anyhow = "1"
 thiserror = "2"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 async-trait = "0.1"
 futures = "0.3"
 glob = "0.3"
@@ -40,6 +40,14 @@ bytes = "1"
 
 # Testing
 serial_test = "3"
+tracing-test = "0.2"
+tempfile = "3"
+ulid = "1"
+chrono = "0.4"
+
+# TUI
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
 
 # VMM
 msb_krun = "0.1"
