@@ -1,6 +1,9 @@
 //! Offline craft efficiency scorer (Sprint 10 S10.3 lib layer).
-
-#![allow(dead_code)] // wiring into CLI + cron is v1.0.2 follow-up
+//!
+//! Wired into the CLI by Sprint 12 task #72 — `sage craft-score` calls
+//! `load_task_records` → `aggregate_by_craft` → `format_craft_score_report`.
+//! The `crafts_needing_evaluation` helper is still waiting on a
+//! daemon-side scheduler (task #83) so its call site is absent for now.
 
 use std::collections::HashMap;
 use std::path::Path;

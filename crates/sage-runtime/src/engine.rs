@@ -907,9 +907,16 @@ impl SageSession {
 impl Drop for SageSession {
     fn drop(&mut self) {
         if !self.closed {
-            // Session dropped without explicit close() — treat as unclean
-            // failure. SessionEnd still fires so telemetry sees every session
-            // terminate (with success=false + warn log so operators know why).
+            // Session dropped without explicit close() — programmer bug: the
+            // caller forgot to drain the session cleanly, so we synthesize a
+            // SessionEnd (success=false) to keep telemetry pairs balanced.
+            //
+            // Sprint 12 task #77 (4): logged at `error` (upgraded from
+            // `warn`) because this path implies observability data was
+            // almost-lost — an explicit `.close()` is always reachable in a
+            // well-structured caller, and silent drop would hide real bugs
+            // (e.g. tests that forget to await teardown, daemon reload
+            // paths that panic mid-shutdown).
             let duration_ms =
                 u64::try_from(self.started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
             self.hook_bus.emit(HookEvent::SessionEnd {
@@ -918,9 +925,10 @@ impl Drop for SageSession {
                 turn_count: self.turn_count,
                 success: false,
             });
-            tracing::warn!(
+            tracing::error!(
                 session_id = %self.session_id,
-                "SageSession dropped without close() — SessionEnd emitted with success=false"
+                turn_count = self.turn_count,
+                "SageSession dropped without close() — SessionEnd emitted with success=false; caller forgot to invoke close()"
             );
         }
     }

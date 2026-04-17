@@ -248,8 +248,23 @@ impl CraftManageTool {
                     // whose `AlreadyExists` on next `create` would mislead
                     // the user. Best-effort remove — if cleanup itself fails
                     // (read-only FS?), the original write error still wins.
+                    //
+                    // Sprint 12 task #77 (7): log cleanup failures so
+                    // operators tracking disk-full / permission-denied
+                    // incidents see a paper trail rather than a silent
+                    // half-successful filesystem state. Future multi-file
+                    // crafts (artifacts, examples under the craft dir) will
+                    // need tmpdir+rename pattern instead of per-file
+                    // remove; for now a single CRAFT.md keeps it simple.
                     drop(f);
-                    let _ = std::fs::remove_file(&craft_md_path);
+                    if let Err(cleanup_err) = std::fs::remove_file(&craft_md_path) {
+                        tracing::warn!(
+                            path = %craft_md_path.display(),
+                            orig_write_error = %e,
+                            cleanup_error = %cleanup_err,
+                            "failed to clean up zero-byte CRAFT.md after write error"
+                        );
+                    }
                     return error_output(&format!("failed to write CRAFT.md: {}", e));
                 }
             }
@@ -257,6 +272,11 @@ impl CraftManageTool {
                 return error_output(&format!("craft '{}' already exists", name));
             }
             Err(e) => {
+                tracing::warn!(
+                    path = %craft_md_path.display(),
+                    error = %e,
+                    "failed to O_EXCL create CRAFT.md"
+                );
                 return error_output(&format!("failed to create CRAFT.md: {}", e));
             }
         }

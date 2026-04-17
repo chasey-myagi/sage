@@ -11,6 +11,17 @@ use crate::config::SessionType;
 
 const SUMMARY_MAX_ENTRIES: usize = 50;
 
+/// Wall-clock timestamp in milliseconds since the Unix epoch.
+///
+/// Sprint 12 task #77 (5): the `.unwrap_or(0)` is deliberate and documents
+/// the clock-rollback contract — if the host clock is set before 1970
+/// (dead battery, misconfigured VM, deliberate user tomfoolery), record a
+/// zero timestamp rather than panicking in the hot metrics path. Downstream
+/// `duration_ms` uses `saturating_sub` so a (0, non-zero) pair degrades to
+/// 0 instead of wrapping. `expect()` here would mean "one corrupted clock
+/// kills every session's metrics", which is worse than "one corrupted
+/// record shows up in summary.json" — operators can filter zeros, they
+/// can't recover a panic.
 fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -207,6 +218,26 @@ impl MetricsCollector {
     /// * `<workspace>/metrics/summary.json` (rolling 50, newest first)
     ///
     /// Other session types are returned without any filesystem side-effects.
+    ///
+    /// ## Consumption semantics (Sprint 12 task #77 (1))
+    ///
+    /// `self` is consumed — the collector is single-shot. On I/O error,
+    /// the in-flight `TaskRecord` is **dropped** along with the collector;
+    /// callers that need the accumulated counters in the error path must
+    /// inspect `.record()` before calling `finalize`. This is deliberate:
+    ///
+    /// 1. The per-task JSON write is the only durable artefact; summary.json
+    ///    is best-effort (losing it is a cache miss, not a correctness
+    ///    failure). If we can't write the per-task file the record has
+    ///    nowhere to live, so handing it back would invite "zombie records"
+    ///    passed between callers with no way to retry persistence.
+    /// 2. `Result<(TaskRecord, io::Error), TaskRecord>` would be the
+    ///    alternative signature but drags lifetime complexity into every
+    ///    caller for a case that only happens on disk-full / permission-
+    ///    denied. Sage's metrics pipeline is fire-and-forget observability;
+    ///    callers who care about loss treat `finalize().await.is_err()` as
+    ///    a signal to warn and move on (see `chat.rs`'s `tracing::warn!`
+    ///    on failed finalize).
     pub async fn finalize(
         mut self,
         success: bool,

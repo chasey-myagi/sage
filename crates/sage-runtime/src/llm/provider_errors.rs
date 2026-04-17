@@ -10,33 +10,64 @@ use crate::llm::provider_specs::resolve_provider;
 use crate::llm::types::{AssistantMessageEvent, Model};
 
 /// Does the HTTP 4xx body suggest the model id itself is invalid?
+///
+/// Sprint 12 task #77 (6) — classification is intentionally **strict** to
+/// avoid misdirecting users to model-docs URLs when the real problem is a
+/// tool / file / quota / permission issue whose recovery steps are
+/// unrelated to model naming. Two rules enforce the narrow scope:
+///
+///   1. **Hard exclusions** (context_length / rate_limit / authentication /
+///      quota_exceeded / permission_denied) veto any positive match. Each is
+///      a distinct error family whose recovery path differs from
+///      "look up correct model id".
+///   2. Generic phrases like `"does not exist"` are only counted when the
+///      body also mentions `"model"`. Previously the bare phrase caught
+///      any "resource X does not exist" message.
 pub fn is_invalid_model_body(body: &str) -> bool {
     if body.trim().is_empty() {
         return false;
     }
     let lower = body.to_ascii_lowercase();
 
-    // Hard exclusions first — these categories veto any positive match
+    // Hard exclusions first — these categories veto any positive match.
+    // Add here when a provider invents a new error family that deserves
+    // its own recovery UX rather than "look at the model-id docs".
     if lower.contains("context_length")
         || lower.contains("rate_limit")
         || lower.contains("authentication")
+        || lower.contains("quota_exceeded")
+        || lower.contains("permission_denied")
     {
         return false;
     }
 
-    // Positive patterns
-    lower.contains("model_not_found")
+    // Positive patterns. Unambiguous model-family signatures first.
+    let strong = lower.contains("model_not_found")
         || lower.contains("invalid_model")
         || lower.contains("model not found")
         || lower.contains("model does not exist")
-        || lower.contains("model not exist")
-        || lower.contains("does not exist")
-        // Anthropic not_found_error + model co-occurrence
-        || (lower.contains("not_found_error") && lower.contains("model"))
-        // DashScope 特有: "invalid" + "parameter" + "model" 三词共现
-        || (lower.contains("invalid")
-            && lower.contains("parameter")
-            && lower.contains("model"))
+        || lower.contains("model not exist");
+    if strong {
+        return true;
+    }
+
+    // Ambiguous phrases — require co-occurrence with the word "model" so
+    // a "tool does not exist" or "file path does not exist" body doesn't
+    // get misclassified as an invalid model id.
+    let mentions_model = lower.contains("model");
+    if mentions_model && lower.contains("does not exist") {
+        return true;
+    }
+
+    // Anthropic not_found_error + model co-occurrence.
+    if lower.contains("not_found_error") && mentions_model {
+        return true;
+    }
+    // DashScope 特有: "invalid" + "parameter" + "model" 三词共现.
+    if lower.contains("invalid") && lower.contains("parameter") && mentions_model {
+        return true;
+    }
+    false
 }
 
 /// Truncate body to at most 200 chars (not bytes — UTF-8 safe), appending
@@ -231,6 +262,73 @@ mod tests {
         // 粗暴 HTML 404 页
         let body = "<html>404 Not Found</html>";
         assert!(!is_invalid_model_body(body));
+    }
+
+    // ── Sprint 12 task #77 (6): keyword strategy tightening ──────────────
+    //
+    // The pre-tightening `is_invalid_model_body` matched the bare substring
+    // `"does not exist"` — too permissive: any 4xx body that mentions
+    // a missing resource (tool, file, path, dataset) would be mis-classified
+    // as "model id is wrong" and misdirect the user to model-docs URLs.
+    // Tightening: require `"does not exist"` to co-occur with `"model"`.
+    //
+    // Additionally, `quota_exceeded` and `permission_denied` must veto
+    // positive matches — they're distinct error families whose recovery
+    // steps (buy more quota / fix IAM) are unrelated to model naming.
+
+    #[test]
+    fn is_invalid_model_body_false_on_tool_not_found_with_does_not_exist() {
+        // Regression: a tool-related 4xx that mentions "does not exist"
+        // must NOT be classified as an invalid model.
+        let body = r#"{"error":{"message":"The requested tool does not exist in the registry"}}"#;
+        assert!(
+            !is_invalid_model_body(body),
+            "tool-level 'does not exist' must not trigger invalid-model classification"
+        );
+    }
+
+    #[test]
+    fn is_invalid_model_body_false_on_file_path_does_not_exist() {
+        // Providers sometimes return filesystem / upload errors that mention
+        // a missing path. Must not be model-error.
+        let body = r#"{"error":{"message":"uploaded file path does not exist"}}"#;
+        assert!(
+            !is_invalid_model_body(body),
+            "filesystem 'does not exist' must not trigger invalid-model classification"
+        );
+    }
+
+    #[test]
+    fn is_invalid_model_body_true_when_model_and_does_not_exist_cooccur() {
+        // Positive: model + does not exist must still match even when split.
+        let body = r#"{"error":{"message":"The specified model for completion does not exist in this region","type":"invalid_request_error"}}"#;
+        assert!(
+            is_invalid_model_body(body),
+            "model + does-not-exist co-occurrence must still match"
+        );
+    }
+
+    #[test]
+    fn is_invalid_model_body_false_on_quota_exceeded() {
+        // New negative exclusion: quota_exceeded is a billing-layer concern,
+        // has its own recovery path (buy more / wait for reset). Must not be
+        // routed to model-docs-URL hint path.
+        let body = r#"{"error":{"code":"quota_exceeded","message":"You have exceeded the monthly quota for model gpt-4o"}}"#;
+        assert!(
+            !is_invalid_model_body(body),
+            "quota_exceeded must veto even when body mentions model"
+        );
+    }
+
+    #[test]
+    fn is_invalid_model_body_false_on_permission_denied() {
+        // New negative exclusion: permission_denied is IAM/RBAC, unrelated
+        // to model naming.
+        let body = r#"{"error":{"code":"permission_denied","message":"Your org is not allowed to access model claude-opus-4-7"}}"#;
+        assert!(
+            !is_invalid_model_body(body),
+            "permission_denied must veto even when body mentions model"
+        );
     }
 
     // ========================================================================

@@ -1,12 +1,12 @@
 //! Per-user cache of `(provider, model_id)` pairs seen in successful Provider
 //! calls (Sprint 12 M4 data layer).
 //!
-//! All 5 public functions here are intentionally `dead_code` at module commit
-//! time — the caller (`sage init` TUI dropdown + post-200 `record_used_model`
-//! hook) is deferred to a follow-up sprint (v1.0.1). The wiring PR will remove
-//! this allow(dead_code) by simply calling these functions from the TUI and
-//! from the LLM provider response-success path.
-#![allow(dead_code)]
+//! Wired into the chat loop by Sprint 12 task #72 — `record_session_model`
+//! (see `serve.rs`) appends to the cache on every successful
+//! `session.send()`. The `sage init` TUI dropdown consumer is still pending
+//! (task #82), so a handful of read-path helpers remain unused for now;
+//! they are individually `#[allow(dead_code)]` rather than muting the
+//! whole module.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -105,6 +105,9 @@ pub fn record_used_model(path: &Path, provider: &str, model: &str) -> std::io::R
 ///
 /// Returns a `BTreeMap<provider, sorted-unique-models>`.
 /// Missing/malformed agents are skipped; missing `agents_dir` returns empty map.
+///
+/// Consumer: `sage init` TUI dropdown (task #82 pending). Tests exercise it.
+#[allow(dead_code)]
 pub fn aggregate_history_models(agents_dir: &Path) -> BTreeMap<String, Vec<String>> {
     let mut result: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
@@ -205,6 +208,9 @@ pub fn aggregate_history_models(agents_dir: &Path) -> BTreeMap<String, Vec<Strin
 /// Return sorted, deduplicated model candidates for `provider` by merging:
 ///   1. `~/.sage/known_models.json` for that provider
 ///   2. `aggregate_history_models(agents_dir)` for that provider
+///
+/// Consumer: `sage init` TUI dropdown (task #82 pending).
+#[allow(dead_code)]
 pub fn candidates_for_provider(home: &Path, agents_dir: &Path, provider: &str) -> Vec<String> {
     let km_path = home.join(".sage").join("known_models.json");
     // Load failures fall back to an empty cache — candidates is a UX-layer
@@ -914,6 +920,9 @@ mod tests {
 /// `api_key` is optional — some local providers (Ollama / vLLM) don't
 /// require auth on `/v1/models`. For cloud providers, pass
 /// `Some(resolve_api_key_from_env(...))` per ProviderSpec.
+///
+/// Consumer: `sage init` TUI hotkey 'p' (task #82 pending).
+#[allow(dead_code)]
 pub async fn probe_provider_models(
     base_url: &str,
     api_key: Option<&str>,
@@ -931,6 +940,7 @@ pub async fn probe_provider_models(
 /// Error returned by [`probe_provider_models`]. Thin wrapper around the
 /// underlying `DiscoveryError` to avoid leaking reqwest types across the
 /// crate boundary.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum ProbeError {
     /// Any failure in the underlying HTTP / parse flow.
