@@ -21,6 +21,7 @@ pub mod types;
 
 // Top-level re-exports for convenience
 pub use agent::{StopAction, StopContext, StopHook, TransformContextHook};
+pub use agent_loop::AgentLoopError;
 pub use compaction::ContextBudget;
 pub use engine::{SageEngine, SageEngineBuilder, SageError, SageSession, SandboxSettings};
 pub use event::{AgentEvent, EventReceiver};

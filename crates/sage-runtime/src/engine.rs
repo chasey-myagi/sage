@@ -5,7 +5,7 @@ use crate::agent::{
     AfterToolCallHook, Agent, AgentLoopConfig, BeforeToolCallHook, StopAction, StopContext,
     StopHook, TransformContextHook,
 };
-use crate::agent_loop::{AgentLoopError, run_agent_loop};
+use crate::agent_loop::{AgentLoopError, run_agent_loop_with_cancel};
 use crate::event::{AgentEvent, AgentEventSink, EventReceiver, EventSender, EventStream};
 use crate::hook::{HookBus, HookEvent};
 use crate::llm::types::*;
@@ -315,13 +315,16 @@ pub struct SageEngine {
     // Context budget override
     context_budget: Option<crate::compaction::ContextBudget>,
 
-    /// Sprint 11 task #53 — cancellation token for `engine.cancel()` and
-    /// `Ctrl+C` graceful abort. Clone-cheap (`Arc` internally) so downstream
-    /// code in agent_loop / tool backend / LLM stream can `.child_token()`
-    /// and `.await` on `.cancelled()` without owning the root.
+    /// Cancellation token for `engine.cancel()` and `Ctrl+C` graceful abort.
     ///
-    /// MVP: the field is plumbed through `SageEngine`, but the actual wiring
-    /// into agent_loop/tool/LLM-stream select points is a v0.0.2+ PR.
+    /// Sprint 11 task #53 introduced the field; Sprint 12 task #69 wired it
+    /// end-to-end: `run()` spawns the loop with `Some(&cancel_token)` and
+    /// `session()` hands the same token to [`SageSession`], so `engine.cancel()`
+    /// (or `session.cancel()`) aborts in-flight LLM calls and tool executions
+    /// at their `tokio::select!` checkpoints.
+    ///
+    /// Clone-cheap (`Arc` internally); downstream callers `.child_token()` to
+    /// get scoped sub-cancellation without owning the root.
     cancel_token: CancellationToken,
 }
 
@@ -491,12 +494,16 @@ impl SageEngine {
             sender: sender.clone(),
         };
         let timeout_secs = self.timeout_secs;
+        // Sprint 12 task #69: the spawned future owns its own clone of the
+        // engine's cancel token so that `engine.cancel()` from outside — or
+        // a future wired chat.rs mid-turn Ctrl+C — takes effect end-to-end.
+        let cancel_token = self.cancel_token.clone();
         tokio::spawn(async move {
             let result = match timeout_secs {
                 Some(timeout_secs) => {
                     match tokio::time::timeout(
                         std::time::Duration::from_secs(timeout_secs),
-                        run_agent_loop(&mut agent, &sink),
+                        run_agent_loop_with_cancel(&mut agent, &sink, Some(&cancel_token)),
                     )
                     .await
                     {
@@ -517,7 +524,9 @@ impl SageEngine {
                         }
                     }
                 }
-                None => run_agent_loop(&mut agent, &sink).await,
+                None => {
+                    run_agent_loop_with_cancel(&mut agent, &sink, Some(&cancel_token)).await
+                }
             };
 
             // Stop sandbox VM if one was created for this run
@@ -672,6 +681,10 @@ impl SageEngine {
             started_at,
             turn_count: 0,
             closed: false,
+            // Sprint 12 task #69: share the engine's cancellation root so
+            // `engine.cancel()` and `session.cancel()` both abort in-flight
+            // sends. Each send() passes `Some(&cancel_token)` into the loop.
+            cancel_token: self.cancel_token.clone(),
         })
     }
 }
@@ -718,6 +731,10 @@ pub struct SageSession {
     turn_count: u32,
     /// Set to true by `close()` so `Drop` does not double-emit SessionEnd.
     closed: bool,
+    /// Sprint 12 task #69: cancellation root shared with the parent
+    /// [`SageEngine`]. `cancel()` on either end flips this token; in-flight
+    /// `send()` observes it at the agent-loop checkpoints and aborts.
+    cancel_token: CancellationToken,
 }
 
 impl SageSession {
@@ -738,20 +755,45 @@ impl SageSession {
         self.turn_count += 1;
         self.agent
             .steer(AgentMessage::User(UserMessage::from_text(message)));
+        // Sprint 12 task #69: pass the session's cancel token into the loop
+        // so `session.cancel()` (or `engine.cancel()`) aborts this send(). On
+        // cancellation the loop returns `AgentLoopError::Cancelled` which is
+        // surfaced to the caller via the `#[from]` impl on `SageError::AgentLoop`.
+        let cancel = &self.cancel_token;
         match self.timeout_secs {
             Some(secs) => tokio::time::timeout(
                 std::time::Duration::from_secs(secs),
-                run_agent_loop(&mut self.agent, sink),
+                run_agent_loop_with_cancel(&mut self.agent, sink, Some(cancel)),
             )
             .await
             .map_err(|_| SageError::Timeout(secs))?
             .map(|_| ())
             .map_err(SageError::AgentLoop),
-            None => run_agent_loop(&mut self.agent, sink)
+            None => run_agent_loop_with_cancel(&mut self.agent, sink, Some(cancel))
                 .await
                 .map(|_| ())
                 .map_err(SageError::AgentLoop),
         }
+    }
+
+    /// Request graceful cancellation of any in-flight [`send`][Self::send].
+    ///
+    /// Sprint 12 task #69. Idempotent. Takes effect at the next agent-loop
+    /// checkpoint (top-of-turn, LLM call, or tool execution). `send()` returns
+    /// `Err(SageError::AgentLoop(AgentLoopError::Cancelled))` on cancel.
+    pub fn cancel(&self) {
+        self.cancel_token.cancel();
+    }
+
+    /// Whether [`cancel`][Self::cancel] has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_token.is_cancelled()
+    }
+
+    /// Expose the underlying cancellation token for callers that need
+    /// `.child_token()` or `.cancelled()` futures directly.
+    pub fn cancel_token(&self) -> &CancellationToken {
+        &self.cancel_token
     }
 
     /// Clear all conversation history — the next `send()` starts fresh.
@@ -1202,15 +1244,18 @@ impl SageEngineBuilder {
 }
 
 impl SageEngine {
-    /// Request graceful cancellation of any in-flight `run()` call.
+    /// Request graceful cancellation of any in-flight `run()` or `SageSession`
+    /// `send()` call.
     ///
-    /// Sprint 11 task #53: the token is plumbed into `SageEngine`. The
-    /// actual propagation into `agent_loop` → tool backend → LLM stream
-    /// `.select!` points is a v0.0.2+ wiring PR. Current MVP: calling
-    /// `cancel()` on an engine marks the token cancelled; downstream
-    /// consumers that `.child_token()` will observe it once wired.
+    /// Sprint 12 task #69 wired this end-to-end: cancellation is observed at
+    /// three checkpoints inside `run_agent_loop` — top-of-turn, the LLM call
+    /// (via `tokio::select!`), and tool execution (`run_tool`'s select race).
+    /// The cancelled run returns `AgentLoopError::Cancelled` and emits a
+    /// clean `AgentEvent::AgentEnd` so downstream stream consumers see a
+    /// terminal boundary.
     ///
-    /// Calling `cancel()` after the engine has finished a run is a no-op.
+    /// Idempotent. Calling `cancel()` after the engine has finished a run is
+    /// a no-op; calling it multiple times leaves the token cancelled.
     pub fn cancel(&self) {
         self.cancel_token.cancel();
     }
@@ -1440,6 +1485,63 @@ mod tests {
         let e = minimal_engine();
         let tok_ref: &tokio_util::sync::CancellationToken = e.cancel_token();
         assert!(!tok_ref.is_cancelled());
+    }
+
+    // ── Sprint 12 task #69: session-level cancel wiring ──────────────────
+
+    #[tokio::test]
+    async fn session_cancel_before_send_returns_cancelled() {
+        // Session.cancel() must flip the shared token so any subsequent
+        // send() returns AgentLoopError::Cancelled instead of driving the
+        // agent loop. This proves the engine→session token threading.
+        let provider = simple_provider("unreachable");
+        let engine = SageEngine::builder()
+            .system_prompt("t")
+            .llm_provider(provider)
+            .provider("test")
+            .model("m")
+            .build()
+            .unwrap();
+        let mut session = engine.session().await.unwrap();
+        session.cancel();
+        assert!(session.is_cancelled());
+
+        struct NoopSink;
+        #[async_trait::async_trait]
+        impl AgentEventSink for NoopSink {
+            async fn emit(&self, _event: AgentEvent) {}
+        }
+
+        let err = session.send("hi", &NoopSink).await.unwrap_err();
+        match err {
+            SageError::AgentLoop(AgentLoopError::Cancelled) => {}
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn session_cancel_token_shared_with_engine() {
+        // The token exposed by SageSession must be the same root (or a
+        // shared clone) as the engine's. This is the wiring invariant that
+        // lets `engine.cancel()` propagate into any previously-created
+        // session's in-flight send().
+        let provider = simple_provider("t");
+        let engine = SageEngine::builder()
+            .system_prompt("t")
+            .llm_provider(provider)
+            .provider("test")
+            .model("m")
+            .build()
+            .unwrap();
+        let session = engine.session().await.unwrap();
+        assert!(!session.is_cancelled());
+        engine.cancel();
+        // Engine's cancel must propagate to the session's clone of the
+        // same CancellationToken tree.
+        assert!(
+            session.is_cancelled(),
+            "engine.cancel() must propagate into the session's token"
+        );
     }
 
     #[test]

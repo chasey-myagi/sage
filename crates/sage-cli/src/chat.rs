@@ -158,11 +158,11 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
     let config = crate::serve::load_agent_config(agent).await?;
     let engine = crate::serve::build_engine_for_agent(&config, dev).await?;
 
-    // Sprint 11 #56: keep a clone of the engine's cancel token so Ctrl+C can
-    // signal cooperative cancellation to any future wiring inside the agent
-    // loop. MVP only reacts at the readline boundary — v0.0.2 wiring will
-    // propagate the token into session.send()'s select! so mid-turn Ctrl+C
-    // actually aborts LLM streaming and tool execution.
+    // Sprint 11 #56 + Sprint 12 task #69: the engine's cancel token is now
+    // shared with the SageSession and threaded into `run_agent_loop` via
+    // tokio::select! checkpoints. Ctrl+C at the readline boundary shuts the
+    // chat loop; Ctrl+C during a `session.send()` aborts the in-flight LLM
+    // call / tool execution and returns `AgentLoopError::Cancelled`.
     let cancel_token = engine.cancel_token().clone();
 
     let mut session = engine
@@ -212,11 +212,7 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
                 match load_skill_content(&name, &agent_dir).await {
                     Some(template) => {
                         let text = substitute_arguments(&template, &args);
-                        session
-                            .send(text.trim(), &sink)
-                            .await
-                            .map_err(|e| anyhow::anyhow!("{e}"))?;
-                        println!();
+                        send_with_cancel(&mut session, &sink, text.trim(), &cancel_token).await?;
                     }
                     None => {
                         eprintln!(
@@ -227,16 +223,56 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
                 }
             }
             ChatInput::Message(text) => {
-                session
-                    .send(text.trim(), &sink)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-                println!();
+                send_with_cancel(&mut session, &sink, text.trim(), &cancel_token).await?;
             }
         }
     }
 
     Ok(())
+}
+
+/// Drive a single `session.send(...)` call, racing it against Ctrl+C.
+///
+/// Sprint 12 task #69: on Ctrl+C we flip the shared cancel token and await
+/// the send to unwind gracefully. The agent loop observes the token at its
+/// checkpoints and returns `AgentLoopError::Cancelled`, which we print as a
+/// non-fatal message so the chat loop continues to the next readline.
+async fn send_with_cancel(
+    session: &mut sage_runtime::SageSession,
+    sink: &TerminalSink,
+    text: &str,
+    cancel_token: &tokio_util::sync::CancellationToken,
+) -> anyhow::Result<()> {
+    let send_fut = session.send(text, sink);
+    tokio::pin!(send_fut);
+
+    let result = tokio::select! {
+        res = &mut send_fut => res,
+        _ = tokio::signal::ctrl_c() => {
+            cancel_token.cancel();
+            // Drain the send future so session state unwinds cleanly
+            // (cancelled tool_results pushed, AgentEnd emitted).
+            let res = (&mut send_fut).await;
+            println!();
+            println!("^C received; turn cancelled.");
+            res
+        }
+    };
+
+    match result {
+        Ok(()) => {
+            println!();
+            Ok(())
+        }
+        Err(sage_runtime::SageError::AgentLoop(
+            sage_runtime::AgentLoopError::Cancelled,
+        )) => {
+            // Cancelled is not an error condition at the chat-loop level —
+            // the user asked for this. Continue reading the next prompt.
+            Ok(())
+        }
+        Err(e) => Err(anyhow::anyhow!("{e}")),
+    }
 }
 
 /// Format an elapsed duration in a human-readable form.
