@@ -71,6 +71,34 @@ pub fn load_task_records(metrics_dir: &Path) -> Vec<ScoringRecord> {
     records
 }
 
+/// Thresholds for triggering automatic CraftEvaluation session.
+///
+/// A craft needs both low efficiency (score < SCORE_THRESHOLD) AND enough
+/// samples (usage_count >= MIN_USAGE) before the scheduler spawns a
+/// rewrite session. The min-usage guard prevents a single bad run from
+/// triggering wasted LLM calls on a brand-new craft.
+pub const SCORE_THRESHOLD: f32 = 0.5;
+pub const MIN_USAGE_FOR_EVALUATION: u32 = 5;
+
+/// Return craft names that qualify for automatic CraftEvaluation session.
+///
+/// Selection criteria (both required):
+///   - score() < SCORE_THRESHOLD (inefficient)
+///   - usage_count >= MIN_USAGE_FOR_EVALUATION (enough samples)
+///
+/// Returned names are sorted alphabetically for deterministic scheduling.
+pub fn crafts_needing_evaluation(
+    stats: &std::collections::HashMap<String, CraftStats>,
+) -> Vec<String> {
+    let mut names: Vec<String> = stats
+        .iter()
+        .filter(|(_, s)| s.usage_count >= MIN_USAGE_FOR_EVALUATION && s.score() < SCORE_THRESHOLD)
+        .map(|(n, _)| n.clone())
+        .collect();
+    names.sort();
+    names
+}
+
 /// Aggregate records by craft name: a record with `crafts_active = [a, b]`
 /// contributes to both `a` and `b` (tokens_total += sum, usage_count += 1).
 /// tokens_best tracks the min (input+output) across runs touching the craft.
@@ -338,5 +366,137 @@ mod tests {
         assert_eq!(stats.tokens_total, 450);
         assert_eq!(stats.tokens_best, 100, "tokens_best should track global minimum=100");
         assert_eq!(stats.tokens_avg, 150, "tokens_avg = 450/3 = 150");
+    }
+
+    // ── crafts_needing_evaluation ────────────────────────────────────────────
+
+    #[test]
+    fn crafts_needing_evaluation_empty_map_returns_empty() {
+        let map = std::collections::HashMap::new();
+        assert!(crafts_needing_evaluation(&map).is_empty());
+    }
+
+    #[test]
+    fn crafts_needing_evaluation_low_score_high_usage_returns_name() {
+        // score = 200/500 = 0.4 < 0.5 ✓, usage=10 >= 5 ✓
+        let mut map = std::collections::HashMap::new();
+        map.insert("foo".to_string(), CraftStats {
+            usage_count: 10,
+            tokens_total: 1000,
+            tokens_best: 200,
+            tokens_avg: 500,
+        });
+        assert_eq!(crafts_needing_evaluation(&map), vec!["foo"]);
+    }
+
+    #[test]
+    fn crafts_needing_evaluation_low_score_low_usage_filtered_out() {
+        // score = 0.3 < 0.5, but usage=3 < 5 → filtered
+        let mut map = std::collections::HashMap::new();
+        map.insert("foo".to_string(), CraftStats {
+            usage_count: 3,
+            tokens_total: 300,
+            tokens_best: 90,
+            tokens_avg: 300,
+        });
+        assert!(crafts_needing_evaluation(&map).is_empty());
+    }
+
+    #[test]
+    fn crafts_needing_evaluation_high_score_high_usage_filtered_out() {
+        // score = 800/1000 = 0.8 >= 0.5 → filtered
+        let mut map = std::collections::HashMap::new();
+        map.insert("bar".to_string(), CraftStats {
+            usage_count: 10,
+            tokens_total: 10000,
+            tokens_best: 800,
+            tokens_avg: 1000,
+        });
+        assert!(crafts_needing_evaluation(&map).is_empty());
+    }
+
+    #[test]
+    fn crafts_needing_evaluation_exact_threshold_boundary() {
+        // score = 500/1000 = 0.5 — strict < means NOT included
+        let mut map = std::collections::HashMap::new();
+        map.insert("exact".to_string(), CraftStats {
+            usage_count: 10,
+            tokens_total: 10000,
+            tokens_best: 500,
+            tokens_avg: 1000,
+        });
+        assert!(crafts_needing_evaluation(&map).is_empty(), "score == 0.5 must NOT qualify");
+    }
+
+    #[test]
+    fn crafts_needing_evaluation_exact_usage_boundary() {
+        // usage=5 exactly meets MIN_USAGE_FOR_EVALUATION (>= includes equal)
+        let mut map = std::collections::HashMap::new();
+        map.insert("borderline".to_string(), CraftStats {
+            usage_count: 5,
+            tokens_total: 2000,
+            tokens_best: 200,
+            tokens_avg: 400,  // score = 200/400 = 0.5 — wait, need < 0.5
+            // Use tokens_best=199, tokens_avg=400 → 0.4975 < 0.5
+        });
+        // Override with correct values: score = 100/400 = 0.25 < 0.5
+        let mut map2 = std::collections::HashMap::new();
+        map2.insert("borderline".to_string(), CraftStats {
+            usage_count: 5,
+            tokens_total: 2000,
+            tokens_best: 100,
+            tokens_avg: 400,
+        });
+        assert_eq!(crafts_needing_evaluation(&map2), vec!["borderline"], "usage==5 must qualify");
+    }
+
+    #[test]
+    fn crafts_needing_evaluation_returns_sorted_alphabetically() {
+        // "zebra" and "alpha" both qualify — result must be ["alpha", "zebra"]
+        let mut map = std::collections::HashMap::new();
+        for name in &["zebra", "alpha"] {
+            map.insert(name.to_string(), CraftStats {
+                usage_count: 10,
+                tokens_total: 1000,
+                tokens_best: 100,
+                tokens_avg: 400,  // score = 0.25 < 0.5
+            });
+        }
+        assert_eq!(crafts_needing_evaluation(&map), vec!["alpha", "zebra"]);
+    }
+
+    #[test]
+    fn crafts_needing_evaluation_multiple_qualifying_crafts() {
+        let mut map = std::collections::HashMap::new();
+        // "good" — high score, filtered out
+        map.insert("good".to_string(), CraftStats {
+            usage_count: 10,
+            tokens_total: 1000,
+            tokens_best: 900,
+            tokens_avg: 1000,  // score = 0.9
+        });
+        // "bad1" — qualifies
+        map.insert("bad1".to_string(), CraftStats {
+            usage_count: 8,
+            tokens_total: 800,
+            tokens_best: 100,
+            tokens_avg: 100,  // score = 1.0... need < 0.5
+        });
+        // Fix bad1: tokens_best=40, tokens_avg=100 → score=0.4
+        map.insert("bad1".to_string(), CraftStats {
+            usage_count: 8,
+            tokens_total: 800,
+            tokens_best: 40,
+            tokens_avg: 100,
+        });
+        // "bad2" — qualifies
+        map.insert("bad2".to_string(), CraftStats {
+            usage_count: 6,
+            tokens_total: 600,
+            tokens_best: 50,
+            tokens_avg: 200,  // score = 0.25
+        });
+        let result = crafts_needing_evaluation(&map);
+        assert_eq!(result, vec!["bad1", "bad2"], "both qualifying crafts returned, sorted");
     }
 }
