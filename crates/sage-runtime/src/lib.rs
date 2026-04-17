@@ -13,6 +13,7 @@ pub mod agent_loop;
 pub mod compaction;
 pub mod engine;
 pub mod event;
+pub mod hook;
 pub mod llm;
 pub mod system_prompt;
 pub mod tools;
@@ -23,6 +24,7 @@ pub use agent::{StopAction, StopContext, StopHook, TransformContextHook};
 pub use compaction::ContextBudget;
 pub use engine::{SageEngine, SageEngineBuilder, SageError, SageSession, SandboxSettings};
 pub use event::{AgentEvent, EventReceiver};
+pub use hook::{HookBus, HookEvent, HookHandler, HookOutcome};
 pub use system_prompt::{PromptSection, SystemPrompt, SystemPromptBuilder};
 pub use tools::AgentTool as SageTool;
 
