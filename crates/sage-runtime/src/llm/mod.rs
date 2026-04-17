@@ -24,6 +24,21 @@ pub trait LlmProvider: Send + Sync {
     ) -> Vec<AssistantMessageEvent>;
 }
 
+// Task #71: blanket impl for Arc<T> so engine.rs doesn't need an
+// `ArcProvider` wrapper to feed `Arc<dyn LlmProvider>` into places
+// that take `Box<dyn LlmProvider>`.
+#[async_trait::async_trait]
+impl<T: ?Sized + LlmProvider> LlmProvider for Arc<T> {
+    async fn complete(
+        &self,
+        model: &Model,
+        context: &LlmContext,
+        tools: &[LlmTool],
+    ) -> Vec<AssistantMessageEvent> {
+        (**self).complete(model, context, tools).await
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public convenience API (matching pi-mono's index.ts)
 // ---------------------------------------------------------------------------

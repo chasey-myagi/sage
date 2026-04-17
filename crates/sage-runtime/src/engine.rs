@@ -247,22 +247,8 @@ impl LlmProvider for RoutingProvider {
     }
 }
 
-// ── ArcProvider wrapper ───────────────────────────────────────────────
-
-/// Wraps `Arc<dyn LlmProvider>` into `Box<dyn LlmProvider>` for Agent::new.
-struct ArcProvider(Arc<dyn LlmProvider>);
-
-#[async_trait::async_trait]
-impl LlmProvider for ArcProvider {
-    async fn complete(
-        &self,
-        model: &Model,
-        context: &LlmContext,
-        tools: &[LlmTool],
-    ) -> Vec<AssistantMessageEvent> {
-        self.0.complete(model, context, tools).await
-    }
-}
+// Task #71: ArcProvider wrapper removed — Arc<dyn LlmProvider> now
+// implements LlmProvider directly via the blanket impl in llm/mod.rs.
 
 // ── ChannelSink ───────────────────────────────────────────────────────
 
@@ -471,7 +457,7 @@ impl SageEngine {
             }
         }
         for tool in &self.extra_tools {
-            registry.register(Box::new(ArcTool(Arc::clone(tool))));
+            registry.register(Box::new(Arc::clone(tool)));
         }
 
         // 3. AgentLoopConfig — apply ContextBudget override if provided
@@ -490,20 +476,20 @@ impl SageEngine {
         };
 
         // 4. Create Agent
-        let mut agent = Agent::new(loop_config, Box::new(ArcProvider(provider)), registry);
+        let mut agent = Agent::new(loop_config, Box::new(Arc::clone(&provider)), registry);
 
         // 5. Set hooks
         if let Some(ref hook) = self.before_hook {
-            agent.set_before_tool_call(Box::new(ArcBeforeHook(Arc::clone(hook))));
+            agent.set_before_tool_call(Box::new(Arc::clone(hook)));
         }
         if let Some(ref hook) = self.after_hook {
-            agent.set_after_tool_call(Box::new(ArcAfterHook(Arc::clone(hook))));
+            agent.set_after_tool_call(Box::new(Arc::clone(hook)));
         }
         if let Some(ref hook) = self.transform_context_hook {
-            agent.set_transform_context(Box::new(ArcTransformContextHook(Arc::clone(hook))));
+            agent.set_transform_context(Box::new(Arc::clone(hook)));
         }
         if let Some(ref hook) = self.stop_hook {
-            agent.set_stop_hook(Box::new(ArcStopHook(Arc::clone(hook))));
+            agent.set_stop_hook(Box::new(Arc::clone(hook)));
         }
 
         // 6. Steer initial message
@@ -632,7 +618,7 @@ impl SageEngine {
             }
         }
         for tool in &self.extra_tools {
-            registry.register(Box::new(ArcTool(Arc::clone(tool))));
+            registry.register(Box::new(Arc::clone(tool)));
         }
 
         // 3. AgentLoopConfig
@@ -651,20 +637,20 @@ impl SageEngine {
         };
 
         // 4. Create Agent
-        let mut agent = Agent::new(loop_config, Box::new(ArcProvider(provider)), registry);
+        let mut agent = Agent::new(loop_config, Box::new(Arc::clone(&provider)), registry);
 
         // 5. Set hooks
         if let Some(ref hook) = self.before_hook {
-            agent.set_before_tool_call(Box::new(ArcBeforeHook(Arc::clone(hook))));
+            agent.set_before_tool_call(Box::new(Arc::clone(hook)));
         }
         if let Some(ref hook) = self.after_hook {
-            agent.set_after_tool_call(Box::new(ArcAfterHook(Arc::clone(hook))));
+            agent.set_after_tool_call(Box::new(Arc::clone(hook)));
         }
         if let Some(ref hook) = self.transform_context_hook {
-            agent.set_transform_context(Box::new(ArcTransformContextHook(Arc::clone(hook))));
+            agent.set_transform_context(Box::new(Arc::clone(hook)));
         }
         if let Some(ref hook) = self.stop_hook {
-            agent.set_stop_hook(Box::new(ArcStopHook(Arc::clone(hook))));
+            agent.set_stop_hook(Box::new(Arc::clone(hook)));
         }
 
         // S6.2a: construct lifecycle state for HookEvent emission.
@@ -681,8 +667,8 @@ impl SageEngine {
         // S6.2b: thread the bus + session_id into the agent so the compaction
         // path can emit PreCompact / PostCompact without reaching into the
         // session struct.
-        agent.set_hook_bus(Some(hook_bus.clone()));
-        agent.set_session_id(Some(session_id.clone()));
+        // Task #86: one atomic attach rather than two independent setters.
+        agent.attach_session(hook_bus.clone(), session_id.clone());
 
         // Emit SessionStart BEFORE constructing SageSession so that if any
         // later clone / allocation on the construction path panics, Drop
@@ -934,62 +920,11 @@ impl Drop for SageSession {
     }
 }
 
-// ── Arc wrappers for hooks and tools ──────────────────────────────────
-
-struct ArcBeforeHook(Arc<dyn BeforeToolCallHook>);
-
-#[async_trait::async_trait]
-impl BeforeToolCallHook for ArcBeforeHook {
-    async fn before_tool_call(&self, ctx: &BeforeToolCallContext) -> BeforeToolCallResult {
-        self.0.before_tool_call(ctx).await
-    }
-}
-
-struct ArcAfterHook(Arc<dyn AfterToolCallHook>);
-
-#[async_trait::async_trait]
-impl AfterToolCallHook for ArcAfterHook {
-    async fn after_tool_call(&self, ctx: &AfterToolCallContext) -> AfterToolCallResult {
-        self.0.after_tool_call(ctx).await
-    }
-}
-
-struct ArcTransformContextHook(Arc<dyn TransformContextHook>);
-
-#[async_trait::async_trait]
-impl TransformContextHook for ArcTransformContextHook {
-    async fn transform_context(&self, messages: &mut Vec<AgentMessage>) {
-        self.0.transform_context(messages).await
-    }
-}
-
-struct ArcStopHook(Arc<dyn StopHook>);
-
-#[async_trait::async_trait]
-impl StopHook for ArcStopHook {
-    async fn on_stop(&self, ctx: &StopContext) -> StopAction {
-        self.0.on_stop(ctx).await
-    }
-}
-
-/// Wraps `Arc<dyn AgentTool>` so it can be registered as `Box<dyn AgentTool>`.
-struct ArcTool(Arc<dyn AgentTool>);
-
-#[async_trait::async_trait]
-impl AgentTool for ArcTool {
-    fn name(&self) -> &str {
-        self.0.name()
-    }
-    fn description(&self) -> &str {
-        self.0.description()
-    }
-    fn parameters_schema(&self) -> serde_json::Value {
-        self.0.parameters_schema()
-    }
-    async fn execute(&self, args: serde_json::Value) -> crate::tools::ToolOutput {
-        self.0.execute(args).await
-    }
-}
+// Task #71: 5 Arc wrapper structs (ArcBeforeHook / ArcAfterHook /
+// ArcTransformContextHook / ArcStopHook / ArcTool) removed. Blanket
+// impls in agent.rs + tools/mod.rs now give `Arc<dyn Trait>` direct
+// `Trait` implementations, so `Box::new(Arc::clone(h))` at call sites
+// works without the forwarding newtype.
 
 // ── SageEngineBuilder ─────────────────────────────────────────────────
 

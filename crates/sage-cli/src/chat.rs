@@ -109,7 +109,9 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
     // `--agent ../foo` can never reach `sage_agents_dir().join(agent)`
     // via an unvalidated path. The cost is one comparison — negligible.
     crate::serve::validate_agent_name(agent)?;
-    let config = crate::serve::load_agent_config(agent).await?;
+    // Task #80: pull config + sha256 hash together so TaskRecord.config_hash
+    // gets a real `"sha256:<hex>"` instead of the old `""` sentinel.
+    let (config, config_hash) = crate::serve::load_agent_config_with_hash(agent).await?;
     let engine = crate::serve::build_engine_for_agent(&config, dev).await?;
 
     // Sprint 11 #56 + Sprint 12 task #69: the engine's cancel token is now
@@ -146,7 +148,7 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
         config.llm.model.clone(),
         session_type,
         workspace_dir,
-        String::new(),
+        config_hash,
     );
     let shared_metrics = sage_runner::metrics::share_collector(collector);
     let sink = sage_runner::metrics::MetricsSink::new(shared_metrics.clone(), TerminalSink);
