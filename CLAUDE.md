@@ -84,3 +84,19 @@ cargo run -p sage-cli -- serve --runtime localhost:50070
 - `main` — 发版
 - Conventional Commits: `feat(scope): description`
 - scope: `cli`, `sandbox`, `protocol`, `guest`, `runner`, `runtime`
+
+## Agent 模型分工（多 agent 并行开发）
+
+当本仓库用多 agent 并行做 TDD（test-writer → test-review → implementer →
+Linus / code-review）时，按角色挑模型：
+
+| 角色 | 模型 | 理由 |
+|------|------|------|
+| **Implementer**（让测试变绿、bug-fix、机械翻译） | **Sonnet 4.6** | 成本低、吞吐高；"按规格做"的工作不需要 meta 推理 |
+| **Test-writer**（写测试 + 最小桩） | Sonnet 4.6 | 接近 implementer 工作性质 |
+| **Test-review**（TDD 质量门） | **Opus 4.7** | 需要独立判断测试覆盖是否真的锁死规格 |
+| **Linus-review**（锐评 / 品味审查） | Opus 4.7 | 需要识别架构异味与 race 隐患 |
+| **Code-review**（工程规范质量门） | Opus 4.7 | 需要跨文件推理、安全/性能判断 |
+
+调度器（主 agent）调用 `Agent(model: "sonnet" / "opus", ...)` 显式指定。
+默认继承父 agent 模型，所以要**显式传 model 参数**才能省钱 + 保质。
