@@ -3,6 +3,7 @@
 
 pub mod backend;
 pub mod bash;
+pub mod craft_manage;
 pub mod edit;
 pub mod find;
 pub mod grep;
@@ -62,6 +63,10 @@ impl ToolRegistry {
 }
 
 /// Factory function: create a tool by name, using the given backend for I/O.
+///
+/// For tools that need extra context beyond `backend` (e.g. `craft_manage`
+/// which is workspace-scoped not sandbox-scoped), use
+/// [`create_workspace_tool`] instead.
 pub fn create_tool(
     name: &str,
     backend: std::sync::Arc<dyn backend::ToolBackend>,
@@ -74,6 +79,23 @@ pub fn create_tool(
         "grep" => Some(Box::new(grep::GrepTool(backend))),
         "find" => Some(Box::new(find::FindTool(backend))),
         "ls" => Some(Box::new(ls::LsTool(backend))),
+        _ => None,
+    }
+}
+
+/// Factory for workspace-scoped tools (operate on the agent's persistent
+/// workspace directory, bypassing the sandbox `ToolBackend`).
+///
+/// Sprint 10 S10.1: `craft_manage` — creates / lists CRAFT.md in
+/// `<workspace>/craft/<name>/`. Unlike `bash` / `read` / `ls` etc., these
+/// tools don't go through the sandbox because they write agent-private data
+/// (SOPs, templates, craft scores) that the sandbox has no need to see.
+pub fn create_workspace_tool(
+    name: &str,
+    workspace_dir: std::path::PathBuf,
+) -> Option<Box<dyn AgentTool>> {
+    match name {
+        "craft_manage" => Some(Box::new(craft_manage::CraftManageTool::new(workspace_dir))),
         _ => None,
     }
 }
@@ -818,5 +840,39 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── create_workspace_tool — Sprint 10 S10.1 registration path ────────
+
+    /// Linus v1 blocker #2: `craft_manage` is registerable through the
+    /// factory → ToolRegistry → agent tool-calling path. This test catches
+    /// the failure mode where the tool is written but never pluggable.
+    #[tokio::test]
+    async fn create_workspace_tool_craft_manage_returns_some_and_registers() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let tool = create_workspace_tool("craft_manage", tmp.path().to_path_buf())
+            .expect("craft_manage must be registered in create_workspace_tool");
+        assert_eq!(tool.name(), "craft_manage");
+        // Proves end-to-end: factory produces a tool that accepts the
+        // standard AgentTool.execute() calling convention.
+        let out = tool
+            .execute(serde_json::json!({ "action": "list" }))
+            .await;
+        assert!(!out.is_error, "list on empty workspace must succeed");
+
+        // And the factory-built tool registers into a ToolRegistry cleanly.
+        let mut registry = ToolRegistry::new();
+        let again = create_workspace_tool("craft_manage", tmp.path().to_path_buf()).unwrap();
+        registry.register(again);
+        assert!(
+            registry.get("craft_manage").is_some(),
+            "tool must be retrievable after register"
+        );
+    }
+
+    #[test]
+    fn create_workspace_tool_unknown_name_returns_none() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        assert!(create_workspace_tool("not_a_tool", tmp.path().to_path_buf()).is_none());
     }
 }
