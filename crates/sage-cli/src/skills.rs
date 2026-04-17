@@ -1007,6 +1007,366 @@ Second paragraph ignored.
             body
         );
     }
+
+    // =============================================================
+    // scan_crafts
+    // =============================================================
+
+    /// 1. craft_root 路径不存在 → 空 Vec
+    #[tokio::test]
+    async fn scan_crafts_empty_root_returns_empty() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("no-such-craft-root");
+        let result = scan_crafts(&missing).await;
+        assert!(result.is_empty(), "non-existent root must yield empty vec");
+    }
+
+    /// 2. 目录存在但其中没有任何子目录 → 空 Vec
+    #[tokio::test]
+    async fn scan_crafts_missing_directory_returns_empty() {
+        let tmp = TempDir::new().unwrap();
+        // craft_root 存在但空
+        let result = scan_crafts(tmp.path()).await;
+        assert!(result.is_empty(), "empty root must yield empty vec");
+    }
+
+    /// 3. `<root>/deploy/CRAFT.md` 含有 `name: deploy` → 返回 1 条，name="deploy"
+    #[tokio::test]
+    async fn scan_crafts_reads_single_craft_md() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "deploy/CRAFT.md",
+            "---\nname: deploy\ndescription: Deploy the app.\n---\nBody text.\n",
+        )
+        .await;
+
+        let result = scan_crafts(tmp.path()).await;
+        assert_eq!(result.len(), 1, "expected exactly 1 craft");
+        assert_eq!(result[0].name, "deploy");
+    }
+
+    /// 4. 2 个子目录各有 CRAFT.md → 返回 2 条
+    #[tokio::test]
+    async fn scan_crafts_reads_multiple_crafts() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "alpha/CRAFT.md",
+            "---\nname: alpha\ndescription: Alpha craft.\n---\nBody.\n",
+        )
+        .await;
+        write_file(
+            tmp.path(),
+            "beta/CRAFT.md",
+            "---\nname: beta\ndescription: Beta craft.\n---\nBody.\n",
+        )
+        .await;
+
+        let result = scan_crafts(tmp.path()).await;
+        assert_eq!(result.len(), 2, "expected 2 crafts");
+        let names: Vec<&str> = result.iter().map(|m| m.name.as_str()).collect();
+        assert!(names.contains(&"alpha"));
+        assert!(names.contains(&"beta"));
+    }
+
+    /// 5. 子目录存在但无 CRAFT.md → 跳过
+    #[tokio::test]
+    async fn scan_crafts_ignores_subdir_without_craft_md() {
+        let tmp = TempDir::new().unwrap();
+        // 创建空子目录
+        fs::create_dir_all(tmp.path().join("empty")).await.unwrap();
+        // 另一个有 CRAFT.md 的
+        write_file(
+            tmp.path(),
+            "present/CRAFT.md",
+            "---\nname: present\ndescription: d\n---\nBody.\n",
+        )
+        .await;
+
+        let result = scan_crafts(tmp.path()).await;
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "present");
+    }
+
+    /// 6. `<root>/rogue.md` 是直接文件（非子目录 CRAFT.md 模式）→ 跳过
+    #[tokio::test]
+    async fn scan_crafts_ignores_files_at_root() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "rogue.md", "---\nname: rogue\ndescription: d\n---\n").await;
+        // 同时有一个合法 craft，以确认 scan 本身工作
+        write_file(
+            tmp.path(),
+            "legit/CRAFT.md",
+            "---\nname: legit\ndescription: d\n---\nBody.\n",
+        )
+        .await;
+
+        let result = scan_crafts(tmp.path()).await;
+        let names: Vec<&str> = result.iter().map(|m| m.name.as_str()).collect();
+        assert!(!names.contains(&"rogue"), "root-level .md must be ignored");
+        assert!(names.contains(&"legit"));
+    }
+
+    /// 7. 某子目录的 CRAFT.md 无 frontmatter → fallback：name = 子目录名（不是 "CRAFT"）
+    #[tokio::test]
+    async fn scan_crafts_recovers_from_malformed_frontmatter() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "my-craft/CRAFT.md",
+            // 无 frontmatter，纯正文
+            "This craft has no frontmatter at all.\n",
+        )
+        .await;
+
+        let result = scan_crafts(tmp.path()).await;
+        assert_eq!(result.len(), 1);
+        // 应使用子目录名而非文件 stem "CRAFT"
+        assert_eq!(
+            result[0].name, "my-craft",
+            "name must fall back to sub-directory name, not file stem 'CRAFT'"
+        );
+    }
+
+    /// 8. frontmatter 有 `name: deploy-script` → SkillMeta.name 用 frontmatter 值
+    #[tokio::test]
+    async fn scan_crafts_populates_name_from_frontmatter_when_present() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "some-dir/CRAFT.md",
+            "---\nname: deploy-script\ndescription: d\n---\nBody.\n",
+        )
+        .await;
+
+        let result = scan_crafts(tmp.path()).await;
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].name, "deploy-script",
+            "frontmatter name must be preferred over directory name"
+        );
+    }
+
+    /// 9. SkillMeta.body_path 指向 `<root>/<name>/CRAFT.md` 绝对路径
+    #[tokio::test]
+    async fn scan_crafts_sets_body_path_to_craft_md_absolute() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "deploy/CRAFT.md",
+            "---\nname: deploy\ndescription: d\n---\nBody.\n",
+        )
+        .await;
+
+        let result = scan_crafts(tmp.path()).await;
+        assert_eq!(result.len(), 1);
+        let body_path = &result[0].body_path;
+        assert!(
+            body_path.is_absolute(),
+            "body_path must be absolute; got: {body_path:?}"
+        );
+        assert!(
+            body_path.ends_with("deploy/CRAFT.md"),
+            "body_path must end with deploy/CRAFT.md; got: {body_path:?}"
+        );
+        // 验证 load_skill_body 能读取（文件确实存在）
+        assert!(body_path.exists(), "body_path must point to an existing file");
+    }
+
+    // =============================================================
+    // scan_skills_and_crafts
+    // =============================================================
+
+    /// 10. global skill X + workspace craft Y → 返回 2 条，含 X 和 Y
+    #[tokio::test]
+    async fn scan_skills_and_crafts_merges_both_sources() {
+        let global = TempDir::new().unwrap();
+        let ws_skills = TempDir::new().unwrap();
+        let ws_craft = TempDir::new().unwrap();
+
+        write_file(
+            global.path(),
+            "global-skill.md",
+            "---\nname: global-skill\ndescription: d\n---\nBody.\n",
+        )
+        .await;
+        write_file(
+            ws_craft.path(),
+            "my-craft/CRAFT.md",
+            "---\nname: my-craft\ndescription: d\n---\nBody.\n",
+        )
+        .await;
+
+        let result =
+            scan_skills_and_crafts(global.path(), ws_skills.path(), ws_craft.path(), "").await;
+
+        assert_eq!(result.len(), 2, "must merge skill + craft into 2 items");
+        let names: Vec<&str> = result.iter().map(|m| m.name.as_str()).collect();
+        assert!(names.contains(&"global-skill"));
+        assert!(names.contains(&"my-craft"));
+    }
+
+    /// 11. 两边都有 "deploy"：global skill deploy.md + workspace craft/deploy/CRAFT.md
+    ///     → 只保留一个 deploy，且来自 skills（body_path 不以 "CRAFT.md" 结尾）
+    #[tokio::test]
+    async fn scan_skills_and_crafts_skill_wins_on_name_collision() {
+        let global = TempDir::new().unwrap();
+        let ws_skills = TempDir::new().unwrap();
+        let ws_craft = TempDir::new().unwrap();
+
+        write_file(
+            global.path(),
+            "deploy.md",
+            "---\nname: deploy\ndescription: skill version\n---\nSKILL BODY\n",
+        )
+        .await;
+        write_file(
+            ws_craft.path(),
+            "deploy/CRAFT.md",
+            "---\nname: deploy\ndescription: craft version\n---\nCRAFT BODY\n",
+        )
+        .await;
+
+        let result =
+            scan_skills_and_crafts(global.path(), ws_skills.path(), ws_craft.path(), "").await;
+
+        let deploy: Vec<_> = result.iter().filter(|m| m.name == "deploy").collect();
+        assert_eq!(deploy.len(), 1, "collision must yield exactly one 'deploy'");
+
+        let winner = deploy[0];
+        // skill 来自 deploy.md，不是 CRAFT.md
+        assert!(
+            !winner.body_path.ends_with("CRAFT.md"),
+            "winner must be the skill (deploy.md), not the craft (CRAFT.md); got: {:?}",
+            winner.body_path
+        );
+        assert_eq!(winner.description, "skill version");
+    }
+
+    /// 12. craft frontmatter `agent: bob`，current_agent="alice" → 不出现；
+    ///     current_agent="bob" → 出现
+    #[tokio::test]
+    async fn scan_skills_and_crafts_applies_current_agent_filter() {
+        let global = TempDir::new().unwrap();
+        let ws_skills = TempDir::new().unwrap();
+        let ws_craft = TempDir::new().unwrap();
+
+        write_file(
+            ws_craft.path(),
+            "bob-craft/CRAFT.md",
+            "---\nname: bob-craft\ndescription: d\nagent: bob\n---\nBody.\n",
+        )
+        .await;
+
+        // alice — craft は見えない
+        let result_alice =
+            scan_skills_and_crafts(global.path(), ws_skills.path(), ws_craft.path(), "alice").await;
+        assert!(
+            result_alice.iter().all(|m| m.name != "bob-craft"),
+            "agent=bob craft must not appear for alice"
+        );
+
+        // bob — craft が見える
+        let result_bob =
+            scan_skills_and_crafts(global.path(), ws_skills.path(), ws_craft.path(), "bob").await;
+        assert!(
+            result_bob.iter().any(|m| m.name == "bob-craft"),
+            "agent=bob craft must appear for bob"
+        );
+    }
+
+    /// 13. 所有目录都不存在 → 空 Vec
+    #[tokio::test]
+    async fn scan_skills_and_crafts_empty_when_all_dirs_missing() {
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("no-global");
+        let b = tmp.path().join("no-ws-skills");
+        let c = tmp.path().join("no-ws-craft");
+
+        let result = scan_skills_and_crafts(&a, &b, &c, "anyone").await;
+        assert!(result.is_empty(), "all-missing dirs must return empty vec");
+    }
+}
+
+/// Scan `<workspace>/craft/<name>/CRAFT.md` sub-directory pattern.
+///
+/// Each sub-directory under `craft_root` that contains a `CRAFT.md`
+/// produces one `SkillMeta` via the same [`parse_skill_file`] flow used
+/// for skills. The resulting metas can be merged with `scan_skills`
+/// output to produce a unified knowledge index.
+///
+/// When the `CRAFT.md` frontmatter does not supply a `name` field (or the
+/// frontmatter is malformed/absent), the sub-directory name is used instead
+/// of the file stem `"CRAFT"`.
+pub async fn scan_crafts(craft_root: &Path) -> Vec<SkillMeta> {
+    let mut entries = match fs::read_dir(craft_root).await {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut subdirs: Vec<PathBuf> = Vec::new();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.is_dir() {
+            subdirs.push(path);
+        }
+    }
+    subdirs.sort();
+
+    let mut out = Vec::new();
+    for subdir in subdirs {
+        let craft_md = subdir.join("CRAFT.md");
+        if !craft_md.exists() {
+            continue;
+        }
+        if let Some(mut meta) = parse_skill_file(&craft_md).await {
+            // If parse_skill_file fell back to the file stem "CRAFT" (because
+            // frontmatter was missing or malformed), replace with the subdir name.
+            if meta.name == "CRAFT" {
+                if let Some(dir_name) = subdir.file_name() {
+                    meta.name = dir_name.to_string_lossy().into_owned();
+                }
+            }
+            out.push(meta);
+        }
+    }
+    out
+}
+
+/// Scan both skills (`<global_skills>` + `<workspace_skills>`) and crafts
+/// (`<workspace_craft>`), filter by `current_agent`, and merge into a
+/// single index. Collision policy: skills win over same-named crafts
+/// (design: global skills > workspace crafts).
+pub async fn scan_skills_and_crafts(
+    global_skills_dir: &Path,
+    workspace_skills_dir: &Path,
+    workspace_craft_dir: &Path,
+    current_agent: &str,
+) -> Vec<SkillMeta> {
+    let skills = scan_skills(global_skills_dir, workspace_skills_dir, current_agent).await;
+    let crafts = scan_crafts(workspace_craft_dir).await;
+
+    // Apply agent filter to crafts (same logic as scan_skills).
+    let filtered_crafts: Vec<SkillMeta> = crafts
+        .into_iter()
+        .filter(|s| match &s.agent {
+            None => true,
+            Some(_) if current_agent.is_empty() => false,
+            Some(a) => a == current_agent,
+        })
+        .collect();
+
+    // Merge: skills first, then crafts that don't collide with a skill name.
+    let mut result: Vec<SkillMeta> = skills;
+    let skill_names: std::collections::HashSet<String> =
+        result.iter().map(|s| s.name.clone()).collect();
+    for craft in filtered_crafts {
+        if !skill_names.contains(&craft.name) {
+            result.push(craft);
+        }
+    }
+    result
 }
 
 /// Scan a single directory for top-level `*.md` skill files. Missing or
