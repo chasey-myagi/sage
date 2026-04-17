@@ -951,11 +951,9 @@ pub async fn compact(
         summary.push_str(&file_ops_text);
     }
 
-    // TODO S6.2a: This is the canonical "summary complete" point. If we
-    // decide to emit HookEvent::PostCompact from here (instead of the caller
-    // in agent_loop::try_compact), the bus needs to be threaded through —
-    // see the parallel TODO in agent_loop.rs. Keeping emission at the caller
-    // is cleaner because it also sees the post-apply message count.
+    // S6.2b: HookEvent::PostCompact is emitted by the caller
+    // (agent_loop::try_compact) — the caller has both the post-apply message
+    // vector and the attached HookBus, so it owns both Pre/Post emissions.
     Ok(CompactionResult {
         summary,
         first_kept_index: preparation.first_kept_index,

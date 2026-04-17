@@ -8,6 +8,7 @@ use crate::compaction::{
     microcompact, prepare_compaction, should_compact, should_microcompact, truncate_messages,
 };
 use crate::event::{AgentEvent, AgentEventSink};
+use crate::hook::HookEvent;
 use crate::llm::types::*;
 use crate::tools::ToolOutput;
 use crate::types::*;
@@ -409,7 +410,7 @@ async fn execute_tool_calls(
 
 /// Attempt compaction on the agent's messages.
 /// Returns true if compaction was performed successfully.
-async fn try_compact(
+pub(crate) async fn try_compact(
     agent: &mut Agent,
     reason: CompactionReason,
     emit: &dyn AgentEventSink,
@@ -443,15 +444,21 @@ async fn try_compact(
     })
     .await;
 
-    // TODO S6.2a: emit HookEvent::PreCompact on the session's HookBus here,
-    // parallel to AgentEvent::CompactionStart above. Requires threading an
-    // `Option<HookBus>` reference into try_compact (e.g. via AgentLoopConfig
-    // or a new parameter alongside `emit`).
-    //   bus.emit(HookEvent::PreCompact {
-    //       session_id: <session_id>,
-    //       tokens_before: context_tokens,
-    //       message_count: agent.messages().len(),
-    //   });
+    // S6.2b: emit HookEvent::PreCompact on the session's HookBus (when
+    // attached) before the summarization call. Pre/Post events come in pairs:
+    //   - Ok path  → PostCompact (LLM-summarized compaction)
+    //   - Err path → CompactFallback (hard truncate; distinct event variant
+    //     so subscribers can tell which strategy occurred)
+    let hook_bus = agent.hook_bus().cloned();
+    let session_id = agent.session_id().map(str::to_string).unwrap_or_default();
+    let pre_message_count = agent.messages().len();
+    if let Some(bus) = &hook_bus {
+        bus.emit(HookEvent::PreCompact {
+            session_id: session_id.clone(),
+            tokens_before: context_tokens,
+            message_count: pre_message_count,
+        });
+    }
 
     let first_kept = prep.first_kept_index;
     let model = agent.config().model.clone();
@@ -468,30 +475,38 @@ async fn try_compact(
             })
             .await;
 
-            // TODO S6.2a: emit HookEvent::PostCompact on the session's HookBus
-            // here, parallel to AgentEvent::CompactionEnd above.
-            //   bus.emit(HookEvent::PostCompact {
-            //       session_id: <session_id>,
-            //       tokens_before,
-            //       tokens_after: estimate_context_tokens(agent.messages()) as u64,
-            //       messages_compacted: first_kept,
-            //   });
+            if let Some(bus) = &hook_bus {
+                bus.emit(HookEvent::PostCompact {
+                    session_id: session_id.clone(),
+                    tokens_before,
+                    tokens_after: estimate_context_tokens(agent.messages()) as u64,
+                    messages_compacted: first_kept,
+                });
+            }
             true
         }
         Err(e) => {
             // Compaction failed — fall back to truncation.
             // Emit CompactionEnd so listeners always see a matched Start/End pair.
             tracing::warn!("compaction summarization failed, falling back to truncation: {e}");
+            let messages_before_truncate = agent.messages().len();
             truncate_messages(agent.messages_mut(), settings.keep_recent_tokens);
+            let messages_compacted =
+                messages_before_truncate.saturating_sub(agent.messages().len());
             emit.emit(AgentEvent::CompactionEnd {
                 tokens_before: context_tokens,
                 messages_compacted: 0,
             })
             .await;
 
-            // TODO S6.2a: emit HookEvent::PostCompact with the fallback-truncation
-            // tokens_after (computed from the truncated message vector) so
-            // subscribers always see a matched Pre/Post pair.
+            if let Some(bus) = &hook_bus {
+                bus.emit(HookEvent::CompactFallback {
+                    session_id,
+                    tokens_before: context_tokens,
+                    tokens_after: estimate_context_tokens(agent.messages()) as u64,
+                    messages_truncated: messages_compacted,
+                });
+            }
             false
         }
     }

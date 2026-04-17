@@ -49,6 +49,12 @@ pub enum HookEvent {
         tokens_after: u64,
         messages_compacted: usize,
     },
+    CompactFallback {
+        session_id: String,
+        tokens_before: u64,
+        tokens_after: u64,
+        messages_truncated: usize,
+    },
     Stop {
         session_id: String,
         agent_name: String,
@@ -76,6 +82,7 @@ impl HookEvent {
             HookEvent::PostToolUse { .. } => "PostToolUse",
             HookEvent::PreCompact { .. } => "PreCompact",
             HookEvent::PostCompact { .. } => "PostCompact",
+            HookEvent::CompactFallback { .. } => "CompactFallback",
             HookEvent::Stop { .. } => "Stop",
             HookEvent::SessionEnd { .. } => "SessionEnd",
         }
@@ -90,6 +97,7 @@ impl HookEvent {
             | HookEvent::PostToolUse { session_id, .. }
             | HookEvent::PreCompact { session_id, .. }
             | HookEvent::PostCompact { session_id, .. }
+            | HookEvent::CompactFallback { session_id, .. }
             | HookEvent::Stop { session_id, .. }
             | HookEvent::SessionEnd { session_id, .. } => session_id,
         }
@@ -509,5 +517,27 @@ mod tests {
         let handler = AllowAll;
         let outcome = handler.handle(&sample_pre_tool_use("s")).await;
         assert!(matches!(outcome, HookOutcome::Allow));
+    }
+
+    fn sample_compact_fallback(sid: &str) -> HookEvent {
+        HookEvent::CompactFallback {
+            session_id: sid.into(),
+            tokens_before: 80_000,
+            tokens_after: 40_000,
+            messages_truncated: 10,
+        }
+    }
+
+    #[test]
+    fn compact_fallback_name_returns_CompactFallback() {
+        assert_eq!(sample_compact_fallback("s").name(), "CompactFallback");
+    }
+
+    #[test]
+    fn compact_fallback_session_id_returns_field_value() {
+        assert_eq!(
+            sample_compact_fallback("sess-fallback").session_id(),
+            "sess-fallback"
+        );
     }
 }

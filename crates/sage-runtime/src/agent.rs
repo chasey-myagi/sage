@@ -2,6 +2,7 @@
 // Agent struct with state management, steering/follow-up queues, and hooks.
 
 use crate::compaction::{CompactionSettings, FileOperations};
+use crate::hook::HookBus;
 use crate::llm::LlmProvider;
 use crate::llm::types::*;
 use crate::tools::ToolRegistry;
@@ -116,6 +117,17 @@ pub struct Agent {
     compaction_file_ops: FileOperations,
     /// Previous compaction summary (for iterative update prompt).
     previous_compaction_summary: Option<String>,
+    /// Session-scoped HookBus for lifecycle event emission (S6.2b).
+    ///
+    /// `None` for bare [`Agent`] instances (legacy / test paths); populated
+    /// when the agent is owned by a [`SageSession`]. The compaction code path
+    /// emits `HookEvent::PreCompact` / `PostCompact` through this bus.
+    ///
+    /// [`SageSession`]: crate::engine::SageSession
+    hook_bus: Option<HookBus>,
+    /// Session identifier consumed by [`HookEvent`] payloads emitted through
+    /// [`Agent::hook_bus`]. `None` when no session is attached.
+    session_id: Option<String>,
 }
 
 impl Agent {
@@ -138,7 +150,28 @@ impl Agent {
             stop_hook: None,
             compaction_file_ops: FileOperations::default(),
             previous_compaction_summary: None,
+            hook_bus: None,
+            session_id: None,
         }
+    }
+
+    /// Attach a session-scoped [`HookBus`] used by the compaction path to
+    /// emit `HookEvent::PreCompact` / `PostCompact`.
+    pub fn set_hook_bus(&mut self, bus: Option<HookBus>) {
+        self.hook_bus = bus;
+    }
+
+    pub fn hook_bus(&self) -> Option<&HookBus> {
+        self.hook_bus.as_ref()
+    }
+
+    /// Attach the session identifier stamped onto compaction hook events.
+    pub fn set_session_id(&mut self, id: Option<String>) {
+        self.session_id = id;
+    }
+
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
     }
 
     pub fn config(&self) -> &AgentLoopConfig {

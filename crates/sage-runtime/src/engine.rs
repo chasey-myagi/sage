@@ -576,6 +576,12 @@ impl SageEngine {
         let hook_bus = HookBus::with_session_start_replay(256);
         let started_at = Instant::now();
 
+        // S6.2b: thread the bus + session_id into the agent so the compaction
+        // path can emit PreCompact / PostCompact without reaching into the
+        // session struct.
+        agent.set_hook_bus(Some(hook_bus.clone()));
+        agent.set_session_id(Some(session_id.clone()));
+
         // Emit SessionStart BEFORE constructing SageSession so that if any
         // later clone / allocation on the construction path panics, Drop
         // won't emit a "SessionEnd without matching SessionStart" to
@@ -703,6 +709,44 @@ impl SageSession {
     /// correlated.
     pub fn session_id(&self) -> &str {
         &self.session_id
+    }
+
+    /// Force a compaction cycle on the current message history.
+    ///
+    /// Seeds several large messages into the agent's history (if needed to
+    /// cross the `keep_recent_tokens` budget) and invokes the compaction code
+    /// path, emitting `HookEvent::PreCompact` and `HookEvent::PostCompact`
+    /// through the session's [`HookBus`]. Intended for tests and operator
+    /// tooling that need deterministic compaction triggers; production code
+    /// should rely on the automatic threshold / overflow paths inside
+    /// `run_agent_loop`.
+    #[cfg(test)]
+    pub async fn force_compact(&mut self) -> Result<(), SageError> {
+        // Seed messages large enough to force `prepare_compaction` to cut —
+        // we need total tokens > keep_recent_tokens with at least one message
+        // beyond the recent window.
+        let filler = "x".repeat(8_000);
+        for _ in 0..6 {
+            self.agent
+                .push_message(AgentMessage::User(UserMessage::from_text(&filler)));
+            self.agent.push_message(AgentMessage::Assistant(
+                AssistantMessage::from_text(&filler),
+            ));
+        }
+
+        struct NoopSink;
+        #[async_trait::async_trait]
+        impl AgentEventSink for NoopSink {
+            async fn emit(&self, _event: AgentEvent) {}
+        }
+
+        crate::agent_loop::try_compact(
+            &mut self.agent,
+            crate::compaction::CompactionReason::Threshold,
+            &NoopSink,
+        )
+        .await;
+        Ok(())
     }
 
     /// Explicitly close the session and emit `HookEvent::SessionEnd`.
@@ -2629,20 +2673,18 @@ mod tests {
     // S6.2b should flip the ignores off once the wiring lands.
 
     #[tokio::test]
-    #[ignore = "S6.2b: enable once HookBus is wired into compaction path"]
     async fn pre_compact_emitted_before_post_compact() {
         // Expected behavior: trigger compaction → observe PreCompact followed
         // by PostCompact (Pre must come first).
         let engine = lifecycle_engine(simple_provider("hello"));
-        let session = engine.session().await.expect("session build");
+        let mut session = engine.session().await.expect("session build");
         let mut rx = session.hook_bus().subscribe();
         let _ = expect_event(&mut rx, "SessionStart").await;
 
-        // Placeholder: an implementer-provided hook should trigger compaction.
-        // For now, the test body intentionally fails fast if the ignored gate
-        // is lifted without wiring. The actual trigger mechanism (e.g. a
-        // test-only `force_compact()` on SageSession, or a tiny-context
-        // model config) is left to the implementer.
+        // S6.2b: trigger the compaction code path on demand. The test-writer
+        // left the trigger mechanism "to the implementer" — `force_compact`
+        // is a public SageSession helper added in S6.2b.
+        session.force_compact().await.unwrap();
 
         let mut saw_pre = false;
         while let Ok(Ok(ev)) = timeout(Duration::from_millis(50), rx.recv()).await {
@@ -2659,14 +2701,14 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "S6.2b: enable once HookBus is wired into compaction path"]
     async fn pre_compact_payload_has_tokens_before_and_message_count() {
         let engine = lifecycle_engine(simple_provider("hello"));
-        let session = engine.session().await.expect("session build");
+        let mut session = engine.session().await.expect("session build");
         let mut rx = session.hook_bus().subscribe();
         let _ = expect_event(&mut rx, "SessionStart").await;
 
         // Trigger compaction (see comment on pre_compact_emitted_before_post_compact).
+        session.force_compact().await.unwrap();
         while let Ok(Ok(ev)) = timeout(Duration::from_millis(50), rx.recv()).await {
             if let HookEvent::PreCompact {
                 tokens_before,
@@ -2689,13 +2731,13 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "S6.2b: enable once HookBus is wired into compaction path"]
     async fn post_compact_payload_has_tokens_after_and_messages_compacted() {
         let engine = lifecycle_engine(simple_provider("hello"));
-        let session = engine.session().await.expect("session build");
+        let mut session = engine.session().await.expect("session build");
         let mut rx = session.hook_bus().subscribe();
         let _ = expect_event(&mut rx, "SessionStart").await;
 
+        session.force_compact().await.unwrap();
         while let Ok(Ok(ev)) = timeout(Duration::from_millis(50), rx.recv()).await {
             if let HookEvent::PostCompact {
                 tokens_before,
@@ -2762,5 +2804,62 @@ mod tests {
             matches!(last, HookEvent::SessionEnd { .. }),
             "last event must be SessionEnd, got {last:?}"
         );
+    }
+
+    // ── CompactFallback emission ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn force_compact_fallback_emits_compact_fallback_on_summarization_failure() {
+        // When the LLM provider returns an Error event during compaction's
+        // summarization phase, agent_loop must fire HookEvent::CompactFallback
+        // (hard-truncate path) instead of PostCompact.
+        //
+        // StatefulProvider: first response is the Error event that triggers
+        // SummarizationFailed; subsequent calls return Done (force_compact
+        // itself does not call complete(), only try_compact → compact() does).
+        let provider = StatefulProvider::new(vec![vec![AssistantMessageEvent::Error(
+            "injected summarization failure".into(),
+        )]]);
+
+        let engine = lifecycle_engine(provider);
+        let mut session = engine.session().await.expect("session build");
+        let mut rx = session.hook_bus().subscribe();
+        let _ = expect_event(&mut rx, "SessionStart").await;
+
+        // force_compact seeds large messages then calls try_compact, which
+        // calls compact() → provider.complete() → Error → SummarizationFailed
+        // → CompactFallback branch in agent_loop.
+        session.force_compact().await.unwrap();
+
+        let ev = timeout(Duration::from_secs(2), async {
+            loop {
+                match rx.recv().await {
+                    Ok(e) if matches!(e, HookEvent::CompactFallback { .. }) => return e,
+                    Ok(_) => continue,
+                    Err(e) => panic!("hook bus closed unexpectedly: {e:?}"),
+                }
+            }
+        })
+        .await
+        .expect("CompactFallback must fire within 2 s when summarization fails");
+
+        if let HookEvent::CompactFallback {
+            messages_truncated,
+            tokens_before,
+            tokens_after,
+            ..
+        } = ev
+        {
+            assert!(
+                messages_truncated > 0,
+                "truncate path must drop at least one message, got messages_truncated={messages_truncated}"
+            );
+            assert!(
+                tokens_after <= tokens_before,
+                "truncate must reduce tokens: tokens_before={tokens_before} tokens_after={tokens_after}"
+            );
+        } else {
+            panic!("matched branch is unreachable");
+        }
     }
 }
