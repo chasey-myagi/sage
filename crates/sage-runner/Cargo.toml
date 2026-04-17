@@ -2,6 +2,11 @@
 name = "sage-runner"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Agent configuration, tool policy, hooks, and scheduling for Sage"
+keywords = ["agent", "llm", "config", "hooks", "scheduler"]
+categories = ["development-tools"]
 
 [dependencies]
 sage-sandbox = { workspace = true }
@@ -14,3 +19,10 @@ serde_yaml = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+ulid = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
