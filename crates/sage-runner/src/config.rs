@@ -497,8 +497,14 @@ pub struct HookConfig {
 /// An absent field deserializes as an empty `Vec` (no hooks for that event).
 /// `hooks: {}` deserializes as `Some(HooksConfig { .. empty .. })`.
 /// Omitting the `hooks` field entirely deserializes as `None`.
+///
+/// YAML keys are snake_case (e.g. `session_start`). The runtime `HookEvent`
+/// enum exposes PascalCase names (e.g. `"SessionStart"`) via `HookEvent::name()`
+/// which are passed to hook scripts — the two naming conventions are deliberate
+/// (YAML reads human, script payloads read machine).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HooksConfig {
+    // ── Existing (Sprint 4) ────────────────────────────────────────────────
     /// Run before each tool call. Exit 2 blocks the call; stderr → steering message.
     #[serde(default)]
     pub pre_tool_use: Vec<HookConfig>,
@@ -509,6 +515,23 @@ pub struct HooksConfig {
     /// restarts the agent loop (the Harness mechanism).
     #[serde(default)]
     pub stop: Vec<HookConfig>,
+
+    // ── New in Sprint 6 ────────────────────────────────────────────────────
+    /// Run when an agent session starts (before the first turn).
+    #[serde(default)]
+    pub session_start: Vec<HookConfig>,
+    /// Run when an agent session ends (after stop, regardless of restart).
+    #[serde(default)]
+    pub session_end: Vec<HookConfig>,
+    /// Run when the user submits a new prompt (before agent processing).
+    #[serde(default)]
+    pub user_prompt_submit: Vec<HookConfig>,
+    /// Run before context compaction.
+    #[serde(default)]
+    pub pre_compact: Vec<HookConfig>,
+    /// Run after context compaction completes.
+    #[serde(default)]
+    pub post_compact: Vec<HookConfig>,
 }
 
 /// Harness evaluator configuration for `sage test`.
@@ -3753,5 +3776,451 @@ harness:
 
         assert_eq!(harness.evaluator, "/scripts/eval.sh");
         assert_eq!(harness.timeout_secs, Some(60));
+    }
+
+    // ========================================================================
+    // Sprint 6 S6.5: HooksConfig extended fields (8 lifecycle events)
+    //
+    // YAML keys are snake_case (session_start / pre_compact / …). The runtime
+    // HookEvent enum yields PascalCase names ("SessionStart", "PreCompact")
+    // via HookEvent::name() — that asymmetry is intentional and only affects
+    // the hook-script payload, not config parsing tested here.
+    // ========================================================================
+
+    // ── Struct-level basics ────────────────────────────────────────────────────
+
+    #[test]
+    fn hooks_config_default_all_fields_empty() {
+        // Default must produce empty Vecs for every one of the 8 event fields,
+        // including the 5 added in Sprint 6.
+        let hc = HooksConfig::default();
+        assert!(hc.pre_tool_use.is_empty(), "pre_tool_use must default to empty");
+        assert!(hc.post_tool_use.is_empty(), "post_tool_use must default to empty");
+        assert!(hc.stop.is_empty(), "stop must default to empty");
+        assert!(hc.session_start.is_empty(), "session_start must default to empty");
+        assert!(hc.session_end.is_empty(), "session_end must default to empty");
+        assert!(
+            hc.user_prompt_submit.is_empty(),
+            "user_prompt_submit must default to empty"
+        );
+        assert!(hc.pre_compact.is_empty(), "pre_compact must default to empty");
+        assert!(hc.post_compact.is_empty(), "post_compact must default to empty");
+    }
+
+    #[test]
+    fn hooks_config_serde_roundtrip_preserves_new_fields() {
+        // Round-trip through serde_yaml to confirm all 5 new fields are
+        // serialized with stable snake_case keys and deserialized back.
+        let hc = HooksConfig {
+            pre_tool_use: vec![HookConfig {
+                command: "pre-tool.sh".to_string(),
+                timeout_secs: None,
+            }],
+            post_tool_use: vec![HookConfig {
+                command: "post-tool.sh".to_string(),
+                timeout_secs: None,
+            }],
+            stop: vec![HookConfig {
+                command: "stop.sh".to_string(),
+                timeout_secs: None,
+            }],
+            session_start: vec![HookConfig {
+                command: "ss.sh".to_string(),
+                timeout_secs: Some(10),
+            }],
+            session_end: vec![HookConfig {
+                command: "se.sh".to_string(),
+                timeout_secs: Some(20),
+            }],
+            user_prompt_submit: vec![HookConfig {
+                command: "ups.sh".to_string(),
+                timeout_secs: None,
+            }],
+            pre_compact: vec![HookConfig {
+                command: "pre-compact.sh".to_string(),
+                timeout_secs: Some(30),
+            }],
+            post_compact: vec![HookConfig {
+                command: "post-compact.sh".to_string(),
+                timeout_secs: None,
+            }],
+        };
+
+        let yaml = serde_yaml::to_string(&hc).expect("serialize HooksConfig");
+        let decoded: HooksConfig = serde_yaml::from_str(&yaml).expect("deserialize HooksConfig");
+
+        assert_eq!(decoded.session_start.len(), 1);
+        assert_eq!(decoded.session_start[0].command, "ss.sh");
+        assert_eq!(decoded.session_start[0].timeout_secs, Some(10));
+
+        assert_eq!(decoded.session_end.len(), 1);
+        assert_eq!(decoded.session_end[0].command, "se.sh");
+        assert_eq!(decoded.session_end[0].timeout_secs, Some(20));
+
+        assert_eq!(decoded.user_prompt_submit.len(), 1);
+        assert_eq!(decoded.user_prompt_submit[0].command, "ups.sh");
+
+        assert_eq!(decoded.pre_compact.len(), 1);
+        assert_eq!(decoded.pre_compact[0].command, "pre-compact.sh");
+        assert_eq!(decoded.pre_compact[0].timeout_secs, Some(30));
+
+        assert_eq!(decoded.post_compact.len(), 1);
+        assert_eq!(decoded.post_compact[0].command, "post-compact.sh");
+    }
+
+    #[test]
+    fn hooks_config_new_fields_are_public() {
+        // Compile-time check: all 5 new fields are publicly accessible by
+        // their snake_case identifiers. If a field is renamed or made private,
+        // this test fails to compile.
+        let hc = HooksConfig::default();
+        let _ = &hc.session_start;
+        let _ = &hc.session_end;
+        let _ = &hc.user_prompt_submit;
+        let _ = &hc.pre_compact;
+        let _ = &hc.post_compact;
+    }
+
+    // ── YAML parsing — backward compatibility ─────────────────────────────────
+
+    #[test]
+    fn hooks_config_yaml_only_legacy_fields_parses_with_empty_new_fields() {
+        // Legacy config writing only the Sprint-4 fields must still parse, with
+        // all 5 Sprint-6 fields defaulted to empty Vec.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_tool_use:
+    - command: "/scripts/pre.sh"
+  post_tool_use:
+    - command: "/scripts/post.sh"
+  stop:
+    - command: "/scripts/stop.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.expect("hooks block must deserialize");
+        assert_eq!(hooks.pre_tool_use.len(), 1);
+        assert_eq!(hooks.post_tool_use.len(), 1);
+        assert_eq!(hooks.stop.len(), 1);
+        assert!(hooks.session_start.is_empty(), "session_start defaults to empty");
+        assert!(hooks.session_end.is_empty(), "session_end defaults to empty");
+        assert!(
+            hooks.user_prompt_submit.is_empty(),
+            "user_prompt_submit defaults to empty"
+        );
+        assert!(hooks.pre_compact.is_empty(), "pre_compact defaults to empty");
+        assert!(hooks.post_compact.is_empty(), "post_compact defaults to empty");
+    }
+
+    #[test]
+    fn hooks_config_yaml_empty_block_parses_with_all_empty() {
+        // `hooks: {}` with no child keys must yield Some(HooksConfig) where all
+        // 8 event lists are empty.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks: {}
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.expect("hooks: {} must deserialize as Some");
+        assert!(hooks.pre_tool_use.is_empty());
+        assert!(hooks.post_tool_use.is_empty());
+        assert!(hooks.stop.is_empty());
+        assert!(hooks.session_start.is_empty());
+        assert!(hooks.session_end.is_empty());
+        assert!(hooks.user_prompt_submit.is_empty());
+        assert!(hooks.pre_compact.is_empty());
+        assert!(hooks.post_compact.is_empty());
+    }
+
+    #[test]
+    fn hooks_config_yaml_missing_hooks_section_is_none() {
+        // AgentConfig without a hooks field must deserialize with hooks = None
+        // (Sprint 6 additions do not change this existing contract).
+        let config: AgentConfig = serde_yaml::from_str(FEISHU_YAML).unwrap();
+        assert!(
+            config.hooks.is_none(),
+            "omitted hooks field must remain None after Sprint 6 additions"
+        );
+    }
+
+    // ── YAML parsing — new fields (one test per field) ────────────────────────
+
+    #[test]
+    fn hooks_config_yaml_session_start_parses_command_list() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  session_start:
+    - command: "python init.py"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.session_start.len(), 1);
+        assert_eq!(hooks.session_start[0].command, "python init.py");
+        assert_eq!(hooks.session_start[0].timeout_secs, None);
+    }
+
+    #[test]
+    fn hooks_config_yaml_session_end_parses_command_list() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  session_end:
+    - command: "python cleanup.py"
+      timeout_secs: 15
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.session_end.len(), 1);
+        assert_eq!(hooks.session_end[0].command, "python cleanup.py");
+        assert_eq!(hooks.session_end[0].timeout_secs, Some(15));
+    }
+
+    #[test]
+    fn hooks_config_yaml_user_prompt_submit_parses_command_list() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  user_prompt_submit:
+    - command: "/scripts/log-prompt.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.user_prompt_submit.len(), 1);
+        assert_eq!(hooks.user_prompt_submit[0].command, "/scripts/log-prompt.sh");
+        assert_eq!(hooks.user_prompt_submit[0].timeout_secs, None);
+    }
+
+    #[test]
+    fn hooks_config_yaml_pre_compact_parses_command_list() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_compact:
+    - command: "/scripts/snapshot.sh"
+      timeout_secs: 45
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.pre_compact.len(), 1);
+        assert_eq!(hooks.pre_compact[0].command, "/scripts/snapshot.sh");
+        assert_eq!(hooks.pre_compact[0].timeout_secs, Some(45));
+    }
+
+    #[test]
+    fn hooks_config_yaml_post_compact_parses_command_list() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  post_compact:
+    - command: "/scripts/log-compaction.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.post_compact.len(), 1);
+        assert_eq!(hooks.post_compact[0].command, "/scripts/log-compaction.sh");
+        assert_eq!(hooks.post_compact[0].timeout_secs, None);
+    }
+
+    // ── Composition & boundary cases ──────────────────────────────────────────
+
+    #[test]
+    fn hooks_config_yaml_all_eight_events_coexist() {
+        // Specifying one hook per event across all 8 events must produce 8
+        // single-element Vecs.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_tool_use:
+    - command: "/hooks/pre-tool.sh"
+  post_tool_use:
+    - command: "/hooks/post-tool.sh"
+  stop:
+    - command: "/hooks/stop.sh"
+  session_start:
+    - command: "/hooks/session-start.sh"
+  session_end:
+    - command: "/hooks/session-end.sh"
+  user_prompt_submit:
+    - command: "/hooks/user-prompt.sh"
+  pre_compact:
+    - command: "/hooks/pre-compact.sh"
+  post_compact:
+    - command: "/hooks/post-compact.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.pre_tool_use.len(), 1);
+        assert_eq!(hooks.post_tool_use.len(), 1);
+        assert_eq!(hooks.stop.len(), 1);
+        assert_eq!(hooks.session_start.len(), 1);
+        assert_eq!(hooks.session_end.len(), 1);
+        assert_eq!(hooks.user_prompt_submit.len(), 1);
+        assert_eq!(hooks.pre_compact.len(), 1);
+        assert_eq!(hooks.post_compact.len(), 1);
+
+        assert_eq!(hooks.session_start[0].command, "/hooks/session-start.sh");
+        assert_eq!(hooks.session_end[0].command, "/hooks/session-end.sh");
+        assert_eq!(hooks.user_prompt_submit[0].command, "/hooks/user-prompt.sh");
+        assert_eq!(hooks.pre_compact[0].command, "/hooks/pre-compact.sh");
+        assert_eq!(hooks.post_compact[0].command, "/hooks/post-compact.sh");
+    }
+
+    #[test]
+    fn hooks_config_yaml_multi_commands_per_event_preserves_order() {
+        // Multiple hooks for a single new-event field must preserve YAML order.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_compact:
+    - command: "/hooks/first.sh"
+    - command: "/hooks/second.sh"
+      timeout_secs: 20
+    - command: "/hooks/third.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.pre_compact.len(), 3);
+        assert_eq!(hooks.pre_compact[0].command, "/hooks/first.sh");
+        assert_eq!(hooks.pre_compact[0].timeout_secs, None);
+        assert_eq!(hooks.pre_compact[1].command, "/hooks/second.sh");
+        assert_eq!(hooks.pre_compact[1].timeout_secs, Some(20));
+        assert_eq!(hooks.pre_compact[2].command, "/hooks/third.sh");
+        assert_eq!(hooks.pre_compact[2].timeout_secs, None);
+    }
+
+    #[test]
+    fn hooks_config_yaml_unknown_event_key_is_ignored() {
+        // HooksConfig does not use #[serde(deny_unknown_fields)], so unknown
+        // event keys in YAML must be silently ignored — the 8 known fields
+        // parse normally.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  random_event:
+    - command: "foo"
+  session_start:
+    - command: "/hooks/ss.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml)
+            .expect("unknown hook event key must not cause a parse error");
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.session_start.len(), 1);
+        assert_eq!(hooks.session_start[0].command, "/hooks/ss.sh");
+    }
+
+    // ── AgentConfig integration ───────────────────────────────────────────────
+
+    #[test]
+    fn agent_config_with_hooks_all_events_parses() {
+        // Full AgentConfig with hooks for every one of the 8 events parses and
+        // retains all payloads.
+        let yaml = r#"
+name: full-agent
+description: "Agent with all 8 lifecycle hook events"
+llm: { provider: anthropic, model: claude-haiku-4-5-20251001, max_tokens: 4096 }
+system_prompt: "full agent"
+tools:
+  bash: { allowed_binaries: [python3] }
+constraints: { max_turns: 10, timeout_secs: 120 }
+hooks:
+  pre_tool_use:
+    - command: "/hooks/pre-tool.sh"
+  post_tool_use:
+    - command: "/hooks/post-tool.sh"
+  stop:
+    - command: "/hooks/stop.sh"
+  session_start:
+    - command: "/hooks/ss.sh"
+  session_end:
+    - command: "/hooks/se.sh"
+  user_prompt_submit:
+    - command: "/hooks/ups.sh"
+  pre_compact:
+    - command: "/hooks/pre-compact.sh"
+  post_compact:
+    - command: "/hooks/post-compact.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.expect("hooks block must be Some");
+        // Sprint 4 fields intact.
+        assert_eq!(hooks.pre_tool_use[0].command, "/hooks/pre-tool.sh");
+        assert_eq!(hooks.post_tool_use[0].command, "/hooks/post-tool.sh");
+        assert_eq!(hooks.stop[0].command, "/hooks/stop.sh");
+        // Sprint 6 fields present.
+        assert_eq!(hooks.session_start[0].command, "/hooks/ss.sh");
+        assert_eq!(hooks.session_end[0].command, "/hooks/se.sh");
+        assert_eq!(hooks.user_prompt_submit[0].command, "/hooks/ups.sh");
+        assert_eq!(hooks.pre_compact[0].command, "/hooks/pre-compact.sh");
+        assert_eq!(hooks.post_compact[0].command, "/hooks/post-compact.sh");
+    }
+
+    #[test]
+    fn agent_config_hooks_optional_defaults_to_none() {
+        // Reaffirm after Sprint 6 field additions: an AgentConfig YAML without
+        // a top-level `hooks:` key still produces config.hooks == None.
+        let yaml = r#"
+name: no-hooks-agent
+description: "Agent without any hooks section"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(
+            config.hooks.is_none(),
+            "missing hooks section must deserialize to None"
+        );
     }
 }
