@@ -7,9 +7,11 @@ mod context;
 mod daemon;
 mod harness;
 mod serve;
+mod session_archive;
 mod skills;
 mod triggers;
 mod tui;
+mod wiki_trigger;
 
 /// Build an [`EnvFilter`] from explicit option values (no side effects, pure function).
 ///
@@ -209,8 +211,18 @@ enum Commands {
         #[arg(long)]
         suite: String,
         /// Reporter format
-        #[arg(long, default_value = "terminal", value_parser = ["terminal", "json"])]
+        #[arg(long, default_value = "terminal", value_parser = ["terminal", "json", "junit"])]
         reporter: String,
+        /// Filter to run only cases whose name matches this glob/exact pattern.
+        /// Supports * (any chars) and ? (single char). Case-sensitive.
+        #[arg(long)]
+        case: Option<String>,
+        /// Max concurrent test cases (default: 1 = serial).
+        #[arg(long, default_value = "1")]
+        parallel: usize,
+        /// Output directory for reporter artifacts (e.g. JUnit XML files).
+        #[arg(long)]
+        output: Option<String>,
     },
 
     /// Internal: run as a daemon server process (spawned by `sage start`).
@@ -312,13 +324,26 @@ async fn main() -> Result<()> {
             TriggerAction::Start => triggers::run_triggers().await,
             TriggerAction::List => triggers::list_triggers().await,
         },
-        Commands::Test { suite, reporter } => {
-            let rep = if reporter == "json" {
-                harness::Reporter::Json
-            } else {
-                harness::Reporter::Terminal
+        Commands::Test {
+            suite,
+            reporter,
+            case,
+            parallel,
+            output,
+        } => {
+            let rep = match reporter.as_str() {
+                "json" => harness::Reporter::Json,
+                "junit" => harness::Reporter::Junit,
+                _ => harness::Reporter::Terminal,
             };
-            let pass = harness::run_test_suite(&suite, rep).await?;
+            let pass = harness::run_test_suite(
+                &suite,
+                rep,
+                case.as_deref(),
+                parallel,
+                output.as_deref(),
+            )
+            .await?;
             if !pass {
                 std::process::exit(1);
             }

@@ -62,6 +62,9 @@ pub struct AgentConfig {
     /// Harness evaluator configuration for `sage test`.
     #[serde(default)]
     pub harness: Option<HarnessConfig>,
+    /// Wiki self-maintenance configuration (Sprint 7).
+    #[serde(default)]
+    pub wiki: Option<WikiConfig>,
 }
 
 /// LLM provider and model selection.
@@ -474,6 +477,27 @@ pub enum SessionType {
     HarnessRun,
 }
 
+impl SessionType {
+    /// Stable PascalCase name for archive JSONL metadata.
+    ///
+    /// Archive wire format is distinct from config.yaml wire format: config.yaml
+    /// uses snake_case (serde rename_all), archive JSONL uses this PascalCase.
+    /// Both are explicit choices — don't derive archive names from `Debug`.
+    ///
+    /// **CAUTION: wire format invariant**
+    /// These strings are the on-disk archive contract. They must NEVER be renamed —
+    /// only new variants may be added. Renaming breaks the ability to read older
+    /// archive files. Migration schema bumps live in the JSONL `version` field.
+    pub fn archive_name(&self) -> &'static str {
+        match self {
+            SessionType::UserDriven => "UserDriven",
+            SessionType::WikiMaintenance => "WikiMaintenance",
+            SessionType::CraftEvaluation => "CraftEvaluation",
+            SessionType::HarnessRun => "HarnessRun",
+        }
+    }
+}
+
 fn default_auto_load() -> Vec<String> {
     vec!["AGENT.md".to_string(), "memory/MEMORY.md".to_string()]
 }
@@ -540,6 +564,51 @@ pub struct HarnessConfig {
     /// Evaluator timeout in seconds.
     #[serde(default)]
     pub timeout_secs: Option<u32>,
+}
+
+/// Wiki self-maintenance configuration (Sprint 7).
+///
+/// When enabled, the daemon monitors archived sessions under
+/// `<workspace>/raw/sessions/` and triggers a `WikiMaintenance` session
+/// once the unprocessed-session count crosses `trigger_sessions`, subject
+/// to the `cooldown_secs` rate limit.
+///
+/// Defaults are conservative (`enabled: false`) so that opting in is an
+/// explicit YAML edit — otherwise an agent could silently burn LLM tokens
+/// on background maintenance without the operator knowing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiConfig {
+    /// Number of unprocessed archived sessions required to trigger a
+    /// `WikiMaintenance` run. Defaults to 3.
+    #[serde(default = "default_wiki_trigger_sessions")]
+    pub trigger_sessions: u32,
+
+    /// Minimum number of seconds between two consecutive `WikiMaintenance`
+    /// runs. Defaults to 1800 (30 minutes).
+    #[serde(default = "default_wiki_cooldown_secs")]
+    pub cooldown_secs: u64,
+
+    /// Whether wiki self-maintenance is enabled. Defaults to `false` —
+    /// opt-in to avoid unexpected LLM spend.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+fn default_wiki_trigger_sessions() -> u32 {
+    3
+}
+fn default_wiki_cooldown_secs() -> u64 {
+    1800
+}
+
+impl Default for WikiConfig {
+    fn default() -> Self {
+        Self {
+            trigger_sessions: default_wiki_trigger_sessions(),
+            cooldown_secs: default_wiki_cooldown_secs(),
+            enabled: false,
+        }
+    }
 }
 
 /// Memory and knowledge injection configuration.
@@ -2927,6 +2996,74 @@ sandbox:
         let yaml = format!("{}\nmemory:\n  inject_as: prepend_system\n", MINIMAL_YAML);
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         assert!(config.memory.unwrap().session_type.is_none());
+    }
+
+    // ========================================================================
+    // Sprint 7 — WikiConfig (wiki self-maintenance)
+    // ========================================================================
+
+    #[test]
+    fn wiki_config_default_values() {
+        let w = WikiConfig::default();
+        assert_eq!(w.trigger_sessions, 3);
+        assert_eq!(w.cooldown_secs, 1800);
+        assert!(!w.enabled, "enabled must default to false (opt-in)");
+    }
+
+    #[test]
+    fn wiki_config_yaml_empty_map_applies_all_defaults() {
+        // `wiki: {}` — every field takes its default.
+        let yaml = format!("{}\nwiki: {{}}\n", MINIMAL_YAML);
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let w = config.wiki.expect("wiki should be Some for `wiki: {}`");
+        assert_eq!(w.trigger_sessions, 3);
+        assert_eq!(w.cooldown_secs, 1800);
+        assert!(!w.enabled);
+    }
+
+    #[test]
+    fn wiki_config_yaml_full_fields_parse() {
+        let yaml = format!(
+            "{}\nwiki:\n  trigger_sessions: 5\n  cooldown_secs: 600\n  enabled: true\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let w = config.wiki.unwrap();
+        assert_eq!(w.trigger_sessions, 5);
+        assert_eq!(w.cooldown_secs, 600);
+        assert!(w.enabled);
+    }
+
+    #[test]
+    fn wiki_config_absent_in_agent_config_is_none() {
+        // When the `wiki:` key is entirely missing, the field must be `None`.
+        let config: AgentConfig = serde_yaml::from_str(MINIMAL_YAML).unwrap();
+        assert!(config.wiki.is_none(), "wiki should be None when absent");
+    }
+
+    #[test]
+    fn wiki_config_yaml_roundtrip() {
+        let cfg = WikiConfig {
+            trigger_sessions: 7,
+            cooldown_secs: 120,
+            enabled: true,
+        };
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        let back: WikiConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(back.trigger_sessions, 7);
+        assert_eq!(back.cooldown_secs, 120);
+        assert!(back.enabled);
+    }
+
+    #[test]
+    fn wiki_config_partial_fields_fill_defaults() {
+        // Only `enabled` is specified — the other two fall back to defaults.
+        let yaml = format!("{}\nwiki:\n  enabled: true\n", MINIMAL_YAML);
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let w = config.wiki.unwrap();
+        assert!(w.enabled);
+        assert_eq!(w.trigger_sessions, 3);
+        assert_eq!(w.cooldown_secs, 1800);
     }
 
     // ── M2: error paths ──────────────────────────────────────────────────────

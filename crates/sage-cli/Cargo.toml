@@ -29,6 +29,7 @@ futures = { workspace = true }
 chrono = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
+regex = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
