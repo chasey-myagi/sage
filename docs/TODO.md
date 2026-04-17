@@ -1,12 +1,31 @@
-# Sage v1.0.0 Roadmap
+# Sage 完整 TODO 清单
 
-从 agent-caster 到 Sage v1.0.0 — `docs/future.md` 完整最终形态的交付清单。
+从 agent-caster 到 Sage 完整产品形态的全量交付清单。综合 `docs/future.md`、`docs/roadmap.md`、`docs/design/` 各设计文档，以及代码现状探索结果。
 
-**起点**：agent-caster, 24,277 行 Rust, 876 tests, 6 crates, 4 LLM providers, 7 tools, 三层循环, Before/AfterToolCall hooks.
+**起点**：agent-caster, 24,277 行 Rust, 876 tests, 6 crates, 4 LLM providers, 7 tools, 三层循环。
 
 ---
 
-## v0.1.0 — First Light
+## ⚠️ 设计与实现差异说明
+
+以下是当前代码与设计文档之间的已知差异，后续需统一：
+
+| 设计文档命名 | 当前代码命名 | 位置 | 建议 |
+|------------|------------|------|------|
+| `on_pre_tool_use` | `on_before_tool_call` | engine.rs | 统一为设计文档命名（v0.9.0 重构时一并改） |
+| `on_post_tool_use` | `on_after_tool_call` | engine.rs | 同上 |
+| `HookEvent` 系统 | 不存在 | — | v0.9.0 H1 新增 |
+| `SessionType` | 不存在 | — | v0.7.0 M3 新增 |
+| `AgentConfig.hooks` | 不存在 | config.rs | v0.9.0 H1 新增 |
+| `AgentConfig.memory` | 不存在 | config.rs | v0.7.0 M3 新增 |
+| `AgentConfig.wiki` | 不存在 | config.rs | v0.8.0 新增 |
+| `SandboxConfig.workspace_host` | 不存在 | config.rs | v0.7.0 M2 新增 |
+| `SandboxConfig.mode` (none/microvm) | 不存在 | config.rs | v0.8.0 新增 |
+| `SandboxConfig.rootfs` tier | 不存在 | config.rs | v0.8.0 新增 |
+
+---
+
+## v0.1.0 — First Light ✅
 
 > 第一次端到端跑通：`sage run` 用真实 LLM 完成一个多步编码任务。
 
@@ -23,384 +42,696 @@
 
 ### P1: SageEngine 嵌入式 API ✅
 
-- [x] `sage-runtime/src/engine.rs` — SageEngine + SageEngineBuilder (~1037 行)
+- [x] `sage-runtime/src/engine.rs` — SageEngine + SageEngineBuilder
   - Builder pattern: `.system_prompt()` `.provider()` `.model()` `.llm_provider()`
   - 持有 atomic config fields，每次 `run()` 新建 Agent
 - [x] `engine.run(msg) -> EventReceiver<AgentEvent>`
-  - RoutingProvider 按 model.api 分发到正确 ApiProvider
-  - ChannelSink 桥接 AgentEventSink → EventStream
-- [x] SageTool = `pub use AgentTool as SageTool`
-  - `.register_tool(impl AgentTool)` 动态注册
-- [x] Hooks: `.on_before_tool_call()` / `.on_after_tool_call()`
+- [x] SageTool = `pub use AgentTool as SageTool`，`.register_tool()` 动态注册
+- [x] Hooks: `.on_before_tool_call()` / `.on_after_tool_call()` *(设计文档命名：on_pre/post_tool_use)*
 - [x] 公共 API: SageEngine, SageEngineBuilder, SageError, SageTool, AgentEvent, EventReceiver
 - [x] 21 tests (9 builder + 9 run + 3 resolve)
-- [ ] Lifecycle Hooks 扩展 (on_agent_start/on_agent_end/on_error) — deferred to v0.1.1
+- [ ] Lifecycle Hooks 扩展 (on_agent_start/on_agent_end/on_error) — 推迟到 v0.9.0 H1
 
 ### P2: 端到端联调（无沙箱）✅
 
 - [x] `sage run` CLI 可用，终端流式输出 AgentEvent
-- [x] **真实 LLM 调用验证**（Qwen）— test_real_qwen_single_turn, API key gated
-- [x] 多轮 tool call（>3 轮）— run_multi_turn_tool_calls_four_turns (4 轮 + final)
-- [x] 并行 tool call — run_parallel_tool_calls_two_tools_one_turn (2 tools, join_all)
-- [x] Steering 队列验证 — run_steering_message_appears_in_events + reaches_provider_context
+- [x] 真实 LLM 调用验证（Qwen）
+- [x] 多轮 tool call（>3 轮）
+- [x] 并行 tool call
+- [x] Steering 队列验证
 
-### Review 发现的技术债
+### Review 技术债
 
-- [x] ~~double AgentEnd emit in error path~~ (fixed)
-- [x] ~~resolve_or_construct_model called twice~~ (fixed)
-- [x] ~~RoutingProvider silent fallback~~ (fixed)
-- [x] ~~`register_builtin_providers()` 每次 `run()` 调用~~ (fixed: `std::sync::Once` guard)
-- [x] ~~RoutingProvider error 缺少 Done 事件~~ (fixed: Error + Done{StopReason::Error})
-- [x] ~~`builtin_tools()` 静默忽略未知 tool name~~ (fixed: tracing::warn)
-- [x] ~~RoutingProvider 路径零测试覆盖~~ (fixed: routing_provider_missing_api_returns_error_and_done)
-- [x] ~~CLI binary 名 sage-caster → sage~~ (fixed: [[bin]] name="sage" + package rename sage-cli)
-- [x] ~~SandboxBuilder guest path agent-guest → sage-guest~~ (fixed)
-- [x] ~~serve.rs 不打印 final assistant reply~~ (fixed: 从 AgentEnd messages 提取并 println)
-- [x] ~~CLAUDE.md 中 `cargo run -p sage` 命令过期~~ (fixed: 更新为 sage-cli)
-- [ ] 无 cancellation 机制（CancellationToken）— v0.1.1
-- [ ] 5 个 Arc newtype wrapper boilerplate — 需改 Agent 接口
-- [ ] test_helpers 对外部 crate 不可见 — 需 feature flag
-- [ ] 全局 registry → 考虑改为 Engine 实例级 — v0.2.0
-
-### v0.1.0 验收
-
-```bash
-sage run --config configs/coding-assistant.yaml \
-    --message "创建一个 Rust hello world 项目并运行它"
-# Agent 完成多步任务，流式输出事件，正常退出
-```
+- [x] double AgentEnd / resolve_or_construct_model / RoutingProvider 等 bug 全部修复
+- [ ] CancellationToken — 仍未实现
+- [ ] 5 个 Arc newtype wrapper boilerplate
+- [ ] 全局 registry → Engine 实例级 — 仍未实现
 
 ---
 
-## v0.2.0 — Sandboxed
+## v0.2.0 — Sandboxed ✅
 
-> 工具执行从本地进程切换到 microVM。Sage 区别于普通 Agent 框架的核心。
+> 工具执行从本地进程切换到 microVM。
 
 ### P3: Sandbox 对接 msb_krun ✅
 
 - [x] msb_krun 编译验证（macOS HVF / Linux KVM）
-- [x] 最小 rootfs 构建
-  - sage-guest 交叉编译 aarch64-unknown-linux-musl (static ELF)
-  - rootfs = sage-guest binary + busybox
-  - 构建脚本自动化 (`scripts/build-sandbox.sh`)
-- [x] VM 启动链路 (P3-A)
-  - SandboxBuilder::create() → VM 启动 → Guest Agent PID 1
-  - Host ↔ Guest virtio-console CBOR 通信验证
-- [x] 7 个工具通过 sandbox 执行 (P3-B)
-  - ToolBackend trait 抽象 (LocalBackend / SandboxBackend)
-  - bash → `sandbox.shell()` → stdout
-  - read/write/edit → `sandbox.fs_read/fs_write`
-  - grep/find/ls → VM 内执行
-- [x] Volume mount（只读 / 读写）(P3-C)
-  - VolumeMount serde → SANDBOX_VOLUMES → virtiofs → SAGE_VOLUMES → guest mount
-  - Path traversal 防护, MS_NOEXEC 默认 flag
-- [x] VM 生命周期管理 (P3-D)
-  - SandboxSettings + SageEngineBuilder::sandbox()
-  - 任务开始 → 创建 VM / 任务结束 → stop + 清理
-  - Drop 兜底 SIGKILL
-
-### v0.2.0 验收
-
-```bash
-sage run --config configs/coding-assistant.yaml \
-    --message "在 /workspace 创建文件并验证内容"
-# 工具在 microVM 内执行，Host 无感知
-```
+- [x] 最小 rootfs 构建（sage-guest 交叉编译 aarch64-unknown-linux-musl）
+- [x] VM 启动链路：SandboxBuilder::create() → VM → Guest Agent PID 1
+- [x] Host ↔ Guest virtio-console CBOR 通信
+- [x] 7 个工具通过 sandbox 执行（ToolBackend trait：LocalBackend / SandboxBackend）
+- [x] Volume mount（只读 / 读写）+ Path traversal 防护
+- [x] VM 生命周期管理：创建/停止/Drop 兜底
 
 ---
 
-## v0.3.0 — Full LLM Coverage
+## v0.3.0 — Full LLM Coverage ✅
 
 > 20+ Provider 全量覆盖，对齐 pi-mono。
 
-### P4: LLM Provider 补全
+### P4: LLM Provider 补全 ✅
 
-**Tier 1（云厂商变体）：**
-
-- [x] Bedrock provider — AWS SigV4 签名 + Anthropic on Bedrock streaming
-- [x] Vertex AI provider — Google OAuth2 + Gemini on Vertex streaming
-- [x] Azure OpenAI provider — Azure AD / API key + deployment endpoint
-
-**Tier 2（独立 Provider 或通过 OpenAI Compat）：**
-
-- [x] Groq（15 models, detect_compat handles compat dynamically）
-- [x] Mistral
-- [x] xAI (Grok)（24 models, detect_compat handles compat dynamically）
-- [x] DeepSeek — pi-mono 无独立 provider，模型通过 OpenRouter/Groq/Bedrock 提供
-- [x] Ollama / LM Studio / vLLM — 通过 OpenAI compat + discover_models() 支持，无需 catalog 条目
-- [x] GitHub Copilot
-- [x] Together / Fireworks / SambaNova — pi-mono 无独立 provider，通过 OpenRouter 提供
-- [x] Cerebras（4 models, detect_compat handles as is_non_standard）
-
-**基础设施：**
-
-- [x] openai_compat.rs 通用 OpenAI 兼容 provider 对齐 pi-mono
-  - ThinkingBlock roundtrip via signature-based dynamic field name
-  - tool_name support (requiresToolResultName), hasToolHistory fallback
-  - strict=false on tool defs, skip empty assistant, finish_reason mapping
-  - 12 new tests, code review 8.83/10 (debea21)
-- [x] 模型自动发现（`/v1/models` 端点探测）
-  - discover_models() with 15s timeout, discover_models_with_client()
-  - DiscoveredModel serde + construct_model_from_discovered (8K conservative ctx)
-  - DiscoveryError enum, tracing::debug for skipped entries
-  - 17 new tests (mockito mock server), code review 8.48/10 (690c77e)
-- [x] redacted_thinking 往返（LlmMessage 增加 thinking variant）
-  - ThinkingBlock struct + thinking_blocks field on LlmMessage::Assistant
-  - ThinkingBlockEnd event + per-block accumulator
-  - Anthropic serialize/deserialize for thinking/redacted_thinking
-  - Full roundtrip chain: SSE → accumulator → Content → LlmMessage → API
-  - 24 new tests, code review 8.90/10 (85b4009)
-
-### v0.3.0 验收
-
-- [x] 每个 Provider 至少一个集成测试（真实 API 或 mock）
-  - 56 个 mockito-based 集成测试，覆盖 6 个 HTTP provider
-  - 文本流、工具调用生命周期、Usage token、Thinking/Reasoning、错误处理、事件顺序
-  - test-review 8.475/10, code-review 8.46/10 (957fcd1)
-- [x] `sage run --config X.yaml` 可切换所有已支持 Provider
-  - `--provider` / `--model` CLI 覆盖已实现
-  - 3 个示例配置：coding-assistant (qwen), deepseek-coder, feishu-assistant (anthropic)
-  - Model catalog 支持 100+ 内置模型 + 自定义 base_url/api_key_env
+- [x] Bedrock / Vertex AI / Azure OpenAI
+- [x] Groq / Mistral / xAI / DeepSeek / Ollama / GitHub Copilot / Cerebras 等
+- [x] openai_compat.rs 通用兼容 provider
+- [x] 模型自动发现（`/v1/models` 探测）
+- [x] redacted_thinking 往返（ThinkingBlock roundtrip）
+- [x] 56 个 mockito-based 集成测试
 
 ---
 
-## v0.4.0 — Production Runtime
+## v0.4.0 — Production Runtime ✅（P5.5 已补全）
 
-> 长对话、配置简化、安全加固 — 生产环境所需的运行时能力。
+> 长对话、配置简化、安全加固。
 
 ### P5: 上下文压缩 (Compaction) ✅
 
-- [x] `sage-runtime/src/compaction.rs` (~2962 行, 103 tests)
-  - token 估算器（chars/4 启发式, 图片/工具截断）
-  - should_compact 阈值检测 + is_context_overflow (13 错误模式)
-  - find_cut_point 算法（保留最近 token, 分裂 turn 检测）
-  - extract_file_operations（从 tool call 参数提取读写路径）
-  - prepare_compaction / compact 两阶段工作流
-  - 三套摘要 prompt（初始/更新/分裂 turn 前缀）
-  - safe_truncate UTF-8 安全截断
-  - ContextOverflowHook trait（Compact/Truncate/CustomSummary/Abort）
-- [x] 压缩策略
-  - 截断：truncate_messages 保留最近 N tokens
-  - LLM 摘要：compact() 调 LLM 生成摘要 + CompactionSummaryMessage
-- [x] on_context_overflow hook（ContextOverflowHook trait）
-- [x] 集成到 agent_loop.rs
-  - try_compact() 异步辅助（emit events, fallback to truncate）
-  - 主动压缩（LLM 调用前 should_compact 检测）
-  - 被动压缩（LLM 响应后 overflow 检测 + 安全重试）
-  - CompactionStart/CompactionEnd 事件
-  - build_llm_context 统一复用 transform.rs（消除代码重复）
-- [x] test-review 8.54/10, code-review 7.95/10 (165e6d0)
+- [x] `sage-runtime/src/compaction.rs`（~2962 行，103 tests）
+  - token 估算器 + should_compact + find_cut_point + 三套摘要 prompt
+  - ContextOverflowHook trait（Compact / Truncate / CustomSummary / Abort）
+- [x] 压缩策略：截断 + LLM 摘要
+- [x] on_context_overflow hook 集成到 agent_loop.rs
 
 ### P6: Runner 增强 — Toolset 预设 ✅
 
 - [x] Toolset 枚举：Coding / Ops / Web / Minimal / Readonly
-  - coding: 全部 7 工具, bash `*` 通配
-  - ops: bash + read + grep + find + ls, 29 个运维命令白名单
-  - web: bash + read, 6 个 HTTP 工具白名单
-  - minimal/readonly: read + grep + find + ls, 只读
-- [x] AgentConfig YAML 支持 `toolset: coding` 简写
-  - expand() 展开预设 → resolved() 合并显式覆盖
-  - 向后兼容：无 toolset 字段时行为不变
-- [x] Toolset ↔ ToolPolicy 联动（预设自带 allowed_binaries）
-- [x] 34 个新测试, test-review PASS, code-review 8.50/10 (15ea633)
+- [x] AgentConfig YAML `toolset` 字段支持
+- [x] Toolset ↔ ToolPolicy 联动
 
-### P5.5: 上下文工程增强（Context Engineering）
+### P5.5: 上下文工程增强 ✅（已全部实现，TODO.md 之前滞后）
 
-> 参考 Pi (Warp) 和 Claude Code 的上下文工程，在引擎层提升长对话效率和 LLM 成本控制。
-> 分析来源：`context-engineering-report/index.html`
+**P0 — Microcompact 双层压缩 ✅**
 
-**P0 — Microcompact 双层压缩**
+- [x] `compaction.rs` 新增 `microcompact()` 轻量清理层（`microcompact_threshold: f32`，默认 0.75）
+- [x] agent_loop.rs 集成：先 microcompact → 还不够 → 再 full compaction
+- [x] 零 LLM 调用开销
 
-- [ ] `compaction.rs` 新增 `microcompact()` 轻量清理层
-  - 遍历历史，清除超过 N 轮之前的 ToolResultMessage 内容
-  - 替换为 `[tool result cleared - {tool_name}: {byte_count} bytes]`
-  - 保留消息结构（tool_call_id, tool_name, is_error）
-  - Thinking blocks 清理：只保留最近 2-3 个 turn 的 thinking
-  - 触发阈值：`microcompact_threshold`（默认 0.75 context usage）
-- [ ] agent_loop.rs 集成：先 microcompact → 还不够 → 再 full compaction
-- [ ] 零 LLM 调用开销，比当前纯 LLM 摘要更快更省
-- 参考：CC `services/compact/apiMicrocompact.ts` 的 `clear_tool_uses` 策略
+**P1 — Anthropic Provider Prompt Caching ✅**
 
-**P1 — Anthropic Provider Prompt Caching**
+- [x] `providers/anthropic.rs`：system prompt block 加 `cache_control: { type: "ephemeral" }`
+- [x] 最后一条 user message 加 `cache_control: { type: "ephemeral" }`
+- [x] 验证：连续对话中 Usage.cache_read > 0
 
-- [ ] `providers/anthropic.rs` 给 system prompt block 加 `cache_control: { type: "ephemeral" }`
-- [ ] 最后一条 user message 加 `cache_control: { type: "ephemeral" }`
-- [ ] 两个 cache breakpoint 足够引擎层使用（不需要 CC 的 memoized section 复杂度）
-- [ ] 验证：连续对话中 Usage.cache_read > 0
-- 参考：CC `services/api/claude.ts` 的 per-block cache_control
+**P1 — SystemPromptBuilder ✅**
 
-**P1 — SystemPromptBuilder**
+- [x] `sage-runtime/src/system_prompt.rs` — `SystemPromptBuilder` + `PromptSection { name, content, cacheable }`
+- [x] `.section()` / `.cacheable_section()` / `.build()`
+- [x] Provider 层根据 `cacheable` 标记决定是否加 `cache_control`
 
-- [ ] 新增 `sage-runtime/src/system_prompt.rs`
-  - `SystemPromptBuilder` + `PromptSection { name, content, cacheable }`
-  - `.section(name, content)` / `.cacheable_section(name, content)` / `.build()`
-- [ ] Provider 层根据 `cacheable` 标记决定是否加 `cache_control`
-- [ ] SageEngineBuilder 接受 `SystemPrompt` 替代裸 `String`（向后兼容）
-- [ ] 上层项目可结构化组装 prompt（base + tools_guide + project_context + metadata）
-- 参考：Pi `core/system-prompt.ts` 的 `buildSystemPrompt()` 动态拼装
+**P2 — Context Budget 机制 ✅**
 
-**P2 — Context Budget 机制**
+- [x] `ContextBudget` struct（context_window / system_reserve / output_reserve / history_budget）
+- [x] `microcompact_threshold: f32` / `compaction_threshold: f32`
 
-- [ ] 新增 `ContextBudget` struct
-  - `context_window`, `system_reserve`, `output_reserve`, `history_budget`
-  - `microcompact_threshold: f32` (0.75), `compaction_threshold: f32` (0.90)
-- [ ] 主动预算管理替代被动溢出检测
-- [ ] 集成到 `CompactionSettings`，与现有 `reserve_tokens` 对齐
+**P2 — transformContext Hook ✅**
 
-**P2 — transformContext Hook**
-
-- [ ] SageEngineBuilder 新增 `.on_transform_context(Fn(&mut Vec<AgentMessage>))`
-- [ ] 在 `agent_loop.rs` LLM 调用前执行，允许上层项目：
-  - 注入记忆/项目上下文（产品层做记忆，引擎层提供注入点）
-  - 在发送前过滤敏感信息
-  - 实现自定义压缩策略
-- [ ] 对齐 future.md "学习/记忆不做，上层项目通过 Hooks 实现"
-- 参考：Pi `agent/src/types.ts` 的 `transformContext()` option
-
-**不做（产品层职责）：**
-
-| CC/Pi 能力 | 理由 |
-|-----------|------|
-| 结构化记忆系统 (memdir) | future.md 明确"不做"，上层项目职责 |
-| CLAUDE.md / AGENTS.md 指令层级 | 产品层指令系统 |
-| System Reminder 注入 | 产品层的中间对话注入 |
-| Skills / Prompt Templates | 产品层扩展 |
-| Deferred Tool Loading | Sage 工具集小（7 个），无需延迟加载 |
-| CC sticky-on latch / cache break detection | 过度工程，简单 cache_control 足够 |
+- [x] SageEngineBuilder `.on_transform_context(Fn(&mut Vec<AgentMessage>))`
+- [x] agent_loop.rs LLM 调用前执行
 
 ### P7: 安全加固（Layer 3）✅
 
-- [x] seccomp-bpf profile
-  - Guest Agent 启动加载 BPF filter（手写 sock_filter 指令）
-  - 精简 allowlist：移除 SYS_seccomp/SYS_setrlimit/Landlock syscalls，添加 SYS_close_range
-  - 拒绝 ptrace/mount/reboot 等危险系统调用
-- [x] Landlock LSM
-  - allowed_paths allowlist，/dev 只读 + /dev/null,zero,urandom 可写
-  - allowed_paths 从 volume guest_paths + 默认路径推导
-- [x] 网络策略
-  - airgapped（默认）/ whitelist（待 TSI 支持）/ full（调试）
-- [x] 资源限制
-  - RLIMIT_NOFILE / RLIMIT_FSIZE / RLIMIT_NPROC + 值钳位
-  - tmpfs 磁盘限额
+- [x] seccomp-bpf profile（BPF filter + allowlist）
+- [x] Landlock LSM（allowed_paths allowlist）
+- [x] 网络策略（airgapped / whitelist / full）
+- [x] 资源限制（RLIMIT_NOFILE / RLIMIT_FSIZE / RLIMIT_NPROC + tmpfs 限额）
 - [x] GuestSecurityConfig 共享类型 + fail-closed 语义
-- [x] 安全测试（38 guest + 13 sandbox + 11 CLI, 两轮 Linus review）
-
-### v0.4.0 验收
-
-- 30+ turns 长对话自动压缩不 OOM
-- microcompact 在 full compaction 之前触发，零 LLM 开销
-- Anthropic provider 连续对话 cache_read > 0
-- SystemPromptBuilder API 可用，上层项目可结构化组装 prompt
-- seccomp/Landlock 在 Guest 生效
-- airgapped 模式下 Guest 无法外联
 
 ---
 
-## v0.5.0 — Advanced Sandbox
+## v0.5.0 — Advanced Sandbox *(推迟到 v1.x)*
 
 > 沙箱高级能力 — OCI 镜像、VM 预热池、快照恢复。
+>
+> **推迟原因**：v0.8.0 引入 `sandbox.mode: none` 作为本地部署默认模式，个人 Agent 场景不需要这些能力。OCI / VM Pool / Snapshot 是多租户生产场景才用得上的，v1.x 做。
 
-### P8: 高级沙箱
+### P8: 高级沙箱（v1.x）
 
-- [ ] OCI 镜像支持
-  - 用户自定义 rootfs（Docker image → OCI → rootfs）
-  - 预装 Python / Node / Rust 工具链的镜像
-- [ ] VM 预热池
-  - 预创建 N 个 idle VM
-  - 任务到来时从池中取，减少冷启动延迟
-- [ ] VM 快照 / 快速恢复
-  - checkpoint VM 状态
-  - 从快照恢复（秒级）
-- [ ] 并发控制
-  - Engine Semaphore（max_concurrent）
-  - 超限排队 / 拒绝策略
-
-### v0.5.0 验收
-
-- OCI 镜像构建 + 使用流程跑通
-- VM 预热池冷启动延迟 < 500ms
-- 并发 3 个 Agent 互不干扰
+- [ ] OCI 镜像支持（Docker image → OCI → rootfs，预装工具链）
+- [ ] VM 预热池（预创建 N 个 idle VM，任务到来时从池中取）
+- [ ] VM 快照 / 快速恢复（checkpoint + 秒级恢复）
+- [ ] 并发控制（Engine Semaphore + 排队/拒绝策略）
 
 ---
 
 ## v0.6.0 — Observability & DevEx
 
-> 可观测性 + 开发体验。
+> 可观测性 + 构建流水线。（`sage test` 合并到 v0.7.0+ Harness 系统）
 
 ### P9: 运维
 
-- [ ] OpenTelemetry 链路追踪
-  - Agent 执行全链路 span
-  - LLM 调用 span（provider / model / latency / tokens）
-  - Tool 执行 span
-- [ ] 结构化日志
-  - tracing crate 集成
-  - JSON 格式输出
-  - 日志级别可配（AgentConfig / env）
-- [ ] 健康上报
-  - pressure 指标（CPU / 内存 / 并发数）
-  - 与 Rune Runtime 上报对接（可选）
+- [ ] OpenTelemetry 链路追踪（Agent 执行 / LLM 调用 / Tool 执行全链路 span）
+- [x] 结构化日志（tracing crate + `SAGE_LOG_FORMAT=json` + `SAGE_LOG`/`RUST_LOG` directive）
+- [ ] 健康上报（pressure 指标 + 可选 Rune Runtime 对接）
 
-### P10: 构建流水线
+### P10: 构建流水线 ✅
 
-- [ ] macOS HVF entitlements 签名（codesign）
-- [ ] 交叉编译
-  - sage-guest: aarch64-unknown-linux-musl
-  - sage-cli: macOS arm64 + Linux x86_64
-- [ ] CI 流水线
-  - cargo test + clippy + fmt
-  - 交叉编译产物
-  - 集成测试（mock provider）
+- [x] macOS HVF entitlements 签名（codesign + `entitlements/sage.entitlements`，CI build.yml 集成）
+- [x] 交叉编译：sage-guest (aarch64-linux-musl) + sage-cli (macOS arm64 / Linux x86_64 musl)
+- [x] CI 流水线（`.github/workflows/ci.yml`：fmt + clippy + build + test workspace）
+- [x] Release 流水线（`.github/workflows/build.yml`：tag 触发，产出三个二进制 artifact）
 
-### P11: sage test 子命令
+---
 
-- [ ] 测试用例格式（YAML: input → expected behavior）
-- [ ] 批量运行 + 报告输出
-- [ ] CI/CD 集成
+## v0.7.0 — Agent Registry + Workspace + Memory
 
-### v0.6.0 验收
+**目标**：建立 Sage Agent 身份模型。Agent 有名字、持久化工作空间、跨会话记忆。
 
-- OTel 链路可在 Jaeger 中查看
-- `sage test` 跑通测试套件
-- 交叉编译产物可直接部署
+### M1：Agent 注册与发现
+
+- [x] `~/.sage/agents/<name>/config.yaml` 规范解析（新增 `memory` 字段、`sandbox.workspace_host`）
+  - 实际落地：配置文件叫 `config.yaml`（非 `agent.yaml`），且 AGENT.md 与 config.yaml 分离
+- [x] `sage init --agent <name>` — 创建 Agent 目录结构 + 模板 config.yaml + AGENT.md + memory/MEMORY.md + workspace/
+- [x] `sage list` — 列出所有已注册 Agent（仅 name，未含 description / workspace 大小）
+- [x] `sage validate --agent <name>` — 校验 config.yaml 合法性（serde_yaml 解析）
+- [ ] `sage list` 展开 description + workspace 体积
+- [ ] `sage validate` 额外校验 workspace 路径可访问性
+- [ ] **[P2] Workspace 按调用方目录名解析，而非 YAML `name` 字段**：`sage-cli/src/serve.rs:381-383` 的 `build_engine_for_agent` 用 `config.name` 去 join `sage_agents_dir()`；但 config 本身是按 `~/.sage/agents/<invoked-name>/config.yaml` 路径加载的。目录被复制/重命名或 `name:` 字段漂移后，chat/daemon 会读错 workspace 的 memory/skills（甚至静默读不到）。修法：把 `invoked_name` 显式传进 `build_engine_for_agent`，或把 agent_dir 的路径一路透传，不要从可变 YAML 字段反推
+
+**Workspace 目录结构**：
+
+```
+~/.sage/agents/<name>/
+├── agent.yaml
+└── workspace/
+    ├── SCHEMA.md          # Wiki 锚点
+    ├── AGENT.md           # 认知框架（注入 system prompt）
+    ├── memory/
+    │   ├── MEMORY.md      # 索引（注入 system prompt）
+    │   └── *.md
+    ├── raw/sessions/      # 对话归档（ingest 后标记 processed）
+    ├── wiki/
+    │   ├── index.md / log.md / overview.md
+    │   └── pages/
+    ├── assets/
+    ├── craft/             # Agent 自管理产物
+    └── metrics/           # TaskRecord
+```
+
+### M2：Workspace 挂载 ✅
+
+- [x] `AgentConfig.sandbox.workspace_host: Option<PathBuf>`
+- [x] tilde 展开（`deserialize_workspace_host` 自定义反序列化器）
+- [x] `SandboxBuilder` 将 workspace_host 作为读写 `VolumeMount`，guest path = `/workspace`（`serve.rs` L381/L613）
+- [x] landlock `allowed_paths` 自动加入 `/workspace`
+- [x] 首次启动时 `fs::create_dir_all` 自动创建 workspace 目录（`init_agent` L101）
+- [x] VM 销毁后 workspace 内容保留（Volume mount 语义天然满足）
+
+### M3：知识系统初始化
+
+- [x] `AgentConfig.memory.auto_load: Vec<String>` — 默认 `["AGENT.md", "memory/MEMORY.md"]`
+- [x] `AgentConfig.memory.inject_as: MemoryInjectMode` — `PrependSystem | InitialMessage`
+  - ⚠️ `InitialMessage` 当前回退为 `PrependSystem`（`serve.rs` L263 有 TODO warning）
+- [x] 启动时读取 auto_load 文件，拼成 memory block（`context::prepend_memory_sections`）
+- [ ] 通过 `SystemPromptBuilder.cacheable_section("memory", ...)` 注入享受 prompt caching
+  - 当前实现是字符串拼接（`context.rs`），未走 `SystemPromptBuilder` 的 cacheable section
+- [x] 文件不存在时静默跳过（`load_memory_sections` L201）
+- [ ] **[P2] `sage run --config` 也必须走完整 prompt assembly**：`sage-cli/src/serve.rs:794-797` 现在 `run` 路径仍直接把裸 `config.system_prompt` 塞进 engine，没有复用 `build_engine_for_agent` 的 memory / workspace skills / crafts 注入逻辑。结果是同一个 agent config 放在 `~/.sage/agents/...` 下时，`sage run` 和 `sage chat` / daemon 的 system prompt 语义不一致。修法：抽出共享的 prompt assembly helper，`run` / `chat` / daemon 全部统一走它
+- [ ] 首次启动初始化目录结构 + 生成 `SCHEMA.md` + `wiki/index.md` / `log.md` / `overview.md` 空模板
+  - 当前 `init_agent` 只建 `AGENT.md` / `memory/MEMORY.md` / `config.yaml` / `workspace/`，不建 wiki 骨架
+- [x] Skill 扫描（`workspace/skills/` + `~/.sage/skills/`，按 `*.md` 全量拼接到 system prompt）
+- [ ] `.agent/skills/` 平台级路径 + 自动安装 `chasey-myagi/llm-wiki` 4 个 Skills
+- [ ] `workspace/craft/` 目录与 SOP frontmatter 解析
+- [x] **新增 `sage-runner` 结构体**（`config.rs`：`MemoryConfig` / `MemoryInjectMode` / `SandboxConfig` / `SessionType`）：
+
+```rust
+pub struct MemoryConfig {
+    pub auto_load: Vec<String>,
+    pub inject_as: MemoryInjectMode,
+}
+pub enum MemoryInjectMode { PrependSystem, InitialMessage }
+
+pub struct SandboxConfig {
+    pub cpus: u32,
+    pub memory_mib: u32,
+    pub network: NetworkMode,
+    pub workspace_host: Option<PathBuf>,
+    // v0.8.0 追加：mode, rootfs
+}
+
+pub enum SessionType {
+    UserDriven,
+    WikiMaintenance,
+    CraftEvaluation,
+    HarnessRun,        // v0.9.0 Harness 追加
+}
+```
+
+- [ ] **TaskRecord 采集（MetricsCollector）**：
+  - [x] `TaskRecord` 结构体 + ULID task_id（`sage-runner/src/metrics.rs`）
+  - [ ] 订阅 AgentEvent 流（MetricsCollector 尚未实现）
+  - [ ] 累积每轮 `TurnEnd.message.usage`、工具调用/错误次数、压缩次数（字段定义了但没人写）
+  - [ ] UserDriven 会话结束时写 `workspace/metrics/<task_id>.json`
+  - [ ] 定期更新 `workspace/metrics/summary.json`（最近 50 条滚动聚合）
+  - [ ] **[P2] `summary.json` 更新要防并发 finalizer 丢记录**：`sage-runner/src/metrics.rs:267-274` 当前是读旧 `summary.json` → prepend 本次记录 → rename 覆盖，两个 `UserDriven` 会话几乎同时结束时会发生 last-writer-wins，把其中一条新 session 从 recent-50 摘要里静默抹掉。需要加串行化、文件锁，或 merge/retry 逻辑
+  - [ ] WikiMaintenance / CraftEvaluation / HarnessRun 不写 TaskRecord（采集逻辑缺位）
+  - [ ] **[P2] `sage craft-score` 读取 metrics 路径也要走 `sandbox.workspace_host`**：`sage-cli/src/serve.rs:351-353` 当前硬编码 `~/.sage/agents/<agent>/workspace/metrics`，但支持外置 workspace 的 agent 会把 TaskRecord 写到 `config.sandbox.workspace_host/metrics`。这会让 `craft-score` 在受支持配置下读错目录，静默显示空/旧 craft 统计。修法：像 `run_chat` 一样先加载 agent config，再从解析后的 workspace_dir 推导 metrics 目录
+  - ⚠️ 当前 `TaskRecord` 缺字段：`config_hash` / `started_at` / `ended_at` / `duration_ms` / `cache_read_tokens` / `cache_write_tokens` / `tool_error_count` / `failure_reason` / `crafts_active`
+
+```rust
+pub struct TaskRecord {
+    pub task_id: String,           // ULID
+    pub agent_name: String,
+    pub model: String,
+    pub config_hash: String,       // sha256(agent.yaml)
+    pub started_at: u64,
+    pub ended_at: u64,
+    pub duration_ms: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub turn_count: u32,
+    pub tool_call_count: u32,
+    pub tool_error_count: u32,
+    pub compaction_count: u32,
+    pub success: bool,
+    pub failure_reason: Option<String>,
+    pub crafts_active: Vec<String>,  // Phase 2+
+}
+```
+
+**验收标准**：
+
+```bash
+sage init --agent feishu
+sage list                    # feishu  [飞书专员]  workspace: 0B
+sage validate --agent feishu # ✓ OK
+# workspace/MEMORY.md 写入内容，运行任务后确认注入到 system_prompt
+```
+
+---
+
+## v0.8.0 — TUI + Standard Rootfs + Session Persistence
+
+**目标**：`sage chat --agent feishu` 完整跑通多轮交互，daemon 模式，wiki 自动维护。
+
+### M4：TUI 交互（sage chat）
+
+- [x] `sage chat --agent <name>` CLI 命令（`--dev` 跳过 microVM）
+- [x] 交互式输入行（tokio stdin + 简易 read-eval loop，非 rustyline）
+- [x] 流式输出 LLM 文本（`TerminalSink` 逐 token flush）
+- [x] 工具调用可视化：`[tool: name]` / `✗ ERROR` 提示
+- [x] 多轮对话：`SageSession` context 累积
+- [x] 内置命令：`/exit`、`/reset`
+- [ ] `--resume` flag（当前未实现）
+- [ ] Ctrl+C 优雅退出 / 错误提示细化（LLM API / 沙箱崩溃 / 工具超时）
+- [ ] **[P1] Ctrl+C 后会把整个 chat session 永久 cancel 掉**：`sage-cli/src/chat.rs:249-255` 现在把共享 root `CancellationToken` 直接传进 `session.send()`；一旦用户在某轮 `send()` 时按下 Ctrl+C，这个 token 会被永久标记为 cancelled，后续轮次复用同一个 token 时，`run_agent_loop_with_cancel()` 会立刻退出，当前 chat 会话只能重启恢复。修法：每次 `send()` 派生 per-turn child token，或在被取消后重置 session 级 token，避免一次中断把整段交互彻底打死
+
+### 沙箱模式：microvm + none ✅
+
+- [x] `SandboxConfig.mode: SandboxMode` 枚举（`Microvm | Host`，Host ≈ 设计的 None）
+- [x] `mode: host` 下 bash tool 直接在宿主机执行
+- [x] `allowed_binaries` 仍然生效（`WEB_BINARIES` 白名单等）
+- [x] `sage chat --dev` / `sage run --dev` flag：强制 `mode: host`（`SandboxMode::with_dev_override`）
+
+### Standard Rootfs Bundle（microvm 模式）
+
+- [x] `SandboxConfig.rootfs: RootfsTier` 字段解析（`Minimal | Standard | Custom`）
+- [ ] standard tier：curl / python3 / jq / git / rg / fd / gh 静态编译进 rootfs（scripts/build-sandbox.sh 只编 sage-guest，未打 standard rootfs）
+- [ ] custom tier：解析 `rootfs_path`，挂载用户 rootfs tar.gz
+- [ ] tools/ 持久化卷：`~/.sage/agents/<name>/tools/` → VM 内 `/agent-tools/`
+- [ ] `$PATH` 预置 `/agent-tools/bin`
+
+### Daemon 模式（已基本完成 ✅）
+
+- [x] `sage start --agent <name>` — detached 子进程 + `__daemon-server__` 隐藏子命令 + setsid
+- [x] daemon 监听 Unix socket：`/tmp/sage-<name>.sock` + PID 文件 `~/.sage/agents/<name>/daemon.pid`
+- [x] `sage connect --agent <name>` — 接入 socket 流式 I/O
+- [x] `sage disconnect` — 提示用 Ctrl+C / `/exit` 断开
+- [x] `sage stop --agent <name>` — 优雅 Shutdown 协议 + SIGTERM 回退
+- [x] `sage send --agent <name> --message "..."` — 非交互式
+- [x] `sage status` — 列出 daemon（name + PID + running/stopped）
+- [ ] `sage status` 展开运行时长 + 对话轮数（当前仅 PID + 状态）
+- [ ] daemon 崩溃后自动写 crash log（当前直接进程退出）
+- [ ] **[P2] `sage start --dev` 没有真正透传到 daemon 启动路径**：`sage-cli/src/main.rs:307-309` 当前 match arm 把 `dev` 硬编码成 `false`，导致 agent config 还是 `sandbox.mode: microvm` 时，`sage start` 永远走 VM 路径，和已经声明支持的 daemon `dev` toggle 不一致。在没装 libkrunfw 的机器上，这会直接破坏 `sage start --dev` 逃生通道。修法：把 CLI 的 `--dev` 一路透传到 `start_daemon`
+- [ ] **[P2] socket 关闭时不能继续 `continue`**：`sage-cli/src/daemon.rs:311-315`（`connect_interactive`）和 ~L371（`send_one`）里 `read_line()` 返回 0 表示 EOF/对端关闭，代码把它当空消息 `continue` 回到循环头，daemon 崩了之后客户端会永远 spin。两处都改成 `if n == 0 { break / bail!("daemon disconnected") }`，让断连显式暴露给用户
+- [ ] **[P2] chat/start/connect/send/stop 入口统一走 `validate_agent_name`**：`sage-cli/src/daemon.rs:49-55` 的 `pid_path` / `agents_dir().join(name)` 用的是 `PathBuf::join`，`..` 会真的穿越，`../other` 能逃出 `~/.sage/agents/` 写到外层目录的 `daemon.pid` / config。目前只有 `init` / `validate` 走 `validate_agent_name`，daemon 相关入口全是裸字符串。socket_path 因为是 `format!("/tmp/sage-{name}.sock")` 字符串插值，实际不会做路径穿越（`sage-..` 只是字面名），但作为 defense-in-depth 也该一起收口
+- [ ] **[P3] daemon-backed session 成功结束后也要写 model cache**：`sage-cli/src/daemon.rs:226-227` 当前 daemon 路径只发 `RunEnd`，没有像前台 chat 一样调用 `record_session_model`，导致 `known_models.json` 只能从 foreground session 学习 provider/model 组合，长期运行的 daemon 使用记录被静默漏掉。修法：在 daemon 的成功 `session.send` 收尾处补上同样的 model 记录逻辑
+
+### 知识蒸馏（PreCompact hook 触发）
+
+- [ ] PreCompact event 触发时，hook 提示 Agent：先更新 memory/MEMORY.md，再压缩
+  - 当前只有 PreToolUse / PostToolUse / Stop 三种 hook，无 PreCompact
+- [ ] system prompt 中告知 Agent：随时主动写入 `/workspace/memory/`
+- [ ] compact 后 Memory 仍然在 system prompt（每次 compact 重新注入）
+
+### Wiki 自动维护（IDLE hook 触发）
+
+- [ ] UserDriven 会话结束后，归档到 `raw/sessions/`（无 daemon 端 wiki 采集逻辑）
+- [ ] PostProcessing hook 检查未处理 session 数量 ≥ `wiki.trigger_sessions`
+- [ ] 触发 WikiMaintenance 会话：Agent 使用 wiki_* 工具提炼知识
+- [ ] WikiMaintenance 期间用户消息进入优先级队列
+- [ ] wiki 维护冷却期：两次维护至少间隔 `wiki.cooldown_secs`
+  - ⚠️ 仅有 `SessionType::WikiMaintenance` 枚举值（config.rs L470），DaemonLoop / IDLE 触发机制尚未实现
+
+**验收标准**：
+
+```bash
+sage start --agent feishu
+sage connect --agent feishu  # 多轮对话
+sage status                  # feishu  PID:12345  运行 2h15m  12 轮对话
+sage stop --agent feishu
+```
+
+---
+
+## v0.9.0 — Hook & Skill 系统
+
+**目标**：Agent 具备可扩展生命周期钩子和能力模块，对齐 CC Hook/Skill 机制精简版。
+
+### H1：Hook 系统（已实现 3/12 事件）
+
+- [ ] `HookEvent` 枚举（12 个事件）：
+
+| Event | 优先级 | 状态 | 用途 |
+|-------|-------|------|------|
+| `SessionStart` | P0 | [ ] | 初始化环境、注入动态上下文 |
+| `UserPromptSubmit` | P0 | [ ] | 拦截/增强用户输入 |
+| `PreToolUse` | P0 | [x] | 工具调用前审计/安全防护（exit 2 = 阻断） |
+| `PostToolUse` | P0 | [x] | 工具调用后回调/副作用触发 |
+| `Stop` | P0 | [x] | Agent 结束前质量检查（exit 2 = 要求继续）|
+| `SessionEnd` | P1 | [ ] | 保存状态、清理外部资源 |
+| `PreCompact` | P1 | [ ] | 压缩前处理（exit 2 = 阻断压缩） |
+| `PostCompact` | P1 | [ ] | 压缩后通知 |
+| `FileChanged` | P1 | [ ] | 监听 workspace 文件变化 |
+| `MemoryUpdated` | P2 | [ ] | MEMORY.md 写入后触发 |
+| `AgentSwitched` | P2 | [ ] | `/switch <agent>` 切换时 |
+| `WorkspaceChanged` | P2 | [ ] | 工作目录变更 |
+
+- [ ] 统一 `HookEvent` 枚举（当前是三个独立 trait：`BeforeToolCallHook` / `AfterToolCallHook` / `StopHook`）
+- [ ] tokio broadcast channel 广播系统（当前直接 trait dispatch，无 broadcast）
+- [x] **command hook 执行引擎**：`hooks::execute_hook`（`/bin/sh -c` fork + kill_on_drop + 超时）
+- [x] **exit 2 协议**：PreToolUse exit 2 阻断 + stderr steering / Stop exit 2 Continue feedback
+- [ ] exit 0 stdout 按事件语义注入（当前 stdout 丢弃，只看 stderr）
+- [ ] Stdin JSON contract（Stop hook）：当前通过环境变量 `SAGE_*` 传参，非 stdin JSON
+- [x] `config.yaml` 中 `hooks` 字段解析（`HooksConfig` 支持 `pre_tool_use` / `post_tool_use` / `stop`）
+- [ ] 扩展解析：`SessionStart` / `UserPromptSubmit` / `PreCompact` / `PostCompact` / `SessionEnd` 等 9 个事件
+- [ ] 全局 `~/.sage/hooks.yaml` 加载 + 与 agent 级 hooks 合并
+- [ ] Matcher 过滤（tool name 前缀匹配）+ `if` 条件（权限规则语法子集）
+  - 当前 `HookConfig` 只有 `command` + `timeout_secs`，无 matcher / if
+- [ ] http hook / prompt / agent hook（当前只支持 command）
+- [ ] **[P1] Drop fallback 仍是生产态正常 session shutdown 路径，不能按错误/失败上报**：`sage-runtime/src/engine.rs:928-931` 现在把未显式 `SageSession::close()` 的 fallback 分支升级成 `tracing::error!`，同时合成 `SessionEnd { success: false }`。但真实调用方 `chat.rs::run_chat`、`daemon.rs::run_server`、`harness.rs::run_single_case` 目前都没调 `close()`，所以正常成功退出也会持续打 error log，并把 hook / telemetry 里的 session 成功率记成失败。修法：在所有生产调用方补齐显式 `close()` 之前，这个 fallback 不能按 error/failure 语义处理；更稳妥的是统一收口 session lifecycle，让正常 shutdown 明确发出成功的 `SessionEnd`
+- [ ] **API 命名统一**：`on_before_tool_call` / `on_after_tool_call` → `on_pre_tool_use` / `on_post_tool_use`（仍是旧名）
+- [ ] on_agent_start / on_agent_end / on_error lifecycle hooks（v0.1.0 遗留）
+
+### H2：Harness 系统（`sage test`）
+
+Harness 通过 Stop hook 作为评估入口，exit 2 强制 Agent 继续迭代，实现质量门禁闭环。
+
+- [x] **HarnessConfig YAML 支持**（config.yaml 内联，`HarnessConfig { evaluator, timeout_secs }`）
+- [x] 独立测试套件 YAML 解析（`TestSuite { suite, agent, cases[{name,message,eval,max_turns}] }`）
+- [ ] criteria 检查协议（`output_contains` / `tool_called` / `token_budget`）— 当前只支持 `eval` 脚本出口码，无声明式 criteria
+- [ ] **[P2] `tool_called` 会把 synthetic cancelled `tool_result` 误判成已执行**：`sage-cli/src/harness.rs:495-500` 目前只要看到 `ToolResultMessage` 就认为工具跑过，但 `run_agent_loop_with_cancel()` 在中断时会给尚未启动的排队工具补 synthetic cancelled result 以维持 message pairing，导致 interrupted harness run 里被跳过的工具也会让 `tool_called` 通过。修法：改为记录真实 `ToolExecutionStart` 事件，或至少在 criteria 判断里过滤 synthetic cancelled 标记
+- [x] `sage test --suite <path>` CLI 命令
+- [ ] `--case "..."` 单例过滤
+- [ ] `--parallel N` 并发
+- [ ] `--reporter junit` / `--output results/`（当前仅 `terminal` / `json`）
+- [x] Eval script 协议：exit 0 Pass / exit 2 Fail + stderr / 其他 Error（`harness::run_eval_script`）
+- [x] Stop hook 通过环境变量 `SAGE_EVENT=Stop` + `SAGE_AGENT_NAME` / `SAGE_SESSION_ID` / `SAGE_TURN_COUNT` / `SAGE_STOP_REASON` / `SAGE_MODEL` / `SAGE_LAST_ASSISTANT_MESSAGE` 传参
+- [ ] Stop hook stdin JSON contract（当前是 env vars，不是 stdin JSON，与设计文档不一致）
+- [x] `SessionType::HarnessRun` 枚举值已定义（config.rs L470）
+- [ ] 运行时让 HarnessRun 不写 TaskRecord（尚无 TaskRecord 写入逻辑，整体缺失）
+- [ ] 测试结果包含 token 用量（当前只有 turns + duration_ms）
+- [ ] Craft 效率验证（Craft 系统整体未实现）
+- [ ] DaemonLoop 中 HarnessRun session 类型不触发 wiki 维护
+
+### S1：Skill + Craft 系统（两级架构）
+
+**全局 Skills**（`~/.sage/skills/`）= Markdown + YAML frontmatter，`/skill-name` 调用时注入当前对话，只读。
+**Craft**（`workspace/craft/`）= Agent 自管理可复用产物（SOP/脚本/模板/素材），通过 `craft_manage` 工具管理。
+
+- [x] 启动时扫描 `~/.sage/skills/` + `workspace/skills/`（注意：实际路径是 `skills/` 不是 `craft/`）
+- [ ] SOP 类懒加载正文（当前一次性 full-content 注入，无 frontmatter 解析）
+- [x] Skill 列表注入 system_prompt（`context::append_skill_sections` 整体追加）
+- [ ] **[P2] workspace skill 覆盖 global skill 时，prompt 注入也要保持 workspace-wins**：`sage-cli/src/serve.rs:476-480` 当前 global 和 workspace skill bodies 直接 `extend(...)`，同名 skill 会被双重注入到 system prompt；但 `scan_skills` / `load_skill_content` 的实际可调用语义是 workspace 覆盖 global。这样模型会看到两份相互冲突的 `/name` 定义，而运行时只能调用其中一份。修法：prompt 注入前按 skill name 去重，保留 workspace 副本
+- [ ] 按 description + score 降序排列 + 仅注入 frontmatter 概要
+- [x] TUI 中 `/skill-name [args]` 解析：加载完整正文，注入当前对话（`chat::substitute_arguments` + `load_skill_content`）
+- [x] `$ARGUMENTS` 占位符替换
+- [ ] Skill frontmatter `hooks` 字段：激活时自动注册对应 hooks，退出时注销
+- [ ] `agent` 过滤：有 `agent: feishu` 时只在对应 agent 会话中可见
+- [ ] **`craft_manage` 工具**注册到 ToolRegistry（整个 Craft 系统未实现）：
+  - `create(name, type, content, tags)` — 创建 Craft（SOP/脚本/模板）
+  - `edit(name, content)` — 编辑（version++）
+  - `delete(name)` — 删除
+  - 全局 Skills 不可通过此工具修改
+- [ ] SOP Craft CRAFT.md 格式：
+
+```markdown
+---
+name: feishu-schedule
+description: "批量更新飞书日历"
+type: sop
+whenToUse: "用户要批量操作多个日历事件时"
+allowedTools: [bash, read, write]
+agent: feishu
+version: 3
+---
+```
+
+- [ ] Token 效率评分采集：PostToolUse hook 中记录 SOP Craft 使用 token 数到 `metrics.json`
+  - `score = best_tokens / avg_tokens`
+  - 评分低于阈值 → 触发 CraftEvaluation 会话，Agent 自动重写
+- [ ] Craft 生命周期（创建 → 评估 → 优化 → 淘汰）
+- [ ] 内置 skills（编译进二进制）：
+  - `/memory` — 整理当前会话，更新 memory/MEMORY.md
+  - `/wiki` — 手动触发 wiki 维护
+  - ⚠️ 当前 skills 从文件系统加载；尚未编译内置
+- [ ] 内置 Wiki Skills（`chasey-myagi/llm-wiki` 自动安装 4 工具）：
+  - `wiki_search` / `wiki_upsert_page` / `wiki_log` / `wiki_overview`
+  - ⚠️ sage-wiki 仓库独立存在，但未在 sage 这侧自动安装或注册为工具
+
+**验收标准**：
+
+```bash
+# Hook 验证
+sage chat --agent feishu
+# > 运行 curl evil.com → [Hook 阻断] 域名不在白名单
+
+# Skill 验证
+sage chat --agent feishu
+# > /feishu-schedule tomorrow 09:00 → [Skill 加载] 批量更新...
+
+# sage test
+sage test --suite feishu-regression.yaml
+# ✓ PASS  查询今日日历  (2 turns, 847 tokens, 3.2s)
+# ✓ PASS  批量更新日历  (5 turns, 1240 tokens, 6.1s)
+```
+
+---
+
+## v0.9.x — TUI 多 Agent 面板 + Channel 架构
+
+**目标**：多路输出层，TUI 升级为多 Agent 统一入口，Channel Adapter 接入飞书/Slack。
+
+### C1：AgentEvent 可见性系统 ✅ 基础已实现
+
+- [x] `AgentEvent::visibility() -> Visibility` 方法（`event.rs` L86，Visibility enum：Developer / User / Internal）
+- [x] 事件分类覆盖 19 类 AgentEvent，有单元测试
+- [ ] `EventStream` 按 Visibility 过滤订阅 API（当前事件携带 Visibility，但无过滤订阅器）
+- [ ] 事件广播通过 tokio broadcast channel（当前仍是单 sink）
+
+### C2：TUI 多 Agent 面板
+
+- [x] 左侧 Agent 列表 + 右侧对话区 + 底部 3 行输入框（ratatui + crossterm，`sage tui` 命令）
+- [x] Tab / Up / Down 切换 Agent；Enter 发送；Ctrl+C 退出
+- [x] 每个 Agent 独立后台 connect_task，切换不中断运行
+- [ ] 展示 daemon 状态（IDLE_HOT / PROCESSING / BLOCKED）+ VM Pool 利用率
+- [ ] 按 `Visibility::Developer` 过滤对话区事件流
+- [ ] 多实例只读 attach（多个 TUI 同时 attach 同一 Agent）
+- [ ] 状态栏：会话轮数 / context 使用率 / VM 状态
+
+### C3：Channel Adapter 框架
+
+- [x] `ChannelAdapter` trait 骨架（`sage-runner/src/channel/mod.rs`，当前 `send(&str)` + `name()`）
+- [ ] 扩展到设计 API：`channel_hints()` / `visibility_filter()` / `send(event: AgentEvent)`
+- [ ] Caster 进程 Channel 注册表（运行时动态注册/注销）
+- [ ] SessionStart 调用 `channel_hints()` 通过 `SystemPromptBuilder.section("channel_hints", ...)` 追加
+- [ ] 事件广播：DaemonLoop AgentEvent → 按 visibility 过滤 → 投递到 Channel Adapter
+- [ ] `config.yaml` 中 `channel` 字段解析
+
+### C4：FeishuChannel（仅 stub，未接入）
+
+- [ ] Feishu webhook 监听（axum HTTP handler）：接收 `im.message.receive_v1` 事件
+- [ ] 消息提取：解析 `content` JSON，支持纯文本 + AT 消息
+- [ ] 通过 Unix socket 路由到目标 DaemonLoop
+- [ ] `channel_hints()` 返回：飞书平台格式提示
+- [ ] `send()` 真实接入（`sage-runner` 中的 `FeishuChannel::send()` 仍是 `todo!()`；CLI/daemon 也未接入真实投递链路）
+- [ ] **[P1] 出站鉴权**：`sage-channel-feishu/src/lib.rs:244-251` 目前 `post_json(..., None)` 不带 bearer，TODO 明确写了 tenant_access_token 还没实现。需要用 `app_id` / `app_secret` 换 tenant access token（带刷新和缓存），实打实的 API 调用现在必 401
+- [ ] **[P1] `receive_id_type=chat_id` 查询参数**：`sage-channel-feishu/src/lib.rs:248-250` 的 URL 是裸的 `/open-apis/im/v1/messages`，Feishu 默认按 `open_id` 解释 `receive_id`，存的是 chat_id 会查不到。必须追加 `?receive_id_type=chat_id`（或在调用点显式拼 query）。与上一项必须一起修，单独修任何一个都不能让真实 reply 成功
+- [ ] 消息去重（记录 `message_id` 集合防止 webhook 重试重复发送）
+- [ ] 同一 `chat_id` 复用同一 DaemonLoop Session
+
+### C5：SlackChannel（后续）
+
+- [ ] Slack Events API webhook（`message.im` + `app_mention`）
+- [ ] `channel_hints()` 返回 mrkdwn 格式说明
+- [ ] `send()` 通过 Slack Web API（`chat.postMessage`，Block Kit 格式）
+- [ ] slash command：`/sage <message>` 触发 Agent
+
+### C6：WebUIChannel（远期）
+
+- [ ] HTTP SSE 长连接：`/api/agents/<name>/events` SSE 流
+- [ ] `Visibility::User` 事件转 JSON 推送
+- [ ] 配合 Runeforge Web UI 实现浏览器端 Agent 交互
+
+### C7：触发系统（应用级，cron + every_secs 已完成 ✅）
+
+- [x] `~/.sage/triggers.yaml` 解析（`TriggersFile { triggers: Vec<TriggerConfig> }`）
+- [x] `cron` 触发（自研 5 字段解析器 + `chrono::Local`）
+- [x] `every_secs` 周期触发
+- [x] 消息通过 Unix socket 路由到目标 daemon（复用 daemon 协议）
+- [x] `sage triggers start` / `sage triggers list` CLI 子命令
+- [ ] `feishu_event` 触发（依赖 C4 真实实现）
+- [ ] `file_watch` 触发（notify crate / FSEvents / inotify）
+- [ ] 触发器执行记录写入 `~/.sage/trigger-log.jsonl`
+- ⚠️ 设计文档字段是 `schedule` / `route_to`，实现是 `cron` / `agent`，需统一
+
+**验收标准**：
+
+```bash
+# TUI 多 Agent 面板
+sage connect   # 显示所有 Agent 状态列表
+
+# Feishu Channel
+# 飞书群 @sage → DaemonLoop 收到 → LLM 回复 → 飞书卡片消息
+
+# 触发系统
+# 工作日早 9 点自动触发 morning-brief → feishu-agent 生成日程摘要
+```
+
+---
+
+## v0.9.z — Provider / Model ID 解耦（Sprint 12）
+
+> 代码只强绑 Provider，Model ID 由 YAML 任意字符串配置，厂商列表由用户自管。
+>
+> **设计文档**：[`docs/design/model-id-policy.md`](design/model-id-policy.md)
+
+### 动机
+
+`llm/models.rs` 5500 行的 Model registry 维护成本高、权威性弱、错
+误提示差。厂商每出新模型都要一轮 PR；cost / context_window 硬编码即
+过时；用户写错 model ID 时 Sage 返回 `UnknownModel` 但**不掌握正确答
+案**。改成 Provider 强绑 / Model 弱绑后，代码只关心 Provider 一层，模
+型字符串透传给厂商自己去校验，错误信息直接来自权威源。
+
+### M1：Provider 提取 + Model 弱绑
+
+- [ ] 新增 `crates/sage-runtime/src/llm/providers.rs`：
+  `ProviderSpec { id, base_url, api_key_env, api_kind, default_compat, docs_url }`
+- [ ] `list_providers() -> &[ProviderSpec]`（代码级有限集）
+- [ ] `resolve_provider(id) -> Option<&ProviderSpec>` 取代
+  `resolve_model(provider, model_id)` 的"查表-返回元数据"用法
+- [ ] `AgentConfig.llm` 校验改：强验 provider / 弱验 model（只要求
+  非空字符串）
+- [ ] Provider HTTP 调用 `model` 字段直接透传 YAML 字符串
+- [ ] `llm/models.rs` 5500 行 → 缩到几百行（删 Model 字面量，保留
+  ApiKind / CompatConfig / 测试 fixtures）
+- [ ] `context_window` / `max_tokens` / `base_url` / `cost` 从 YAML
+  读，代码不再硬编码
+
+### M2：错误提示
+
+- [ ] `SageError::InvalidModel { provider, model_id, provider_error,
+  hint_docs_url }`
+- [ ] 各 Provider 实现识别 4xx + "model_not_found" / "invalid_model"
+  类响应码 → 映射到 InvalidModel
+- [ ] 每个 ProviderSpec 静态绑定 `docs_url`（Moonshot / DashScope /
+  Anthropic 等的模型列表文档链接）
+- [ ] CLI / TUI 展示 InvalidModel 时打印 `curl <docs_url>` 可复制命令
+
+### M3：Metrics 解耦
+
+- [ ] `TaskRecord` 加 `provider: String` 字段
+- [ ] `cost` 字段改 `Option<Cost>`，不强制算
+- [ ] `configs/cost_schedule.example.yaml` 给一份起步样例
+- [ ] `scripts/backfill_cost.rs`（或 Python）离线扫 metrics/*.json
+  按 `(provider, model)` 对应 cost_schedule 补算
+
+### M4：Known models cache + TUI 补全
+
+- [ ] `llm/known_models.rs`：读写 `~/.sage/known_models.json` 格式
+  `{ provider: [model_id, ...] }`
+- [ ] 聚合三路：
+  1. `~/.sage/agents/*/workspace/metrics/summary.json`
+  2. `~/.sage/agents/*/config.yaml` 的 `llm.model`
+  3. `~/.sage/known_models.json` per-user cache
+- [ ] Provider 成功响应（200）→ 追加 model 到 known_models cache
+- [ ] **[P3] `known_models.json` 更新不能是 last-writer-wins 覆盖**：`sage-cli/src/known_models.rs:89-98` 当前每次成功会话都是 load 旧 JSON → 追加自己的 `(provider, model)` → 整体 rename 覆盖；并发成功会话会互相抹掉对方刚发现的 model。原子 rename 只能保证文件不坏，不能保证增量不丢，需要加文件锁、merge/retry，或其他串行化写入方案
+- [ ] **[P3] daemon 成功会话也要参与 `known_models.json` 学习**：当前 `record_session_model` 只在前台 chat 路径触发，`sage start` + `sage connect` / triggers 等 daemon-backed 会话不会更新 per-user model cache，导致 TUI/CLI 的 provider-model 建议长期偏向前台使用习惯。需要把成功响应后的 cache 写入逻辑统一收口到所有 frontend path
+- [ ] `sage init` TUI：Provider 下拉（`list_providers()`）+ Model
+  输入 + 历史建议（`known_models_for(provider)`）
+- [ ] `sage validate` 命令同步校验：provider 在代码级集合里、
+  model 非空
+
+### M5：可选 — /v1/models 在线 probe（v1.0.1 nice-to-have）
+
+- [ ] `provider_probe_models(provider) -> Result<Vec<String>>`
+  调 `GET /v1/models`
+- [ ] TUI 加 hotkey "press 'p' to probe live model list"
+
+### 验收
+
+```bash
+# 用户故意写错 model id
+$ sage run --config test.yaml --message "hello"
+Error: Provider 'kimi' rejected model 'kimi-k2.6-preview' —
+"model_not_found". Sage does not validate model IDs; check Moonshot's
+list at https://platform.moonshot.cn/docs/api/models or query:
+  curl https://api.moonshot.cn/v1/models -H "Authorization: Bearer $MOONSHOT_API_KEY"
+
+# sage init TUI
+$ sage init --agent new-bot
+? Select LLM provider:
+  ❯ kimi        (Moonshot — api.moonshot.cn)
+    qwen        (DashScope — dashscope.aliyuncs.com)
+    anthropic   (Claude — api.anthropic.com)
+    ...
+? Model ID for 'kimi':
+  (type anything, or ↓ to pick from your history)
+  History: kimi-k2.5, moonshot-v1-auto
+  > _
+```
+
+### 工作量估算：~1.5 周（TDD + Linus + code-review 三轮）
+
+### 兼容性影响
+
+- `configs/*.yaml`：已有的 `model: qwen3.6-plus` 等完全兼容
+- `metrics/*.json` 历史文件：新增 `provider` 字段，旧字段不动
+- **Runeforge / Usage 看板**：Sage 不再算 cost，需下游改用 cost_schedule
+- **下游嵌入用户（SageEngine）**：`SageEngineBuilder.model(...)` API 不变，
+  传进来的字符串照样透传；若要取 model 元数据，改调 `provider_spec()`
 
 ---
 
 ## v1.0.0 — Release
 
-> 可嵌入的 AI Agent 执行引擎，完整最终形态。
+> 可嵌入执行引擎 + 独立 Agent 产品完整发布。
 
 ### P12: 文档 & 示例
 
-- [ ] README.md 重写（Sage 定位 + SQLite 类比 + Quick Start）
-- [ ] API 文档（rustdoc: SageEngine / SageTool / AgentEvent / Hook）
-- [ ] 示例项目
+- [ ] README.md 重写（Sage 定位 + Quick Start）
+- [ ] API 文档（rustdoc：SageEngine / SageTool / AgentEvent / Hook）
+- [ ] 示例项目：
   - `examples/minimal.rs` — 最简嵌入（5 行跑通）
-  - `examples/custom_tool.rs` — 自定义工具注册
-  - `examples/hooks.rs` — Lifecycle Hooks
+  - `examples/custom_tool.rs` — 自定义工具
+  - `examples/hooks.rs` — Hook 系统
   - `examples/runeforge_integration.rs` — Runeforge 集成
-- [ ] Architecture Guide（从 future.md 精简）
 
 ### P13: 发布准备
 
-- [ ] crates.io 发布
-  - License (MIT / Apache-2.0)
-  - 版本号 1.0.0
-  - 各 crate 描述 + keywords
-- [ ] GitHub Release
-  - Changelog
-  - 预编译二进制（macOS arm64 / Linux x86_64）
+- [ ] crates.io 发布（MIT/Apache-2.0，版本 1.0.0，各 crate 描述）
+- [ ] GitHub Release（Changelog + 预编译二进制）
 - [ ] 公告博文（可选）
 
 ### v1.0.0 验收
 
-future.md 全部功能点可用：
-
 ```rust
-// 上层项目嵌入 — 5 行核心代码
+// 嵌入使用
 let engine = SageEngine::from_config("assistant.yaml").await?
     .register_tool(MyTool::new())
-    .on_pre_tool_use(|name, input| { /* audit */ HookAction::Allow });
+    .on_pre_tool_use(|name, input| HookAction::Allow);
 
 let mut stream = engine.run("完成这个任务").await?;
 while let Some(event) = stream.next().await { /* ... */ }
@@ -411,10 +742,16 @@ while let Some(event) = stream.next().await { /* ... */ }
 sage run --config coding-assistant.yaml --message "..."
 
 # Rune 分布式调度
-sage serve --rune localhost:50070
+sage serve --runtime localhost:50070
 
-# CI/CD 测试
-sage test --suite regression.yaml
+# 多轮交互
+sage chat --agent feishu
+
+# Daemon 模式
+sage start --agent feishu && sage connect --agent feishu
+
+# Harness 测试
+sage test --suite regression.yaml --reporter junit
 ```
 
 ---
@@ -422,38 +759,27 @@ sage test --suite regression.yaml
 ## 版本路线图总览
 
 ```
-当前 (agent-caster)
-  │
-  ▼
-v0.1.0 — First Light        改名 + Engine API + 端到端跑通（无沙箱）
-  │
-  ▼
-v0.2.0 — Sandboxed          microVM 对接，工具在 VM 内执行
-  │
-  ▼
-v0.3.0 — Full LLM           20+ Provider 全量覆盖
-  │
-  ▼
-v0.4.0 — Production Runtime 压缩 + Toolset + 上下文工程 + 安全加固
-  │
-  ▼
-v0.5.0 — Advanced Sandbox   OCI 镜像 + VM 预热池 + 快照
-  │
-  ▼
-v0.6.0 — Observability      OTel + 日志 + 构建流水线 + sage test
-  │
-  ▼
-v1.0.0 — Release            文档 + 示例 + crates.io 发布
+v0.1.0 — First Light         ✅  改名 + Engine API + 端到端
+v0.2.0 — Sandboxed           ✅  microVM + 工具沙箱
+v0.3.0 — Full LLM            ✅  20+ Provider
+v0.4.0 — Production Runtime  ✅  压缩 + 上下文工程 + 安全加固
+v0.6.0 — Observability       ◐   P10 构建流水线 ✅ / P9 仅 JSON 日志（OTel + 健康上报仍缺）
+v0.7.0 — Agent Registry      ◐   M1/M2 ✅ / M3 ◐（Memory baseline 已有；MetricsCollector / Skill frontmatter / init_agent wiki 骨架仍未完成）
+v0.8.0 — TUI + Daemon        ◐   sage chat + daemon + SandboxMode ✅ + PreCompact ✅（Sprint 6）/ Wiki 自维护触发尚未接入运行时 / Standard rootfs 缺
+v0.9.0 — Hook & Skill        ◐   Hook 体系 8/12 ✅（Sprint 6）/ Harness criteria + parallel + junit ✅（Sprint 9）/ Craft S10.3 crafts_active 数据面尚未接入 / S10.1/S10.2/S10.4 工具面缺
+v0.9.x — Multi-Agent + Chan. ◐   Visibility + TUI + cron triggers ✅ / Channel 真实 Feishu 接入未完成（runner 仅 stub，未接到 CLI/daemon）
+v0.9.z — Provider/Model 解耦 ○   Sprint 12: 代码只强绑 Provider，Model ID 完全由 YAML 控制（设计见 docs/design/model-id-policy.md）
+v1.0.0 — Release             ○   文档 + 示例 + crates.io 发布（仍需先补齐未完成的 TaskRecord / wiki / Channel 能力）
+v1.x   — Advanced Sandbox    ○   OCI + VM 预热池 + 快照（多租户生产）
 ```
 
-| 版本 | 核心交付 | 预估新增代码 |
-|------|---------|-------------|
-| v0.1.0 | 改名 + Engine API + 端到端 | ~2,000 行 |
-| v0.2.0 | Sandbox 对接 | ~1,500 行 |
-| v0.3.0 | 20+ Provider | ~6,000 行 |
-| v0.4.0 | 压缩 + 上下文工程 + 安全 | ~3,500 行 |
-| v0.5.0 | 高级沙箱 | ~1,500 行 |
-| v0.6.0 | 可观测 + DevEx | ~1,500 行 |
-| v1.0.0 | 文档 + 发布 | ~500 行 |
-| **累计** | | **~16,500 行** |
-| **最终总量** | | **~41,000 行** (现有 24,277 + 新增) |
+| 版本 | 核心交付 | 关键新增 |
+|------|---------|---------|
+| v0.5.0 | 可观测 | OTel / CI pipeline |
+| v0.7.0 | Agent 身份 | Registry / Workspace / Memory / TaskRecord |
+| v0.8.0 | 完整交互 | sage chat / daemon / wiki / Standard rootfs |
+| v0.9.0 | 可扩展性 | Hook / Harness / Craft / sage test |
+| v0.9.x | 多路接入 | Channel / 多 Agent TUI / 触发系统 |
+| v0.9.z | Provider/Model 解耦 | ProviderSpec 代码级有限集 / Model ID 透传 / InvalidModel 可观察报错 / TUI 历史补全 |
+| v1.0.0 | 发布 | 文档 / 示例 / crates.io |
+| v1.x | 高级沙箱 | OCI / VM pool / snapshot（多租户场景） |

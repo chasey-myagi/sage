@@ -3,45 +3,166 @@ use std::path::Path;
 
 use sage_runtime::tools::policy::ToolPolicy;
 
+/// Return the current user's home directory, checking `HOME` then `USERPROFILE`.
+///
+/// Returns `None` when neither environment variable is set (rare in practice,
+/// possible in minimal container environments).
+pub fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+}
+
 /// Expand a leading `~` in a path string to the user's home directory.
 /// Returns the original string unchanged if it doesn't start with `~` or
 /// if the home directory cannot be determined.
+///
+/// Only bare `~` and `~/…` are expanded. The `~username/…` form is returned
+/// as-is.
 fn expand_tilde(path: &str) -> String {
+    let Some(home) = home_dir() else {
+        return path.to_string();
+    };
     if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-            return Path::new(&home).join(rest).to_string_lossy().to_string();
-        }
-    } else if path == "~" {
-        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-            return home.to_string_lossy().to_string();
-        }
+        return home.join(rest).to_string_lossy().into_owned();
+    }
+    if path == "~" {
+        return home.to_string_lossy().into_owned();
     }
     path.to_string()
 }
 
+/// Top-level agent configuration, parsed from `config.yaml`.
+///
+/// Stored at `~/.sage/agents/<name>/config.yaml` and loaded by
+/// [`crate::serve::load_agent_config`][sage_cli].
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AgentConfig {
+    /// Unique identifier for this agent (used as the daemon service name).
     pub name: String,
+    /// Human-readable purpose description shown in `sage list`.
     pub description: String,
+    /// LLM provider and model selection.
     pub llm: LlmConfig,
+    /// Base system prompt. Memory and skill sections are prepended/appended at runtime.
     pub system_prompt: String,
+    /// Tool access policy.
     pub tools: ToolsConfig,
+    /// Operational limits (max turns, timeout).
     pub constraints: Constraints,
+    /// Sandbox VM configuration. `None` ⟹ host mode (equivalent to `--dev`).
     #[serde(default)]
     pub sandbox: Option<SandboxConfig>,
+    /// Memory and knowledge injection configuration.
+    #[serde(default)]
+    pub memory: Option<MemoryConfig>,
+    /// Hook commands for agent lifecycle events (pre/post tool use, stop).
+    #[serde(default)]
+    pub hooks: Option<HooksConfig>,
+    /// Harness evaluator configuration for `sage test`.
+    #[serde(default)]
+    pub harness: Option<HarnessConfig>,
+    /// Wiki self-maintenance configuration (Sprint 7).
+    #[serde(default)]
+    pub wiki: Option<WikiConfig>,
+    /// Outbound/inbound channel adapter (Sprint 8).
+    /// `None` means the agent runs headless (CLI / daemon socket only).
+    #[serde(default)]
+    pub channel: Option<ChannelConfig>,
 }
 
+/// LLM provider and model selection.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LlmConfig {
+    /// Provider name as recognised by the LLM registry (e.g. `"anthropic"`, `"openai"`).
     pub provider: String,
+    /// Model identifier (e.g. `"claude-opus-4-6"`, `"gpt-4o"`).
     pub model: String,
-    pub max_tokens: u32,
+    /// Maximum tokens to generate per turn.
+    ///
+    /// `None` ⇒ use `ProviderSpec.default_max_tokens` (Sprint 12 M1). The
+    /// ProviderSpec default is guaranteed non-zero by a test invariant, so
+    /// `None` never means "unlimited" — it means "defer to the per-provider
+    /// default".
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    /// Context window size in tokens (used to size the token budget for
+    /// compaction).
+    ///
+    /// `None` ⇒ use `ProviderSpec.default_context_window` (Sprint 12 M1,
+    /// non-zero by invariant). Compaction stays enabled either way — to
+    /// disable compaction, supply a custom `ContextBudget` via the engine
+    /// builder rather than leaving this field off.
+    #[serde(default)]
+    pub context_window: Option<u32>,
     /// Override base URL for the LLM API endpoint.
     #[serde(default)]
     pub base_url: Option<String>,
     /// Override environment variable name for the API key.
     #[serde(default)]
     pub api_key_env: Option<String>,
+}
+
+// ── Provider validation (M1) ──────────────────────────────────────────────
+
+/// Validate that the given provider string is one of the known providers
+/// listed in `sage_runtime::llm::provider_specs::list_providers()`.
+/// Returns `Ok(())` on success, `Err` with a helpful message listing valid providers.
+///
+/// Called from `load_agent_config` / `validate_agent` / `run_local_test` in
+/// `sage-cli::serve` after YAML parsing. The error message lists candidates
+/// sorted alphabetically so users can scan the list for the correct spelling.
+pub fn validate_provider(provider: &str) -> Result<(), String> {
+    if sage_runtime::llm::provider_specs::resolve_provider(provider).is_some() {
+        return Ok(());
+    }
+    let mut valid: Vec<&str> = sage_runtime::llm::provider_specs::list_providers()
+        .iter()
+        .map(|s| s.id)
+        .collect();
+    valid.sort_unstable();
+    Err(format!(
+        "unknown provider '{}'; valid providers: {}",
+        provider,
+        valid.join(", ")
+    ))
+}
+
+/// Execution mode for the sandbox.
+///
+/// - `Microvm` — run the agent inside a msb_krun microVM (default, production)
+/// - `Host` — run the agent directly as a host process (dev/test mode, no isolation).
+///   YAML key: `host`. Enabled by `--dev` flag or `mode: host` in config.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SandboxMode {
+    #[default]
+    Microvm,
+    Host,
+}
+
+impl SandboxMode {
+    /// Return `SandboxMode::Host` when `dev` is true, otherwise return `self` unchanged.
+    ///
+    /// This is the semantic bridge between the CLI `--dev` flag and the runtime
+    /// `SandboxMode`: `--dev` bypasses the microVM regardless of what the config says.
+    pub fn with_dev_override(self, dev: bool) -> Self {
+        if dev { SandboxMode::Host } else { self }
+    }
+}
+
+/// Rootfs image tier for the sandbox VM.
+///
+/// - `Minimal` — bare-minimum rootfs (default)
+/// - `Standard` — curl, python3, jq, git, rg, fd, gh pre-installed
+///
+/// A `Custom` tier (user-supplied OCI image path) is planned for v1.x.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RootfsTier {
+    #[default]
+    Minimal,
+    Standard,
 }
 
 /// Network access policy for the sandbox.
@@ -165,8 +286,16 @@ fn default_exec_timeout_secs() -> u32 {
     30
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SandboxConfig {
+    /// Sandbox execution mode. `microvm` (default) runs in a VM; `host` runs on the host
+    /// directly (dev/CI mode with no isolation).
+    #[serde(default)]
+    pub mode: SandboxMode,
+    /// Rootfs image tier. `minimal` (default) is bare-bones; `standard` includes
+    /// curl, python3, jq, git, rg, fd, gh.
+    #[serde(default)]
+    pub rootfs: RootfsTier,
     #[serde(default = "default_cpus")]
     pub cpus: u32,
     #[serde(default = "default_memory_mib")]
@@ -184,6 +313,20 @@ pub struct SandboxConfig {
     /// Per-command execution timeout in seconds.
     #[serde(default = "default_exec_timeout_secs")]
     pub exec_timeout_secs: u32,
+    /// Host-side workspace directory mounted read-write into the sandbox at `/workspace`.
+    /// A leading `~` is expanded to the user home directory on deserialization.
+    #[serde(default, deserialize_with = "deserialize_workspace_host")]
+    pub workspace_host: Option<std::path::PathBuf>,
+}
+
+fn deserialize_workspace_host<'de, D>(
+    deserializer: D,
+) -> Result<Option<std::path::PathBuf>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    Ok(opt.map(|s| std::path::PathBuf::from(expand_tilde(&s))))
 }
 
 fn default_cpus() -> u32 {
@@ -354,6 +497,225 @@ pub struct Constraints {
     pub timeout_secs: u32,
 }
 
+/// Determines how memory documents are injected into the agent context.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryInjectMode {
+    /// Prepend memory content to the system prompt as a cacheable section.
+    PrependSystem,
+    /// Inject memory as the first user message in the conversation.
+    InitialMessage,
+}
+
+/// Classifies the session type for metrics collection and behavioural branching.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionType {
+    /// Normal interactive session driven by a human user.
+    UserDriven,
+    /// Automated wiki maintenance and knowledge distillation session.
+    WikiMaintenance,
+    /// Craft/skill self-evaluation session.
+    SkillEvaluation,
+    /// Test harness evaluation run.
+    HarnessRun,
+}
+
+impl SessionType {
+    /// Stable PascalCase name for archive JSONL metadata.
+    ///
+    /// Archive wire format is distinct from config.yaml wire format: config.yaml
+    /// uses snake_case (serde rename_all), archive JSONL uses this PascalCase.
+    /// Both are explicit choices — don't derive archive names from `Debug`.
+    ///
+    /// **CAUTION: wire format invariant**
+    /// These strings are the on-disk archive contract. They must NEVER be renamed —
+    /// only new variants may be added. Renaming breaks the ability to read older
+    /// archive files. Migration schema bumps live in the JSONL `version` field.
+    pub fn archive_name(&self) -> &'static str {
+        match self {
+            SessionType::UserDriven => "UserDriven",
+            SessionType::WikiMaintenance => "WikiMaintenance",
+            SessionType::SkillEvaluation => "SkillEvaluation",
+            SessionType::HarnessRun => "HarnessRun",
+        }
+    }
+}
+
+fn default_auto_load() -> Vec<String> {
+    vec!["AGENT.md".to_string(), "memory/MEMORY.md".to_string()]
+}
+
+/// Configuration for a single hook command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookConfig {
+    /// Shell command string, executed via `/bin/sh -c <command>`.
+    pub command: String,
+    /// Per-hook execution timeout in seconds. Overrides any executor default.
+    #[serde(default)]
+    pub timeout_secs: Option<u32>,
+}
+
+/// Event-keyed hook configuration for an agent.
+///
+/// Each field maps an agent lifecycle event to an ordered list of hook commands.
+/// An absent field deserializes as an empty `Vec` (no hooks for that event).
+/// `hooks: {}` deserializes as `Some(HooksConfig { .. empty .. })`.
+/// Omitting the `hooks` field entirely deserializes as `None`.
+///
+/// YAML keys are snake_case (e.g. `session_start`). The runtime `HookEvent`
+/// enum exposes PascalCase names (e.g. `"SessionStart"`) via `HookEvent::name()`
+/// which are passed to hook scripts — the two naming conventions are deliberate
+/// (YAML reads human, script payloads read machine).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HooksConfig {
+    // ── Existing (Sprint 4) ────────────────────────────────────────────────
+    /// Run before each tool call. Exit 2 blocks the call; stderr → steering message.
+    #[serde(default)]
+    pub pre_tool_use: Vec<HookConfig>,
+    /// Run after each tool call completes.
+    #[serde(default)]
+    pub post_tool_use: Vec<HookConfig>,
+    /// Run when the agent is about to stop. Exit 2 injects stderr as feedback and
+    /// restarts the agent loop (the Harness mechanism).
+    #[serde(default)]
+    pub stop: Vec<HookConfig>,
+
+    // ── New in Sprint 6 ────────────────────────────────────────────────────
+    /// Run when an agent session starts (before the first turn).
+    #[serde(default)]
+    pub session_start: Vec<HookConfig>,
+    /// Run when an agent session ends (after stop, regardless of restart).
+    #[serde(default)]
+    pub session_end: Vec<HookConfig>,
+    /// Run when the user submits a new prompt (before agent processing).
+    #[serde(default)]
+    pub user_prompt_submit: Vec<HookConfig>,
+    /// Run before context compaction.
+    #[serde(default)]
+    pub pre_compact: Vec<HookConfig>,
+    /// Run after context compaction completes.
+    #[serde(default)]
+    pub post_compact: Vec<HookConfig>,
+}
+
+/// Harness evaluator configuration for `sage test`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HarnessConfig {
+    /// Path to the evaluator script or inline shell expression.
+    /// Run via `/bin/sh -c <evaluator>`.
+    pub evaluator: String,
+    /// Evaluator timeout in seconds.
+    #[serde(default)]
+    pub timeout_secs: Option<u32>,
+}
+
+/// Wiki self-maintenance configuration (Sprint 7).
+///
+/// When enabled, the daemon monitors archived sessions under
+/// `<workspace>/raw/sessions/` and triggers a `WikiMaintenance` session
+/// once the unprocessed-session count crosses `trigger_sessions`, subject
+/// to the `cooldown_secs` rate limit.
+///
+/// Defaults are conservative (`enabled: false`) so that opting in is an
+/// explicit YAML edit — otherwise an agent could silently burn LLM tokens
+/// on background maintenance without the operator knowing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiConfig {
+    /// Number of unprocessed archived sessions required to trigger a
+    /// `WikiMaintenance` run. Defaults to 3.
+    #[serde(default = "default_wiki_trigger_sessions")]
+    pub trigger_sessions: u32,
+
+    /// Minimum number of seconds between two consecutive `WikiMaintenance`
+    /// runs. Defaults to 1800 (30 minutes).
+    #[serde(default = "default_wiki_cooldown_secs")]
+    pub cooldown_secs: u64,
+
+    /// Whether wiki self-maintenance is enabled. Defaults to `false` —
+    /// opt-in to avoid unexpected LLM spend.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+fn default_wiki_trigger_sessions() -> u32 {
+    3
+}
+fn default_wiki_cooldown_secs() -> u64 {
+    1800
+}
+
+/// Channel adapter configuration (Sprint 8).
+///
+/// A channel plugs the agent into an external messaging platform (Feishu,
+/// Slack, …). The variant selects the platform; fields inside carry the
+/// platform-specific credentials and webhook server settings.
+///
+/// Serialized form uses an explicit `type:` tag so future variants can be
+/// added without breaking existing YAML:
+///
+/// ```yaml
+/// channel:
+///   type: feishu
+///   app_id: cli_xxx
+///   app_secret: ${FEISHU_APP_SECRET}
+///   verification_token: optional
+///   webhook_port: 3400
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ChannelConfig {
+    /// Feishu / Lark channel.
+    Feishu {
+        /// App ID from the Feishu developer console.
+        app_id: String,
+        /// App secret. Supports `${ENV_VAR}` expansion at load time so
+        /// secrets don't have to live in the YAML verbatim.
+        app_secret: String,
+        /// Verification token used to validate inbound webhook signatures
+        /// (HMAC-SHA256).
+        ///
+        /// **PRODUCTION: always set this.** `None` disables signature
+        /// checking and the webhook will accept any payload — dev/testing
+        /// only. The handler logs a warning on every unverified request so
+        /// the risk is visible in logs.
+        #[serde(default)]
+        verification_token: Option<String>,
+        /// Local port the webhook HTTP server binds to.
+        #[serde(default = "default_webhook_port")]
+        webhook_port: u16,
+    },
+}
+
+fn default_webhook_port() -> u16 {
+    3400
+}
+
+impl Default for WikiConfig {
+    fn default() -> Self {
+        Self {
+            trigger_sessions: default_wiki_trigger_sessions(),
+            cooldown_secs: default_wiki_cooldown_secs(),
+            enabled: false,
+        }
+    }
+}
+
+/// Memory and knowledge injection configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    /// Files to auto-load from the agent workspace and inject into context.
+    /// Paths are relative to the workspace root. Defaults to `["AGENT.md",
+    /// "memory/MEMORY.md"]`.
+    #[serde(default = "default_auto_load")]
+    pub auto_load: Vec<String>,
+    /// How the loaded content is injected into the agent context.
+    pub inject_as: MemoryInjectMode,
+    /// Optional session type classification.
+    #[serde(default)]
+    pub session_type: Option<SessionType>,
+}
+
 impl ToolsConfig {
     /// Resolve the effective ToolsConfig by merging toolset defaults with
     /// explicit overrides. Explicit tool fields take precedence over the preset.
@@ -475,7 +837,7 @@ constraints:
         assert_eq!(config.description, "飞书助手");
         assert_eq!(config.llm.provider, "anthropic");
         assert_eq!(config.llm.model, "claude-haiku-4-5-20251001");
-        assert_eq!(config.llm.max_tokens, 4096);
+        assert_eq!(config.llm.max_tokens, Some(4096));
         assert!(config.system_prompt.contains("飞书助手"));
         assert!(config.tools.bash.is_some());
         assert!(config.tools.read.is_some());
@@ -946,7 +1308,7 @@ sandbox:
         assert_eq!(config.name, "coding-assistant");
         assert_eq!(config.llm.provider, "qwen");
         assert_eq!(config.llm.model, "qwen-plus");
-        assert_eq!(config.llm.max_tokens, 8192);
+        assert_eq!(config.llm.max_tokens, Some(8192));
         assert_eq!(
             config.llm.base_url.as_deref(),
             Some("https://dashscope.aliyuncs.com/compatible-mode/v1")
@@ -1666,7 +2028,10 @@ sandbox:
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
         let sb = config.sandbox.unwrap();
         assert_eq!(sb.network, NetworkPolicy::Whitelist);
-        assert_eq!(sb.allowed_hosts, vec!["api.openai.com", "api.anthropic.com"]);
+        assert_eq!(
+            sb.allowed_hosts,
+            vec!["api.openai.com", "api.anthropic.com"]
+        );
     }
 
     #[test]
@@ -2005,6 +2370,7 @@ sandbox:
             max_file_size_mb: 200,
             max_open_files: 512,
             tmpfs_size_mb: 1024,
+            max_processes: 128,
         };
         let yaml = serde_yaml::to_string(&cfg).unwrap();
         let parsed: SecurityConfig = serde_yaml::from_str(&yaml).unwrap();
@@ -2205,7 +2571,14 @@ sandbox:
 
     #[test]
     fn network_policy_case_sensitive_rejects_capitalized() {
-        for value in &["Full", "FULL", "Airgapped", "AIRGAPPED", "Whitelist", "WHITELIST"] {
+        for value in &[
+            "Full",
+            "FULL",
+            "Airgapped",
+            "AIRGAPPED",
+            "Whitelist",
+            "WHITELIST",
+        ] {
             let yaml = format!(
                 r#"
 name: t
@@ -2383,6 +2756,8 @@ sandbox:
         // Construct a SandboxConfig with non-default values in every field,
         // serialize to YAML, deserialize back, and verify all fields match.
         let original = SandboxConfig {
+            mode: SandboxMode::Microvm,
+            rootfs: RootfsTier::Minimal,
             cpus: 4,
             memory_mib: 2048,
             network: NetworkPolicy::Whitelist,
@@ -2393,20 +2768,26 @@ sandbox:
                 max_file_size_mb: 200,
                 max_open_files: 512,
                 tmpfs_size_mb: 1024,
+                max_processes: 128,
             },
             exec_timeout_secs: 60,
+            workspace_host: None,
         };
         let yaml = serde_yaml::to_string(&original).unwrap();
         let parsed: SandboxConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(parsed.cpus, 4);
         assert_eq!(parsed.memory_mib, 2048);
         assert_eq!(parsed.network, NetworkPolicy::Whitelist);
-        assert_eq!(parsed.allowed_hosts, vec!["api.example.com", "*.internal.net"]);
+        assert_eq!(
+            parsed.allowed_hosts,
+            vec!["api.example.com", "*.internal.net"]
+        );
         assert_eq!(parsed.security.seccomp, false);
         assert_eq!(parsed.security.landlock, true);
         assert_eq!(parsed.security.max_file_size_mb, 200);
         assert_eq!(parsed.security.max_open_files, 512);
         assert_eq!(parsed.security.tmpfs_size_mb, 1024);
+        assert_eq!(parsed.security.max_processes, 128);
         assert_eq!(parsed.exec_timeout_secs, 60);
     }
 
@@ -2467,5 +2848,2001 @@ constraints: { max_turns: 1, timeout_secs: 1 }
         // write is still present because toolset preset fills it in
         assert!(names.contains(&"write".to_string()));
         assert_eq!(names.len(), 7);
+    }
+
+    // ========================================================================
+    // Sprint 2 — M2: workspace_host in SandboxConfig
+    // ========================================================================
+
+    const MINIMAL_YAML: &str = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+"#;
+
+    #[test]
+    fn sandbox_config_workspace_host_absent_by_default() {
+        let yaml = format!("{}\nsandbox:\n  cpus: 1\n  memory_mib: 512\n", MINIMAL_YAML);
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert!(
+            sb.workspace_host.is_none(),
+            "workspace_host should be None when not set"
+        );
+    }
+
+    #[test]
+    fn sandbox_config_workspace_host_parses_absolute_path() {
+        let yaml = format!(
+            "{}\nsandbox:\n  workspace_host: /var/lib/sage/agents/feishu\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        let path = sb.workspace_host.expect("workspace_host should be Some");
+        assert_eq!(path.to_string_lossy(), "/var/lib/sage/agents/feishu");
+    }
+
+    #[test]
+    fn sandbox_config_workspace_host_tilde_is_expanded() {
+        let yaml = format!(
+            "{}\nsandbox:\n  workspace_host: ~/workspace/feishu\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        let path = sb.workspace_host.expect("workspace_host should be Some");
+        let s = path.to_string_lossy();
+        assert!(!s.starts_with('~'), "tilde must be expanded, got: {s}");
+        assert!(
+            s.ends_with("workspace/feishu"),
+            "path should end with workspace/feishu, got: {s}"
+        );
+    }
+
+    #[test]
+    fn sandbox_config_workspace_host_dotted_path_expanded() {
+        // ~/.sage/agents/myagent — dotfile dir under home
+        let yaml = format!(
+            "{}\nsandbox:\n  workspace_host: ~/.sage/agents/myagent\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        let path = sb.workspace_host.unwrap();
+        let s = path.to_string_lossy();
+        assert!(!s.starts_with('~'), "tilde must be expanded, got: {s}");
+        assert!(s.ends_with(".sage/agents/myagent"), "got: {s}");
+    }
+
+    #[test]
+    fn existing_sandbox_config_without_workspace_host_still_parses() {
+        // Backward compat: no workspace_host field → defaults to None
+        let yaml = r#"
+name: coding-assistant
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+sandbox:
+  cpus: 2
+  memory_mib: 2048
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert!(
+            sb.workspace_host.is_none(),
+            "workspace_host defaults to None"
+        );
+    }
+
+    #[test]
+    fn sandbox_config_workspace_host_no_sandbox_section_still_parses() {
+        // Config with no sandbox section at all should parse fine
+        let config: AgentConfig = serde_yaml::from_str(FEISHU_YAML).unwrap();
+        assert!(config.sandbox.is_none());
+    }
+
+    // ========================================================================
+    // Sprint 2 — M3: MemoryConfig + MemoryInjectMode + SessionType
+    // ========================================================================
+
+    #[test]
+    fn agent_config_without_memory_field_defaults_to_none() {
+        let config: AgentConfig = serde_yaml::from_str(FEISHU_YAML).unwrap();
+        assert!(
+            config.memory.is_none(),
+            "memory should be None when not specified"
+        );
+    }
+
+    #[test]
+    fn agent_config_minimal_without_memory_parses() {
+        let config: AgentConfig = serde_yaml::from_str(MINIMAL_YAML).unwrap();
+        assert!(config.memory.is_none());
+    }
+
+    #[test]
+    fn memory_inject_mode_prepend_system_parses() {
+        let yaml = format!("{}\nmemory:\n  inject_as: prepend_system\n", MINIMAL_YAML);
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let mem = config.memory.expect("memory should be Some");
+        assert!(
+            matches!(mem.inject_as, MemoryInjectMode::PrependSystem),
+            "expected PrependSystem"
+        );
+    }
+
+    #[test]
+    fn memory_inject_mode_initial_message_parses() {
+        let yaml = format!("{}\nmemory:\n  inject_as: initial_message\n", MINIMAL_YAML);
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let mem = config.memory.unwrap();
+        assert!(matches!(mem.inject_as, MemoryInjectMode::InitialMessage));
+    }
+
+    #[test]
+    fn memory_config_default_auto_load_contains_agent_md() {
+        let yaml = format!("{}\nmemory:\n  inject_as: prepend_system\n", MINIMAL_YAML);
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let mem = config.memory.unwrap();
+        assert!(
+            mem.auto_load.contains(&"AGENT.md".to_string()),
+            "default auto_load must include AGENT.md, got: {:?}",
+            mem.auto_load
+        );
+    }
+
+    #[test]
+    fn memory_config_default_auto_load_contains_memory_md() {
+        let yaml = format!("{}\nmemory:\n  inject_as: prepend_system\n", MINIMAL_YAML);
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let mem = config.memory.unwrap();
+        assert!(
+            mem.auto_load.contains(&"memory/MEMORY.md".to_string()),
+            "default auto_load must include memory/MEMORY.md, got: {:?}",
+            mem.auto_load
+        );
+    }
+
+    #[test]
+    fn memory_config_custom_auto_load_overrides_default() {
+        let yaml = format!(
+            "{}\nmemory:\n  auto_load: [\"CUSTOM.md\", \"notes/NOTES.md\"]\n  inject_as: prepend_system\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let mem = config.memory.unwrap();
+        assert_eq!(mem.auto_load.len(), 2, "custom list should have 2 entries");
+        assert!(mem.auto_load.contains(&"CUSTOM.md".to_string()));
+        assert!(mem.auto_load.contains(&"notes/NOTES.md".to_string()));
+        // Default entries must NOT be present when explicitly overridden
+        assert!(
+            !mem.auto_load.contains(&"AGENT.md".to_string()),
+            "AGENT.md should not appear when auto_load is explicitly set"
+        );
+    }
+
+    #[test]
+    fn session_type_user_driven_parses() {
+        let yaml = format!(
+            "{}\nmemory:\n  inject_as: prepend_system\n  session_type: user_driven\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let st = config
+            .memory
+            .unwrap()
+            .session_type
+            .expect("session_type should be Some");
+        assert!(matches!(st, SessionType::UserDriven));
+    }
+
+    #[test]
+    fn session_type_wiki_maintenance_parses() {
+        let yaml = format!(
+            "{}\nmemory:\n  inject_as: prepend_system\n  session_type: wiki_maintenance\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(matches!(
+            config.memory.unwrap().session_type.unwrap(),
+            SessionType::WikiMaintenance
+        ));
+    }
+
+    #[test]
+    fn session_type_skill_evaluation_parses() {
+        let yaml = format!(
+            "{}\nmemory:\n  inject_as: prepend_system\n  session_type: skill_evaluation\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(matches!(
+            config.memory.unwrap().session_type.unwrap(),
+            SessionType::SkillEvaluation
+        ));
+    }
+
+    #[test]
+    fn session_type_harness_run_parses() {
+        let yaml = format!(
+            "{}\nmemory:\n  inject_as: prepend_system\n  session_type: harness_run\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(matches!(
+            config.memory.unwrap().session_type.unwrap(),
+            SessionType::HarnessRun
+        ));
+    }
+
+    #[test]
+    fn session_type_absent_defaults_to_none() {
+        let yaml = format!("{}\nmemory:\n  inject_as: prepend_system\n", MINIMAL_YAML);
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(config.memory.unwrap().session_type.is_none());
+    }
+
+    // ========================================================================
+    // Sprint 7 — WikiConfig (wiki self-maintenance)
+    // ========================================================================
+
+    #[test]
+    fn wiki_config_default_values() {
+        let w = WikiConfig::default();
+        assert_eq!(w.trigger_sessions, 3);
+        assert_eq!(w.cooldown_secs, 1800);
+        assert!(!w.enabled, "enabled must default to false (opt-in)");
+    }
+
+    #[test]
+    fn wiki_config_yaml_empty_map_applies_all_defaults() {
+        // `wiki: {}` — every field takes its default.
+        let yaml = format!("{}\nwiki: {{}}\n", MINIMAL_YAML);
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let w = config.wiki.expect("wiki should be Some for `wiki: {}`");
+        assert_eq!(w.trigger_sessions, 3);
+        assert_eq!(w.cooldown_secs, 1800);
+        assert!(!w.enabled);
+    }
+
+    #[test]
+    fn wiki_config_yaml_full_fields_parse() {
+        let yaml = format!(
+            "{}\nwiki:\n  trigger_sessions: 5\n  cooldown_secs: 600\n  enabled: true\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let w = config.wiki.unwrap();
+        assert_eq!(w.trigger_sessions, 5);
+        assert_eq!(w.cooldown_secs, 600);
+        assert!(w.enabled);
+    }
+
+    #[test]
+    fn wiki_config_absent_in_agent_config_is_none() {
+        // When the `wiki:` key is entirely missing, the field must be `None`.
+        let config: AgentConfig = serde_yaml::from_str(MINIMAL_YAML).unwrap();
+        assert!(config.wiki.is_none(), "wiki should be None when absent");
+    }
+
+    #[test]
+    fn wiki_config_yaml_roundtrip() {
+        let cfg = WikiConfig {
+            trigger_sessions: 7,
+            cooldown_secs: 120,
+            enabled: true,
+        };
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        let back: WikiConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(back.trigger_sessions, 7);
+        assert_eq!(back.cooldown_secs, 120);
+        assert!(back.enabled);
+    }
+
+    #[test]
+    fn wiki_config_partial_fields_fill_defaults() {
+        // Only `enabled` is specified — the other two fall back to defaults.
+        let yaml = format!("{}\nwiki:\n  enabled: true\n", MINIMAL_YAML);
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let w = config.wiki.unwrap();
+        assert!(w.enabled);
+        assert_eq!(w.trigger_sessions, 3);
+        assert_eq!(w.cooldown_secs, 1800);
+    }
+
+    // ── M2: error paths ──────────────────────────────────────────────────────
+
+    #[test]
+    fn sandbox_config_workspace_host_integer_coerced_to_string() {
+        // serde_yaml 0.9 coerces YAML scalars (integers, booleans) to String when the
+        // target type is String. workspace_host: 123 therefore parses as Some("123").
+        // This documents the actual behaviour — callers should validate the resulting
+        // path before use.
+        let yaml = format!("{}\nsandbox:\n  workspace_host: 123\n", MINIMAL_YAML);
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        let path = sb
+            .workspace_host
+            .expect("integer is coerced to string Some(\"123\")");
+        assert_eq!(path.to_string_lossy(), "123");
+    }
+
+    #[test]
+    fn sandbox_config_workspace_host_list_type_returns_error() {
+        let yaml = format!(
+            "{}\nsandbox:\n  workspace_host:\n  - /path/a\n  - /path/b\n",
+            MINIMAL_YAML
+        );
+        let result = serde_yaml::from_str::<AgentConfig>(&yaml);
+        assert!(
+            result.is_err(),
+            "list-type workspace_host must return a parse error"
+        );
+    }
+
+    // ── M2: boundary ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn sandbox_config_workspace_host_empty_string_parses_to_empty_path() {
+        // Empty string is accepted by the parser; validation is the caller's job
+        let yaml = format!("{}\nsandbox:\n  workspace_host: \"\"\n", MINIMAL_YAML);
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        let path = sb
+            .workspace_host
+            .expect("empty string should parse as Some");
+        assert_eq!(path.to_string_lossy(), "");
+    }
+
+    #[test]
+    fn sandbox_config_workspace_host_relative_path_accepted_unchanged() {
+        // Relative path (no tilde, no leading /) is passed through as-is
+        let yaml = format!(
+            "{}\nsandbox:\n  workspace_host: relative/path/here\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        let path = sb.workspace_host.expect("relative path should parse");
+        assert_eq!(path.to_string_lossy(), "relative/path/here");
+    }
+
+    #[test]
+    fn sandbox_config_workspace_host_path_with_spaces() {
+        let yaml = format!(
+            "{}\nsandbox:\n  workspace_host: \"/path with spaces/agent\"\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        let path = sb.workspace_host.unwrap();
+        assert_eq!(path.to_string_lossy(), "/path with spaces/agent");
+    }
+
+    #[test]
+    fn expand_tilde_no_tilde_prefix_unchanged() {
+        // Strings without ~ prefix are never modified
+        assert_eq!(expand_tilde("/absolute/path"), "/absolute/path");
+        assert_eq!(expand_tilde("relative/path"), "relative/path");
+        assert_eq!(expand_tilde(""), "");
+    }
+
+    #[test]
+    fn expand_tilde_does_not_expand_internal_tilde() {
+        // Only a leading ~ is expanded — ~ elsewhere in the path is literal
+        let result = expand_tilde("/some/~/path");
+        assert_eq!(result, "/some/~/path");
+    }
+
+    // ── M3: error paths ──────────────────────────────────────────────────────
+
+    #[test]
+    fn memory_inject_mode_invalid_value_returns_error() {
+        let yaml = format!("{}\nmemory:\n  inject_as: bad_mode\n", MINIMAL_YAML);
+        let result = serde_yaml::from_str::<AgentConfig>(&yaml);
+        assert!(
+            result.is_err(),
+            "invalid inject_as value must return a YAML parse error"
+        );
+    }
+
+    #[test]
+    fn memory_inject_mode_missing_returns_error() {
+        // inject_as has no default — omitting it when memory section exists is an error
+        let yaml = format!("{}\nmemory:\n  auto_load: [\"AGENT.md\"]\n", MINIMAL_YAML);
+        let result = serde_yaml::from_str::<AgentConfig>(&yaml);
+        assert!(
+            result.is_err(),
+            "missing inject_as field must return a parse error"
+        );
+    }
+
+    #[test]
+    fn session_type_invalid_value_returns_error() {
+        let yaml = format!(
+            "{}\nmemory:\n  inject_as: prepend_system\n  session_type: bad_type\n",
+            MINIMAL_YAML
+        );
+        let result = serde_yaml::from_str::<AgentConfig>(&yaml);
+        assert!(
+            result.is_err(),
+            "invalid session_type must return a YAML parse error"
+        );
+    }
+
+    #[test]
+    fn memory_inject_mode_integer_type_returns_error() {
+        // inject_as must be a string — integer value should fail
+        let yaml = format!("{}\nmemory:\n  inject_as: 1\n", MINIMAL_YAML);
+        let result = serde_yaml::from_str::<AgentConfig>(&yaml);
+        assert!(
+            result.is_err(),
+            "integer inject_as must return a parse error"
+        );
+    }
+
+    // ── M3: boundary ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn memory_auto_load_empty_list_is_accepted() {
+        // Explicit empty list overrides the default — results in empty Vec
+        let yaml = format!(
+            "{}\nmemory:\n  auto_load: []\n  inject_as: prepend_system\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let mem = config.memory.unwrap();
+        assert!(
+            mem.auto_load.is_empty(),
+            "explicit empty auto_load should result in empty vec, got: {:?}",
+            mem.auto_load
+        );
+    }
+
+    #[test]
+    fn memory_auto_load_single_entry() {
+        let yaml = format!(
+            "{}\nmemory:\n  auto_load: [\"AGENT.md\"]\n  inject_as: prepend_system\n",
+            MINIMAL_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let mem = config.memory.unwrap();
+        assert_eq!(mem.auto_load.len(), 1);
+        assert_eq!(mem.auto_load[0], "AGENT.md");
+    }
+
+    #[test]
+    fn full_config_with_all_sprint2_fields_parses() {
+        // Integration: workspace_host + memory config together
+        let yaml = r#"
+name: knowledge-agent
+description: "知识管理专员"
+llm:
+  provider: anthropic
+  model: claude-haiku-4-5-20251001
+  max_tokens: 4096
+system_prompt: "你是知识管理专员。"
+tools:
+  toolset: coding
+constraints: { max_turns: 20, timeout_secs: 300 }
+sandbox:
+  cpus: 2
+  memory_mib: 1024
+  workspace_host: ~/.sage/agents/knowledge
+memory:
+  auto_load: ["AGENT.md", "memory/MEMORY.md"]
+  inject_as: prepend_system
+  session_type: user_driven
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.name, "knowledge-agent");
+        let sb = config.sandbox.unwrap();
+        let ws = sb.workspace_host.unwrap();
+        assert!(
+            !ws.to_string_lossy().starts_with('~'),
+            "workspace_host tilde must be expanded"
+        );
+        assert!(ws.to_string_lossy().ends_with(".sage/agents/knowledge"));
+        let mem = config.memory.unwrap();
+        assert_eq!(mem.auto_load.len(), 2);
+        assert!(matches!(mem.inject_as, MemoryInjectMode::PrependSystem));
+        assert!(matches!(mem.session_type.unwrap(), SessionType::UserDriven));
+    }
+
+    // ── Sprint 3 — v0.8: SandboxMode ─────────────────────────────────────────
+
+    const S3_BASE_YAML: &str = "name: t\ndescription: \"\"\nllm: { provider: test, model: m, max_tokens: 256 }\nsystem_prompt: test\ntools: {}\nconstraints: { max_turns: 5, timeout_secs: 60 }";
+
+    fn minimal_yaml_with_sandbox(sandbox_extra: &str) -> String {
+        format!("{S3_BASE_YAML}\nsandbox:\n  cpus: 1\n  memory_mib: 512\n{sandbox_extra}")
+    }
+
+    #[test]
+    fn sandbox_mode_defaults_to_microvm() {
+        let yaml = minimal_yaml_with_sandbox("");
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(
+            sb.mode,
+            SandboxMode::Microvm,
+            "default mode should be Microvm"
+        );
+    }
+
+    #[test]
+    fn sandbox_mode_host_parses() {
+        let yaml = minimal_yaml_with_sandbox("  mode: host\n");
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.mode, SandboxMode::Host);
+    }
+
+    #[test]
+    fn sandbox_mode_microvm_explicit_parses() {
+        let yaml = minimal_yaml_with_sandbox("  mode: microvm\n");
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.mode, SandboxMode::Microvm);
+    }
+
+    #[test]
+    fn sandbox_mode_invalid_string_returns_error() {
+        let yaml = minimal_yaml_with_sandbox("  mode: docker\n");
+        let result = serde_yaml::from_str::<AgentConfig>(&yaml);
+        assert!(result.is_err(), "unknown sandbox mode must fail to parse");
+    }
+
+    #[test]
+    fn sandbox_mode_host_preserves_other_fields() {
+        let yaml = minimal_yaml_with_sandbox("  mode: host\n  workspace_host: /tmp/ws\n");
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.mode, SandboxMode::Host);
+        assert!(
+            sb.workspace_host.is_some(),
+            "other fields must be preserved alongside mode: host"
+        );
+    }
+
+    #[test]
+    fn sandbox_mode_roundtrips_via_serde_yaml() {
+        // Verify SandboxMode::Host serialises back to "host"
+        let mode = SandboxMode::Host;
+        let s = serde_yaml::to_string(&mode).unwrap();
+        assert!(
+            s.trim() == "host",
+            "Host must serialise to 'host', got: {s:?}"
+        );
+
+        let mode = SandboxMode::Microvm;
+        let s = serde_yaml::to_string(&mode).unwrap();
+        assert!(
+            s.trim() == "microvm",
+            "Microvm must serialise to 'microvm', got: {s:?}"
+        );
+    }
+
+    // ── Sprint 3 — v0.8: RootfsTier ──────────────────────────────────────────
+
+    #[test]
+    fn rootfs_tier_defaults_to_minimal() {
+        let yaml = minimal_yaml_with_sandbox("");
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(
+            sb.rootfs,
+            RootfsTier::Minimal,
+            "default rootfs should be Minimal"
+        );
+    }
+
+    #[test]
+    fn rootfs_tier_standard_parses() {
+        let yaml = minimal_yaml_with_sandbox("  rootfs: standard\n");
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.rootfs, RootfsTier::Standard);
+    }
+
+    #[test]
+    fn rootfs_tier_minimal_explicit_parses() {
+        let yaml = minimal_yaml_with_sandbox("  rootfs: minimal\n");
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.rootfs, RootfsTier::Minimal);
+    }
+
+    #[test]
+    fn rootfs_tier_invalid_string_returns_error() {
+        let yaml = minimal_yaml_with_sandbox("  rootfs: ubuntu\n");
+        let result = serde_yaml::from_str::<AgentConfig>(&yaml);
+        assert!(result.is_err(), "unknown rootfs tier must fail to parse");
+    }
+
+    #[test]
+    fn rootfs_tier_roundtrips_via_serde_yaml() {
+        let tier = RootfsTier::Standard;
+        let s = serde_yaml::to_string(&tier).unwrap();
+        assert!(
+            s.trim() == "standard",
+            "Standard must serialise to 'standard', got: {s:?}"
+        );
+
+        let tier = RootfsTier::Minimal;
+        let s = serde_yaml::to_string(&tier).unwrap();
+        assert!(
+            s.trim() == "minimal",
+            "Minimal must serialise to 'minimal', got: {s:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_mode_and_rootfs_parse_together() {
+        let yaml = minimal_yaml_with_sandbox("  mode: host\n  rootfs: standard\n");
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.mode, SandboxMode::Host);
+        assert_eq!(sb.rootfs, RootfsTier::Standard);
+    }
+
+    #[test]
+    fn existing_sandbox_config_without_mode_or_rootfs_still_parses() {
+        // Backward compat: configs written before Sprint 3 must still parse cleanly.
+        let yaml = minimal_yaml_with_sandbox("  network: airgapped\n  exec_timeout_secs: 30\n");
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(
+            sb.mode,
+            SandboxMode::Microvm,
+            "missing mode defaults to Microvm"
+        );
+        assert_eq!(
+            sb.rootfs,
+            RootfsTier::Minimal,
+            "missing rootfs defaults to Minimal"
+        );
+    }
+
+    #[test]
+    fn sandbox_mode_microvm_with_rootfs_standard() {
+        // Both non-default values in opposite corners of the matrix
+        let yaml = minimal_yaml_with_sandbox("  mode: microvm\n  rootfs: standard\n");
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let sb = config.sandbox.unwrap();
+        assert_eq!(sb.mode, SandboxMode::Microvm);
+        assert_eq!(sb.rootfs, RootfsTier::Standard);
+    }
+
+    #[test]
+    fn sandbox_mode_integer_type_returns_error() {
+        // YAML integer where a string enum is expected must fail cleanly
+        let yaml = minimal_yaml_with_sandbox("  mode: 1\n");
+        let result = serde_yaml::from_str::<AgentConfig>(&yaml);
+        assert!(
+            result.is_err(),
+            "integer-typed mode must fail: expected string enum 'microvm'/'host'"
+        );
+    }
+
+    #[test]
+    fn rootfs_tier_integer_type_returns_error() {
+        let yaml = minimal_yaml_with_sandbox("  rootfs: 2\n");
+        let result = serde_yaml::from_str::<AgentConfig>(&yaml);
+        assert!(
+            result.is_err(),
+            "integer-typed rootfs must fail: expected string enum"
+        );
+    }
+
+    // ── Sprint 3 — v0.8: SandboxMode::with_dev_override ─────────────────────
+
+    #[test]
+    fn dev_override_true_forces_host_mode() {
+        // --dev=true must translate to SandboxMode::Host regardless of config value
+        let result = SandboxMode::Microvm.with_dev_override(true);
+        assert_eq!(
+            result,
+            SandboxMode::Host,
+            "--dev=true must override to Host"
+        );
+    }
+
+    #[test]
+    fn dev_override_false_preserves_microvm() {
+        let result = SandboxMode::Microvm.with_dev_override(false);
+        assert_eq!(
+            result,
+            SandboxMode::Microvm,
+            "--dev=false must leave Microvm unchanged"
+        );
+    }
+
+    #[test]
+    fn dev_override_false_preserves_host() {
+        let result = SandboxMode::Host.with_dev_override(false);
+        assert_eq!(
+            result,
+            SandboxMode::Host,
+            "--dev=false must leave Host unchanged"
+        );
+    }
+
+    // ========================================================================
+    // Sprint 4 — H1 HookConfig + H2 HarnessConfig YAML parsing
+    // ========================================================================
+
+    // ── HookConfig — basic parsing ────────────────────────────────────────────
+
+    #[test]
+    fn parse_hooks_pre_tool_use() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_tool_use:
+    - command: "/scripts/validate-tool.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.expect("hooks should be Some");
+        assert_eq!(hooks.pre_tool_use.len(), 1);
+        assert_eq!(hooks.pre_tool_use[0].command, "/scripts/validate-tool.sh");
+    }
+
+    #[test]
+    fn parse_hooks_post_tool_use() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  post_tool_use:
+    - command: "/scripts/log-tool.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.expect("hooks should be Some");
+        assert_eq!(hooks.post_tool_use.len(), 1);
+        assert_eq!(hooks.post_tool_use[0].command, "/scripts/log-tool.sh");
+    }
+
+    #[test]
+    fn parse_hooks_stop_event() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  stop:
+    - command: "/scripts/eval.sh"
+      timeout_secs: 30
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.expect("hooks should be Some");
+        assert_eq!(hooks.stop.len(), 1);
+        assert_eq!(hooks.stop[0].command, "/scripts/eval.sh");
+        assert_eq!(hooks.stop[0].timeout_secs, Some(30));
+    }
+
+    #[test]
+    fn hook_config_timeout_secs_defaults_to_none_when_omitted() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_tool_use:
+    - command: "/scripts/check.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(
+            hooks.pre_tool_use[0].timeout_secs, None,
+            "timeout_secs must be None when omitted"
+        );
+    }
+
+    #[test]
+    fn parse_hooks_multiple_per_event() {
+        // Multiple hooks per event type execute in order.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_tool_use:
+    - command: "/scripts/check1.sh"
+    - command: "/scripts/check2.sh"
+      timeout_secs: 10
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.pre_tool_use.len(), 2);
+        assert_eq!(hooks.pre_tool_use[0].command, "/scripts/check1.sh");
+        assert_eq!(hooks.pre_tool_use[0].timeout_secs, None);
+        assert_eq!(hooks.pre_tool_use[1].command, "/scripts/check2.sh");
+        assert_eq!(hooks.pre_tool_use[1].timeout_secs, Some(10));
+    }
+
+    #[test]
+    fn parse_hooks_all_three_event_types_together() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_tool_use:
+    - command: "/hooks/pre.sh"
+  post_tool_use:
+    - command: "/hooks/post.sh"
+  stop:
+    - command: "/hooks/stop.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.pre_tool_use[0].command, "/hooks/pre.sh");
+        assert_eq!(hooks.post_tool_use[0].command, "/hooks/post.sh");
+        assert_eq!(hooks.stop[0].command, "/hooks/stop.sh");
+    }
+
+    // ── HooksConfig defaults ──────────────────────────────────────────────────
+
+    #[test]
+    fn empty_hooks_section_gives_empty_vecs() {
+        // hooks: {} with no event keys → all three lists are empty
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks: {}
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config
+            .hooks
+            .expect("hooks: {} must deserialize as Some(HooksConfig)");
+        assert!(
+            hooks.pre_tool_use.is_empty(),
+            "pre_tool_use should be empty when omitted"
+        );
+        assert!(
+            hooks.post_tool_use.is_empty(),
+            "post_tool_use should be empty when omitted"
+        );
+        assert!(hooks.stop.is_empty(), "stop should be empty when omitted");
+    }
+
+    #[test]
+    fn agent_without_hooks_field_is_none() {
+        // FEISHU_YAML has no hooks field — backward compat must give None
+        let config: AgentConfig = serde_yaml::from_str(FEISHU_YAML).unwrap();
+        assert!(
+            config.hooks.is_none(),
+            "omitted hooks field must deserialize as None"
+        );
+    }
+
+    // ── HarnessConfig parsing ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_harness_minimal() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+harness:
+  evaluator: "/scripts/eval.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let harness = config.harness.expect("harness should be Some");
+        assert_eq!(harness.evaluator, "/scripts/eval.sh");
+    }
+
+    #[test]
+    fn parse_harness_with_explicit_timeout() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+harness:
+  evaluator: "/scripts/eval.sh"
+  timeout_secs: 60
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let harness = config.harness.unwrap();
+        assert_eq!(harness.evaluator, "/scripts/eval.sh");
+        assert_eq!(harness.timeout_secs, Some(60));
+    }
+
+    #[test]
+    fn harness_timeout_defaults_to_none_when_omitted() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+harness:
+  evaluator: "/scripts/eval.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.harness.unwrap().timeout_secs,
+            None,
+            "harness timeout_secs must be None when omitted"
+        );
+    }
+
+    #[test]
+    fn agent_without_harness_field_is_none() {
+        let config: AgentConfig = serde_yaml::from_str(FEISHU_YAML).unwrap();
+        assert!(
+            config.harness.is_none(),
+            "omitted harness field must be None"
+        );
+    }
+
+    // ── Backward compatibility ────────────────────────────────────────────────
+
+    #[test]
+    fn existing_config_still_parses_with_hooks_and_harness_as_none() {
+        // Any config without hooks/harness must still parse cleanly
+        let config: AgentConfig = serde_yaml::from_str(FEISHU_YAML).unwrap();
+        assert_eq!(config.name, "feishu-assistant");
+        assert!(config.hooks.is_none());
+        assert!(config.harness.is_none());
+    }
+
+    // ── Integration — full Sprint 4 config ───────────────────────────────────
+
+    // ── HookConfig edge cases ─────────────────────────────────────────────────
+
+    #[test]
+    fn hook_timeout_secs_zero_is_valid() {
+        // timeout_secs = 0 is a valid u32 — parser must accept it
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  stop:
+    - command: "/scripts/eval.sh"
+      timeout_secs: 0
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.hooks.unwrap().stop[0].timeout_secs,
+            Some(0),
+            "timeout_secs: 0 must parse as Some(0)"
+        );
+    }
+
+    #[test]
+    fn hooks_empty_pre_tool_use_list_is_empty_vec() {
+        // hooks: pre_tool_use: [] should parse as Some(HooksConfig) with empty vec,
+        // not as None or parse error.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_tool_use: []
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.expect("hooks should be Some");
+        assert!(
+            hooks.pre_tool_use.is_empty(),
+            "explicit empty list must parse as empty Vec, not None"
+        );
+    }
+
+    #[test]
+    fn hook_command_empty_string_parses_successfully() {
+        // An empty command string is structurally valid YAML; parse succeeds.
+        // Execution-layer validation is the executor's responsibility, not the parser's.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_tool_use:
+    - command: ""
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.hooks.unwrap().pre_tool_use[0].command,
+            "",
+            "empty command string must parse as empty String"
+        );
+    }
+
+    // ── HookConfig error paths ────────────────────────────────────────────────
+
+    #[test]
+    fn hooks_field_as_scalar_is_parse_error() {
+        // hooks: "invalid" (scalar, not mapping) must fail deserialization
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks: "invalid string value"
+"#;
+        assert!(
+            serde_yaml::from_str::<AgentConfig>(yaml).is_err(),
+            "hooks: scalar must be a parse error"
+        );
+    }
+
+    #[test]
+    fn hook_timeout_secs_negative_is_parse_error() {
+        // timeout_secs is u32 — negative values must fail deserialization
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  stop:
+    - command: "/scripts/eval.sh"
+      timeout_secs: -1
+"#;
+        assert!(
+            serde_yaml::from_str::<AgentConfig>(yaml).is_err(),
+            "negative timeout_secs must be a parse error (u32 cannot be negative)"
+        );
+    }
+
+    #[test]
+    fn hook_timeout_secs_string_is_parse_error() {
+        // timeout_secs must be numeric, not a string
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_tool_use:
+    - command: "/scripts/check.sh"
+      timeout_secs: "thirty"
+"#;
+        assert!(
+            serde_yaml::from_str::<AgentConfig>(yaml).is_err(),
+            "string timeout_secs must be a parse error"
+        );
+    }
+
+    #[test]
+    fn harness_missing_evaluator_is_parse_error() {
+        // `evaluator` is a required field in HarnessConfig — `harness: {}` must fail
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+harness: {}
+"#;
+        assert!(
+            serde_yaml::from_str::<AgentConfig>(yaml).is_err(),
+            "harness: {{}} (missing evaluator) must be a parse error"
+        );
+    }
+
+    #[test]
+    fn harness_timeout_secs_negative_is_parse_error() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+harness:
+  evaluator: "/scripts/eval.sh"
+  timeout_secs: -5
+"#;
+        assert!(
+            serde_yaml::from_str::<AgentConfig>(yaml).is_err(),
+            "negative harness timeout_secs must be a parse error (u32)"
+        );
+    }
+
+    // ── Integration — full Sprint 4 config ───────────────────────────────────
+
+    #[test]
+    fn parse_full_sprint4_config_hooks_and_harness() {
+        let yaml = r#"
+name: eval-agent
+description: "Agent with sprint4 hooks + harness"
+llm: { provider: anthropic, model: claude-haiku-4-5-20251001, max_tokens: 4096 }
+system_prompt: "evaluator agent"
+tools:
+  bash: { allowed_binaries: [python3] }
+  read: { allowed_paths: ["/workspace"] }
+constraints: { max_turns: 10, timeout_secs: 120 }
+hooks:
+  pre_tool_use:
+    - command: "/hooks/pre-tool.sh"
+      timeout_secs: 5
+  post_tool_use:
+    - command: "/hooks/post-tool.sh"
+  stop:
+    - command: "/hooks/stop.sh"
+      timeout_secs: 30
+harness:
+  evaluator: "/scripts/eval.sh"
+  timeout_secs: 60
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        let harness = config.harness.unwrap();
+
+        assert_eq!(hooks.pre_tool_use.len(), 1);
+        assert_eq!(hooks.pre_tool_use[0].command, "/hooks/pre-tool.sh");
+        assert_eq!(hooks.pre_tool_use[0].timeout_secs, Some(5));
+
+        assert_eq!(hooks.post_tool_use.len(), 1);
+        assert_eq!(hooks.post_tool_use[0].command, "/hooks/post-tool.sh");
+        assert_eq!(hooks.post_tool_use[0].timeout_secs, None);
+
+        assert_eq!(hooks.stop.len(), 1);
+        assert_eq!(hooks.stop[0].command, "/hooks/stop.sh");
+        assert_eq!(hooks.stop[0].timeout_secs, Some(30));
+
+        assert_eq!(harness.evaluator, "/scripts/eval.sh");
+        assert_eq!(harness.timeout_secs, Some(60));
+    }
+
+    // ========================================================================
+    // Sprint 6 S6.5: HooksConfig extended fields (8 lifecycle events)
+    //
+    // YAML keys are snake_case (session_start / pre_compact / …). The runtime
+    // HookEvent enum yields PascalCase names ("SessionStart", "PreCompact")
+    // via HookEvent::name() — that asymmetry is intentional and only affects
+    // the hook-script payload, not config parsing tested here.
+    // ========================================================================
+
+    // ── Struct-level basics ────────────────────────────────────────────────────
+
+    #[test]
+    fn hooks_config_default_all_fields_empty() {
+        // Default must produce empty Vecs for every one of the 8 event fields,
+        // including the 5 added in Sprint 6.
+        let hc = HooksConfig::default();
+        assert!(
+            hc.pre_tool_use.is_empty(),
+            "pre_tool_use must default to empty"
+        );
+        assert!(
+            hc.post_tool_use.is_empty(),
+            "post_tool_use must default to empty"
+        );
+        assert!(hc.stop.is_empty(), "stop must default to empty");
+        assert!(
+            hc.session_start.is_empty(),
+            "session_start must default to empty"
+        );
+        assert!(
+            hc.session_end.is_empty(),
+            "session_end must default to empty"
+        );
+        assert!(
+            hc.user_prompt_submit.is_empty(),
+            "user_prompt_submit must default to empty"
+        );
+        assert!(
+            hc.pre_compact.is_empty(),
+            "pre_compact must default to empty"
+        );
+        assert!(
+            hc.post_compact.is_empty(),
+            "post_compact must default to empty"
+        );
+    }
+
+    #[test]
+    fn hooks_config_serde_roundtrip_preserves_new_fields() {
+        // Round-trip through serde_yaml to confirm all 5 new fields are
+        // serialized with stable snake_case keys and deserialized back.
+        let hc = HooksConfig {
+            pre_tool_use: vec![HookConfig {
+                command: "pre-tool.sh".to_string(),
+                timeout_secs: None,
+            }],
+            post_tool_use: vec![HookConfig {
+                command: "post-tool.sh".to_string(),
+                timeout_secs: None,
+            }],
+            stop: vec![HookConfig {
+                command: "stop.sh".to_string(),
+                timeout_secs: None,
+            }],
+            session_start: vec![HookConfig {
+                command: "ss.sh".to_string(),
+                timeout_secs: Some(10),
+            }],
+            session_end: vec![HookConfig {
+                command: "se.sh".to_string(),
+                timeout_secs: Some(20),
+            }],
+            user_prompt_submit: vec![HookConfig {
+                command: "ups.sh".to_string(),
+                timeout_secs: None,
+            }],
+            pre_compact: vec![HookConfig {
+                command: "pre-compact.sh".to_string(),
+                timeout_secs: Some(30),
+            }],
+            post_compact: vec![HookConfig {
+                command: "post-compact.sh".to_string(),
+                timeout_secs: None,
+            }],
+        };
+
+        let yaml = serde_yaml::to_string(&hc).expect("serialize HooksConfig");
+        let decoded: HooksConfig = serde_yaml::from_str(&yaml).expect("deserialize HooksConfig");
+
+        assert_eq!(decoded.session_start.len(), 1);
+        assert_eq!(decoded.session_start[0].command, "ss.sh");
+        assert_eq!(decoded.session_start[0].timeout_secs, Some(10));
+
+        assert_eq!(decoded.session_end.len(), 1);
+        assert_eq!(decoded.session_end[0].command, "se.sh");
+        assert_eq!(decoded.session_end[0].timeout_secs, Some(20));
+
+        assert_eq!(decoded.user_prompt_submit.len(), 1);
+        assert_eq!(decoded.user_prompt_submit[0].command, "ups.sh");
+
+        assert_eq!(decoded.pre_compact.len(), 1);
+        assert_eq!(decoded.pre_compact[0].command, "pre-compact.sh");
+        assert_eq!(decoded.pre_compact[0].timeout_secs, Some(30));
+
+        assert_eq!(decoded.post_compact.len(), 1);
+        assert_eq!(decoded.post_compact[0].command, "post-compact.sh");
+    }
+
+    #[test]
+    fn hooks_config_new_fields_are_public() {
+        // Compile-time check: all 5 new fields are publicly accessible by
+        // their snake_case identifiers. If a field is renamed or made private,
+        // this test fails to compile.
+        let hc = HooksConfig::default();
+        let _ = &hc.session_start;
+        let _ = &hc.session_end;
+        let _ = &hc.user_prompt_submit;
+        let _ = &hc.pre_compact;
+        let _ = &hc.post_compact;
+    }
+
+    // ── YAML parsing — backward compatibility ─────────────────────────────────
+
+    #[test]
+    fn hooks_config_yaml_only_legacy_fields_parses_with_empty_new_fields() {
+        // Legacy config writing only the Sprint-4 fields must still parse, with
+        // all 5 Sprint-6 fields defaulted to empty Vec.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_tool_use:
+    - command: "/scripts/pre.sh"
+  post_tool_use:
+    - command: "/scripts/post.sh"
+  stop:
+    - command: "/scripts/stop.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.expect("hooks block must deserialize");
+        assert_eq!(hooks.pre_tool_use.len(), 1);
+        assert_eq!(hooks.post_tool_use.len(), 1);
+        assert_eq!(hooks.stop.len(), 1);
+        assert!(
+            hooks.session_start.is_empty(),
+            "session_start defaults to empty"
+        );
+        assert!(
+            hooks.session_end.is_empty(),
+            "session_end defaults to empty"
+        );
+        assert!(
+            hooks.user_prompt_submit.is_empty(),
+            "user_prompt_submit defaults to empty"
+        );
+        assert!(
+            hooks.pre_compact.is_empty(),
+            "pre_compact defaults to empty"
+        );
+        assert!(
+            hooks.post_compact.is_empty(),
+            "post_compact defaults to empty"
+        );
+    }
+
+    #[test]
+    fn hooks_config_yaml_empty_block_parses_with_all_empty() {
+        // `hooks: {}` with no child keys must yield Some(HooksConfig) where all
+        // 8 event lists are empty.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks: {}
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.expect("hooks: {} must deserialize as Some");
+        assert!(hooks.pre_tool_use.is_empty());
+        assert!(hooks.post_tool_use.is_empty());
+        assert!(hooks.stop.is_empty());
+        assert!(hooks.session_start.is_empty());
+        assert!(hooks.session_end.is_empty());
+        assert!(hooks.user_prompt_submit.is_empty());
+        assert!(hooks.pre_compact.is_empty());
+        assert!(hooks.post_compact.is_empty());
+    }
+
+    #[test]
+    fn hooks_config_yaml_missing_hooks_section_is_none() {
+        // AgentConfig without a hooks field must deserialize with hooks = None
+        // (Sprint 6 additions do not change this existing contract).
+        let config: AgentConfig = serde_yaml::from_str(FEISHU_YAML).unwrap();
+        assert!(
+            config.hooks.is_none(),
+            "omitted hooks field must remain None after Sprint 6 additions"
+        );
+    }
+
+    // ── YAML parsing — new fields (one test per field) ────────────────────────
+
+    #[test]
+    fn hooks_config_yaml_session_start_parses_command_list() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  session_start:
+    - command: "python init.py"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.session_start.len(), 1);
+        assert_eq!(hooks.session_start[0].command, "python init.py");
+        assert_eq!(hooks.session_start[0].timeout_secs, None);
+    }
+
+    #[test]
+    fn hooks_config_yaml_session_end_parses_command_list() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  session_end:
+    - command: "python cleanup.py"
+      timeout_secs: 15
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.session_end.len(), 1);
+        assert_eq!(hooks.session_end[0].command, "python cleanup.py");
+        assert_eq!(hooks.session_end[0].timeout_secs, Some(15));
+    }
+
+    #[test]
+    fn hooks_config_yaml_user_prompt_submit_parses_command_list() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  user_prompt_submit:
+    - command: "/scripts/log-prompt.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.user_prompt_submit.len(), 1);
+        assert_eq!(
+            hooks.user_prompt_submit[0].command,
+            "/scripts/log-prompt.sh"
+        );
+        assert_eq!(hooks.user_prompt_submit[0].timeout_secs, None);
+    }
+
+    #[test]
+    fn hooks_config_yaml_pre_compact_parses_command_list() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_compact:
+    - command: "/scripts/snapshot.sh"
+      timeout_secs: 45
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.pre_compact.len(), 1);
+        assert_eq!(hooks.pre_compact[0].command, "/scripts/snapshot.sh");
+        assert_eq!(hooks.pre_compact[0].timeout_secs, Some(45));
+    }
+
+    #[test]
+    fn hooks_config_yaml_post_compact_parses_command_list() {
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  post_compact:
+    - command: "/scripts/log-compaction.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.post_compact.len(), 1);
+        assert_eq!(hooks.post_compact[0].command, "/scripts/log-compaction.sh");
+        assert_eq!(hooks.post_compact[0].timeout_secs, None);
+    }
+
+    // ── Composition & boundary cases ──────────────────────────────────────────
+
+    #[test]
+    fn hooks_config_yaml_all_eight_events_coexist() {
+        // Specifying one hook per event across all 8 events must produce 8
+        // single-element Vecs.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_tool_use:
+    - command: "/hooks/pre-tool.sh"
+  post_tool_use:
+    - command: "/hooks/post-tool.sh"
+  stop:
+    - command: "/hooks/stop.sh"
+  session_start:
+    - command: "/hooks/session-start.sh"
+  session_end:
+    - command: "/hooks/session-end.sh"
+  user_prompt_submit:
+    - command: "/hooks/user-prompt.sh"
+  pre_compact:
+    - command: "/hooks/pre-compact.sh"
+  post_compact:
+    - command: "/hooks/post-compact.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.pre_tool_use.len(), 1);
+        assert_eq!(hooks.post_tool_use.len(), 1);
+        assert_eq!(hooks.stop.len(), 1);
+        assert_eq!(hooks.session_start.len(), 1);
+        assert_eq!(hooks.session_end.len(), 1);
+        assert_eq!(hooks.user_prompt_submit.len(), 1);
+        assert_eq!(hooks.pre_compact.len(), 1);
+        assert_eq!(hooks.post_compact.len(), 1);
+
+        assert_eq!(hooks.session_start[0].command, "/hooks/session-start.sh");
+        assert_eq!(hooks.session_end[0].command, "/hooks/session-end.sh");
+        assert_eq!(hooks.user_prompt_submit[0].command, "/hooks/user-prompt.sh");
+        assert_eq!(hooks.pre_compact[0].command, "/hooks/pre-compact.sh");
+        assert_eq!(hooks.post_compact[0].command, "/hooks/post-compact.sh");
+    }
+
+    #[test]
+    fn hooks_config_yaml_multi_commands_per_event_preserves_order() {
+        // Multiple hooks for a single new-event field must preserve YAML order.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  pre_compact:
+    - command: "/hooks/first.sh"
+    - command: "/hooks/second.sh"
+      timeout_secs: 20
+    - command: "/hooks/third.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.pre_compact.len(), 3);
+        assert_eq!(hooks.pre_compact[0].command, "/hooks/first.sh");
+        assert_eq!(hooks.pre_compact[0].timeout_secs, None);
+        assert_eq!(hooks.pre_compact[1].command, "/hooks/second.sh");
+        assert_eq!(hooks.pre_compact[1].timeout_secs, Some(20));
+        assert_eq!(hooks.pre_compact[2].command, "/hooks/third.sh");
+        assert_eq!(hooks.pre_compact[2].timeout_secs, None);
+    }
+
+    #[test]
+    fn hooks_config_yaml_unknown_event_key_is_ignored() {
+        // HooksConfig does not use #[serde(deny_unknown_fields)], so unknown
+        // event keys in YAML must be silently ignored — the 8 known fields
+        // parse normally.
+        let yaml = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+hooks:
+  random_event:
+    - command: "foo"
+  session_start:
+    - command: "/hooks/ss.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml)
+            .expect("unknown hook event key must not cause a parse error");
+        let hooks = config.hooks.unwrap();
+        assert_eq!(hooks.session_start.len(), 1);
+        assert_eq!(hooks.session_start[0].command, "/hooks/ss.sh");
+    }
+
+    // ── AgentConfig integration ───────────────────────────────────────────────
+
+    #[test]
+    fn agent_config_with_hooks_all_events_parses() {
+        // Full AgentConfig with hooks for every one of the 8 events parses and
+        // retains all payloads.
+        let yaml = r#"
+name: full-agent
+description: "Agent with all 8 lifecycle hook events"
+llm: { provider: anthropic, model: claude-haiku-4-5-20251001, max_tokens: 4096 }
+system_prompt: "full agent"
+tools:
+  bash: { allowed_binaries: [python3] }
+constraints: { max_turns: 10, timeout_secs: 120 }
+hooks:
+  pre_tool_use:
+    - command: "/hooks/pre-tool.sh"
+  post_tool_use:
+    - command: "/hooks/post-tool.sh"
+  stop:
+    - command: "/hooks/stop.sh"
+  session_start:
+    - command: "/hooks/ss.sh"
+  session_end:
+    - command: "/hooks/se.sh"
+  user_prompt_submit:
+    - command: "/hooks/ups.sh"
+  pre_compact:
+    - command: "/hooks/pre-compact.sh"
+  post_compact:
+    - command: "/hooks/post-compact.sh"
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        let hooks = config.hooks.expect("hooks block must be Some");
+        // Sprint 4 fields intact.
+        assert_eq!(hooks.pre_tool_use[0].command, "/hooks/pre-tool.sh");
+        assert_eq!(hooks.post_tool_use[0].command, "/hooks/post-tool.sh");
+        assert_eq!(hooks.stop[0].command, "/hooks/stop.sh");
+        // Sprint 6 fields present.
+        assert_eq!(hooks.session_start[0].command, "/hooks/ss.sh");
+        assert_eq!(hooks.session_end[0].command, "/hooks/se.sh");
+        assert_eq!(hooks.user_prompt_submit[0].command, "/hooks/ups.sh");
+        assert_eq!(hooks.pre_compact[0].command, "/hooks/pre-compact.sh");
+        assert_eq!(hooks.post_compact[0].command, "/hooks/post-compact.sh");
+    }
+
+    #[test]
+    fn agent_config_hooks_optional_defaults_to_none() {
+        // Reaffirm after Sprint 6 field additions: an AgentConfig YAML without
+        // a top-level `hooks:` key still produces config.hooks == None.
+        let yaml = r#"
+name: no-hooks-agent
+description: "Agent without any hooks section"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+"#;
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(
+            config.hooks.is_none(),
+            "missing hooks section must deserialize to None"
+        );
+    }
+
+    // ========================================================================
+    // Sprint 8: ChannelConfig (Feishu)
+    // ========================================================================
+
+    const CHANNEL_BASE_YAML: &str = r#"
+name: t
+description: "t"
+llm: { provider: a, model: b, max_tokens: 1 }
+system_prompt: "t"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 1 }
+"#;
+
+    #[test]
+    fn channel_config_default_webhook_port_is_3400() {
+        // default_webhook_port() is exercised indirectly via serde default.
+        let yaml = format!(
+            r#"{CHANNEL_BASE_YAML}
+channel:
+  type: feishu
+  app_id: cli_abc
+  app_secret: secret123
+"#
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        match config.channel.expect("channel must be Some") {
+            ChannelConfig::Feishu { webhook_port, .. } => {
+                assert_eq!(webhook_port, 3400);
+            }
+        }
+    }
+
+    #[test]
+    fn channel_config_parse_feishu_full_fields() {
+        let yaml = format!(
+            r#"{CHANNEL_BASE_YAML}
+channel:
+  type: feishu
+  app_id: cli_abc
+  app_secret: "secret-xyz"
+  verification_token: "vtok-1"
+  webhook_port: 4500
+"#
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let ch = config.channel.expect("channel must be Some");
+        match ch {
+            ChannelConfig::Feishu {
+                app_id,
+                app_secret,
+                verification_token,
+                webhook_port,
+            } => {
+                assert_eq!(app_id, "cli_abc");
+                assert_eq!(app_secret, "secret-xyz");
+                assert_eq!(verification_token.as_deref(), Some("vtok-1"));
+                assert_eq!(webhook_port, 4500);
+            }
+        }
+    }
+
+    #[test]
+    fn channel_config_verification_token_optional() {
+        let yaml = format!(
+            r#"{CHANNEL_BASE_YAML}
+channel:
+  type: feishu
+  app_id: cli_abc
+  app_secret: "secret-xyz"
+  webhook_port: 3400
+"#
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        match config.channel.unwrap() {
+            ChannelConfig::Feishu {
+                verification_token, ..
+            } => {
+                assert!(verification_token.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn channel_config_webhook_port_defaults_to_3400_when_omitted() {
+        let yaml = format!(
+            r#"{CHANNEL_BASE_YAML}
+channel:
+  type: feishu
+  app_id: cli_abc
+  app_secret: s
+  verification_token: v
+"#
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        match config.channel.unwrap() {
+            ChannelConfig::Feishu { webhook_port, .. } => assert_eq!(webhook_port, 3400),
+        }
+    }
+
+    #[test]
+    fn channel_config_serde_roundtrip_preserves_fields() {
+        let original = ChannelConfig::Feishu {
+            app_id: "cli_round".into(),
+            app_secret: "rts".into(),
+            verification_token: Some("vt".into()),
+            webhook_port: 8080,
+        };
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let decoded: ChannelConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn agent_config_without_channel_section_defaults_to_none() {
+        let config: AgentConfig = serde_yaml::from_str(CHANNEL_BASE_YAML).unwrap();
+        assert!(config.channel.is_none());
+    }
+
+    #[test]
+    fn channel_config_unknown_type_fails_to_parse() {
+        let yaml = format!(
+            r#"{CHANNEL_BASE_YAML}
+channel:
+  type: mirc
+  app_id: x
+  app_secret: y
+"#
+        );
+        let result: Result<AgentConfig, _> = serde_yaml::from_str(&yaml);
+        assert!(
+            result.is_err(),
+            "unknown channel type must fail to deserialize"
+        );
+    }
+
+    // ========================================================================
+    // M1: LlmConfig field changes — max_tokens Optional + context_window
+    // ========================================================================
+
+    const M1_BASE_YAML: &str = r#"
+name: m1-test
+description: "M1 test agent"
+system_prompt: "test"
+tools: {}
+constraints: { max_turns: 1, timeout_secs: 30 }
+"#;
+
+    #[test]
+    fn llm_config_max_tokens_optional_defaults_to_none() {
+        // max_tokens field omitted entirely — should parse and give Option::None
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: kimi
+  model: kimi-k2.5
+"#,
+            M1_BASE_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(
+            config.llm.max_tokens.is_none(),
+            "max_tokens omitted should be None, got: {:?}",
+            config.llm.max_tokens
+        );
+    }
+
+    #[test]
+    fn llm_config_max_tokens_read_when_present() {
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: kimi
+  model: kimi-k2.5
+  max_tokens: 8192
+"#,
+            M1_BASE_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(
+            config.llm.max_tokens,
+            Some(8192),
+            "max_tokens: 8192 should parse to Some(8192)"
+        );
+    }
+
+    #[test]
+    fn llm_config_context_window_optional_defaults_to_none() {
+        // context_window omitted — should parse and give None
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: kimi
+  model: kimi-k2.5
+"#,
+            M1_BASE_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(
+            config.llm.context_window.is_none(),
+            "context_window omitted should be None, got: {:?}",
+            config.llm.context_window
+        );
+    }
+
+    #[test]
+    fn llm_config_context_window_read_when_present() {
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: kimi
+  model: kimi-k2.5
+  context_window: 262144
+"#,
+            M1_BASE_YAML
+        );
+        let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(
+            config.llm.context_window,
+            Some(262144),
+            "context_window: 262144 should parse to Some(262144)"
+        );
+    }
+
+    #[test]
+    fn llm_config_arbitrary_model_string_accepted_at_serde_layer() {
+        // Serde layer does NOT validate model string — weak binding
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: kimi
+  model: "literally-anything-xyz-123"
+"#,
+            M1_BASE_YAML
+        );
+        let result: Result<AgentConfig, _> = serde_yaml::from_str(&yaml);
+        assert!(
+            result.is_ok(),
+            "arbitrary model string must parse at serde layer (weak binding)"
+        );
+        let config = result.unwrap();
+        assert_eq!(config.llm.model, "literally-anything-xyz-123");
+    }
+
+    #[test]
+    fn llm_config_empty_model_still_parses_at_serde_layer() {
+        // Empty model string — serde must not reject it (post-validation handles this)
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: kimi
+  model: ""
+"#,
+            M1_BASE_YAML
+        );
+        let result: Result<AgentConfig, _> = serde_yaml::from_str(&yaml);
+        assert!(
+            result.is_ok(),
+            "empty model string must parse at serde layer; post-validation rejects it later"
+        );
+    }
+
+    #[test]
+    fn llm_config_unknown_provider_parses_at_serde_layer() {
+        // Serde layer does NOT validate provider — only validate_provider() does
+        let yaml = format!(
+            r#"{}
+llm:
+  provider: "not-a-real-provider-xyz"
+  model: some-model
+"#,
+            M1_BASE_YAML
+        );
+        let result: Result<AgentConfig, _> = serde_yaml::from_str(&yaml);
+        assert!(
+            result.is_ok(),
+            "unknown provider must parse at serde layer (validation is post-parse)"
+        );
+    }
+
+    #[test]
+    fn load_config_rejects_unknown_provider_with_helpful_error() {
+        // validate_provider("not-a-real-provider-xyz") must return Err with hint
+        let result = validate_provider("not-a-real-provider-xyz");
+        assert!(
+            result.is_err(),
+            "validate_provider should reject unknown provider"
+        );
+        let msg = result.unwrap_err();
+        // Error message must hint at valid providers
+        assert!(
+            msg.contains("valid providers") || msg.contains("provider"),
+            "error message should mention valid providers, got: {msg}"
+        );
+        // Should mention the bad provider id
+        assert!(
+            msg.contains("not-a-real-provider-xyz"),
+            "error message should echo back the invalid provider id, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn load_config_rejects_empty_provider() {
+        let result = validate_provider("");
+        assert!(
+            result.is_err(),
+            "validate_provider should reject empty string provider"
+        );
+    }
+
+    #[test]
+    fn validate_provider_accepts_every_known_provider_from_spec_table() {
+        // Data-driven: new providers in list_providers() auto-covered.
+        // Hardcoding 17 ids would drift when Sprint 12 M1 v2 added the 18th
+        // (openrouter) and the test would silently skip it.
+        for spec in sage_runtime::llm::provider_specs::list_providers() {
+            let result = validate_provider(spec.id);
+            assert!(
+                result.is_ok(),
+                "validate_provider(\"{}\") should succeed but got: {:?}",
+                spec.id,
+                result
+            );
+        }
     }
 }

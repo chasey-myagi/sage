@@ -66,33 +66,100 @@ pub trait ApiProvider: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// Global registry
+// Instance registry (Sprint 11 task #55 — SageEngine-scoped registry)
 // ---------------------------------------------------------------------------
 
-static REGISTRY: LazyLock<RwLock<HashMap<String, Arc<dyn ApiProvider>>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
-
-/// Register a provider, keyed by its `api()` identifier.
+/// A thread-safe registry of `ApiProvider` instances keyed by their
+/// `api()` identifier.
 ///
-/// If a provider with the same API identifier already exists it is replaced.
+/// Sprint 11 task #55: this is the **instance-level** alternative to the
+/// global `static REGISTRY` below. Future wiring (v0.0.2+) will migrate
+/// `SageEngine` to own a `Arc<ApiProviderRegistry>` field so multiple
+/// engines can carry different provider sets (multi-tenant / test isolation).
+///
+/// The global `register_provider` / `get_provider` API still exists and
+/// remains authoritative for backward compatibility; they delegate to
+/// `GLOBAL_REGISTRY.register / .get`.
+pub struct ApiProviderRegistry {
+    providers: RwLock<HashMap<String, Arc<dyn ApiProvider>>>,
+}
+
+impl ApiProviderRegistry {
+    /// New empty registry.
+    pub fn new() -> Self {
+        Self {
+            providers: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Register a provider, keyed by its `api()` identifier. Replaces any
+    /// existing entry with the same API.
+    pub fn register(&self, provider: Arc<dyn ApiProvider>) {
+        let api = provider.api().to_string();
+        self.providers.write().unwrap().insert(api, provider);
+    }
+
+    /// Look up a provider by API identifier.
+    pub fn get(&self, api: &str) -> Option<Arc<dyn ApiProvider>> {
+        self.providers.read().unwrap().get(api).cloned()
+    }
+
+    /// Clear all registered providers.
+    pub fn clear(&self) {
+        self.providers.write().unwrap().clear();
+    }
+
+    /// Look up or return a formatted error string.
+    pub fn resolve(&self, api: &str) -> Result<Arc<dyn ApiProvider>, String> {
+        self.get(api).ok_or_else(|| format!("No provider registered for API: {api}"))
+    }
+
+    /// Number of providers currently registered (testing / observability).
+    pub fn len(&self) -> usize {
+        self.providers.read().unwrap().len()
+    }
+
+    /// Whether the registry has zero providers.
+    pub fn is_empty(&self) -> bool {
+        self.providers.read().unwrap().is_empty()
+    }
+}
+
+impl Default for ApiProviderRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Global registry (backward-compat shim delegating to GLOBAL_REGISTRY)
+// ---------------------------------------------------------------------------
+
+static GLOBAL_REGISTRY: LazyLock<ApiProviderRegistry> = LazyLock::new(ApiProviderRegistry::new);
+
+/// Register a provider in the process-global registry.
+///
+/// Sprint 11 task #55: deprecation candidate. New code should prefer
+/// `SageEngine`'s instance registry once the v0.0.2+ wiring lands so
+/// multi-engine tests don't cross-pollute. Keeping the global shim for
+/// one release to avoid breaking downstream crates.
 pub fn register_provider(provider: Arc<dyn ApiProvider>) {
-    let api = provider.api().to_string();
-    REGISTRY.write().unwrap().insert(api, provider);
+    GLOBAL_REGISTRY.register(provider);
 }
 
-/// Look up a provider by API identifier.
+/// Look up a provider in the process-global registry.
 pub fn get_provider(api: &str) -> Option<Arc<dyn ApiProvider>> {
-    REGISTRY.read().unwrap().get(api).cloned()
+    GLOBAL_REGISTRY.get(api)
 }
 
-/// Remove all registered providers (useful for tests).
+/// Remove all providers from the process-global registry.
 pub fn clear_providers() {
-    REGISTRY.write().unwrap().clear();
+    GLOBAL_REGISTRY.clear()
 }
 
-/// Convenience: look up a provider or return an error string.
+/// Resolve (or error) via the process-global registry.
 pub fn resolve_provider(api: &str) -> Result<Arc<dyn ApiProvider>, String> {
-    get_provider(api).ok_or_else(|| format!("No provider registered for API: {api}"))
+    GLOBAL_REGISTRY.resolve(api)
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +169,7 @@ pub fn resolve_provider(api: &str) -> Result<Arc<dyn ApiProvider>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     struct MockProvider;
 
@@ -125,6 +193,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_register_and_get() {
         clear_providers();
         register_provider(Arc::new(MockProvider));
@@ -134,11 +203,63 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_provider_error() {
         clear_providers();
         let result = resolve_provider("nonexistent");
         assert!(result.is_err());
         let err = result.err().unwrap();
         assert!(err.contains("nonexistent"));
+    }
+
+    // ── Sprint 11 task #55: ApiProviderRegistry instance-level API ────────
+
+    #[test]
+    fn api_provider_registry_new_is_empty() {
+        let r = ApiProviderRegistry::new();
+        assert!(r.is_empty());
+        assert_eq!(r.len(), 0);
+    }
+
+    #[test]
+    fn api_provider_registry_register_and_get_roundtrip() {
+        let r = ApiProviderRegistry::new();
+        r.register(Arc::new(MockProvider));
+        assert_eq!(r.len(), 1);
+        assert!(r.get("mock-api").is_some());
+        assert!(r.get("not-there").is_none());
+    }
+
+    #[test]
+    fn api_provider_registry_register_same_api_replaces() {
+        let r = ApiProviderRegistry::new();
+        r.register(Arc::new(MockProvider));
+        r.register(Arc::new(MockProvider));
+        assert_eq!(r.len(), 1, "same api id must replace, not append");
+    }
+
+    #[test]
+    fn api_provider_registry_clear_removes_everything() {
+        let r = ApiProviderRegistry::new();
+        r.register(Arc::new(MockProvider));
+        r.clear();
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn api_provider_registry_resolve_returns_descriptive_err() {
+        let r = ApiProviderRegistry::new();
+        let err = r.resolve("missing-api").err().unwrap();
+        assert!(err.contains("missing-api"));
+    }
+
+    #[test]
+    fn two_independent_registries_do_not_share_state() {
+        // The whole point of Sprint 11 task #55: instance isolation.
+        let a = ApiProviderRegistry::new();
+        let b = ApiProviderRegistry::new();
+        a.register(Arc::new(MockProvider));
+        assert!(a.get("mock-api").is_some());
+        assert!(b.get("mock-api").is_none(), "registry B must not see A's provider");
     }
 }

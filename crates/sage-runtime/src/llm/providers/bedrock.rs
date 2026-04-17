@@ -46,7 +46,10 @@ fn resolve_region() -> Option<String> {
     if let Some(r) = std::env::var("AWS_REGION").ok().filter(|s| !s.is_empty()) {
         return Some(r);
     }
-    if let Some(r) = std::env::var("AWS_DEFAULT_REGION").ok().filter(|s| !s.is_empty()) {
+    if let Some(r) = std::env::var("AWS_DEFAULT_REGION")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
         return Some(r);
     }
     // If AWS_PROFILE is set, let SDK resolve region from profile config
@@ -60,7 +63,13 @@ fn resolve_region() -> Option<String> {
 fn normalize_tool_call_id(id: &str) -> String {
     let sanitized: String = id
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if sanitized.len() > 64 {
         sanitized[..64].to_string()
@@ -288,7 +297,9 @@ fn convert_messages(context: &LlmContext, model: &Model) -> Vec<br::Message> {
 
     // Add cache point to last user message for supported models
     if supports_prompt_caching(&model.id)
-        && let Some(last) = result.last_mut().filter(|m| m.role() == &br::ConversationRole::User)
+        && let Some(last) = result
+            .last_mut()
+            .filter(|m| m.role() == &br::ConversationRole::User)
     {
         last.content.push(br::ContentBlock::CachePoint(
             br::CachePointBlock::builder()
@@ -302,10 +313,7 @@ fn convert_messages(context: &LlmContext, model: &Model) -> Vec<br::Message> {
 }
 
 /// Build system prompt blocks.
-fn build_system_prompt(
-    system_prompt: &str,
-    model: &Model,
-) -> Option<Vec<br::SystemContentBlock>> {
+fn build_system_prompt(system_prompt: &str, model: &Model) -> Option<Vec<br::SystemContentBlock>> {
     if system_prompt.is_empty() {
         return None;
     }
@@ -336,9 +344,7 @@ fn convert_tool_config(tools: &[LlmTool]) -> Option<br::ToolConfiguration> {
                 br::ToolSpecification::builder()
                     .name(t.name.clone())
                     .description(t.description.clone())
-                    .input_schema(br::ToolInputSchema::Json(
-                        json_to_document(&t.parameters),
-                    ))
+                    .input_schema(br::ToolInputSchema::Json(json_to_document(&t.parameters)))
                     .build()
                     .expect("valid tool spec"),
             )
@@ -395,9 +401,13 @@ impl ApiProvider for BedrockProvider {
             .map(|v| v == "1")
             .unwrap_or(false)
         {
-            config_loader = config_loader.credentials_provider(
-                bedrock::config::Credentials::new("dummy-access-key", "dummy-secret-key", None, None, "skip-auth"),
-            );
+            config_loader = config_loader.credentials_provider(bedrock::config::Credentials::new(
+                "dummy-access-key",
+                "dummy-secret-key",
+                None,
+                None,
+                "skip-auth",
+            ));
         }
 
         let sdk_config = config_loader.load().await;
@@ -422,8 +432,8 @@ impl ApiProvider for BedrockProvider {
         }
 
         // Set inference config
-        let mut inf_config = br::InferenceConfiguration::builder()
-            .max_tokens(context.max_tokens as i32);
+        let mut inf_config =
+            br::InferenceConfiguration::builder().max_tokens(context.max_tokens as i32);
         if let Some(temp) = context.temperature {
             inf_config = inf_config.temperature(temp);
         }
@@ -446,105 +456,82 @@ impl ApiProvider for BedrockProvider {
 
         loop {
             match stream.recv().await {
-                Ok(Some(event)) => {
-                    match event {
-                        bedrock::types::ConverseStreamOutput::ContentBlockDelta(delta_event) => {
-                            if let Some(delta) = delta_event.delta() {
-                                match delta {
-                                    br::ContentBlockDelta::Text(text) => {
-                                        events.push(AssistantMessageEvent::TextDelta(
-                                            text.to_string(),
+                Ok(Some(event)) => match event {
+                    bedrock::types::ConverseStreamOutput::ContentBlockDelta(delta_event) => {
+                        if let Some(delta) = delta_event.delta() {
+                            match delta {
+                                br::ContentBlockDelta::Text(text) => {
+                                    events.push(AssistantMessageEvent::TextDelta(text.to_string()));
+                                }
+                                br::ContentBlockDelta::ToolUse(tool_delta) => {
+                                    let input = tool_delta.input();
+                                    if !input.is_empty() {
+                                        events.push(AssistantMessageEvent::ToolCallDelta {
+                                            id: current_tool_id.clone(),
+                                            arguments_delta: input.to_string(),
+                                        });
+                                    }
+                                }
+                                br::ContentBlockDelta::ReasoningContent(rc) => match rc {
+                                    br::ReasoningContentBlockDelta::Text(text) => {
+                                        events.push(AssistantMessageEvent::ThinkingDelta(
+                                            text.clone(),
                                         ));
                                     }
-                                    br::ContentBlockDelta::ToolUse(tool_delta) => {
-                                        let input = tool_delta.input();
-                                        if !input.is_empty() {
-                                            events.push(
-                                                AssistantMessageEvent::ToolCallDelta {
-                                                    id: current_tool_id.clone(),
-                                                    arguments_delta: input.to_string(),
-                                                },
-                                            );
-                                        }
+                                    br::ReasoningContentBlockDelta::Signature(sig) => {
+                                        events.push(AssistantMessageEvent::ThinkingBlockEnd {
+                                            signature: sig.clone(),
+                                            redacted: false,
+                                        });
                                     }
-                                    br::ContentBlockDelta::ReasoningContent(rc) => {
-                                        match rc {
-                                            br::ReasoningContentBlockDelta::Text(text) => {
-                                                events.push(
-                                                    AssistantMessageEvent::ThinkingDelta(
-                                                        text.clone(),
-                                                    ),
-                                                );
-                                            }
-                                            br::ReasoningContentBlockDelta::Signature(sig) => {
-                                                events.push(
-                                                    AssistantMessageEvent::ThinkingBlockEnd {
-                                                        signature: sig.clone(),
-                                                        redacted: false,
-                                                    },
-                                                );
-                                            }
-                                            br::ReasoningContentBlockDelta::RedactedContent(_) => {
-                                                events.push(
-                                                    AssistantMessageEvent::ThinkingBlockEnd {
-                                                        signature: String::new(),
-                                                        redacted: true,
-                                                    },
-                                                );
-                                            }
-                                            _ => {}
-                                        }
+                                    br::ReasoningContentBlockDelta::RedactedContent(_) => {
+                                        events.push(AssistantMessageEvent::ThinkingBlockEnd {
+                                            signature: String::new(),
+                                            redacted: true,
+                                        });
                                     }
                                     _ => {}
-                                }
+                                },
+                                _ => {}
                             }
                         }
-                        bedrock::types::ConverseStreamOutput::ContentBlockStart(start_event) => {
-                            if let Some(tool_use) = start_event
-                                .start()
-                                .and_then(|s| s.as_tool_use().ok())
-                            {
-                                current_tool_id = tool_use.tool_use_id().to_string();
-                                let name = tool_use.name().to_string();
-                                events.push(AssistantMessageEvent::ToolCallStart {
-                                    id: current_tool_id.clone(),
-                                    name,
-                                });
-                            }
-                        }
-                        bedrock::types::ConverseStreamOutput::ContentBlockStop(_) => {
-                            if !current_tool_id.is_empty() {
-                                events.push(AssistantMessageEvent::ToolCallEnd {
-                                    id: current_tool_id.clone(),
-                                });
-                                current_tool_id.clear();
-                            }
-                        }
-                        bedrock::types::ConverseStreamOutput::MessageStop(stop_event) => {
-                            stop_reason = map_stop_reason(stop_event.stop_reason());
-                        }
-                        bedrock::types::ConverseStreamOutput::Metadata(meta) => {
-                            if let Some(usage) = meta.usage() {
-                                events.push(AssistantMessageEvent::Usage(
-                                    crate::types::Usage {
-                                        input: usage.input_tokens() as u64,
-                                        output: usage.output_tokens() as u64,
-                                        cache_read: usage
-                                            .cache_read_input_tokens()
-                                            .unwrap_or(0)
-                                            as u64,
-                                        cache_write: usage
-                                            .cache_write_input_tokens()
-                                            .unwrap_or(0)
-                                            as u64,
-                                        ..Default::default()
-                                    },
-                                ));
-                            }
-                        }
-                        _ => {}
                     }
-                }
+                    bedrock::types::ConverseStreamOutput::ContentBlockStart(start_event) => {
+                        if let Some(tool_use) =
+                            start_event.start().and_then(|s| s.as_tool_use().ok())
+                        {
+                            current_tool_id = tool_use.tool_use_id().to_string();
+                            let name = tool_use.name().to_string();
+                            events.push(AssistantMessageEvent::ToolCallStart {
+                                id: current_tool_id.clone(),
+                                name,
+                            });
+                        }
+                    }
+                    bedrock::types::ConverseStreamOutput::ContentBlockStop(_) => {
+                        if !current_tool_id.is_empty() {
+                            events.push(AssistantMessageEvent::ToolCallEnd {
+                                id: current_tool_id.clone(),
+                            });
+                            current_tool_id.clear();
+                        }
+                    }
+                    bedrock::types::ConverseStreamOutput::MessageStop(stop_event) => {
+                        stop_reason = map_stop_reason(stop_event.stop_reason());
+                    }
+                    bedrock::types::ConverseStreamOutput::Metadata(meta) => {
+                        if let Some(usage) = meta.usage() {
+                            events.push(AssistantMessageEvent::Usage(crate::types::Usage {
+                                input: usage.input_tokens() as u64,
+                                output: usage.output_tokens() as u64,
+                                cache_read: usage.cache_read_input_tokens().unwrap_or(0) as u64,
+                                cache_write: usage.cache_write_input_tokens().unwrap_or(0) as u64,
+                                ..Default::default()
+                            }));
+                        }
+                    }
+                    _ => {}
+                },
                 Ok(None) => break,
                 Err(e) => {
                     events.push(AssistantMessageEvent::Error(format!(
@@ -567,6 +554,7 @@ impl ApiProvider for BedrockProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     // ========================================================================
     // normalize_tool_call_id
@@ -607,7 +595,9 @@ mod tests {
     fn test_supports_thinking_signature_claude() {
         assert!(supports_thinking_signature("anthropic.claude-opus-4-6-v1"));
         assert!(supports_thinking_signature("anthropic.claude-sonnet-4-6"));
-        assert!(supports_thinking_signature("eu.anthropic.claude-opus-4-6-v1"));
+        assert!(supports_thinking_signature(
+            "eu.anthropic.claude-opus-4-6-v1"
+        ));
     }
 
     #[test]
@@ -629,15 +619,20 @@ mod tests {
 
     #[test]
     fn test_supports_prompt_caching_claude37() {
-        assert!(supports_prompt_caching("anthropic.claude-3-7-sonnet-20250219-v1:0"));
+        assert!(supports_prompt_caching(
+            "anthropic.claude-3-7-sonnet-20250219-v1:0"
+        ));
     }
 
     #[test]
     fn test_supports_prompt_caching_claude35_haiku() {
-        assert!(supports_prompt_caching("anthropic.claude-3-5-haiku-20241022-v1:0"));
+        assert!(supports_prompt_caching(
+            "anthropic.claude-3-5-haiku-20241022-v1:0"
+        ));
     }
 
     #[test]
+    #[serial]
     fn test_supports_prompt_caching_non_claude() {
         unsafe { std::env::remove_var("AWS_BEDROCK_FORCE_CACHE") };
         assert!(!supports_prompt_caching("amazon.nova-pro-v1:0"));
@@ -649,6 +644,7 @@ mod tests {
     // ========================================================================
 
     #[test]
+    #[serial]
     fn test_resolve_region_default_us_east_1() {
         unsafe { std::env::remove_var("AWS_REGION") };
         unsafe { std::env::remove_var("AWS_DEFAULT_REGION") };
@@ -657,6 +653,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_region_from_env() {
         unsafe { std::env::set_var("AWS_REGION", "eu-west-1") };
         assert_eq!(resolve_region(), Some("eu-west-1".into()));
@@ -664,6 +661,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_region_none_when_profile_set() {
         unsafe { std::env::remove_var("AWS_REGION") };
         unsafe { std::env::remove_var("AWS_DEFAULT_REGION") };

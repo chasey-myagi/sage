@@ -1,0 +1,17 @@
+name: example-agent
+system_prompt: "You are a helpful assistant."
+llm:
+  provider: anthropic
+  model: claude-haiku-4-5-20251001
+  max_tokens: 4096
+constraints:
+  max_turns: 10
+  timeout_secs: 120
+tools:
+  toolset: coding
+hooks:
+  pre_tool_use:
+    - command: 'echo "About to run: $SAGE_TOOL_NAME" >&2'
+  stop:
+    - command: './evals/check_output.sh'
+      timeout_secs: 10

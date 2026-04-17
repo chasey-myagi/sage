@@ -155,9 +155,7 @@ impl OpenAiCompletionsProvider {
                             // reasoning field name (e.g., "reasoning_content", "reasoning").
                             // If no signature is present, skip — pi-mono doesn't write a
                             // reasoning field when thinkingSignature is empty.
-                            if let Some(field_name) =
-                                non_empty_thinking[0].signature.as_deref()
-                            {
+                            if let Some(field_name) = non_empty_thinking[0].signature.as_deref() {
                                 let reasoning: String = non_empty_thinking
                                     .iter()
                                     .map(|b| b.thinking.as_str())
@@ -549,11 +547,7 @@ impl ApiProvider for OpenAiCompletionsProvider {
         };
 
         if !response.status().is_success() {
-            let status = response.status();
-            let body_text = response.text().await.unwrap_or_default();
-            return vec![AssistantMessageEvent::Error(format!(
-                "API error {status}: {body_text}"
-            ))];
+            return vec![crate::llm::provider_errors::handle_error_response(response, model).await];
         }
 
         // Parse SSE stream chunk-by-chunk using a byte buffer to avoid
@@ -1371,10 +1365,7 @@ mod tests {
             compat.reasoning_effort_map[&ReasoningLevel::Minimal],
             "default"
         );
-        assert_eq!(
-            compat.reasoning_effort_map[&ReasoningLevel::Low],
-            "default"
-        );
+        assert_eq!(compat.reasoning_effort_map[&ReasoningLevel::Low], "default");
         assert_eq!(
             compat.reasoning_effort_map[&ReasoningLevel::Medium],
             "default"
@@ -1416,7 +1407,10 @@ mod tests {
     fn test_map_reasoning_effort_falls_back_when_map_empty() {
         let map = HashMap::new();
         // Empty map → return level's own string (pi-mono: effort ?? effort)
-        assert_eq!(map_reasoning_effort(ReasoningLevel::Minimal, &map), "minimal");
+        assert_eq!(
+            map_reasoning_effort(ReasoningLevel::Minimal, &map),
+            "minimal"
+        );
         assert_eq!(map_reasoning_effort(ReasoningLevel::Low, &map), "low");
         assert_eq!(map_reasoning_effort(ReasoningLevel::Medium, &map), "medium");
         assert_eq!(map_reasoning_effort(ReasoningLevel::High, &map), "high");
@@ -1605,7 +1599,10 @@ mod tests {
         );
         let messages = body["messages"].as_array().unwrap();
         let assistant = &messages[0];
-        assert_eq!(assistant["reasoning_content"], "Step 1: analyze\nStep 2: implement");
+        assert_eq!(
+            assistant["reasoning_content"],
+            "Step 1: analyze\nStep 2: implement"
+        );
     }
 
     #[test]

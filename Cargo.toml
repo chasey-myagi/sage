@@ -6,11 +6,12 @@ members = [
     "crates/sage-guest",
     "crates/sage-runner",
     "crates/sage-runtime",
+    "crates/sage-channel-feishu",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/chasey-myagi/sage"
@@ -24,7 +25,7 @@ serde_yaml = "0.9"
 anyhow = "1"
 thiserror = "2"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 async-trait = "0.1"
 futures = "0.3"
 glob = "0.3"
@@ -38,12 +39,37 @@ aws-types = "1"
 ciborium = "0.2"              # CBOR encoding for wire protocol
 bytes = "1"
 
+# Testing
+serial_test = "3"
+tracing-test = "0.2"
+tempfile = "3"
+ulid = "1"
+chrono = "0.4"
+
+# TUI
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+
 # VMM
 msb_krun = "0.1"
 libc = "0.2"
+
+# Cancellation propagation (Sprint 11 task #53 — async Ctrl+C + engine.cancel())
+tokio-util = "0.7"
+
+# HTTP / crypto (Sprint 12 tech debt: originally inlined in
+# sage-channel-feishu/Cargo.toml, promoted here so future channel crates
+# share versions).
+axum = "0.7"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 # Internal crates
 sage-protocol = { path = "crates/sage-protocol" }
 sage-sandbox = { path = "crates/sage-sandbox" }
 sage-runner = { path = "crates/sage-runner" }
 sage-runtime = { path = "crates/sage-runtime" }
+sage-channel-feishu = { path = "crates/sage-channel-feishu" }

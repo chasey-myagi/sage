@@ -5,6 +5,16 @@ use crate::error::SandboxError;
 use crate::handle::SandboxHandle;
 use crate::relay::AgentRelay;
 
+/// Commands available inside the guest rootfs via busybox symlinks.
+///
+/// **Current state**: Only busybox is installed. Tools like `cargo`, `git`,
+/// `python3`, `rg`, `fd` are NOT available in the default rootfs.
+/// YAML configs referencing these binaries will fail at execution time.
+///
+/// Future work: support custom rootfs images or a tool installer mechanism
+/// to provide richer development environments inside the sandbox.
+pub const BUSYBOX_COMMANDS: &[&str] = &["sh", "echo", "cat", "ls", "mkdir", "rm", "cp", "mv"];
+
 /// Configuration for a sandbox VM instance.
 pub struct SandboxBuilder {
     name: String,
@@ -131,7 +141,7 @@ impl SandboxBuilder {
         let security_json = self
             .security_config
             .as_ref()
-            .map(|c| serde_json::to_string(c))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| SandboxError::VmCreate(format!("serialize security config: {e}")))?;
 
@@ -218,7 +228,7 @@ impl SandboxBuilder {
             set_executable(&bb_dest).await?;
 
             // Create symlinks for common commands
-            for cmd in &["sh", "echo", "cat", "ls", "mkdir", "rm", "cp", "mv"] {
+            for cmd in BUSYBOX_COMMANDS {
                 let link = rootfs.join(format!("bin/{cmd}"));
                 let _ = tokio::fs::symlink("busybox", &link).await;
             }
@@ -253,13 +263,18 @@ impl SandboxBuilder {
 
 /// Generate a unique suffix for temp directory names (timestamp + pid).
 fn unique_suffix() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let t = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     let pid = std::process::id();
-    format!("{t:x}-{pid:x}")
+    // Include a per-process atomic counter so concurrent test threads (same PID,
+    // same nanosecond) always get distinct paths.
+    format!("{t:x}-{pid:x}-{n:x}")
 }
 
 /// Set a file as executable (chmod +x).
@@ -448,5 +463,13 @@ mod tests {
         assert!(rootfs.join("tmp").is_dir());
 
         let _ = std::fs::remove_dir_all(&rootfs);
+    }
+
+    #[test]
+    fn test_fix_rootfs_documents_available_commands() {
+        // Regression: BUSYBOX_COMMANDS must match the actual symlinks created
+        // in prepare_rootfs(). If you add a command to the rootfs, add it here too.
+        let expected = &["sh", "echo", "cat", "ls", "mkdir", "rm", "cp", "mv"];
+        assert_eq!(BUSYBOX_COMMANDS, expected);
     }
 }

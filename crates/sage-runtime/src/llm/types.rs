@@ -260,11 +260,21 @@ pub enum AssistantMessageEvent {
         signature: String,
         redacted: bool,
     },
-    ToolCallStart { id: String, name: String },
-    ToolCallDelta { id: String, arguments_delta: String },
-    ToolCallEnd { id: String },
+    ToolCallStart {
+        id: String,
+        name: String,
+    },
+    ToolCallDelta {
+        id: String,
+        arguments_delta: String,
+    },
+    ToolCallEnd {
+        id: String,
+    },
     Usage(Usage),
-    Done { stop_reason: StopReason },
+    Done {
+        stop_reason: StopReason,
+    },
     Error(String),
 }
 

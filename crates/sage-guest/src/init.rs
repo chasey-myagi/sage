@@ -2,6 +2,7 @@ use anyhow::Result;
 
 /// Volume info received from the host via SAGE_VOLUMES env var.
 #[derive(serde::Deserialize)]
+#[allow(dead_code)]
 struct GuestVolume {
     tag: String,
     guest_path: String,

@@ -89,11 +89,7 @@ impl ApiProvider for AnthropicProvider {
         };
 
         if !response.status().is_success() {
-            let status = response.status();
-            let body_text = response.text().await.unwrap_or_default();
-            return vec![AssistantMessageEvent::Error(format!(
-                "API error {status}: {body_text}"
-            ))];
+            return vec![crate::llm::provider_errors::handle_error_response(response, model).await];
         }
 
         // Parse SSE stream with byte-buffer approach (same as openai_compat.rs)
@@ -1230,8 +1226,7 @@ mod tests {
         assert_eq!(blocks[2]["type"], "thinking");
         assert_eq!(blocks[2]["thinking"], "step 2 reasoning");
         assert!(
-            blocks[2].get("signature").is_none()
-                || blocks[2]["signature"].is_null(),
+            blocks[2].get("signature").is_none() || blocks[2]["signature"].is_null(),
             "thinking block without signature should omit signature key"
         );
         assert_eq!(blocks[3]["type"], "text");
@@ -1972,8 +1967,7 @@ mod tests {
             block_type: BlockType::Thinking,
             signature: "sig_accumulated".into(),
         }];
-        let line =
-            r#"data: {"type":"content_block_stop","index":0}"#;
+        let line = r#"data: {"type":"content_block_stop","index":0}"#;
         process_sse_line(line, &mut events, &mut blocks);
 
         assert_eq!(events.len(), 1);
@@ -2000,8 +1994,7 @@ mod tests {
             },
             signature: String::new(),
         }];
-        let line =
-            r#"data: {"type":"content_block_stop","index":0}"#;
+        let line = r#"data: {"type":"content_block_stop","index":0}"#;
         process_sse_line(line, &mut events, &mut blocks);
 
         assert_eq!(events.len(), 1);
@@ -2025,8 +2018,7 @@ mod tests {
             block_type: BlockType::Text,
             signature: String::new(),
         }];
-        let line =
-            r#"data: {"type":"content_block_stop","index":0}"#;
+        let line = r#"data: {"type":"content_block_stop","index":0}"#;
         process_sse_line(line, &mut events, &mut blocks);
 
         assert!(events.is_empty(), "text block stop should not emit events");

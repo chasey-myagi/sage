@@ -2,6 +2,8 @@
 pub mod keys;
 pub mod models;
 pub mod openai_compat;
+pub mod provider_errors;
+pub mod provider_specs;
 pub mod providers;
 pub mod registry;
 pub mod stream;
@@ -26,7 +28,14 @@ pub trait LlmProvider: Send + Sync {
 // Public convenience API (matching pi-mono's index.ts)
 // ---------------------------------------------------------------------------
 
-/// Register all built-in providers.
+/// Register all built-in providers **into the process-global registry**.
+///
+/// **Transitional shim — do not call from new code.** Since Sprint 12 task
+/// #70 `SageEngine` owns its own `ApiProviderRegistry` and initializes it via
+/// [`register_builtin_into`]; the global registry survives only to keep
+/// existing integration-test setup compiling. Task #77 will remove both the
+/// global registry and this shim.
+#[doc(hidden)]
 pub fn register_builtin_providers() {
     use providers::*;
     registry::register_provider(Arc::new(AnthropicProvider::new()));
@@ -36,6 +45,24 @@ pub fn register_builtin_providers() {
     registry::register_provider(Arc::new(AzureOpenAiResponsesProvider::new()));
     registry::register_provider(Arc::new(BedrockProvider::new()));
     registry::register_provider(Arc::new(GoogleVertexProvider::new()));
+}
+
+/// Populate the given [`registry::ApiProviderRegistry`] with all built-in
+/// provider instances (Anthropic, OpenAI Completions / Responses, Google,
+/// Azure OpenAI, Bedrock, Google Vertex).
+///
+/// Sprint 12 task #70: used by `SageEngine` to initialize its instance
+/// registry. Safe to call multiple times — `ApiProviderRegistry::register`
+/// replaces entries with the same API id.
+pub fn register_builtin_into(reg: &registry::ApiProviderRegistry) {
+    use providers::*;
+    reg.register(Arc::new(AnthropicProvider::new()));
+    reg.register(Arc::new(OpenAiCompletionsProvider::new()));
+    reg.register(Arc::new(OpenAiResponsesProvider::new()));
+    reg.register(Arc::new(GoogleProvider::new()));
+    reg.register(Arc::new(AzureOpenAiResponsesProvider::new()));
+    reg.register(Arc::new(BedrockProvider::new()));
+    reg.register(Arc::new(GoogleVertexProvider::new()));
 }
 
 /// Stream a completion using the model's registered API provider.

@@ -4,14 +4,16 @@
 
 use crate::agent::Agent;
 use crate::compaction::{
-    self, CompactionReason, apply_compaction, estimate_context_tokens,
-    is_context_overflow, prepare_compaction, should_compact, truncate_messages,
+    self, CompactionReason, apply_compaction, estimate_context_tokens, is_context_overflow,
+    microcompact, prepare_compaction, should_compact, should_microcompact, truncate_messages,
 };
 use crate::event::{AgentEvent, AgentEventSink};
+use crate::hook::HookEvent;
 use crate::llm::types::*;
 use crate::tools::ToolOutput;
 use crate::types::*;
 use std::fmt;
+use tokio_util::sync::CancellationToken;
 
 /// Errors that can occur during the agent loop.
 #[derive(Debug)]
@@ -19,6 +21,8 @@ pub enum AgentLoopError {
     MaxTurnsReached,
     Cancelled,
     ProviderError(String),
+    /// A [`StopHook`] returned [`StopAction::Fail`] — the harness test failed.
+    TestFailed(String),
 }
 
 impl fmt::Display for AgentLoopError {
@@ -27,6 +31,7 @@ impl fmt::Display for AgentLoopError {
             AgentLoopError::MaxTurnsReached => write!(f, "max turns reached"),
             AgentLoopError::Cancelled => write!(f, "cancelled"),
             AgentLoopError::ProviderError(msg) => write!(f, "provider error: {msg}"),
+            AgentLoopError::TestFailed(reason) => write!(f, "harness test failed: {reason}"),
         }
     }
 }
@@ -158,8 +163,10 @@ impl MessageAccumulator {
             content.push(Content::Text { text: self.text });
         }
         for tc in &self.tool_calls {
-            let args = serde_json::from_str(&tc.arguments)
-                .unwrap_or(serde_json::Value::String(tc.arguments.clone()));
+            let args = serde_json::from_str(&tc.arguments).unwrap_or_else(|e| {
+                tracing::warn!(tool = %tc.name, error = %e, "tool call arguments are not valid JSON — using empty object");
+                serde_json::Value::Object(Default::default())
+            });
             content.push(Content::ToolCall {
                 id: tc.id.clone(),
                 name: tc.name.clone(),
@@ -244,6 +251,7 @@ async fn prepare_tool_call(
     let args: serde_json::Value = match serde_json::from_str(&tc.arguments) {
         Ok(v) => v,
         Err(e) => {
+            tracing::warn!(tool = %tc.name, error = %e, "tool call arguments are not valid JSON — blocking call");
             return Err(emit_blocked(
                 tc,
                 serde_json::Value::Null,
@@ -255,10 +263,10 @@ async fn prepare_tool_call(
     };
 
     // Enforce tool policy before any execution
-    if let Some(policy) = &agent.config().tool_policy {
-        if let Err(reason) = policy.check_tool_call(&tc.name, &args) {
-            return Err(emit_blocked(tc, args, reason, emit).await);
-        }
+    if let Some(policy) = &agent.config().tool_policy
+        && let Err(reason) = policy.check_tool_call(&tc.name, &args)
+    {
+        return Err(emit_blocked(tc, args, reason, emit).await);
     }
 
     emit.emit(AgentEvent::ToolExecutionStart {
@@ -297,21 +305,30 @@ async fn prepare_tool_call(
 }
 
 /// Finalize a tool call: run after hook, emit end, build result.
+/// Accepts already-parsed `args` to avoid redundant JSON parsing.
 async fn finalize_tool_call(
     agent: &Agent,
     tc: &ToolCallAccum,
+    args: serde_json::Value,
     output: ToolOutput,
     emit: &dyn AgentEventSink,
 ) -> ToolResultMessage {
     let after_ctx = AfterToolCallContext {
         tool_name: tc.name.clone(),
         tool_call_id: tc.id.clone(),
-        args: serde_json::from_str(&tc.arguments).unwrap_or_default(),
+        args,
         is_error: output.is_error,
     };
     let after_result = agent.call_after_tool_call(&after_ctx).await;
     let content = after_result.content.unwrap_or(output.content);
     let is_error = after_result.is_error.unwrap_or(output.is_error);
+
+    tracing::info!(
+        tool_name = %tc.name,
+        tool_call_id = %tc.id,
+        is_error,
+        "tool executed"
+    );
 
     emit.emit(AgentEvent::ToolExecutionEnd {
         tool_call_id: tc.id.clone(),
@@ -329,49 +346,103 @@ async fn finalize_tool_call(
     }
 }
 
-/// Execute a single tool call against the registry.
-async fn run_tool(agent: &Agent, name: &str, args: serde_json::Value) -> ToolOutput {
-    match agent.tools().get(name) {
-        Some(tool) => tool.execute(args).await,
-        None => ToolOutput {
-            content: vec![Content::Text {
-                text: format!("Unknown tool: {name}"),
-            }],
-            is_error: true,
+/// Execute a single tool call against the registry, aborting if `cancel` fires.
+///
+/// Sprint 12 task #69: tool execution is a common blocking point (network calls,
+/// long shell commands). `tokio::select!` on `cancel.cancelled()` lets a user
+/// Ctrl+C mid-tool actually interrupt the tool, instead of waiting for it to
+/// finish before observing the cancel.
+///
+/// Scope: `cancel` races **only** the `tool.execute(args)` future. Before- and
+/// after-hook invocations (managed in `prepare_tool_call` / `finalize_tool_call`)
+/// still run to completion even if cancel fires — this is deliberate so that
+/// hook-maintained state (metrics, audit log, external ack) stays consistent.
+/// Callers who need hook-level preemption must fold cancel into the hook impl
+/// itself.
+async fn run_tool(
+    agent: &Agent,
+    name: &str,
+    args: serde_json::Value,
+    cancel: Option<&CancellationToken>,
+) -> ToolOutput {
+    let tool = match agent.tools().get(name) {
+        Some(tool) => tool,
+        None => {
+            return ToolOutput {
+                content: vec![Content::Text {
+                    text: format!("Unknown tool: {name}"),
+                }],
+                is_error: true,
+            };
+        }
+    };
+    match cancel {
+        Some(tok) => tokio::select! {
+            biased;
+            _ = tok.cancelled() => ToolOutput {
+                content: vec![Content::Text {
+                    text: "tool execution cancelled".into(),
+                }],
+                is_error: true,
+            },
+            out = tool.execute(args) => out,
         },
+        None => tool.execute(args).await,
     }
 }
 
 /// Execute tool calls — parallel or sequential based on config.
+///
+/// When `cancel` fires mid-execution, remaining not-yet-started tool calls are
+/// synthesized as `cancelled` tool_results so the assistant message ↔ tool
+/// result pairing invariant (required by Anthropic and friends) survives into
+/// the next session turn. In-flight tools already observe cancel via the
+/// `run_tool` select.
 async fn execute_tool_calls(
     agent: &Agent,
     tool_calls: &[ToolCallAccum],
     emit: &dyn AgentEventSink,
+    cancel: Option<&CancellationToken>,
 ) -> Vec<ToolResultMessage> {
-    let mut results = Vec::new();
-
     match agent.config().tool_execution_mode {
         ToolExecutionMode::Parallel => {
-            let mut prepared = Vec::new();
-            for tc in tool_calls {
+            // Use index slots to preserve original tool_calls ordering.
+            // Anthropic requires tool results in the same order as tool uses.
+            let mut slots: Vec<Option<ToolResultMessage>> = vec![None; tool_calls.len()];
+            let mut prepared: Vec<(usize, &ToolCallAccum, serde_json::Value)> = Vec::new();
+
+            for (idx, tc) in tool_calls.iter().enumerate() {
                 match prepare_tool_call(agent, tc, emit).await {
-                    Ok(args) => prepared.push((tc, args)),
-                    Err(tr) => results.push(tr),
+                    Ok(args) => prepared.push((idx, tc, args)),
+                    Err(tr) => slots[idx] = Some(tr),
                 }
             }
 
             let futs: Vec<_> = prepared
                 .iter()
-                .map(|(tc, args)| run_tool(agent, &tc.name, args.clone()))
+                .map(|(_, tc, args)| run_tool(agent, &tc.name, args.clone(), cancel))
                 .collect();
             let outputs: Vec<ToolOutput> = futures::future::join_all(futs).await;
 
-            for ((tc, _args), output) in prepared.into_iter().zip(outputs) {
-                results.push(finalize_tool_call(agent, tc, output, emit).await);
+            for ((idx, tc, args), output) in prepared.into_iter().zip(outputs) {
+                slots[idx] = Some(finalize_tool_call(agent, tc, args, output, emit).await);
             }
+
+            slots.into_iter().flatten().collect()
         }
         ToolExecutionMode::Sequential => {
+            let mut results = Vec::new();
             for tc in tool_calls {
+                // Sprint 12 task #69: between sequential tool calls, a Ctrl+C
+                // should abort the remaining queue rather than drain it. We
+                // synthesize cancelled results for the rest to preserve the
+                // tool_use ↔ tool_result pairing.
+                if let Some(tok) = cancel
+                    && tok.is_cancelled()
+                {
+                    results.push(cancelled_tool_result(tc));
+                    continue;
+                }
                 let args = match prepare_tool_call(agent, tc, emit).await {
                     Ok(args) => args,
                     Err(tr) => {
@@ -379,18 +450,42 @@ async fn execute_tool_calls(
                         continue;
                     }
                 };
-                let output = run_tool(agent, &tc.name, args).await;
-                results.push(finalize_tool_call(agent, tc, output, emit).await);
+                let output = run_tool(agent, &tc.name, args.clone(), cancel).await;
+                results.push(finalize_tool_call(agent, tc, args, output, emit).await);
             }
+            results
         }
     }
+}
 
-    results
+/// Build a `cancelled` tool_result marker for a tool_call that never ran.
+///
+/// This preserves the **message-level** `tool_use` ↔ `tool_result` pairing
+/// invariant (required by Anthropic and friends): every tool_use block the
+/// assistant emitted gets a matching tool_result pushed into the agent's
+/// history, so the next `send()` starts from a valid state.
+///
+/// **Event stream is not preserved here.** This path skips `ToolExecutionStart`
+/// and `ToolExecutionEnd` emissions because the tool was never prepared. UI
+/// subscribers that render Start/End pairs will see a hole. Consumers that
+/// need full event coverage for cancelled tools should watch the message
+/// stream (which is complete) or subscribe to `AgentLoopError::Cancelled` and
+/// reconcile.
+fn cancelled_tool_result(tc: &ToolCallAccum) -> ToolResultMessage {
+    ToolResultMessage {
+        tool_call_id: tc.id.clone(),
+        tool_name: tc.name.clone(),
+        content: vec![Content::Text {
+            text: "tool execution cancelled".into(),
+        }],
+        is_error: true,
+        timestamp: now_secs(),
+    }
 }
 
 /// Attempt compaction on the agent's messages.
 /// Returns true if compaction was performed successfully.
-async fn try_compact(
+pub(crate) async fn try_compact(
     agent: &mut Agent,
     reason: CompactionReason,
     emit: &dyn AgentEventSink,
@@ -424,6 +519,22 @@ async fn try_compact(
     })
     .await;
 
+    // S6.2b: emit HookEvent::PreCompact on the session's HookBus (when
+    // attached) before the summarization call. Pre/Post events come in pairs:
+    //   - Ok path  → PostCompact (LLM-summarized compaction)
+    //   - Err path → CompactFallback (hard truncate; distinct event variant
+    //     so subscribers can tell which strategy occurred)
+    let hook_bus = agent.hook_bus().cloned();
+    let session_id = agent.session_id().map(str::to_string).unwrap_or_default();
+    let pre_message_count = agent.messages().len();
+    if let Some(bus) = &hook_bus {
+        bus.emit(HookEvent::PreCompact {
+            session_id: session_id.clone(),
+            tokens_before: context_tokens,
+            message_count: pre_message_count,
+        });
+    }
+
     let first_kept = prep.first_kept_index;
     let model = agent.config().model.clone();
     match compaction::compact(prep, agent.provider(), &model).await {
@@ -438,29 +549,95 @@ async fn try_compact(
                 messages_compacted: first_kept,
             })
             .await;
+
+            if let Some(bus) = &hook_bus {
+                bus.emit(HookEvent::PostCompact {
+                    session_id: session_id.clone(),
+                    tokens_before,
+                    tokens_after: estimate_context_tokens(agent.messages()) as u64,
+                    messages_compacted: first_kept,
+                });
+            }
             true
         }
-        Err(_) => {
-            // Compaction failed — fall back to truncation
-            truncate_messages(
-                agent.messages_mut(),
-                settings.keep_recent_tokens,
-            );
+        Err(e) => {
+            // Compaction failed — fall back to truncation.
+            // Emit CompactionEnd so listeners always see a matched Start/End pair.
+            tracing::warn!("compaction summarization failed, falling back to truncation: {e}");
+            let messages_before_truncate = agent.messages().len();
+            truncate_messages(agent.messages_mut(), settings.keep_recent_tokens);
+            let messages_compacted =
+                messages_before_truncate.saturating_sub(agent.messages().len());
+            emit.emit(AgentEvent::CompactionEnd {
+                tokens_before: context_tokens,
+                messages_compacted: 0,
+            })
+            .await;
+
+            if let Some(bus) = &hook_bus {
+                bus.emit(HookEvent::CompactFallback {
+                    session_id,
+                    tokens_before: context_tokens,
+                    tokens_after: estimate_context_tokens(agent.messages()) as u64,
+                    messages_truncated: messages_compacted,
+                });
+            }
             false
         }
     }
 }
 
-/// Run the three-layer agent loop.
+/// Generate a compact hex session identifier from the current wall-clock time.
+/// Not cryptographically unique, but sufficient for log correlation within a run.
+fn generate_session_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("{ms:013x}")
+}
+
+/// Run the three-layer agent loop with no external cancellation signal.
+///
+/// Equivalent to [`run_agent_loop_with_cancel`] with `cancel = None`. Retained
+/// as a zero-cost shortcut for callers that don't thread a CancellationToken
+/// (unit tests, one-shot CLI runs, etc).
 pub async fn run_agent_loop(
     agent: &mut Agent,
     emit: &dyn AgentEventSink,
 ) -> Result<Vec<AgentMessage>, AgentLoopError> {
+    run_agent_loop_with_cancel(agent, emit, None).await
+}
+
+/// Run the three-layer agent loop with optional external cancellation.
+///
+/// Sprint 12 task #69: when `cancel` is `Some`, the loop observes it at three
+/// checkpoints — before each LLM call, during the LLM call (via
+/// `tokio::select!`), and during tool execution. Passing `None` preserves
+/// pre-#69 behavior bit-for-bit.
+///
+/// On cancellation the loop emits `AgentEvent::AgentEnd` with messages
+/// collected so far and returns `Err(AgentLoopError::Cancelled)`. If the
+/// assistant had already requested tool calls that hadn't started when cancel
+/// fired, synthetic `cancelled` tool_results are pushed first so the
+/// `tool_use` ↔ `tool_result` pairing invariant survives into the next turn.
+pub async fn run_agent_loop_with_cancel(
+    agent: &mut Agent,
+    emit: &dyn AgentEventSink,
+    cancel: Option<&CancellationToken>,
+) -> Result<Vec<AgentMessage>, AgentLoopError> {
     let mut new_messages: Vec<AgentMessage> = Vec::new();
     let mut turn_count: usize = 0;
+    let session_id = generate_session_id();
+
+    // Stop-hook state: updated after each assistant message, consumed at natural stop.
+    let mut last_stop_reason = crate::types::StopReason::Stop;
+    let mut last_assistant_text = String::new();
 
     agent.set_streaming(true);
     emit.emit(AgentEvent::AgentStart).await;
+    tracing::info!("agent loop started");
 
     // Drain initial steering messages
     let mut pending: Vec<AgentMessage> = agent.drain_steering();
@@ -471,6 +648,21 @@ pub async fn run_agent_loop(
 
         while has_more_tool_calls || !pending.is_empty() {
             // INNER: steering + tools loop
+
+            // Sprint 12 task #69: top-of-turn cancellation checkpoint.
+            // Cheap early exit before the expensive LLM call. We emit
+            // AgentEnd so downstream event consumers see a clean terminal
+            // boundary even when the run is aborted.
+            if let Some(tok) = cancel
+                && tok.is_cancelled()
+            {
+                emit.emit(AgentEvent::AgentEnd {
+                    messages: new_messages.clone(),
+                })
+                .await;
+                agent.set_streaming(false);
+                return Err(AgentLoopError::Cancelled);
+            }
 
             // Check max turns
             if turn_count >= agent.config().max_turns {
@@ -498,7 +690,27 @@ pub async fn run_agent_loop(
                 new_messages.push(msg);
             }
 
-            // 2. Proactive compaction — check before LLM call
+            // 2a. Microcompact — lightweight client-side cleanup, zero LLM cost.
+            //     Fires at 75% context usage, before full compaction at ~90%.
+            {
+                let ctx_tokens = estimate_context_tokens(agent.messages()) as u64;
+                let cw = agent.config().model.context_window;
+                if should_microcompact(ctx_tokens, cw, &agent.config().compaction) {
+                    let keep_turns = agent.config().compaction.microcompact_keep_turns;
+                    let keep_thinking_turns =
+                        agent.config().compaction.microcompact_keep_thinking_turns;
+                    let cleared = microcompact(
+                        agent.messages_mut(),
+                        keep_turns,
+                        keep_thinking_turns,
+                    );
+                    if cleared > 0 {
+                        tracing::debug!(cleared, "microcompact cleared tool results");
+                    }
+                }
+            }
+
+            // 2b. Proactive compaction — full LLM summarization.
             {
                 let ctx_tokens = estimate_context_tokens(agent.messages()) as u64;
                 let cw = agent.config().model.context_window;
@@ -507,20 +719,87 @@ pub async fn run_agent_loop(
                 }
             }
 
+            // 2c. transformContext hook — inject memory, filter, or custom context edits.
+            agent.call_transform_context().await;
+
             // 3. Build context and call LLM
             let context = build_llm_context(agent);
             let tools = build_llm_tools(agent);
-            let events = agent
-                .provider()
-                .complete(&agent.config().model, &context, &tools)
-                .await;
+            let llm_start = std::time::Instant::now();
+            tracing::info!("llm.request");
+            // Sprint 12 task #69: race the LLM call against cancellation.
+            // `biased` ensures a pre-fired cancel token wins deterministically
+            // (relevant when cancel was set before the provider future was
+            // polled). On cancel we emit AgentEnd and return Cancelled
+            // without pushing the unfinished assistant message.
+            let events = match cancel {
+                Some(tok) => {
+                    let fut = agent.provider().complete(
+                        &agent.config().model,
+                        &context,
+                        &tools,
+                    );
+                    tokio::select! {
+                        biased;
+                        _ = tok.cancelled() => {
+                            emit.emit(AgentEvent::AgentEnd {
+                                messages: new_messages.clone(),
+                            })
+                            .await;
+                            agent.set_streaming(false);
+                            return Err(AgentLoopError::Cancelled);
+                        }
+                        evts = fut => evts,
+                    }
+                }
+                None => {
+                    agent
+                        .provider()
+                        .complete(&agent.config().model, &context, &tools)
+                        .await
+                }
+            };
 
-            // 4. Accumulate events into AssistantMessage
+            // 4. Accumulate events into AssistantMessage + emit streaming events
             let mut accum = MessageAccumulator::new();
+            let mut tool_id_to_name: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
             for event in &events {
+                match event {
+                    AssistantMessageEvent::TextDelta(delta) => {
+                        emit.emit(AgentEvent::MessageUpdate {
+                            message: AgentMessage::assistant(String::new()),
+                            delta: delta.clone(),
+                        })
+                        .await;
+                    }
+                    AssistantMessageEvent::ToolCallStart { id, name } => {
+                        tool_id_to_name.insert(id.clone(), name.clone());
+                    }
+                    AssistantMessageEvent::ToolCallDelta {
+                        id,
+                        arguments_delta,
+                    } => {
+                        let tool_name =
+                            tool_id_to_name.get(id).cloned().unwrap_or_default();
+                        emit.emit(AgentEvent::ToolExecutionUpdate {
+                            tool_call_id: id.clone(),
+                            tool_name,
+                            partial_result: arguments_delta.clone(),
+                        })
+                        .await;
+                    }
+                    _ => {}
+                }
                 accum.push_event(event);
             }
             let (assistant_msg, tool_call_accums) = accum.build(&agent.config().model);
+            tracing::info!(
+                input_tokens = assistant_msg.usage.input,
+                output_tokens = assistant_msg.usage.output,
+                elapsed_ms = u64::try_from(llm_start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                "llm.response"
+            );
 
             // 5. Reactive compaction — check for context overflow in response
             if is_context_overflow(&assistant_msg, agent.config().model.context_window) {
@@ -534,8 +813,22 @@ pub async fn run_agent_loop(
 
             agent.push_message(AgentMessage::Assistant(assistant_msg.clone()));
             new_messages.push(AgentMessage::Assistant(assistant_msg.clone()));
-
             turn_count += 1;
+
+            // Track fields consumed by the stop hook at natural completion.
+            last_stop_reason = assistant_msg.stop_reason.clone();
+            last_assistant_text = assistant_msg
+                .content
+                .iter()
+                .filter_map(|c| {
+                    if let Content::Text { text } = c {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("");
 
             // 6. Check for early termination
             if matches!(
@@ -559,7 +852,7 @@ pub async fn run_agent_loop(
             has_more_tool_calls = !tool_call_accums.is_empty();
 
             let tool_results = if has_more_tool_calls {
-                let results = execute_tool_calls(agent, &tool_call_accums, emit).await;
+                let results = execute_tool_calls(agent, &tool_call_accums, emit, cancel).await;
                 for r in &results {
                     agent.push_message(AgentMessage::ToolResult(r.clone()));
                     new_messages.push(AgentMessage::ToolResult(r.clone()));
@@ -568,6 +861,8 @@ pub async fn run_agent_loop(
             } else {
                 vec![]
             };
+
+            tracing::info!(turn = turn_count, "turn complete");
 
             emit.emit(AgentEvent::TurnEnd {
                 message: assistant_msg,
@@ -586,8 +881,41 @@ pub async fn run_agent_loop(
             continue 'outer;
         }
 
-        break;
+        // 10. Call stop hook at the natural completion point.
+        //     Continue(feedback) → steer the feedback and restart the outer loop.
+        //     Fail(reason)       → emit AgentEnd and return TestFailed error.
+        //     Pass               → fall through to normal AgentEnd.
+        {
+            let stop_ctx = crate::agent::StopContext {
+                stop_reason: last_stop_reason.clone(),
+                session_id: session_id.clone(),
+                task_id: session_id.clone(),
+                turn_count,
+                agent_name: agent.config().name.clone(),
+                model: agent.config().model.id.clone(),
+                last_assistant_message: last_assistant_text.clone(),
+            };
+            match agent.call_stop_hook(&stop_ctx).await {
+                crate::agent::StopAction::Pass => break,
+                crate::agent::StopAction::Continue(feedback) => {
+                    tracing::info!("stop hook requested continuation — steering feedback");
+                    pending.push(AgentMessage::User(UserMessage::from_text(&feedback)));
+                    continue 'outer;
+                }
+                crate::agent::StopAction::Fail(reason) => {
+                    tracing::info!(reason = %reason, "stop hook failed the harness test");
+                    emit.emit(AgentEvent::AgentEnd {
+                        messages: new_messages.clone(),
+                    })
+                    .await;
+                    agent.set_streaming(false);
+                    return Err(AgentLoopError::TestFailed(reason));
+                }
+            }
+        }
     }
+
+    tracing::info!(total_turns = turn_count, "agent loop completed");
 
     emit.emit(AgentEvent::AgentEnd {
         messages: new_messages.clone(),
@@ -821,6 +1149,7 @@ mod tests {
 
     fn test_config() -> AgentLoopConfig {
         AgentLoopConfig {
+            name: "test-agent".into(),
             model: test_model(),
             system_prompt: "You are a test agent.".into(),
             max_turns: 10,
@@ -1123,6 +1452,7 @@ mod tests {
     #[tokio::test]
     async fn test_max_turns_prevents_infinite_loop() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "test".into(),
             max_turns: 2,
@@ -1348,6 +1678,7 @@ mod tests {
     #[tokio::test]
     async fn test_parallel_mode_executes_all_tools() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "test".into(),
             max_turns: 10,
@@ -1389,6 +1720,7 @@ mod tests {
     #[tokio::test]
     async fn test_sequential_mode_executes_all_tools() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "test".into(),
             max_turns: 10,
@@ -1981,6 +2313,7 @@ mod tests {
     #[tokio::test]
     async fn test_max_turns_zero_terminates_immediately() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "test".into(),
             max_turns: 0,
@@ -2015,6 +2348,7 @@ mod tests {
     #[tokio::test]
     async fn test_max_turns_one_allows_single_call() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "test".into(),
             max_turns: 1,
@@ -2056,6 +2390,7 @@ mod tests {
     #[tokio::test]
     async fn test_empty_system_prompt() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "".into(),
             max_turns: 10,
@@ -2496,6 +2831,7 @@ mod tests {
     #[tokio::test]
     async fn test_sequential_mode_respects_call_order() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "test".into(),
             max_turns: 10,
@@ -2698,11 +3034,7 @@ mod tests {
 
         let provider = ContextCapturingProvider::new(vec![turn1, turn2]);
         let captured = provider.captured.clone();
-        let mut agent = Agent::new(
-            test_config(),
-            Box::new(provider),
-            echo_registry(),
-        );
+        let mut agent = Agent::new(test_config(), Box::new(provider), echo_registry());
         agent.steer(AgentMessage::User(UserMessage::from_text("Hello")));
         let sink = CollectorSink::new();
         let _ = run_agent_loop(&mut agent, &sink).await;
@@ -2901,5 +3233,709 @@ mod tests {
             }
             other => panic!("expected Thinking, got: {other:?}"),
         }
+    }
+
+    // ── Issue #6: Regression — MessageUpdate and ToolExecutionUpdate emitted ──
+
+    #[tokio::test]
+    async fn test_fix_text_delta_emits_message_update() {
+        let sink = CollectorSink::new();
+        let mut agent = make_agent(
+            vec![text_response("hello world")],
+            ToolRegistry::new(),
+        );
+        agent.push_message(AgentMessage::User(UserMessage::from_text("hi")));
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        let events = sink.events().await;
+        let message_updates: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::MessageUpdate { .. }))
+            .collect();
+        assert!(
+            !message_updates.is_empty(),
+            "TextDelta should produce MessageUpdate events"
+        );
+        // Verify the delta content
+        if let AgentEvent::MessageUpdate { delta, .. } = &message_updates[0] {
+            assert_eq!(delta, "hello world");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fix_tool_call_delta_emits_tool_execution_update() {
+        let sink = CollectorSink::new();
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc-1", "echo", r#"{"text":"hi"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.push_message(AgentMessage::User(UserMessage::from_text("use echo")));
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        let events = sink.events().await;
+        let tool_updates: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::ToolExecutionUpdate { .. }))
+            .collect();
+        assert!(
+            !tool_updates.is_empty(),
+            "ToolCallDelta should produce ToolExecutionUpdate events"
+        );
+        // Verify tool name is correctly resolved from ToolCallStart
+        if let AgentEvent::ToolExecutionUpdate {
+            tool_call_id,
+            tool_name,
+            partial_result,
+        } = &tool_updates[0]
+        {
+            assert_eq!(tool_call_id, "tc-1");
+            assert_eq!(tool_name, "echo");
+            assert_eq!(partial_result, r#"{"text":"hi"}"#);
+        }
+    }
+
+    // ===============================================================
+    // Structured tracing span / event tests
+    // ===============================================================
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_agent_loop_started_emitted() {
+        let mut agent = make_agent(vec![text_response("hi")], ToolRegistry::new());
+        agent.steer(AgentMessage::User(UserMessage::from_text("hello")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("agent loop started"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_agent_loop_completed_emitted() {
+        let mut agent = make_agent(vec![text_response("hi")], ToolRegistry::new());
+        agent.steer(AgentMessage::User(UserMessage::from_text("hello")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("agent loop completed"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_turn_complete_emitted_after_each_turn() {
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"x"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("go")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        // Two turns: one for tool call, one for text response
+        assert!(logs_contain("turn complete"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_tool_executed_emitted_on_success() {
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"hello"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("echo it")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("tool executed"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_tool_executed_is_error_true_on_fail_tool() {
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "fail", r#"{}"#),
+                text_response("ok"),
+            ],
+            echo_fail_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("run fail")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("tool executed"));
+        // Verify the field value is `true`, not just that the field name appears
+        assert!(logs_contain("is_error=true"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_llm_call_is_logged() {
+        // "llm.request" fires before the LLM call; "llm.response" fires after
+        // with input_tokens, output_tokens, and elapsed_ms fields.
+        let mut agent = make_agent(vec![text_response("answer")], ToolRegistry::new());
+        agent.steer(AgentMessage::User(UserMessage::from_text("question")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("llm.request"), "request log must fire before LLM call");
+        assert!(logs_contain("llm.response"), "response log must fire after LLM call with usage");
+        assert!(logs_contain("elapsed_ms"), "response log must include latency");
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_no_tool_executed_log_when_no_tool_calls() {
+        // A pure text response should not emit "tool executed"
+        let mut agent = make_agent(vec![text_response("just text")], ToolRegistry::new());
+        agent.steer(AgentMessage::User(UserMessage::from_text("no tools")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        // agent loop events should still fire; tool executed should NOT appear
+        assert!(logs_contain("agent loop started"));
+        assert!(logs_contain("agent loop completed"));
+        assert!(!logs_contain("tool executed"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_tool_name_field_in_tool_executed_log() {
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"test"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("use echo")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        // The structured log should include the tool_name field value
+        assert!(logs_contain("tool_name=echo"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_multi_turn_emits_multiple_turn_complete_logs() {
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"step1"}"#),
+                tool_call_response("tc2", "echo", r#"{"text":"step2"}"#),
+                text_response("all done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("three turns")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        // "turn complete" should appear at least once per LLM response
+        assert!(logs_contain("turn complete"));
+        // The completion log should report total_turns=3 (one per LLM response)
+        assert!(logs_contain("total_turns=3"), "3-response run should log total_turns=3");
+        assert!(logs_contain("agent loop completed"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_turn_complete_field_values() {
+        // Two LLM responses → two turns logged with 1-indexed turn numbers
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"x"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("go")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        // turn_count is 1-indexed (incremented before "turn complete" is logged)
+        assert!(logs_contain("turn=1"), "first turn should log turn=1");
+        assert!(logs_contain("turn=2"), "second turn should log turn=2");
+        // Completion log reflects total
+        assert!(logs_contain("total_turns=2"), "2-response run should report total_turns=2");
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_provider_error_early_termination_not_logged_as_completed() {
+        // When the LLM returns Error event → StopReason::Error → early return.
+        // The agent loop exits before "turn complete" or "agent loop completed" are logged.
+        let mut agent = make_agent(
+            vec![vec![AssistantMessageEvent::Error("api error".into())]],
+            ToolRegistry::new(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("test")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("agent loop started"), "loop start must always be logged");
+        // Early return path does NOT reach "turn complete" or "agent loop completed"
+        assert!(!logs_contain("turn complete"), "error path exits before turn complete log");
+        assert!(
+            !logs_contain("agent loop completed"),
+            "error path exits before completion log"
+        );
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_aborted_stop_reason_skips_completed_log() {
+        // StopReason::Aborted also triggers early return — same path as Error.
+        // Both are checked at "if matches!(stop_reason, Error | Aborted)".
+        let mut agent = make_agent(
+            vec![vec![AssistantMessageEvent::Done {
+                stop_reason: StopReason::Aborted,
+            }]],
+            ToolRegistry::new(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("test")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("agent loop started"));
+        assert!(!logs_contain("turn complete"), "Aborted exits before turn complete log");
+        assert!(
+            !logs_contain("agent loop completed"),
+            "Aborted exits before completion log"
+        );
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_tool_executed_is_error_false_on_success() {
+        // Successful tool execution → is_error=false in the log.
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"ok"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("run echo")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("tool executed"));
+        assert!(logs_contain("is_error=false"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_tool_call_id_field_in_tool_executed_log() {
+        // "tool executed" log includes tool_call_id field.
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("my-call-id", "echo", r#"{"text":"x"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("echo")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("tool executed"));
+        assert!(logs_contain("my-call-id"), "tool_call_id value should appear in log");
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_max_turns_reached_skips_completed_log() {
+        // When turn_count >= max_turns the loop returns early before
+        // "agent loop completed" is logged.
+        let mut config = test_config();
+        config.max_turns = 1;
+        // Two responses: first would trigger another turn, but max_turns=1 stops it.
+        let mut agent = make_agent_with_config(
+            config,
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"x"}"#),
+                text_response("never reached"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("go")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("agent loop started"));
+        // max_turns early return skips the completion log
+        assert!(
+            !logs_contain("agent loop completed"),
+            "max_turns exit should not reach completion log"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Sprint 12 task #69: CancellationToken wiring
+    // ---------------------------------------------------------------
+    //
+    // Covers the three agent-loop wiring points:
+    //   (a) top-of-turn checkpoint — cancel before the first LLM call returns
+    //       Cancelled without invoking the provider
+    //   (b) LLM call — a slow provider cancelled mid-await returns Cancelled
+    //       and does NOT push a half-built assistant message
+    //   (c) tool execute — a slow tool cancelled mid-run returns a cancelled
+    //       tool_result (preserving the tool_use ↔ tool_result pairing) and
+    //       the loop surfaces Cancelled on the next iteration
+
+    /// A provider that blocks on a `Notify` until the test wakes it, then
+    /// returns a configured response. Used to create a deterministic race
+    /// between cancellation and LLM completion.
+    ///
+    /// `new()` returns `(Box<Self>, Arc<AtomicUsize>)` — the `Box` goes to
+    /// `Agent::new`, the `Arc` is a side-channel handle the test reads to
+    /// assert how many times `complete()` was polled.
+    struct SlowProvider {
+        release: std::sync::Arc<tokio::sync::Notify>,
+        response: Mutex<Option<Vec<AssistantMessageEvent>>>,
+        calls: std::sync::Arc<AtomicUsize>,
+    }
+
+    impl SlowProvider {
+        fn new(
+            response: Vec<AssistantMessageEvent>,
+        ) -> (Box<Self>, std::sync::Arc<AtomicUsize>) {
+            let calls = std::sync::Arc::new(AtomicUsize::new(0));
+            (
+                Box::new(Self {
+                    release: std::sync::Arc::new(tokio::sync::Notify::new()),
+                    response: Mutex::new(Some(response)),
+                    calls: calls.clone(),
+                }),
+                calls,
+            )
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for SlowProvider {
+        async fn complete(
+            &self,
+            _model: &Model,
+            _context: &LlmContext,
+            _tools: &[LlmTool],
+        ) -> Vec<AssistantMessageEvent> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.release.notified().await;
+            self.response.lock().unwrap().take().unwrap_or_else(|| {
+                vec![AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Stop,
+                }]
+            })
+        }
+    }
+
+    /// Tool that blocks on an internal `Notify` (never released in these
+    /// tests) and records whether `execute` ever completed. Returns
+    /// `(Box<Self>, Arc<AtomicBool>)` — the Arc is the completion flag the
+    /// test reads to assert the tool was preempted rather than finished.
+    struct SlowTool {
+        release: std::sync::Arc<tokio::sync::Notify>,
+        completed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl SlowTool {
+        fn new() -> (Box<Self>, std::sync::Arc<std::sync::atomic::AtomicBool>) {
+            let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let tool = Box::new(Self {
+                release: std::sync::Arc::new(tokio::sync::Notify::new()),
+                completed: completed.clone(),
+            });
+            (tool, completed)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AgentTool for SlowTool {
+        fn name(&self) -> &str {
+            "slow"
+        }
+        fn description(&self) -> &str {
+            "Blocks until released or cancelled"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            json!({"type": "object", "properties": {}})
+        }
+        async fn execute(&self, _args: serde_json::Value) -> ToolOutput {
+            self.release.notified().await;
+            self.completed
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            ToolOutput {
+                content: vec![Content::Text {
+                    text: "slow done".into(),
+                }],
+                is_error: false,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_before_run_returns_cancelled_without_calling_provider() {
+        // (a) top-of-turn checkpoint: if the token is already cancelled when
+        //     the loop enters the inner while, we must skip the LLM call.
+        let (provider, calls) = SlowProvider::new(text_response("unreachable"));
+        let mut agent = Agent::new(test_config(), provider, echo_registry());
+        agent.steer(AgentMessage::User(UserMessage::from_text("hi")));
+        let sink = CollectorSink::new();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let res = run_agent_loop_with_cancel(&mut agent, &sink, Some(&cancel)).await;
+
+        assert!(
+            matches!(res, Err(AgentLoopError::Cancelled)),
+            "pre-fired cancel must short-circuit with Cancelled, got {res:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "provider must not be invoked when cancel is set before first turn"
+        );
+        // AgentEnd must still fire so stream consumers see a clean terminal.
+        let events = sink.events().await;
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::AgentEnd { .. })),
+            "AgentEnd must be emitted on cancellation"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_during_llm_call_aborts_and_returns_cancelled() {
+        // (b) LLM call: provider future is in flight; cancel fires; select!
+        //     branch returns Cancelled and the partial provider response
+        //     never becomes an assistant message.
+        let (provider, calls) = SlowProvider::new(text_response("unreachable"));
+        let mut agent = Agent::new(test_config(), provider, echo_registry());
+        agent.steer(AgentMessage::User(UserMessage::from_text("hi")));
+        let sink = CollectorSink::new();
+        let cancel = CancellationToken::new();
+        let cancel_handle = cancel.clone();
+
+        let canceller = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            cancel_handle.cancel();
+        });
+
+        let res = run_agent_loop_with_cancel(&mut agent, &sink, Some(&cancel)).await;
+        canceller.await.unwrap();
+
+        assert!(
+            matches!(res, Err(AgentLoopError::Cancelled)),
+            "mid-LLM cancel must produce Cancelled, got {res:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "provider was polled exactly once before cancel fired"
+        );
+        // No assistant message was pushed from the aborted call.
+        let has_assistant = agent
+            .messages()
+            .iter()
+            .any(|m| matches!(m, AgentMessage::Assistant(_)));
+        assert!(
+            !has_assistant,
+            "no assistant message should be pushed when LLM call was cancelled"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_during_tool_execute_synthesizes_cancelled_tool_result() {
+        // (c) tool execute: LLM asks for a tool call; the tool blocks; cancel
+        //     fires; tool observes cancel via select! and emits a cancelled
+        //     ToolOutput. Loop then sees cancel at top-of-next-turn and
+        //     returns Cancelled. tool_use ↔ tool_result invariant is
+        //     preserved.
+        let mut config = test_config();
+        config.tool_execution_mode = ToolExecutionMode::Sequential;
+        let (slow_tool, completed) = SlowTool::new();
+        let mut reg = ToolRegistry::new();
+        reg.register(slow_tool);
+
+        let mut agent = make_agent_with_config(
+            config,
+            vec![
+                tool_call_response("tc1", "slow", "{}"),
+                text_response("never reached"),
+            ],
+            reg,
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("go")));
+        let sink = CollectorSink::new();
+        let cancel = CancellationToken::new();
+        let cancel_handle = cancel.clone();
+
+        let canceller = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            cancel_handle.cancel();
+        });
+
+        let res = run_agent_loop_with_cancel(&mut agent, &sink, Some(&cancel)).await;
+        canceller.await.unwrap();
+
+        assert!(
+            matches!(res, Err(AgentLoopError::Cancelled)),
+            "mid-tool cancel must eventually surface Cancelled, got {res:?}"
+        );
+        assert!(
+            !completed.load(std::sync::atomic::Ordering::SeqCst),
+            "slow tool must not run to completion after cancel"
+        );
+        // Pairing invariant: the assistant message with tool_use has a
+        // matching ToolResult (synthesized cancelled marker).
+        let tool_result = agent
+            .messages()
+            .iter()
+            .find_map(|m| match m {
+                AgentMessage::ToolResult(tr) if tr.tool_call_id == "tc1" => Some(tr),
+                _ => None,
+            })
+            .expect("cancelled tool must still produce a tool_result for pairing");
+        assert!(tool_result.is_error, "cancelled tool_result is an error");
+    }
+
+    #[tokio::test]
+    async fn cancel_in_sequential_multi_tool_synthesizes_marker_for_unstarted() {
+        // Linus review follow-up: cover the `cancelled_tool_result` helper
+        // directly. Scenario: LLM emits TWO sequential tool_calls. Cancel
+        // fires while the first one is executing (it returns via the
+        // select! race path). At the top of the next iteration of the
+        // for-loop inside `execute_tool_calls`, the pre-check
+        // `tok.is_cancelled()` branch fires for the second tool — which
+        // triggers `cancelled_tool_result(tc)`, the code path that was
+        // previously uncovered.
+        let mut config = test_config();
+        config.tool_execution_mode = ToolExecutionMode::Sequential;
+        let (slow_tool, _completed) = SlowTool::new();
+        let mut reg = ToolRegistry::new();
+        reg.register(slow_tool);
+
+        // A single LLM response carrying two tool_use blocks.
+        let multi = multi_tool_response(vec![
+            ("tc-a", "slow", "{}"),
+            ("tc-b", "slow", "{}"),
+        ]);
+        let mut agent = make_agent_with_config(
+            config,
+            vec![multi, text_response("never reached")],
+            reg,
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("go")));
+        let sink = CollectorSink::new();
+        let cancel = CancellationToken::new();
+        let cancel_handle = cancel.clone();
+
+        let canceller = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            cancel_handle.cancel();
+        });
+
+        let res = run_agent_loop_with_cancel(&mut agent, &sink, Some(&cancel)).await;
+        canceller.await.unwrap();
+
+        assert!(
+            matches!(res, Err(AgentLoopError::Cancelled)),
+            "multi-tool mid-execute cancel must surface Cancelled, got {res:?}"
+        );
+        // Both tool_use blocks must have matching tool_results pushed —
+        // this is the invariant the `cancelled_tool_result` helper exists
+        // to uphold for the unstarted tool.
+        let tc_a_result = agent.messages().iter().find_map(|m| match m {
+            AgentMessage::ToolResult(tr) if tr.tool_call_id == "tc-a" => Some(tr),
+            _ => None,
+        });
+        let tc_b_result = agent.messages().iter().find_map(|m| match m {
+            AgentMessage::ToolResult(tr) if tr.tool_call_id == "tc-b" => Some(tr),
+            _ => None,
+        });
+        assert!(
+            tc_a_result.is_some(),
+            "first tool (raced in execute) must have a tool_result"
+        );
+        let tc_b = tc_b_result
+            .expect("second tool (never started) must have a synthesized cancelled marker");
+        // Synthesized marker: is_error + "cancelled" text — proves it went
+        // through `cancelled_tool_result`, not through the normal
+        // finalize_tool_call path.
+        assert!(tc_b.is_error, "synthesized marker is is_error=true");
+        let text = tc_b
+            .content
+            .iter()
+            .find_map(|c| match c {
+                Content::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .unwrap_or("");
+        assert!(
+            text.contains("cancelled"),
+            "synthesized marker text must mention cancellation, got {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_cancel_token_preserves_pre_s12_behavior() {
+        // Backward-compat regression: run_agent_loop(agent, emit) delegates
+        // to run_agent_loop_with_cancel(agent, emit, None), which must not
+        // observe any cancel and must complete normally.
+        let mut agent = make_agent(vec![text_response("hello")], echo_registry());
+        agent.steer(AgentMessage::User(UserMessage::from_text("hi")));
+        let sink = CollectorSink::new();
+
+        let res = run_agent_loop(&mut agent, &sink).await;
+
+        assert!(res.is_ok(), "no-cancel path must complete normally");
+    }
+
+    #[tokio::test]
+    async fn cancel_is_idempotent() {
+        // Repeated cancel() on the same token must remain cancelled and
+        // behave identically to a single cancel().
+        let (provider, calls) = SlowProvider::new(text_response("unreachable"));
+        let mut agent = Agent::new(test_config(), provider, echo_registry());
+        agent.steer(AgentMessage::User(UserMessage::from_text("hi")));
+        let sink = CollectorSink::new();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        cancel.cancel();
+        cancel.cancel();
+
+        let res = run_agent_loop_with_cancel(&mut agent, &sink, Some(&cancel)).await;
+
+        assert!(matches!(res, Err(AgentLoopError::Cancelled)));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }

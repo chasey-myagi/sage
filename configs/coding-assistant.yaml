@@ -2,7 +2,7 @@ name: coding-assistant
 description: "Qwen-based coding assistant"
 llm:
   provider: qwen
-  model: qwen-plus
+  model: qwen3.6-plus
   max_tokens: 8192
   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
 system_prompt: |
@@ -11,7 +11,9 @@ system_prompt: |
   使用中文回答。
 tools:
   bash:
-    allowed_binaries: [python, python3, pip, cargo, rustc, node, npm, git]
+    # NOTE: Default rootfs only has busybox (sh/echo/cat/ls/mkdir/rm/cp/mv).
+    # Tools like cargo/git/python3 require a custom rootfs image.
+    allowed_binaries: [sh, echo, cat, ls, mkdir, rm, cp, mv]
   read:
     allowed_paths: ["/workspace"]
   write:
@@ -27,4 +29,3 @@ constraints:
 sandbox:
   cpus: 2
   memory_mib: 2048
-  network: true

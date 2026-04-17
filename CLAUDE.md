@@ -1,32 +1,39 @@
 # Sage
 
-Embeddable AI Agent execution engine — Rust workspace，基于 msb_krun microVM 沙箱。
+领域专家 Agent 应用 — 给任意领域配置一个有独立工作空间、有记忆沉淀的专员。基于 msb_krun microVM 沙箱，通过 TUI 交互或 Runeforge Caster 调度。
 
 ## 项目结构
 
 ```
 crates/
-├── caster/          # Rune Caster 入口 (clap CLI + Rune SDK)
+├── sage-cli/        # CLI 入口 (clap CLI + Rune SDK stub)
 │   └── src/
 │       ├── main.rs  # CLI 解析 + 启动
 │       └── serve.rs # Rune 注册 + 任务处理
-├── sandbox/         # Host 端沙箱 SDK
+├── sage-runtime/    # Agent 执行引擎 (LLM + Tools + Events)
+│   └── src/
+│       ├── engine.rs    # SageEngine (builder + run)
+│       ├── agent_loop.rs # Agent 循环
+│       ├── event.rs     # AgentEvent 类型
+│       ├── llm/         # LLM Providers
+│       └── tools/       # 内置工具
+├── sage-sandbox/    # Host 端沙箱 SDK
 │   └── src/
 │       ├── builder.rs   # SandboxBuilder (VM 配置)
 │       ├── handle.rs    # SandboxHandle (exec/fs 操作)
 │       ├── relay.rs     # AgentRelay (virtio-console 通信)
 │       └── error.rs
-├── protocol/        # Host↔Guest 线协议
+├── sage-protocol/   # Host↔Guest 线协议
 │   └── src/
 │       ├── messages.rs  # HostMessage / GuestMessage
 │       └── wire.rs      # 长度前缀 CBOR 编解码
-├── guest-agent/     # Guest Agent (VM 内 PID 1)
+├── sage-guest/      # Guest Agent (VM 内 PID 1)
 │   └── src/
 │       ├── main.rs  # init + 主循环
 │       ├── init.rs  # mount filesystems
 │       ├── exec.rs  # 命令执行
 │       └── fs.rs    # 文件操作
-└── runner/          # Agent 配置 + 策略
+└── sage-runner/     # Agent 配置 + 策略
     └── src/
         ├── config.rs    # AgentConfig (YAML 解析)
         └── tools.rs     # ToolPolicy (白名单校验)
@@ -77,3 +84,19 @@ cargo run -p sage-cli -- serve --runtime localhost:50070
 - `main` — 发版
 - Conventional Commits: `feat(scope): description`
 - scope: `cli`, `sandbox`, `protocol`, `guest`, `runner`, `runtime`
+
+## Agent 模型分工（多 agent 并行开发）
+
+当本仓库用多 agent 并行做 TDD（test-writer → test-review → implementer →
+Linus / code-review）时，按角色挑模型：
+
+| 角色 | 模型 | 理由 |
+|------|------|------|
+| **Implementer**（让测试变绿、bug-fix、机械翻译） | **Sonnet 4.6** | 成本低、吞吐高；"按规格做"的工作不需要 meta 推理 |
+| **Test-writer**（写测试 + 最小桩） | Sonnet 4.6 | 接近 implementer 工作性质 |
+| **Test-review**（TDD 质量门） | **Opus 4.7** | 需要独立判断测试覆盖是否真的锁死规格 |
+| **Linus-review**（锐评 / 品味审查） | Opus 4.7 | 需要识别架构异味与 race 隐患 |
+| **Code-review**（工程规范质量门） | Opus 4.7 | 需要跨文件推理、安全/性能判断 |
+
+调度器（主 agent）调用 `Agent(model: "sonnet" / "opus", ...)` 显式指定。
+默认继承父 agent 模型，所以要**显式传 model 参数**才能省钱 + 保质。

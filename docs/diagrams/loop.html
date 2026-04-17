@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+:root {
+  --l4-s:#818cf8; --l4-f:rgba(99,102,241,0.06);
+  --l3-s:#34d399; --l3-f:rgba(52,211,153,0.06);
+  --l2-s:#fbbf24; --l2-f:rgba(251,191,36,0.06);
+  --l1-s:#f87171; --l1-f:rgba(248,113,113,0.08);
+  --fg:#1c1917; --fg2:#44403c; --fg3:#78716c;
+}
+[data-theme="dark"] {
+  --l4-f:rgba(129,140,248,0.12); --l3-f:rgba(52,211,153,0.12);
+  --l2-f:rgba(251,191,36,0.1);  --l1-f:rgba(248,113,113,0.14);
+  --fg:#e7e5e4; --fg2:#d4cfc9; --fg3:#a8a29e;
+}
+html,body { margin:0; padding:0; background:transparent; overflow:hidden; }
+@media (prefers-reduced-motion:reduce) { * { animation-duration:0.01ms !important; } }
+</style>
+</head>
+<body>
+<svg viewBox="0 0 760 338" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;">
+
+  <!-- Layer 4: DaemonLoop -->
+  <rect x="2" y="2" width="756" height="334" rx="18"
+        fill="var(--l4-f)" stroke="var(--l4-s)" stroke-width="2"/>
+  <text x="18" y="26" font-family="'SF Mono',ui-monospace,monospace" font-size="10"
+        font-weight="800" fill="var(--l4-s)" letter-spacing="1.2">LAYER 4 — DAEMONLOOP</text>
+  <text x="18" y="44" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" fill="var(--fg3)">
+    所有 Hook / Skill / Memory 机制在此执行 · STARTUP → IDLE → PROCESSING → COMPACTING → SHUTDOWN
+  </text>
+
+  <!-- Layer 3: OUTER LOOP -->
+  <rect x="18" y="56" width="724" height="272" rx="14"
+        fill="var(--l3-f)" stroke="var(--l3-s)" stroke-width="1.5"/>
+  <text x="34" y="78" font-family="'SF Mono',ui-monospace,monospace" font-size="10"
+        font-weight="800" fill="var(--l3-s)" letter-spacing="1.2">LAYER 3 — OUTER LOOP</text>
+  <text x="34" y="95" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" fill="var(--fg3)">
+    Follow-Up 队列 · 有新 follow-up 消息则继续，否则退出到 Layer 4 IDLE 等待
+  </text>
+
+  <!-- Layer 2: INNER LOOP -->
+  <rect x="34" y="108" width="692" height="210" rx="10"
+        fill="var(--l2-f)" stroke="var(--l2-s)" stroke-width="1.5"/>
+  <text x="50" y="128" font-family="'SF Mono',ui-monospace,monospace" font-size="10"
+        font-weight="800" fill="var(--l2-s)" letter-spacing="1.2">LAYER 2 — INNER LOOP</text>
+  <text x="50" y="146" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" fill="var(--fg3)">
+    Steering 队列 + Tool Calls · PreToolUse / PostToolUse hook 在此触发（HookRunner 由 Layer 4 传入）
+  </text>
+
+  <!-- Layer 1: INNERMOST -->
+  <rect x="50" y="160" width="660" height="148" rx="8"
+        fill="var(--l1-f)" stroke="var(--l1-s)" stroke-width="1.5"/>
+  <text x="66" y="182" font-family="'SF Mono',ui-monospace,monospace" font-size="10"
+        font-weight="800" fill="var(--l1-s)" letter-spacing="1.2">LAYER 1 — INNERMOST  LLM 调用</text>
+
+  <!-- L1 content lines -->
+  <text x="66" y="207" font-family="system-ui,-apple-system,sans-serif" font-size="12.5"
+        font-weight="600" fill="var(--fg2)">SSE 流式 · 20+ Provider · provider.stream(context)</text>
+  <text x="66" y="228" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" fill="var(--fg3)">
+    逐事件发射 AgentEvent：text_delta / thinking_delta / toolcall_delta
+  </text>
+  <text x="66" y="248" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" fill="var(--fg3)">
+    完成后返回 AssistantMessage，提取 tool_calls 进入 Layer 2 执行工具
+  </text>
+  <text x="66" y="268" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" fill="var(--fg3)">
+    transformContext → convertToLlm → stream → 上下文预算管理
+  </text>
+
+  <!-- Animated pulse indicator (top-right of L1) -->
+  <circle cx="696" cy="182" r="5" fill="var(--l1-s)">
+    <animate attributeName="r" values="4;7;4" dur="2s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.8;0.2;0.8" dur="2s" repeatCount="indefinite"/>
+  </circle>
+
+</svg>
+<script>
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.theme) document.documentElement.dataset.theme = e.data.theme;
+});
+if (window.matchMedia('(prefers-color-scheme: dark)').matches)
+  document.documentElement.dataset.theme = 'dark';
+</script>
+</body>
+</html>

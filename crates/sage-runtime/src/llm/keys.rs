@@ -106,6 +106,7 @@ pub fn resolve_api_key_from_env(env_var: &str) -> Result<String, KeyError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     // ========================================================================
     // api_key_env_var — provider to env var mapping
@@ -186,6 +187,7 @@ mod tests {
     // ========================================================================
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_mistral_recognized() {
         unsafe { std::env::remove_var("MISTRAL_API_KEY") };
         let result = resolve_api_key("mistral");
@@ -199,6 +201,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_cerebras_recognized() {
         unsafe { std::env::remove_var("CEREBRAS_API_KEY") };
         let result = resolve_api_key("cerebras");
@@ -218,10 +221,14 @@ mod tests {
 
     #[test]
     fn test_env_var_azure_openai_responses() {
-        assert_eq!(api_key_env_var("azure-openai-responses"), "AZURE_OPENAI_API_KEY");
+        assert_eq!(
+            api_key_env_var("azure-openai-responses"),
+            "AZURE_OPENAI_API_KEY"
+        );
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_azure_openai_responses_recognized() {
         unsafe { std::env::remove_var("AZURE_OPENAI_API_KEY") };
         let result = resolve_api_key("azure-openai-responses");
@@ -240,6 +247,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_amazon_bedrock_recognized() {
         unsafe { std::env::remove_var("AWS_ACCESS_KEY_ID") };
         let result = resolve_api_key("amazon-bedrock");
@@ -253,6 +261,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_github_copilot_recognized() {
         unsafe { std::env::remove_var("COPILOT_GITHUB_TOKEN") };
         let result = resolve_api_key("github-copilot");
@@ -270,6 +279,7 @@ mod tests {
     // ========================================================================
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_from_env() {
         // Set a test env var
         // SAFETY: test runs single-threaded (--test-threads=1)
@@ -282,6 +292,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_missing_env() {
         // Ensure the env var is not set
         // SAFETY: test runs single-threaded (--test-threads=1)
@@ -313,6 +324,7 @@ mod tests {
     // ========================================================================
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_anthropic_recognized() {
         // Should return NotFound (missing env var), not UnknownProvider
         unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
@@ -327,6 +339,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_openai_recognized() {
         unsafe { std::env::remove_var("OPENAI_API_KEY") };
         let result = resolve_api_key("openai");
@@ -340,6 +353,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_google_recognized() {
         unsafe { std::env::remove_var("GOOGLE_API_KEY") };
         let result = resolve_api_key("google");
@@ -353,6 +367,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_xai_recognized() {
         unsafe { std::env::remove_var("XAI_API_KEY") };
         let result = resolve_api_key("xai");
@@ -366,6 +381,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_groq_recognized() {
         unsafe { std::env::remove_var("GROQ_API_KEY") };
         let result = resolve_api_key("groq");
@@ -379,6 +395,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_openrouter_recognized() {
         unsafe { std::env::remove_var("OPENROUTER_API_KEY") };
         let result = resolve_api_key("openrouter");
@@ -420,6 +437,7 @@ mod tests {
     // ========================================================================
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_empty_string_env() {
         // Set the env var to an empty string
         // SAFETY: test runs single-threaded (--test-threads=1)
@@ -464,6 +482,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_google_vertex_recognized() {
         unsafe { std::env::remove_var("GOOGLE_CLOUD_API_KEY") };
         let result = resolve_api_key("google-vertex");
@@ -477,6 +496,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_whitespace_only() {
         // Key with only whitespace should be treated as empty/missing
         unsafe { std::env::set_var("DASHSCOPE_API_KEY", "   ") };
@@ -492,6 +512,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_with_newline() {
         // Key with trailing newline (common from `echo "key" > file`)
         unsafe { std::env::set_var("DASHSCOPE_API_KEY", "sk-test123\n") };

@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CC Hook 机制与 Skill 系统研究报告 — Sage</title>
+<style>
+/* ── Variables ─────────────────────────────────── */
+:root {
+  --bg:       #f4f0ec;
+  --bg-alt:   #eae4dd;
+  --bg-code:  #1e1b18;
+  --fg:       #1c1917;
+  --fg-2:     #44403c;
+  --fg-3:     #78716c;
+  --accent:   #dc4a1a;
+  --accent-2: #9a3412;
+  --green:    #15803d;
+  --green-bg: #ecfdf5;
+  --red-bg:   #fef2f2;
+  --border:   #d6d0c8;
+  --tag-bg:   rgba(220,74,26,0.08);
+  --tag-fg:   var(--accent-2);
+  --quote-bg: rgba(28,25,23,0.03);
+}
+[data-theme="dark"] {
+  --bg:       #0c0a09;
+  --bg-alt:   #1c1917;
+  --bg-code:  #0a0908;
+  --fg:       #e7e5e4;
+  --fg-2:     #a8a29e;
+  --fg-3:     #78716c;
+  --accent:   #fb923c;
+  --accent-2: #fdba74;
+  --green:    #4ade80;
+  --green-bg: rgba(74,222,128,0.08);
+  --red-bg:   rgba(248,113,113,0.08);
+  --border:   #292524;
+  --tag-bg:   rgba(251,146,60,0.12);
+  --tag-fg:   var(--accent);
+  --quote-bg: rgba(255,255,255,0.03);
+}
+
+/* ── Reset & Base ───────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 17px;
+  line-height: 1.7;
+  color: var(--fg-2);
+  background: var(--bg);
+  transition: background 0.3s, color 0.3s;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+strong { color: var(--fg); font-weight: 700; }
+code {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 0.82em;
+  background: var(--tag-bg);
+  color: var(--accent-2);
+  padding: 0.1em 0.4em;
+  border-radius: 3px;
+}
+pre {
+  background: var(--bg-code);
+  color: #e7e5e4;
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  overflow-x: auto;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 0.79rem;
+  line-height: 1.6;
+  margin: 1.25rem 0;
+}
+pre code { background: none; color: inherit; padding: 0; font-size: inherit; }
+
+/* ── Progress Bar ───────────────────────────────── */
+#progress {
+  position: fixed;
+  top: 0; left: 0;
+  height: 2px;
+  width: 0%;
+  background: var(--accent);
+  z-index: 1000;
+  transition: width 0.1s linear;
+}
+
+/* ── Theme Toggle ───────────────────────────────── */
+#theme-btn {
+  position: fixed;
+  top: 1rem; right: 1rem;
+  z-index: 999;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  color: var(--fg-3);
+  border-radius: 20px;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.72rem;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  cursor: pointer;
+  transition: all 0.2s;
+  letter-spacing: 0.04em;
+}
+#theme-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Nav ────────────────────────────────────────── */
+.nav {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  z-index: 100;
+  backdrop-filter: blur(8px);
+}
+.nav-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav-inner::-webkit-scrollbar { display: none; }
+.nav-inner a {
+  padding: 0.7rem 1rem;
+  font-size: 0.7rem;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  transition: color 0.2s, border-color 0.2s;
+}
+.nav-inner a:hover, .nav-inner a.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  text-decoration: none;
+}
+
+/* ── Layout ─────────────────────────────────────── */
+.wrap      { max-width: 780px; margin: 0 auto; padding: 0 1.5rem; }
+.wrap-wide { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
+
+/* ── Hero ───────────────────────────────────────── */
+.hero {
+  background: var(--bg);
+  padding: 6rem 0 4rem;
+  border-bottom: 1px solid var(--border);
+}
+.hero-tag {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 1.2rem;
+  opacity: 0; animation: fadeUp 0.4s 0.1s ease forwards;
+}
+.hero h1 {
+  font-size: clamp(2.2rem, 5vw, 3.4rem);
+  font-weight: 900;
+  color: var(--fg);
+  line-height: 1.15;
+  margin-bottom: 1.2rem;
+  opacity: 0; animation: fadeUp 0.4s 0.2s ease forwards;
+}
+.hero h1 .highlight { color: var(--accent); }
+.hero-deck {
+  font-size: 1.1rem;
+  color: var(--fg-2);
+  max-width: 55ch;
+  margin-bottom: 1.8rem;
+  opacity: 0; animation: fadeUp 0.4s 0.3s ease forwards;
+}
+.hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  font-size: 0.8rem;
+  color: var(--fg-3);
+  opacity: 0; animation: fadeUp 0.4s 0.4s ease forwards;
+}
+.hero-meta b { color: var(--fg); }
+
+/* ── Sections ───────────────────────────────────── */
+section { padding: 4rem 0 3.5rem; }
+section:nth-child(even) { background: var(--bg-alt); }
+.sn {
+  font-size: 4.5rem;
+  font-weight: 900;
+  color: var(--accent);
+  opacity: 0.22;
+  line-height: 1;
+  margin-bottom: 0.25rem;
+  font-family: system-ui;
+}
+section h2 {
+  font-size: clamp(1.6rem, 3vw, 2.1rem);
+  font-weight: 800;
+  color: var(--fg);
+  margin-bottom: 0.75rem;
+}
+section h3 { font-size: 1.08rem; font-weight: 700; color: var(--fg); margin: 1.5rem 0 0.5rem; }
+section p { margin-bottom: 0.9rem; max-width: 65ch; }
+
+/* ── Stats Bar ──────────────────────────────────── */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 2rem 0;
+}
+.stat {
+  background: var(--bg);
+  padding: 1.4rem 1.2rem;
+  text-align: center;
+}
+section:nth-child(even) .stat { background: var(--bg-alt); }
+.stat-val {
+  font-size: 2.2rem;
+  font-weight: 900;
+  color: var(--accent);
+  line-height: 1;
+  margin-bottom: 0.3rem;
+  transition: transform 0.2s;
+}
+.stat:hover .stat-val { transform: scale(1.08); }
+.stat-lbl {
+  font-size: 0.66rem;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+/* ── Table ──────────────────────────────────────── */
+.table-wrap { overflow-x: auto; margin: 1.5rem 0; }
+table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+th {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 0.63rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  padding: 0.6rem 0.8rem;
+  text-align: left;
+  border-bottom: 2px solid var(--border);
+}
+td {
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-2);
+  vertical-align: top;
+}
+td:first-child { color: var(--fg); font-weight: 600; }
+tr.row-hl td { background: var(--tag-bg); }
+tr.row-hl td:first-child { color: var(--accent); }
+tr:last-child td { border-bottom: none; }
+
+/* ── Flow ───────────────────────────────────────── */
+.flow { margin: 1.5rem 0; }
+.flow-step { display: flex; gap: 1rem; }
+.flow-rail { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 20px; }
+.flow-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+.flow-line { flex: 1; width: 2px; background: var(--border); min-height: 16px; margin: 3px 0; }
+.flow-body { padding-bottom: 1.2rem; flex: 1; }
+.flow-title { font-weight: 700; color: var(--fg); font-size: 0.95rem; }
+.flow-desc { font-size: 0.86rem; color: var(--fg-3); margin-top: 0.15rem; }
+.flow-fork { display: flex; gap: 1rem; margin: 0.5rem 0; }
+.flow-fork-item {
+  flex: 1;
+  padding: 0.5rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+.fork-yes { background: var(--green-bg); color: var(--green); border: 1px solid rgba(21,128,61,0.2); }
+.fork-no  { background: var(--red-bg);   color: var(--fg-2);  border: 1px solid var(--border); }
+
+/* ── Callout ────────────────────────────────────── */
+.callout {
+  padding: 0.9rem 1.1rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  margin: 1rem 0;
+  border-left: 3px solid;
+}
+.callout-green  { background: var(--green-bg);  border-color: var(--green);  color: var(--green);  }
+.callout-green  p, .callout-green strong { color: var(--green); }
+.callout-accent { background: var(--tag-bg);    border-color: var(--accent); color: var(--fg-2);  }
+.callout-accent strong { color: var(--accent); }
+
+/* ── Quote ──────────────────────────────────────── */
+.quote {
+  background: var(--quote-bg);
+  border-left: 3px solid var(--accent);
+  padding: 1rem 1.5rem;
+  margin: 1.5rem 0;
+  border-radius: 0 8px 8px 0;
+}
+.quote p { font-style: italic; color: var(--fg-2); margin: 0 0 0.4rem; max-width: none; }
+.quote cite { font-size: 0.76rem; color: var(--fg-3); font-style: normal; font-family: 'SF Mono', ui-monospace, monospace; }
+
+/* ── Card Grid ──────────────────────────────────── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+.card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.1rem 1.2rem;
+  transition: border-color 0.2s;
+}
+section:nth-child(even) .card { background: var(--bg-alt); }
+.card:hover { border-color: var(--accent); }
+.card-name {
+  font-weight: 700;
+  color: var(--fg);
+  font-size: 0.92rem;
+  margin-bottom: 0.2rem;
+}
+.card-sub {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 0.65rem;
+  color: var(--accent);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+}
+.card-desc { font-size: 0.83rem; color: var(--fg-3); }
+
+/* ── Verdict ────────────────────────────────────── */
+.verdict {
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  padding: 1.5rem 1.75rem;
+  margin: 2rem 0;
+}
+.verdict h3 { color: var(--accent); margin-top: 0; margin-bottom: 0.5rem; font-size: 1.1rem; }
+.verdict p  { max-width: none; margin-bottom: 0.5rem; }
+.verdict p:last-child { margin-bottom: 0; }
+
+/* ── Tag ────────────────────────────────────────── */
+.tag {
+  display: inline-block;
+  background: var(--tag-bg);
+  color: var(--tag-fg);
+  font-size: 0.62rem;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.15em 0.5em;
+  border-radius: 3px;
+  margin-right: 0.3em;
+}
+
+/* ── Files ──────────────────────────────────────── */
+.files {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.75rem;
+  margin: 1.5rem 0;
+}
+.file {
+  background: var(--bg-code);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+}
+.file-name {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 0.72rem;
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+.file-desc { font-size: 0.76rem; color: #a8a29e; }
+
+/* ── Two-column ─────────────────────────────────── */
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin: 1.5rem 0; }
+@media (max-width: 600px) { .two-col { grid-template-columns: 1fr; } }
+.col h4 {
+  font-size: 0.65rem;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 0.75rem;
+}
+.col ul { list-style: none; }
+.col ul li {
+  padding: 0.25rem 0 0.25rem 1.4rem;
+  font-size: 0.87rem;
+  color: var(--fg-2);
+  position: relative;
+  border-bottom: 1px solid var(--border);
+}
+.col ul li:last-child { border-bottom: none; }
+.pros ul li::before { content: '+'; color: var(--green); position: absolute; left: 0; font-weight: 700; }
+.cons ul li::before { content: '–'; color: var(--fg-3);  position: absolute; left: 0; font-weight: 700; }
+
+/* ── Reveal ─────────────────────────────────────── */
+.reveal {
+  opacity: 0.08;
+  transform: translateY(20px);
+  transition: opacity 0.55s ease, transform 0.55s ease;
+}
+.reveal.visible { opacity: 1; transform: none; }
+.reveal:nth-child(2) { transition-delay: 0.06s; }
+.reveal:nth-child(3) { transition-delay: 0.12s; }
+.reveal:nth-child(4) { transition-delay: 0.18s; }
+.reveal:nth-child(5) { transition-delay: 0.24s; }
+.reveal:nth-child(6) { transition-delay: 0.30s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1; transform: none; transition: none; }
+  .hero-tag, .hero h1, .hero-deck, .hero-meta { opacity: 1; animation: none; }
+}
+
+/* ── Animations ─────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: none; }
+}
+</style>
+</head>
+<body>
+
+<div id="progress"></div>
+<button id="theme-btn" onclick="toggleTheme()">◐ 切换主题</button>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="#overview">概述</a>
+    <a href="#hook-arch">Hook 架构</a>
+    <a href="#hook-types">Hook 类型</a>
+    <a href="#hook-events">Hook Events</a>
+    <a href="#skill-system">Skill 系统</a>
+    <a href="#sage-design">Sage 设计</a>
+    <a href="#verdict">结论</a>
+  </div>
+</nav>
+
+<!-- ── Hero ─────────────────────────────── -->
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-tag">Sage · 研究报告 · 2026-04-14</div>
+    <h1>CC <span class="highlight">Hook 机制</span><br>与 Skill 系统</h1>
+    <p class="hero-deck">深度解析 Claude Code 的扩展架构，提取 Sage v0.9 Hook & Skill 系统的设计输入。</p>
+    <div class="hero-meta">
+      <span><b>来源</b> external/claude-code/src/</span>
+      <span><b>分析范围</b> 7 个核心源文件</span>
+      <span><b>目标</b> Sage v0.9 Hook & Skill 设计</span>
+    </div>
+  </div>
+</header>
+
+<!-- ── 01 概述 ───────────────────────────── -->
+<section id="overview">
+  <div class="wrap">
+    <div class="sn reveal">01</div>
+    <h2 class="reveal">概述</h2>
+    <p class="reveal">CC 的扩展架构由两个互补系统组成：<strong>Hook</strong> 挂载在 Agent 生命周期事件上，通过 shell 脚本/webhook/子Agent 对每次行动进行审计、拦截、注入；<strong>Skill</strong> 是 Markdown 文件，通过 <code>/skill-name</code> 调用，把专项能力以自然语言的方式注入到当前对话。</p>
+
+    <div class="stats reveal">
+      <div class="stat"><div class="stat-val">27</div><div class="stat-lbl">Hook Events</div></div>
+      <div class="stat"><div class="stat-val">4</div><div class="stat-lbl">Hook 类型</div></div>
+      <div class="stat"><div class="stat-val">12</div><div class="stat-lbl">Sage 精选</div></div>
+      <div class="stat"><div class="stat-val">7</div><div class="stat-lbl">分析源文件</div></div>
+    </div>
+
+    <div class="callout callout-accent reveal">
+      <strong>核心设计哲学：</strong> Hook 是 Shell-first — 无需 SDK、无需编译，一行 bash 就能挂载到任意事件。Skill 是 Markdown-first — 零编译、用户可读可改、按需加载。两者都遵循"最小侵入"原则。
+    </div>
+
+    <div class="files reveal">
+      <div class="file"><div class="file-name">src/schemas/hooks.ts</div><div class="file-desc">4 种 Hook 类型 Schema + Matcher 定义</div></div>
+      <div class="file"><div class="file-name">src/utils/hooks/hooksConfigManager.ts</div><div class="file-desc">27 个 Hook Events + exit code 语义</div></div>
+      <div class="file"><div class="file-name">src/utils/hooks/execAgentHook.ts</div><div class="file-desc">Agent Hook 执行引擎（子 Agent 验证）</div></div>
+      <div class="file"><div class="file-name">src/utils/hooks/hookEvents.ts</div><div class="file-desc">Hook 事件广播系统</div></div>
+      <div class="file"><div class="file-name">src/skills/loadSkillsDir.ts</div><div class="file-desc">Skill 加载机制 + frontmatter 解析</div></div>
+      <div class="file"><div class="file-name">src/skills/bundledSkills.ts</div><div class="file-desc">内置 Skill 注册 + 参考文件打包</div></div>
+      <div class="file"><div class="file-name">src/skills/bundled/remember.ts</div><div class="file-desc">示例内置 Skill（记忆整理）</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 02 Hook 架构 ───────────────────────── -->
+<section id="hook-arch">
+  <div class="wrap">
+    <div class="sn reveal">02</div>
+    <h2 class="reveal">Hook 系统架构</h2>
+    <p class="reveal">Hook 是挂载在 Agent 生命周期特定事件上的<strong>外部副作用</strong>。Event 触发 → Runner 并发执行所有匹配 Hook → 根据 exit code 决定是否阻断、注入模型或展示给用户。</p>
+
+    <div class="flow reveal">
+      <div class="flow-step">
+        <div class="flow-rail"><div class="flow-dot"></div><div class="flow-line"></div></div>
+        <div class="flow-body">
+          <div class="flow-title">Event 触发</div>
+          <div class="flow-desc">Agent 执行到特定生命周期节点（如 PreToolUse、UserPromptSubmit）</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-rail"><div class="flow-dot"></div><div class="flow-line"></div></div>
+        <div class="flow-body">
+          <div class="flow-title">Matcher 过滤</div>
+          <div class="flow-desc">按 tool name / <code>if</code> 条件筛选，避免无谓触发</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-rail"><div class="flow-dot"></div><div class="flow-line"></div></div>
+        <div class="flow-body">
+          <div class="flow-title">并发执行所有匹配 Hook</div>
+          <div class="flow-desc">stdin 注入 JSON context，同一 event 的所有 hook 并发执行</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-rail"><div class="flow-dot"></div></div>
+        <div class="flow-body">
+          <div class="flow-title">Exit Code 路由</div>
+          <div class="flow-fork">
+            <div class="flow-fork-item fork-yes"><strong>exit 0</strong> — 成功，stdout 按事件语义决定是否注入模型</div>
+            <div class="flow-fork-item fork-no"><strong>exit 2</strong> — 阻断，stderr 注入模型（让模型感知原因）</div>
+          </div>
+          <div class="flow-fork">
+            <div class="flow-fork-item fork-no" style="flex:none;"><strong>exit N</strong> — 用户可见错误（stderr 展示），执行继续</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="reveal">Hook 配置层级</h3>
+    <div class="table-wrap reveal">
+      <table>
+        <thead><tr><th>层级</th><th>文件</th><th>作用范围</th></tr></thead>
+        <tbody>
+          <tr><td>用户级</td><td><code>~/.claude/settings.json</code></td><td>所有项目</td></tr>
+          <tr><td>项目级</td><td><code>.claude/settings.json</code></td><td>当前项目</td></tr>
+          <tr class="row-hl"><td>Skill 级</td><td>Skill frontmatter <code>hooks</code> 字段</td><td>Skill 激活期间自动注册</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── 03 Hook 类型 ───────────────────────── -->
+<section id="hook-types">
+  <div class="wrap-wide">
+    <div class="sn reveal">03</div>
+    <h2 class="reveal">4 种 Hook 类型</h2>
+    <p class="reveal">从简单的 shell 脚本到启动子 Agent 验证，四种类型覆盖了从轻量回调到复杂验证的全部场景。</p>
+
+    <div class="table-wrap reveal">
+      <table>
+        <thead><tr><th>类型</th><th>执行方式</th><th>适用场景</th><th>关键字段</th></tr></thead>
+        <tbody>
+          <tr class="row-hl">
+            <td>command</td>
+            <td>宿主 shell 执行脚本</td>
+            <td>80% 场景 — 审计/日志/拦截/注入</td>
+            <td><code>command</code>, <code>timeout</code>, <code>async</code>, <code>if</code></td>
+          </tr>
+          <tr>
+            <td>http</td>
+            <td>POST JSON 到 webhook URL</td>
+            <td>外部系统集成、Slack/飞书通知</td>
+            <td><code>url</code>, <code>timeout</code></td>
+          </tr>
+          <tr>
+            <td>prompt</td>
+            <td>调小模型语义评估</td>
+            <td>无法用 regex 判断的内容检查</td>
+            <td><code>prompt</code></td>
+          </tr>
+          <tr>
+            <td>agent</td>
+            <td>启动子 Agent 执行验证</td>
+            <td>需要工具调用的复杂验证逻辑</td>
+            <td><code>prompt</code>（作为任务传入子 Agent）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="reveal">command hook 完整字段</h3>
+    <pre class="reveal"><code>{
+  "type": "command",
+  "command": "python3 audit.py",
+  "if": "Bash(git *)",      // 权限规则语法，细粒度过滤
+  "shell": "bash",          // bash | powershell
+  "timeout": 30,            // 超时秒数
+  "statusMessage": "审计中...",
+  "once": false,            // true = 执行一次后移除
+  "async": false,           // true = 后台执行，不阻塞
+  "asyncRewake": false      // 后台执行时，exit 2 唤醒模型
+}</code></pre>
+
+    <h3 class="reveal">stdin JSON 输入格式</h3>
+    <pre class="reveal"><code>// PreToolUse
+{ "tool_name": "Bash", "tool_input": { "command": "rm -rf /tmp" }, "tool_use_id": "..." }
+
+// PostToolUse
+{ "tool_name": "Bash", "tool_input": {...}, "tool_use_id": "...", "response": "..." }
+
+// UserPromptSubmit
+{ "prompt": "帮我查飞书日程", "session_id": "..." }
+
+// Stop
+{ "stop_reason": "end_turn", "session_id": "..." }</code></pre>
+  </div>
+</section>
+
+<!-- ── 04 Hook Events ────────────────────── -->
+<section id="hook-events">
+  <div class="wrap">
+    <div class="sn reveal">04</div>
+    <h2 class="reveal">27 个 Hook Events</h2>
+    <p class="reveal">按 Agent 生命周期分组。每个 event 可独立配置 Matcher 和多个 Hook。</p>
+
+    <div class="card-grid reveal">
+      <div class="card">
+        <div class="card-name">会话级 (3)</div>
+        <div class="card-sub">Session Lifecycle</div>
+        <div class="card-desc"><code>SessionStart</code> — 会话开始（startup/resume/clear）<br><code>SessionEnd</code> — 会话结束<br><code>Setup</code> — init/maintenance 触发</div>
+      </div>
+      <div class="card">
+        <div class="card-name">用户输入级 (1)</div>
+        <div class="card-sub">User Input</div>
+        <div class="card-desc"><code>UserPromptSubmit</code> — 用户发送消息<br><span style="font-size:0.78rem;color:var(--accent)">exit 2 = 阻断 + 清除原始消息</span></div>
+      </div>
+      <div class="card">
+        <div class="card-name">工具调用级 (5)</div>
+        <div class="card-sub">Tool Execution</div>
+        <div class="card-desc"><code>PreToolUse</code> — 调用前（exit 2 = 阻断）<br><code>PostToolUse</code> — 成功后<br><code>PostToolUseFailure</code> — 失败后<br><code>PermissionDenied</code> — 权限拒绝<br><code>PermissionRequest</code> — 弹出权限框</div>
+      </div>
+      <div class="card">
+        <div class="card-name">Agent 结束级 (2)</div>
+        <div class="card-sub">Agent End</div>
+        <div class="card-desc"><code>Stop</code> — Agent 结束响应前（exit 2 = 继续对话）<br><code>StopFailure</code> — API 错误结束</div>
+      </div>
+      <div class="card">
+        <div class="card-name">压缩级 (2)</div>
+        <div class="card-sub">Compaction</div>
+        <div class="card-desc"><code>PreCompact</code> — 压缩前（exit 2 = 阻断）<br><code>PostCompact</code> — 压缩后</div>
+      </div>
+      <div class="card">
+        <div class="card-name">文件系统级 (4)</div>
+        <div class="card-sub">Filesystem</div>
+        <div class="card-desc"><code>CwdChanged</code>、<code>FileChanged</code> — 文件变化监听<br><code>InstructionsLoaded</code> — CLAUDE.md 加载<br><code>ConfigChange</code> — 配置变更（exit 2 = 阻断）</div>
+      </div>
+      <div class="card">
+        <div class="card-name">多 Agent 级 (6)</div>
+        <div class="card-sub">Multi-Agent / Swarm</div>
+        <div class="card-desc"><code>SubagentStart/Stop</code>、<code>TeammateIdle</code><br><code>TaskCreated/Completed</code><br><span style="color:var(--fg-3);font-size:0.78rem">→ Sage 不需要这组</span></div>
+      </div>
+      <div class="card">
+        <div class="card-name">其他 (4)</div>
+        <div class="card-sub">Misc</div>
+        <div class="card-desc"><code>Elicitation/ElicitationResult</code> — MCP 用户输入<br><code>WorktreeCreate/Remove</code> — Git worktree</div>
+      </div>
+    </div>
+
+    <div class="callout callout-green reveal">
+      <strong>Matcher 机制：</strong> 每个 event 可设置 matcher 过滤，避免无谓触发。<code>matcher: "Bash"</code> 只在 bash 工具时触发，<code>if: "Bash(git push*)"</code> 提供更细粒度的条件过滤。
+    </div>
+  </div>
+</section>
+
+<!-- ── 05 Skill 系统 ──────────────────────── -->
+<section id="skill-system">
+  <div class="wrap">
+    <div class="sn reveal">05</div>
+    <h2 class="reveal">Skill 系统</h2>
+    <p class="reveal">Skill = Markdown 文件 + YAML frontmatter。<code>/skill-name</code> 调用时，完整内容注入当前对话作为 prompt。设计哲学：零编译、用户可读可改、按需加载。</p>
+
+    <h3 class="reveal">加载来源（优先级从高到低）</h3>
+    <div class="flow reveal">
+      <div class="flow-step">
+        <div class="flow-rail"><div class="flow-dot"></div><div class="flow-line"></div></div>
+        <div class="flow-body">
+          <div class="flow-title">policy（企业管控）</div>
+          <div class="flow-desc">最高优先级，企业统一下发</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-rail"><div class="flow-dot"></div><div class="flow-line"></div></div>
+        <div class="flow-body">
+          <div class="flow-title"><code>~/.claude/skills/</code></div>
+          <div class="flow-desc">用户级 Skills，所有项目可用</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-rail"><div class="flow-dot"></div><div class="flow-line"></div></div>
+        <div class="flow-body">
+          <div class="flow-title"><code>.claude/skills/</code></div>
+          <div class="flow-desc">项目级 Skills，当前项目专属</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-rail"><div class="flow-dot"></div><div class="flow-line"></div></div>
+        <div class="flow-body">
+          <div class="flow-title">plugin/skills/</div>
+          <div class="flow-desc">插件提供的 Skills（如 superpowers）</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-rail"><div class="flow-dot"></div></div>
+        <div class="flow-body">
+          <div class="flow-title">bundled（内置 Skill）</div>
+          <div class="flow-desc">编译进二进制，如 <code>/remember</code>，可携带参考文件</div>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="reveal">Skill Frontmatter 核心字段</h3>
+    <pre class="reveal"><code>---
+name: my-skill                    # string，= /command 名
+description: "做某件事"            # 展示在 /skills 列表
+whenToUse: "当...时调用"           # AI 自动调用的触发描述
+allowedTools: [Bash, Read]        # 此 skill 可用的工具
+argumentHint: "<file>"            # 参数格式提示（TUI 显示）
+model: "claude-haiku-4-5"         # 覆盖默认模型
+context: inline                   # inline | fork（fork 开新对话）
+userInvocable: true               # false = 仅内部使用
+
+# Skill 可嵌入 Hooks（激活时自动注册）
+hooks:
+  PostToolUse:
+    - matcher: "Write"
+      hooks:
+        - type: command
+          command: "bash .hooks/lint.sh"
+---
+正文（Markdown）— 注入给 Agent 的 prompt 内容...</code></pre>
+
+    <h3 class="reveal">懒加载与 Token 预算</h3>
+    <div class="two-col reveal">
+      <div class="col pros">
+        <h4>启动时（轻量）</h4>
+        <ul>
+          <li>只读 frontmatter（name + description + whenToUse）</li>
+          <li>约 50–100 tokens/skill</li>
+          <li>skill 列表注入 system prompt</li>
+          <li>Agent 知道可以用哪些 skill</li>
+        </ul>
+      </div>
+      <div class="col cons">
+        <h4>调用时（完整加载）</h4>
+        <ul>
+          <li>/skill-name 触发时加载全文</li>
+          <li>约 1000–5000 tokens/skill</li>
+          <li>$ARGUMENTS 占位符替换</li>
+          <li>嵌入的 hooks 自动注册</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 class="reveal">Bundled Skill 注册方式</h3>
+    <pre class="reveal"><code>registerBundledSkill({
+  name: 'remember',
+  description: '整理记忆',
+  whenToUse: '用户想整理记忆时',
+  userInvocable: true,
+  files: {
+    'SKILL.md': '...',               // 首次调用时解压到临时目录
+    'references/foo.md': '...',
+  },
+  async getPromptForCommand(args, ctx) {
+    return [{ type: 'text', text: SKILL_PROMPT }]
+  },
+})
+// 参考文件解压到 ~/.claude/skills-cache/<nonce>/<skill-name>/</code></pre>
+  </div>
+</section>
+
+<!-- ── 06 Sage 设计建议 ───────────────────── -->
+<section id="sage-design">
+  <div class="wrap-wide">
+    <div class="sn reveal">06</div>
+    <h2 class="reveal">Sage 设计建议</h2>
+    <p class="reveal">Sage 是单用户领域专家 Agent 产品，不是多 Agent 协作平台。在 CC 架构基础上精简 + 扩展，适配 Sage 产品形态。</p>
+
+    <h3 class="reveal">Hook Events — 精选 12 个（去掉多 Agent 协作类，增加 3 个 Sage 特有）</h3>
+    <div class="table-wrap reveal">
+      <table>
+        <thead><tr><th>Event</th><th>优先级</th><th>来源</th><th>Sage 特有价值</th></tr></thead>
+        <tbody>
+          <tr class="row-hl"><td>SessionStart</td><td>P0</td><td>CC</td><td>每次 chat 启动时初始化环境、注入动态上下文</td></tr>
+          <tr class="row-hl"><td>UserPromptSubmit</td><td>P0</td><td>CC</td><td>拦截/增强用户输入（最常用）</td></tr>
+          <tr class="row-hl"><td>PreToolUse</td><td>P0</td><td>CC</td><td>审计工具调用、安全防护（exit 2 = 阻断）</td></tr>
+          <tr class="row-hl"><td>PostToolUse</td><td>P0</td><td>CC</td><td>结果回调、触发副作用</td></tr>
+          <tr class="row-hl"><td>Stop</td><td>P0</td><td>CC</td><td>Agent 结束前质量检查，可要求继续</td></tr>
+          <tr><td>SessionEnd</td><td>P1</td><td>CC</td><td>保存状态、清理外部资源</td></tr>
+          <tr><td>PreCompact</td><td>P1</td><td>CC</td><td>压缩前自定义处理（exit 2 = 阻断）</td></tr>
+          <tr><td>PostCompact</td><td>P1</td><td>CC</td><td>压缩后通知/记录</td></tr>
+          <tr><td>FileChanged</td><td>P1</td><td>CC</td><td>监听 workspace 文件变化</td></tr>
+          <tr><td><strong>MemoryUpdated</strong> ★</td><td>P2</td><td>Sage 特有</td><td>MEMORY.md 写入后触发（知识沉淀回调）</td></tr>
+          <tr><td><strong>AgentSwitched</strong> ★</td><td>P2</td><td>Sage 特有</td><td><code>/switch feishu</code> 切换 Agent 时</td></tr>
+          <tr><td><strong>WorkspaceChanged</strong> ★</td><td>P2</td><td>Sage 特有</td><td>工作目录变更</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="reveal">Sage Hook 配置位置</h3>
+    <pre class="reveal"><code># ~/.sage/agents/feishu/agent.yaml（Agent 级）
+hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "python3 ~/.sage/agents/feishu/init.py"
+  PreToolUse:
+    - matcher: "bash"
+      hooks:
+        - type: command
+          command: "bash ~/.sage/agents/feishu/hooks/audit.sh"
+          if: "bash(curl *)"   # 只在 curl 时触发
+
+# ~/.sage/hooks.yaml（全局，跨所有 Agent）
+PreToolUse:
+  - matcher: "bash"
+    hooks:
+      - type: command
+        command: "~/.sage/global-hooks/security-audit.sh"</code></pre>
+
+    <h3 class="reveal">Sage Skill 目录结构</h3>
+    <pre class="reveal"><code>~/.sage/
+├── skills/                      # 全局 Skills（所有 Agent 可用）
+│   ├── research-template.md
+│   └── batch-update.md
+└── agents/
+    └── feishu/
+        ├── agent.yaml
+        ├── workspace/
+        └── skills/              # feishu 专属 Skills
+            ├── schedule-batch.md
+            └── doc-format.md</code></pre>
+
+    <h3 class="reveal">CC vs Sage 差异对比</h3>
+    <div class="table-wrap reveal">
+      <table>
+        <thead><tr><th>维度</th><th>CC</th><th>Sage</th></tr></thead>
+        <tbody>
+          <tr><td>Hook 存储</td><td><code>settings.json</code>（JSON）</td><td><code>agent.yaml</code>（YAML）+ 全局 <code>~/.sage/hooks.yaml</code></td></tr>
+          <tr><td>Skill 存储</td><td><code>~/.claude/skills/</code></td><td><code>~/.sage/skills/</code> + <code>~/.sage/agents/&lt;name&gt;/skills/</code></td></tr>
+          <tr><td>Hook 事件数</td><td>27 个</td><td>12 个（精简，+ 3 个 Sage 特有）</td></tr>
+          <tr class="row-hl"><td>per-agent Skill</td><td>不支持（项目级最小粒度）</td><td><strong>支持</strong>（<code>agent: feishu</code> frontmatter 字段）</td></tr>
+          <tr><td>Skill 调用</td><td><code>/skill-name</code></td><td><code>/skill-name</code>（完全相同）</td></tr>
+          <tr><td>Agent Hook 验证</td><td>启动子 CC 实例</td><td>启动子 Sage 实例（相同模式）</td></tr>
+          <tr><td>多 Agent 事件</td><td>SubagentStart/Stop 等 6 个</td><td>不需要（单用户产品）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="reveal">Hook × Skill 联动（最有价值的组合）</h3>
+    <pre class="reveal"><code>---
+name: monitor-feishu-doc
+description: "持续监听飞书文档变化并自动同步"
+hooks:
+  FileChanged:
+    - matcher: "*.md"
+      hooks:
+        - type: command
+          command: "python3 ~/.sage/agents/feishu/skills/sync-doc.py $ARGUMENTS"
+---
+# 飞书文档监控模式
+
+激活后，Sage 监听 workspace 中的 .md 文件变化，自动同步到飞书...</code></pre>
+    <div class="callout callout-accent reveal">
+      <strong>联动价值：</strong> 激活 <code>/monitor-feishu-doc</code> skill 的同时，FileChanged hook 自动注册。退出会话时自动注销。无需用户手动管理 hook 的生命周期。
+    </div>
+  </div>
+</section>
+
+<!-- ── 07 Verdict ────────────────────────── -->
+<section id="verdict">
+  <div class="wrap">
+    <div class="sn reveal">07</div>
+    <h2 class="reveal">结论与实施建议</h2>
+
+    <div class="verdict reveal">
+      <h3>核心结论</h3>
+      <p>CC 的 Hook + Skill 架构本质上是<strong>两个正交的扩展维度</strong>：Hook 控制 <em>when</em>（生命周期），Skill 控制 <em>what</em>（专项能力）。两者通过 Skill frontmatter 中的 hooks 字段连接，形成"激活能力同时挂载行为"的强大组合。</p>
+      <p>Sage 可以完整采用这套设计哲学，只需做两件事：<strong>精简 Events</strong>（从 27→12，去掉多 Agent 协作类）和<strong>增加 per-agent 粒度</strong>（agent.yaml 中的 hooks + agents/&lt;name&gt;/skills/ 目录）。</p>
+    </div>
+
+    <h3 class="reveal">v0.9 实施优先级</h3>
+    <div class="table-wrap reveal">
+      <table>
+        <thead><tr><th>模块</th><th>优先级</th><th>关键实现点</th></tr></thead>
+        <tbody>
+          <tr class="row-hl"><td>command hook 执行引擎</td><td>P0</td><td>fork shell、stdin JSON、exit code 路由</td></tr>
+          <tr class="row-hl"><td>5 个 P0 Events</td><td>P0</td><td>SessionStart/UserPromptSubmit/PreToolUse/PostToolUse/Stop</td></tr>
+          <tr class="row-hl"><td>Skill 扫描 + 懒加载</td><td>P0</td><td>frontmatter 解析、/skill-name 注入</td></tr>
+          <tr><td>Matcher + if 过滤</td><td>P1</td><td>tool name 前缀匹配</td></tr>
+          <tr><td>4 个 P1 Events</td><td>P1</td><td>SessionEnd/PreCompact/PostCompact/FileChanged</td></tr>
+          <tr><td>Skill hooks 联动</td><td>P1</td><td>激活 skill 时自动注册/注销 hooks</td></tr>
+          <tr><td>http hook</td><td>P1</td><td>reqwest POST，payload = stdin JSON 格式</td></tr>
+          <tr><td>3 个 Sage 特有 Events</td><td>P2</td><td>MemoryUpdated/AgentSwitched/WorkspaceChanged</td></tr>
+          <tr><td>prompt/agent hook</td><td>P2</td><td>调模型评估 / 启动子 Sage 验证</td></tr>
+          <tr><td>内置 /memory /conventions skill</td><td>P2</td><td>编译进二进制，整理记忆文件</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="quote reveal">
+      <p>"The best hooks are the ones that users write in an afternoon and never have to think about again. Shell-first means zero SDK, zero compilation, zero friction."</p>
+      <cite>CC Hook 系统设计理念</cite>
+    </div>
+  </div>
+</section>
+
+<script>
+// ── Progress bar ─────────────────────────────
+window.addEventListener('scroll', () => {
+  const el = document.documentElement;
+  const pct = el.scrollTop / (el.scrollHeight - el.clientHeight) * 100;
+  document.getElementById('progress').style.width = pct + '%';
+});
+
+// ── Theme toggle ─────────────────────────────
+function toggleTheme() {
+  const html = document.documentElement;
+  const isDark = html.getAttribute('data-theme') === 'dark';
+  html.setAttribute('data-theme', isDark ? '' : 'dark');
+  localStorage.setItem('theme', isDark ? 'light' : 'dark');
+}
+(function() {
+  const saved = localStorage.getItem('theme');
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  if (saved === 'dark' || (!saved && prefersDark)) {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
+})();
+
+// ── Reveal on scroll ─────────────────────────
+const revealObserver = new IntersectionObserver(entries => {
+  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); } });
+}, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' });
+document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
+
+// ── Nav active tracking ──────────────────────
+const navLinks = document.querySelectorAll('.nav-inner a');
+const sections = document.querySelectorAll('section[id]');
+const navObserver = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      navLinks.forEach(a => a.classList.remove('active'));
+      const link = document.querySelector('.nav-inner a[href="#' + e.target.id + '"]');
+      if (link) link.classList.add('active');
+    }
+  });
+}, { threshold: 0.4 });
+sections.forEach(s => navObserver.observe(s));
+
+// ── Stat counter animation ───────────────────
+function animateCounter(el) {
+  const raw = el.textContent.trim();
+  const num = parseInt(raw.replace(/\D/g, ''));
+  if (isNaN(num) || num === 0) return;
+  const prefix = raw.match(/^[^\d]*/)?.[0] || '';
+  const suffix = raw.match(/[^\d]*$/)?.[0] || '';
+  const duration = 900;
+  const start = performance.now();
+  function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+  function tick(now) {
+    const elapsed = Math.min((now - start) / duration, 1);
+    el.textContent = prefix + Math.floor(easeOut(elapsed) * num) + suffix;
+    if (elapsed < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+const counterObserver = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) { animateCounter(e.target); counterObserver.unobserve(e.target); }
+  });
+}, { threshold: 0.5 });
+document.querySelectorAll('.stat-val').forEach(el => counterObserver.observe(el));
+</script>
+</body>
+</html>

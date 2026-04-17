@@ -57,9 +57,19 @@ pub fn apply(config: &GuestSecurityConfig) -> Result<()> {
 }
 
 /// Minimum values for resource limits — below these the guest agent cannot function.
+#[allow(dead_code)]
 const MIN_OPEN_FILES: u32 = 32;
+#[allow(dead_code)]
 const MIN_TMPFS_SIZE_MB: u32 = 16;
+#[allow(dead_code)]
 const MIN_PROCESSES: u32 = 8;
+
+/// Device paths that Landlock must grant write access to inside the guest.
+///
+/// - `/dev/null`, `/dev/zero`, `/dev/urandom`: standard device contracts
+/// - `/dev/vport0p0`: virtio-console used for host↔guest communication
+#[allow(dead_code)]
+const LANDLOCK_WRITABLE_DEVS: &[&str] = &["/dev/null", "/dev/zero", "/dev/urandom", "/dev/vport0p0"];
 
 /// Apply resource limits via setrlimit.
 fn apply_resource_limits(config: &GuestSecurityConfig) -> Result<()> {
@@ -305,14 +315,13 @@ fn apply_landlock(config: &GuestSecurityConfig) -> Result<()> {
     }
 
     // /dev needs special treatment: read-only for the directory itself,
-    // but /dev/null, /dev/zero, /dev/urandom need write access
-    // (many programs write to /dev/null, tokio reads /dev/urandom).
+    // but specific devices need write access (see LANDLOCK_WRITABLE_DEVS).
     if let Ok(fd) = PathFd::new("/dev") {
         ruleset = ruleset
             .add_rule(PathBeneath::new(fd, read_access))
             .map_err(|e| anyhow::anyhow!("landlock rule /dev: {e}"))?;
     }
-    for dev_path in &["/dev/null", "/dev/zero", "/dev/urandom"] {
+    for dev_path in LANDLOCK_WRITABLE_DEVS {
         if let Ok(fd) = PathFd::new(dev_path) {
             ruleset = ruleset
                 .add_rule(PathBeneath::new(fd, write_access))
@@ -717,5 +726,17 @@ mod tests {
         let tmpfs_size_mb = u32::MAX;
         let opts = format!("size={}m", tmpfs_size_mb);
         assert_eq!(opts, format!("size={}m", u32::MAX));
+    }
+
+    // ── Regression: Landlock must allow console device ───────────
+
+    #[test]
+    fn test_fix_landlock_allows_console_device() {
+        // The virtio-console (/dev/vport0p0) must be in the writable device list,
+        // otherwise Landlock blocks the guest from reaching Ready state.
+        assert!(
+            LANDLOCK_WRITABLE_DEVS.contains(&"/dev/vport0p0"),
+            "Landlock must allow write access to virtio console device"
+        );
     }
 }

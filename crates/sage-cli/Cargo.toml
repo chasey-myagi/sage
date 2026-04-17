@@ -2,6 +2,11 @@
 name = "sage-cli"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI for Sage — run, chat, and manage domain-expert agents"
+keywords = ["agent", "llm", "cli", "ai", "assistant"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "sage"
@@ -13,6 +18,7 @@ sage-runner = { workspace = true }
 sage-runtime = { workspace = true }
 sage-protocol = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
@@ -20,4 +26,17 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 async-trait = { workspace = true }
+futures = { workspace = true }
+chrono = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+regex = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+tracing-test = { workspace = true }
+serial_test = { workspace = true }
+tempfile = { workspace = true }

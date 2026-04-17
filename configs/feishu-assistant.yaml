@@ -2,8 +2,8 @@ name: feishu-assistant
 description: "飞书助手"
 
 llm:
-  provider: anthropic
-  model: claude-haiku-4-5-20251001
+  provider: kimi
+  model: kimi-k2.5
   max_tokens: 4096
 
 system_prompt: |

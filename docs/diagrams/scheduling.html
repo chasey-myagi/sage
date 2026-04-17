@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+:root {
+  --fg:#1c1917; --fg2:#44403c; --fg3:#78716c;
+  --runtime-s:#6366f1; --runtime-f:rgba(99,102,241,0.04);
+  --caster-s:#3b82f6;  --caster-f:rgba(59,130,246,0.04);
+  --pool-s:#10b981;    --pool-f:rgba(16,185,129,0.05);
+  --proc-s:#818cf8;    --proc-f:rgba(129,140,248,0.1);
+  --hot-s:#10b981;     --hot-f:rgba(16,185,129,0.08);
+  --cold-s:#3b82f6;    --cold-f:rgba(59,130,246,0.07);
+  --blocked-s:#d97706; --blocked-f:rgba(217,119,6,0.08);
+  --slot-f:rgba(0,0,0,0.03); --slot-s:rgba(0,0,0,0.12);
+  --conn:#a5b4fc;
+}
+[data-theme="dark"] {
+  --fg:#e7e5e4; --fg2:#d4cfc9; --fg3:#a8a29e;
+  --runtime-f:rgba(129,140,248,0.06);
+  --caster-f:rgba(59,130,246,0.05);
+  --pool-f:rgba(16,185,129,0.06);
+  --proc-f:rgba(129,140,248,0.14);
+  --hot-f:rgba(52,211,153,0.1);
+  --cold-f:rgba(96,165,250,0.08);
+  --blocked-f:rgba(251,191,36,0.1);
+  --slot-f:rgba(255,255,255,0.04); --slot-s:rgba(255,255,255,0.12);
+  --conn:#818cf8;
+}
+html,body { margin:0; padding:0; background:transparent; overflow:hidden; }
+@media (prefers-reduced-motion:reduce) { * { animation-duration:0.01ms !important; } }
+</style>
+</head>
+<body>
+<svg viewBox="0 0 900 512" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;">
+  <defs>
+    <marker id="arr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+      <path d="M0,0.5 L0,6.5 L7,3.5 z" fill="var(--conn)"/>
+    </marker>
+  </defs>
+
+  <!-- ═══════════════════════════════════════════
+       RUNE RUNTIME outer box
+  ═══════════════════════════════════════════ -->
+  <rect x="3" y="3" width="894" height="506" rx="18"
+        fill="var(--runtime-f)" stroke="var(--runtime-s)" stroke-width="2"/>
+
+  <!-- Rune Runtime header -->
+  <text x="22" y="28" font-family="'SF Mono',ui-monospace,monospace"
+        font-size="12" font-weight="800" fill="var(--runtime-s)" letter-spacing="0.8">Rune Runtime</text>
+  <text x="22" y="47" font-family="system-ui,-apple-system,sans-serif"
+        font-size="11" fill="var(--fg3)">横向扩缩容 · 进程级调度 · 监控 Caster BLOCKED 队列压力</text>
+
+  <!-- spawn / kill badges (right side) -->
+  <rect x="700" y="10" width="186" height="26" rx="13"
+        fill="rgba(16,185,129,0.1)" stroke="rgba(16,185,129,0.4)" stroke-width="1"/>
+  <text x="793" y="27" text-anchor="middle" font-family="system-ui,sans-serif"
+        font-size="10" font-weight="600" fill="#10b981">↑  压力高 → spawn Caster</text>
+
+  <rect x="700" y="42" width="186" height="26" rx="13"
+        fill="rgba(248,113,113,0.08)" stroke="rgba(248,113,113,0.3)" stroke-width="1"/>
+  <text x="793" y="59" text-anchor="middle" font-family="system-ui,sans-serif"
+        font-size="10" font-weight="600" fill="#f87171">↓  压力低 → kill idle Caster</text>
+
+  <!-- ═══════════════════════════════════════════
+       CASTER PROCESS inner box
+  ═══════════════════════════════════════════ -->
+  <rect x="20" y="76" width="860" height="418" rx="14"
+        fill="var(--caster-f)" stroke="var(--caster-s)" stroke-width="1.5"/>
+
+  <text x="38" y="97" font-family="'SF Mono',ui-monospace,monospace"
+        font-size="11" font-weight="800" fill="var(--caster-s)" letter-spacing="0.6">Caster 进程</text>
+  <text x="38" y="113" font-family="system-ui,-apple-system,sans-serif"
+        font-size="11" fill="var(--fg3)">tokio runtime · N 个 DaemonLoop 协作执行（cooperative multitasking）</text>
+
+  <!-- ── DaemonLoop Chip 1: feishu [PROCESSING] ─────────── -->
+  <rect x="36" y="124" width="192" height="90" rx="10"
+        fill="var(--proc-f)" stroke="var(--proc-s)" stroke-width="1.5"/>
+  <!-- pulse glow -->
+  <rect x="36" y="124" width="192" height="90" rx="10"
+        fill="none" stroke="var(--proc-s)" stroke-width="3" opacity="0">
+    <animate attributeName="opacity" values="0;0.4;0" dur="1.6s" repeatCount="indefinite"/>
+  </rect>
+  <text x="56" y="146" font-family="system-ui,-apple-system,sans-serif"
+        font-size="13" font-weight="700" fill="var(--fg)">feishu</text>
+  <!-- PROCESSING badge -->
+  <rect x="56" y="154" width="96" height="20" rx="10"
+        fill="var(--proc-s)" fill-opacity="0.15" stroke="var(--proc-s)" stroke-width="1"/>
+  <circle cx="69" cy="164" r="3.5" fill="var(--proc-s)">
+    <animate attributeName="opacity" values="1;0.2;1" dur="0.8s" repeatCount="indefinite"/>
+  </circle>
+  <text x="80" y="168" font-family="'SF Mono',monospace" font-size="9.5"
+        font-weight="700" fill="var(--proc-s)">PROCESSING</text>
+  <text x="56" y="200" font-family="'SF Mono',monospace" font-size="9"
+        fill="var(--fg3)">/tmp/sage-feishu.sock</text>
+
+  <!-- ── DaemonLoop Chip 2: github [IDLE_HOT] ─────────── -->
+  <rect x="244" y="124" width="192" height="90" rx="10"
+        fill="var(--hot-f)" stroke="var(--hot-s)" stroke-width="1.5"/>
+  <text x="264" y="146" font-family="system-ui,-apple-system,sans-serif"
+        font-size="13" font-weight="700" fill="var(--fg)">github</text>
+  <rect x="264" y="154" width="84" height="20" rx="10"
+        fill="rgba(16,185,129,0.12)" stroke="var(--hot-s)" stroke-width="1"/>
+  <circle cx="277" cy="164" r="3.5" fill="var(--hot-s)"/>
+  <text x="288" y="168" font-family="'SF Mono',monospace" font-size="9.5"
+        font-weight="700" fill="var(--hot-s)">IDLE_HOT</text>
+  <text x="264" y="200" font-family="'SF Mono',monospace" font-size="9"
+        fill="var(--fg3)">/tmp/sage-github.sock</text>
+
+  <!-- ── DaemonLoop Chip 3: research [IDLE_COLD] ─────────── -->
+  <rect x="452" y="124" width="192" height="90" rx="10"
+        fill="var(--cold-f)" stroke="var(--cold-s)" stroke-width="1.5"/>
+  <text x="472" y="146" font-family="system-ui,-apple-system,sans-serif"
+        font-size="13" font-weight="700" fill="var(--fg)">research</text>
+  <rect x="472" y="154" width="90" height="20" rx="10"
+        fill="rgba(59,130,246,0.1)" stroke="var(--cold-s)" stroke-width="1"/>
+  <circle cx="485" cy="164" r="3.5" fill="var(--cold-s)"/>
+  <text x="496" y="168" font-family="'SF Mono',monospace" font-size="9.5"
+        font-weight="700" fill="var(--cold-s)">IDLE_COLD</text>
+  <text x="472" y="200" font-family="'SF Mono',monospace" font-size="9"
+        fill="var(--fg3)">VM 已驱逐 · cold start 1-2s</text>
+
+  <!-- ── DaemonLoop Chip 4: legal [BLOCKED] ─────────── -->
+  <rect x="660" y="124" width="192" height="90" rx="10"
+        fill="var(--blocked-f)" stroke="var(--blocked-s)" stroke-width="1.5"/>
+  <text x="680" y="146" font-family="system-ui,-apple-system,sans-serif"
+        font-size="13" font-weight="700" fill="var(--fg)">legal</text>
+  <rect x="680" y="154" width="76" height="20" rx="10"
+        fill="rgba(217,119,6,0.1)" stroke="var(--blocked-s)" stroke-width="1"/>
+  <circle cx="693" cy="164" r="3.5" fill="var(--blocked-s)"/>
+  <text x="704" y="168" font-family="'SF Mono',monospace" font-size="9.5"
+        font-weight="700" fill="var(--blocked-s)">BLOCKED</text>
+  <text x="680" y="200" font-family="'SF Mono',monospace" font-size="9"
+        fill="var(--fg3)">等待 VM Pool 空槽</text>
+
+  <!-- ── Connection lines (feishu → Slot1, github → Slot2) ─────────── -->
+  <path d="M 132,214 C 132,248 168,248 168,274"
+        fill="none" stroke="var(--conn)" stroke-width="1.5" stroke-dasharray="5,3"
+        marker-end="url(#arr)" opacity="0.7"/>
+  <path d="M 340,214 C 340,248 446,248 446,274"
+        fill="none" stroke="var(--conn)" stroke-width="1.5" stroke-dasharray="5,3"
+        marker-end="url(#arr)" opacity="0.7"/>
+
+  <!-- ═══════════════════════════════════════════
+       VM POOL inner box
+  ═══════════════════════════════════════════ -->
+  <rect x="36" y="232" width="824" height="248" rx="10"
+        fill="var(--pool-f)" stroke="var(--pool-s)" stroke-width="1.5"/>
+
+  <text x="56" y="254" font-family="'SF Mono',ui-monospace,monospace"
+        font-size="11" font-weight="800" fill="var(--pool-s)" letter-spacing="0.6">VM Pool</text>
+  <text x="136" y="254" font-family="system-ui,-apple-system,sans-serif"
+        font-size="11" fill="var(--fg3)">  LRU 调度 · capacity = 3 · 对话历史在 HOST 侧，VM 只是执行沙箱</text>
+
+  <!-- ── VM Slot 1: feishu [ACTIVE] ─────────── -->
+  <rect x="54" y="270" width="252" height="196" rx="8"
+        fill="var(--slot-f)" stroke="var(--slot-s)" stroke-width="1"/>
+  <text x="74" y="292" font-family="'SF Mono',monospace" font-size="9"
+        font-weight="700" fill="var(--fg3)" letter-spacing="0.5">SLOT 1</text>
+  <text x="74" y="312" font-family="system-ui,sans-serif"
+        font-size="13" font-weight="700" fill="var(--fg)">feishu VM</text>
+  <rect x="74" y="320" width="52" height="18" rx="9"
+        fill="rgba(16,185,129,0.12)" stroke="var(--hot-s)" stroke-width="1"/>
+  <text x="100" y="332" text-anchor="middle" font-family="'SF Mono',monospace"
+        font-size="9" font-weight="700" fill="var(--hot-s)">ACTIVE</text>
+  <!-- Slot 1 details -->
+  <line x1="74" y1="348" x2="288" y2="348" stroke="var(--slot-s)" stroke-width="1"/>
+  <text x="74" y="366" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">Memory</text>
+  <text x="288" y="366" text-anchor="end" font-family="'SF Mono',monospace" font-size="11" fill="var(--fg2)">2 GB</text>
+  <text x="74" y="386" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">Workspace</text>
+  <text x="288" y="386" text-anchor="end" font-family="'SF Mono',monospace" font-size="9.5" fill="var(--fg2)">/agents/feishu/ws/</text>
+  <text x="74" y="406" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">Kernel</text>
+  <text x="288" y="406" text-anchor="end" font-family="'SF Mono',monospace" font-size="11" fill="var(--fg2)">libkrunfw</text>
+  <text x="74" y="426" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">Network</text>
+  <text x="288" y="426" text-anchor="end" font-family="'SF Mono',monospace" font-size="11" fill="var(--fg2)">airgapped</text>
+  <text x="74" y="450" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">PID 1</text>
+  <text x="288" y="450" text-anchor="end" font-family="'SF Mono',monospace" font-size="11" fill="var(--fg2)">sage-guest</text>
+
+  <!-- ── VM Slot 2: github [HOT] ─────────── -->
+  <rect x="324" y="270" width="252" height="196" rx="8"
+        fill="var(--slot-f)" stroke="var(--slot-s)" stroke-width="1"/>
+  <text x="344" y="292" font-family="'SF Mono',monospace" font-size="9"
+        font-weight="700" fill="var(--fg3)" letter-spacing="0.5">SLOT 2</text>
+  <text x="344" y="312" font-family="system-ui,sans-serif"
+        font-size="13" font-weight="700" fill="var(--fg)">github VM</text>
+  <rect x="344" y="320" width="42" height="18" rx="9"
+        fill="rgba(99,102,241,0.1)" stroke="var(--proc-s)" stroke-width="1"/>
+  <text x="365" y="332" text-anchor="middle" font-family="'SF Mono',monospace"
+        font-size="9" font-weight="700" fill="var(--proc-s)">HOT</text>
+  <line x1="344" y1="348" x2="558" y2="348" stroke="var(--slot-s)" stroke-width="1"/>
+  <text x="344" y="366" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">Memory</text>
+  <text x="558" y="366" text-anchor="end" font-family="'SF Mono',monospace" font-size="11" fill="var(--fg2)">2 GB</text>
+  <text x="344" y="386" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">Workspace</text>
+  <text x="558" y="386" text-anchor="end" font-family="'SF Mono',monospace" font-size="9.5" fill="var(--fg2)">/agents/github/ws/</text>
+  <text x="344" y="406" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">Idle since</text>
+  <text x="558" y="406" text-anchor="end" font-family="'SF Mono',monospace" font-size="11" fill="var(--fg2)">3m 21s</text>
+  <text x="344" y="426" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">Network</text>
+  <text x="558" y="426" text-anchor="end" font-family="'SF Mono',monospace" font-size="11" fill="var(--fg2)">airgapped</text>
+  <text x="344" y="450" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">PID 1</text>
+  <text x="558" y="450" text-anchor="end" font-family="'SF Mono',monospace" font-size="11" fill="var(--fg2)">sage-guest</text>
+
+  <!-- ── VM Slot 3: LRU candidate ─────────── -->
+  <rect x="594" y="270" width="252" height="196" rx="8"
+        fill="var(--slot-f)" stroke="var(--blocked-s)" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <text x="614" y="292" font-family="'SF Mono',monospace" font-size="9"
+        font-weight="700" fill="var(--blocked-s)" letter-spacing="0.5">SLOT 3</text>
+  <text x="614" y="312" font-family="system-ui,sans-serif"
+        font-size="13" font-weight="700" fill="var(--fg)">LRU 候选</text>
+  <rect x="614" y="320" width="100" height="18" rx="9"
+        fill="rgba(217,119,6,0.1)" stroke="var(--blocked-s)" stroke-width="1"/>
+  <text x="664" y="332" text-anchor="middle" font-family="'SF Mono',monospace"
+        font-size="9" font-weight="700" fill="var(--blocked-s)">下次被驱逐</text>
+  <line x1="614" y1="348" x2="828" y2="348" stroke="var(--slot-s)" stroke-width="1"/>
+  <text x="614" y="375" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">新请求到来时此 VM 将被终止</text>
+  <text x="614" y="395" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">对话历史在 HOST 侧安全保存</text>
+  <text x="614" y="415" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">下次唤醒：cold start ~1-2s</text>
+  <text x="614" y="435" font-family="system-ui,sans-serif" font-size="11" fill="var(--fg3)">Idle since</text>
+  <text x="828" y="435" text-anchor="end" font-family="'SF Mono',monospace" font-size="11" fill="var(--blocked-s)">18m 44s</text>
+
+</svg>
+<script>
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.theme) document.documentElement.dataset.theme = e.data.theme;
+});
+if (window.matchMedia('(prefers-color-scheme: dark)').matches)
+  document.documentElement.dataset.theme = 'dark';
+</script>
+</body>
+</html>

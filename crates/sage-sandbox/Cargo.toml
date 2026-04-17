@@ -2,6 +2,10 @@
 name = "sage-sandbox"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Host-side microVM sandbox SDK for Sage (msb_krun wrapper)"
+publish = false
 
 [dependencies]
 sage-protocol = { workspace = true }

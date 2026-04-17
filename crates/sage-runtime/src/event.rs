@@ -9,47 +9,67 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 
-/// Agent lifecycle events.
+/// All observable events emitted by the agent loop.
+///
+/// Subscribe via [`AgentEventSink`] or consume from an [`AgentEventStream`].
+/// Use [`AgentEvent::visibility`] to filter by audience.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentEvent {
+    /// The agent loop has started (first event in every run).
     AgentStart,
+    /// A fatal error occurred; the run will not continue.
+    RunError {
+        error: String,
+    },
+    /// The agent loop has completed. `messages` is the full conversation history.
     AgentEnd {
         messages: Vec<AgentMessage>,
     },
+    /// A new turn (LLM call + tool round) has begun.
     TurnStart,
+    /// The current turn has completed. Contains the assistant reply and tool results.
     TurnEnd {
         message: AssistantMessage,
         tool_results: Vec<ToolResultMessage>,
     },
+    /// A new message object has been created (streaming started).
     MessageStart {
         message: AgentMessage,
     },
+    /// A streaming text delta was received. `delta` is the new chunk.
     MessageUpdate {
         message: AgentMessage,
         delta: String,
     },
+    /// A message has been fully received (streaming complete).
     MessageEnd {
         message: AgentMessage,
     },
+    /// A tool call has started.
     ToolExecutionStart {
         tool_call_id: String,
         tool_name: String,
         args: Value,
     },
+    /// A tool is streaming incremental output.
     ToolExecutionUpdate {
         tool_call_id: String,
         tool_name: String,
         partial_result: String,
     },
+    /// A tool call has completed. `is_error` is true if the tool returned an error.
     ToolExecutionEnd {
         tool_call_id: String,
         tool_name: String,
         is_error: bool,
     },
+    /// Context compaction has started. `reason` explains why; `message_count` is the
+    /// number of messages currently in history.
     CompactionStart {
         reason: String,
         message_count: usize,
     },
+    /// Context compaction has completed.
     CompactionEnd {
         tokens_before: u64,
         /// Number of messages summarized (replaced by one CompactionSummary message).
@@ -57,9 +77,52 @@ pub enum AgentEvent {
     },
 }
 
+/// Who an [`AgentEvent`] is intended for.
+///
+/// - `User` — visible in user-facing UIs (chat bubbles, channel messages)
+/// - `Developer` — tool calls, performance metadata; shown in dev UIs / logs
+/// - `Internal` — lifecycle bookkeeping (start, end); filtered in most UIs
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    User,
+    Developer,
+    Internal,
+}
+
+impl AgentEvent {
+    /// Return the intended audience for this event.
+    pub fn visibility(&self) -> Visibility {
+        match self {
+            // User-visible: text the user directly sees or errors they need to know about
+            AgentEvent::MessageUpdate { .. } | AgentEvent::RunError { .. } => Visibility::User,
+
+            // Developer-visible: tool call lifecycle, per-message metadata
+            AgentEvent::ToolExecutionStart { .. }
+            | AgentEvent::ToolExecutionUpdate { .. }
+            | AgentEvent::ToolExecutionEnd { .. }
+            | AgentEvent::MessageStart { .. }
+            | AgentEvent::MessageEnd { .. } => Visibility::Developer,
+
+            // Internal: agent / turn lifecycle bookkeeping, compaction events
+            AgentEvent::AgentStart
+            | AgentEvent::AgentEnd { .. }
+            | AgentEvent::TurnStart
+            | AgentEvent::TurnEnd { .. }
+            | AgentEvent::CompactionStart { .. }
+            | AgentEvent::CompactionEnd { .. } => Visibility::Internal,
+        }
+    }
+}
+
 /// Trait for receiving agent events.
+///
+/// Implement this to observe the agent loop from the outside — e.g. to stream
+/// text deltas to a terminal, forward tool notifications to a channel, or collect
+/// metrics. Each `emit` call is `async` so sinks can perform I/O without blocking
+/// the agent loop.
 #[async_trait::async_trait]
 pub trait AgentEventSink: Send + Sync {
+    /// Called once for every [`AgentEvent`] produced by the agent loop.
     async fn emit(&self, event: AgentEvent);
 }
 
@@ -98,6 +161,7 @@ impl<T, R> Clone for EventSender<T, R> {
 }
 
 impl<T, R> EventSender<T, R> {
+    /// Send an event. Fails if the receiver has been dropped or `end` was already called.
     pub fn send(&self, event: T) -> Result<(), SendError> {
         if self.ended.load(Ordering::SeqCst) {
             return Err(SendError("stream has ended".into()));
@@ -107,6 +171,7 @@ impl<T, R> EventSender<T, R> {
             .map_err(|_| SendError("receiver has been dropped".into()))
     }
 
+    /// Signal end-of-stream and deliver the final result. Idempotent; subsequent calls are no-ops.
     pub fn end(&self, result: R) {
         if self.ended.swap(true, Ordering::SeqCst) {
             return;
@@ -123,6 +188,7 @@ pub struct EventReceiver<T, R> {
 }
 
 impl<T, R: Default> EventReceiver<T, R> {
+    /// Receive the next event, or `None` when the stream has ended.
     pub async fn next(&mut self) -> Option<T> {
         if self.done {
             return None;
@@ -141,6 +207,8 @@ impl<T, R: Default> EventReceiver<T, R> {
         }
     }
 
+    /// Drain all remaining events and return the final result value sent by [`EventSender::end`].
+    /// Falls back to `R::default()` if the sender was dropped without calling `end`.
     pub async fn result(mut self) -> R {
         while self.next().await.is_some() {}
         self.stored_result.take().unwrap_or_default()
@@ -148,11 +216,16 @@ impl<T, R: Default> EventReceiver<T, R> {
 }
 
 /// Async event stream backed by an unbounded mpsc channel.
+///
+/// Call [`EventStream::new`] to get a matched `(sender, receiver)` pair.
+/// The sender is given to producers (e.g. the agent loop); the receiver is consumed
+/// by the caller to observe events and retrieve the final result.
 pub struct EventStream<T, R> {
     _phantom: PhantomData<(T, R)>,
 }
 
 impl<T, R: Default> EventStream<T, R> {
+    /// Create a new `(EventSender, EventReceiver)` pair.
     pub fn new() -> (EventSender<T, R>, EventReceiver<T, R>) {
         let (tx, rx) = mpsc::unbounded_channel();
         let sender = EventSender {
@@ -415,6 +488,10 @@ mod tests {
     #[tokio::test]
     async fn agent_event_all_variants_constructable() {
         let _start = AgentEvent::AgentStart;
+
+        let _run_error = AgentEvent::RunError {
+            error: "boom".to_string(),
+        };
 
         let _end = AgentEvent::AgentEnd { messages: vec![] };
 
@@ -904,6 +981,9 @@ mod tests {
 
         let events: Vec<AgentEvent> = vec![
             AgentEvent::AgentStart,
+            AgentEvent::RunError {
+                error: "boom".into(),
+            },
             AgentEvent::AgentEnd {
                 messages: vec![user_msg.clone()],
             },
@@ -1068,5 +1148,117 @@ mod tests {
             }
             _ => panic!("wrong variant"),
         }
+    }
+
+    // ── Visibility tests ─────────────────────────────────────────────────────
+
+    fn make_assistant_msg(text: &str) -> crate::types::AgentMessage {
+        crate::types::AgentMessage::Assistant(crate::types::AssistantMessage::new(text.into()))
+    }
+
+    #[test]
+    fn message_update_is_user_visible() {
+        let ev = AgentEvent::MessageUpdate {
+            message: make_assistant_msg("hi"),
+            delta: "hi".into(),
+        };
+        assert_eq!(ev.visibility(), Visibility::User);
+    }
+
+    #[test]
+    fn run_error_is_user_visible() {
+        let ev = AgentEvent::RunError { error: "something went wrong".into() };
+        assert_eq!(ev.visibility(), Visibility::User);
+    }
+
+    #[test]
+    fn tool_execution_start_is_developer_visible() {
+        let ev = AgentEvent::ToolExecutionStart {
+            tool_call_id: "id1".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({"command": "ls"}),
+        };
+        assert_eq!(ev.visibility(), Visibility::Developer);
+    }
+
+    #[test]
+    fn tool_execution_end_is_developer_visible() {
+        let ev = AgentEvent::ToolExecutionEnd {
+            tool_call_id: "id1".into(),
+            tool_name: "bash".into(),
+            is_error: false,
+        };
+        assert_eq!(ev.visibility(), Visibility::Developer);
+    }
+
+    #[test]
+    fn tool_execution_update_is_developer_visible() {
+        let ev = AgentEvent::ToolExecutionUpdate {
+            tool_call_id: "id1".into(),
+            tool_name: "bash".into(),
+            partial_result: "output".into(),
+        };
+        assert_eq!(ev.visibility(), Visibility::Developer);
+    }
+
+    #[test]
+    fn compaction_start_is_internal() {
+        let ev = AgentEvent::CompactionStart { reason: "token limit".into(), message_count: 10 };
+        assert_eq!(ev.visibility(), Visibility::Internal);
+    }
+
+    #[test]
+    fn compaction_end_is_internal() {
+        let ev = AgentEvent::CompactionEnd { tokens_before: 1000, messages_compacted: 5 };
+        assert_eq!(ev.visibility(), Visibility::Internal);
+    }
+
+    #[test]
+    fn agent_start_is_internal() {
+        assert_eq!(AgentEvent::AgentStart.visibility(), Visibility::Internal);
+    }
+
+    #[test]
+    fn agent_end_is_internal() {
+        let ev = AgentEvent::AgentEnd { messages: vec![] };
+        assert_eq!(ev.visibility(), Visibility::Internal);
+    }
+
+    #[test]
+    fn turn_start_is_internal() {
+        assert_eq!(AgentEvent::TurnStart.visibility(), Visibility::Internal);
+    }
+
+    #[test]
+    fn message_start_is_developer_visible() {
+        let ev = AgentEvent::MessageStart { message: make_assistant_msg("x") };
+        assert_eq!(ev.visibility(), Visibility::Developer);
+    }
+
+    #[test]
+    fn message_end_is_developer_visible() {
+        let ev = AgentEvent::MessageEnd { message: make_assistant_msg("x") };
+        assert_eq!(ev.visibility(), Visibility::Developer);
+    }
+
+    #[test]
+    fn turn_end_is_internal() {
+        let ev = AgentEvent::TurnEnd {
+            message: crate::types::AssistantMessage::new("response".into()),
+            tool_results: vec![],
+        };
+        assert_eq!(ev.visibility(), Visibility::Internal);
+    }
+
+    #[test]
+    fn tool_execution_end_with_error_is_still_developer_visible() {
+        // Even failed tool calls stay Developer (not User) — the UI layer decides
+        // whether to surface them to the user based on its own logic.
+        let ev = AgentEvent::ToolExecutionEnd {
+            tool_call_id: "id1".into(),
+            tool_name: "bash".into(),
+            is_error: true,
+        };
+        assert_eq!(ev.visibility(), Visibility::Developer);
     }
 }

@@ -498,11 +498,7 @@ impl ApiProvider for OpenAiResponsesProvider {
         };
 
         if !response.status().is_success() {
-            let status = response.status();
-            let body_text = response.text().await.unwrap_or_default();
-            return vec![AssistantMessageEvent::Error(format!(
-                "API error {status}: {body_text}"
-            ))];
+            return vec![crate::llm::provider_errors::handle_error_response(response, model).await];
         }
 
         parse_sse_stream(response).await
@@ -573,12 +569,7 @@ pub async fn parse_sse_stream(response: reqwest::Response) -> Vec<AssistantMessa
                             current_event_type.clone()
                         };
                         if !event_type.is_empty() {
-                            process_responses_event(
-                                &event_type,
-                                &data,
-                                &mut state,
-                                &mut events,
-                            );
+                            process_responses_event(&event_type, &data, &mut state, &mut events);
                         }
                     }
                     Err(e) => {

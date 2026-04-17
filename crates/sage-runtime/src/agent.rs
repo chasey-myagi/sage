@@ -2,6 +2,7 @@
 // Agent struct with state management, steering/follow-up queues, and hooks.
 
 use crate::compaction::{CompactionSettings, FileOperations};
+use crate::hook::HookBus;
 use crate::llm::LlmProvider;
 use crate::llm::types::*;
 use crate::tools::ToolRegistry;
@@ -12,6 +13,8 @@ use std::collections::VecDeque;
 /// Configuration for the agent loop.
 #[derive(Debug, Clone)]
 pub struct AgentLoopConfig {
+    /// Human-readable agent name — forwarded to [`StopContext`] on session end.
+    pub name: String,
     pub model: Model,
     pub system_prompt: String,
     pub max_turns: usize,
@@ -35,6 +38,68 @@ pub trait AfterToolCallHook: Send + Sync {
     async fn after_tool_call(&self, ctx: &AfterToolCallContext) -> AfterToolCallResult;
 }
 
+/// Hook called before each LLM call to transform the message history.
+///
+/// Use this to inject memory, filter sensitive content, or apply custom compression.
+/// The hook receives a mutable reference to the agent's message slice and may
+/// add, remove, or modify messages in place.
+///
+/// # Example
+/// ```rust,ignore
+/// struct MemoryInjector { memories: Vec<String> }
+///
+/// #[async_trait::async_trait]
+/// impl TransformContextHook for MemoryInjector {
+///     async fn transform_context(&self, messages: &mut Vec<AgentMessage>) {
+///         // Inject a memory recap as a system message before the last user turn
+///         // ...
+///     }
+/// }
+/// ```
+#[async_trait::async_trait]
+pub trait TransformContextHook: Send + Sync {
+    async fn transform_context(&self, messages: &mut Vec<AgentMessage>);
+}
+
+/// Context passed to a [`StopHook`] when the agent is about to stop.
+pub struct StopContext {
+    /// The reason the agent is stopping.
+    pub stop_reason: crate::types::StopReason,
+    /// Unique session identifier (e.g., ULID).
+    pub session_id: String,
+    /// Unique task identifier within the session.
+    pub task_id: String,
+    /// Number of turns completed in this session.
+    pub turn_count: usize,
+    /// Name of the agent (from config).
+    pub agent_name: String,
+    /// Model identifier used for this session.
+    pub model: String,
+    /// The last assistant message produced before stopping.
+    pub last_assistant_message: String,
+}
+
+/// The action a [`StopHook`] instructs the agent loop to take after the hook fires.
+#[derive(Debug)]
+pub enum StopAction {
+    /// Accept the stop — the agent session ends normally.
+    Pass,
+    /// Inject `feedback` as a user message and restart the agent loop.
+    /// Used by the Harness to give the agent another chance.
+    Continue(String),
+    /// Mark the harness run as failed with the given reason.
+    Fail(String),
+}
+
+/// Hook called when the agent is about to stop.
+///
+/// Returning [`StopAction::Continue`] injects feedback and restarts the loop —
+/// this is the core mechanism used by the Harness for evaluation-driven iteration.
+#[async_trait::async_trait]
+pub trait StopHook: Send + Sync {
+    async fn on_stop(&self, ctx: &StopContext) -> StopAction;
+}
+
 /// The Agent — owns config, provider, tools, message history, queues, and hooks.
 pub struct Agent {
     config: AgentLoopConfig,
@@ -46,10 +111,23 @@ pub struct Agent {
     follow_up_queue: VecDeque<AgentMessage>,
     before_hook: Option<Box<dyn BeforeToolCallHook>>,
     after_hook: Option<Box<dyn AfterToolCallHook>>,
+    transform_context_hook: Option<Box<dyn TransformContextHook>>,
+    stop_hook: Option<Box<dyn StopHook>>,
     /// Cumulative file operations tracked across compaction rounds.
     compaction_file_ops: FileOperations,
     /// Previous compaction summary (for iterative update prompt).
     previous_compaction_summary: Option<String>,
+    /// Session-scoped HookBus for lifecycle event emission (S6.2b).
+    ///
+    /// `None` for bare [`Agent`] instances (legacy / test paths); populated
+    /// when the agent is owned by a [`SageSession`]. The compaction code path
+    /// emits `HookEvent::PreCompact` / `PostCompact` through this bus.
+    ///
+    /// [`SageSession`]: crate::engine::SageSession
+    hook_bus: Option<HookBus>,
+    /// Session identifier consumed by [`HookEvent`] payloads emitted through
+    /// [`Agent::hook_bus`]. `None` when no session is attached.
+    session_id: Option<String>,
 }
 
 impl Agent {
@@ -68,9 +146,32 @@ impl Agent {
             follow_up_queue: VecDeque::new(),
             before_hook: None,
             after_hook: None,
+            transform_context_hook: None,
+            stop_hook: None,
             compaction_file_ops: FileOperations::default(),
             previous_compaction_summary: None,
+            hook_bus: None,
+            session_id: None,
         }
+    }
+
+    /// Attach a session-scoped [`HookBus`] used by the compaction path to
+    /// emit `HookEvent::PreCompact` / `PostCompact`.
+    pub fn set_hook_bus(&mut self, bus: Option<HookBus>) {
+        self.hook_bus = bus;
+    }
+
+    pub fn hook_bus(&self) -> Option<&HookBus> {
+        self.hook_bus.as_ref()
+    }
+
+    /// Attach the session identifier stamped onto compaction hook events.
+    pub fn set_session_id(&mut self, id: Option<String>) {
+        self.session_id = id;
+    }
+
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
     }
 
     pub fn config(&self) -> &AgentLoopConfig {
@@ -157,6 +258,21 @@ impl Agent {
         self.after_hook = Some(hook);
     }
 
+    pub fn set_transform_context(&mut self, hook: Box<dyn TransformContextHook>) {
+        self.transform_context_hook = Some(hook);
+    }
+
+    /// Call the transform context hook if present; no-op if none is set.
+    ///
+    /// Uses `take()`/restore to sidestep the borrow checker:
+    /// we cannot hold `&self.transform_context_hook` and `&mut self.messages` simultaneously.
+    pub async fn call_transform_context(&mut self) {
+        if let Some(hook) = self.transform_context_hook.take() {
+            hook.transform_context(&mut self.messages).await;
+            self.transform_context_hook = Some(hook);
+        }
+    }
+
     pub fn has_before_tool_call_hook(&self) -> bool {
         self.before_hook.is_some()
     }
@@ -182,6 +298,19 @@ impl Agent {
                 content: None,
                 is_error: None,
             },
+        }
+    }
+
+    // -- stop hook --
+
+    pub fn set_stop_hook(&mut self, hook: Box<dyn StopHook>) {
+        self.stop_hook = Some(hook);
+    }
+
+    pub async fn call_stop_hook(&self, ctx: &StopContext) -> StopAction {
+        match &self.stop_hook {
+            Some(hook) => hook.on_stop(ctx).await,
+            None => StopAction::Pass,
         }
     }
 }
@@ -226,6 +355,7 @@ mod tests {
 
     fn test_config() -> AgentLoopConfig {
         AgentLoopConfig {
+            name: "test-agent".into(),
             model: test_model(),
             system_prompt: "You are a test agent.".into(),
             max_turns: 10,
@@ -721,5 +851,505 @@ mod tests {
         }
         let drained = agent.drain_steering();
         assert_eq!(drained.len(), 200);
+    }
+
+    // ===============================================================
+    // Sprint 4 H2 — StopHook
+    // ===============================================================
+
+    struct PassHook;
+
+    #[async_trait::async_trait]
+    impl StopHook for PassHook {
+        async fn on_stop(&self, _ctx: &StopContext) -> StopAction {
+            StopAction::Pass
+        }
+    }
+
+    struct ContinueHook {
+        message: String,
+    }
+
+    #[async_trait::async_trait]
+    impl StopHook for ContinueHook {
+        async fn on_stop(&self, _ctx: &StopContext) -> StopAction {
+            StopAction::Continue(self.message.clone())
+        }
+    }
+
+    struct FailHook {
+        reason: String,
+    }
+
+    #[async_trait::async_trait]
+    impl StopHook for FailHook {
+        async fn on_stop(&self, _ctx: &StopContext) -> StopAction {
+            StopAction::Fail(self.reason.clone())
+        }
+    }
+
+    fn test_stop_context() -> StopContext {
+        StopContext {
+            stop_reason: StopReason::Stop,
+            session_id: "sess-test".into(),
+            task_id: "task-test".into(),
+            turn_count: 3,
+            agent_name: "test-agent".into(),
+            model: "test-model".into(),
+            last_assistant_message: "Done.".into(),
+        }
+    }
+
+    // ── Initial state ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_no_stop_hook_initially_returns_pass() {
+        // With no hook set, call_stop_hook must return Pass (the safe default).
+        let agent = test_agent();
+        let action = agent.call_stop_hook(&test_stop_context()).await;
+        assert!(matches!(action, StopAction::Pass));
+    }
+
+    #[tokio::test]
+    async fn test_set_stop_hook_takes_effect() {
+        // After set_stop_hook, call_stop_hook must use the installed hook.
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(FailHook { reason: "sentinel".into() }));
+        let action = agent.call_stop_hook(&test_stop_context()).await;
+        assert!(matches!(action, StopAction::Fail(_)));
+    }
+
+    // ── StopAction variants ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_stop_hook_pass_returned() {
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(PassHook));
+        let action = agent.call_stop_hook(&test_stop_context()).await;
+        assert!(matches!(action, StopAction::Pass));
+    }
+
+    #[tokio::test]
+    async fn test_stop_hook_continue_returns_message() {
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(ContinueHook {
+            message: "please try again".into(),
+        }));
+        let action = agent.call_stop_hook(&test_stop_context()).await;
+        match action {
+            StopAction::Continue(msg) => {
+                assert_eq!(msg, "please try again");
+            }
+            other => panic!("expected Continue, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stop_hook_fail_returns_reason() {
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(FailHook {
+            reason: "task did not complete successfully".into(),
+        }));
+        let action = agent.call_stop_hook(&test_stop_context()).await;
+        match action {
+            StopAction::Fail(reason) => {
+                assert_eq!(reason, "task did not complete successfully");
+            }
+            other => panic!("expected Fail, got {other:?}"),
+        }
+    }
+
+    // ── No hook → default Pass ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_no_stop_hook_returns_pass() {
+        let agent = test_agent();
+        let action = agent.call_stop_hook(&test_stop_context()).await;
+        assert!(
+            matches!(action, StopAction::Pass),
+            "no stop hook must return Pass, got {action:?}"
+        );
+    }
+
+    // ── Hook replacement ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_set_stop_hook_twice_replaces_previous() {
+        let mut agent = test_agent();
+        // First: Fail hook
+        agent.set_stop_hook(Box::new(FailHook {
+            reason: "first hook".into(),
+        }));
+        // Second: Pass hook (should replace)
+        agent.set_stop_hook(Box::new(PassHook));
+        let action = agent.call_stop_hook(&test_stop_context()).await;
+        assert!(
+            matches!(action, StopAction::Pass),
+            "second stop hook must replace the first"
+        );
+    }
+
+    // ── Context fields are forwarded correctly ────────────────────────────────
+
+    #[tokio::test]
+    async fn test_stop_hook_receives_correct_context() {
+        use std::sync::{Arc, Mutex};
+
+        struct CaptureHook {
+            captured: Arc<Mutex<Option<(String, String, String, usize, String, String, String)>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl StopHook for CaptureHook {
+            async fn on_stop(&self, ctx: &StopContext) -> StopAction {
+                *self.captured.lock().unwrap() = Some((
+                    ctx.session_id.clone(),
+                    ctx.task_id.clone(),
+                    ctx.agent_name.clone(),
+                    ctx.turn_count,
+                    ctx.last_assistant_message.clone(),
+                    ctx.model.clone(),
+                    format!("{}", ctx.stop_reason),
+                ));
+                StopAction::Pass
+            }
+        }
+
+        let captured = Arc::new(Mutex::new(None));
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(CaptureHook {
+            captured: captured.clone(),
+        }));
+
+        let ctx = StopContext {
+            stop_reason: StopReason::Stop,
+            session_id: "sess-abc".into(),
+            task_id: "task-xyz".into(),
+            turn_count: 7,
+            agent_name: "my-agent".into(),
+            model: "claude-haiku".into(),
+            last_assistant_message: "Task complete.".into(),
+        };
+        agent.call_stop_hook(&ctx).await;
+
+        let (session_id, task_id, name, turns, last_msg, model, stop_reason) = captured
+            .lock()
+            .unwrap()
+            .take()
+            .expect("hook should have been called");
+        assert_eq!(session_id, "sess-abc", "session_id must be forwarded");
+        assert_eq!(task_id, "task-xyz", "task_id must be forwarded");
+        assert_eq!(name, "my-agent", "agent_name must be forwarded");
+        assert_eq!(turns, 7, "turn_count must be forwarded");
+        assert_eq!(last_msg, "Task complete.", "last_assistant_message must be forwarded");
+        assert_eq!(model, "claude-haiku", "model must be forwarded");
+        assert_eq!(stop_reason, "stop", "stop_reason must be forwarded as display string");
+    }
+
+    // ── StopReason variants reach the hook ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_stop_hook_receives_max_turns_stop_reason() {
+        use std::sync::{Arc, Mutex};
+
+        struct ReasonCapture {
+            captured: Arc<Mutex<Option<StopReason>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl StopHook for ReasonCapture {
+            async fn on_stop(&self, ctx: &StopContext) -> StopAction {
+                *self.captured.lock().unwrap() = Some(ctx.stop_reason.clone());
+                StopAction::Pass
+            }
+        }
+
+        let captured = Arc::new(Mutex::new(None));
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(ReasonCapture {
+            captured: captured.clone(),
+        }));
+
+        let ctx = StopContext {
+            stop_reason: StopReason::Length,
+            session_id: "s".into(),
+            task_id: "t".into(),
+            turn_count: 30,
+            agent_name: "a".into(),
+            model: "m".into(),
+            last_assistant_message: "".into(),
+        };
+        agent.call_stop_hook(&ctx).await;
+
+        let reason = captured.lock().unwrap().take().expect("hook must be called");
+        assert!(
+            matches!(reason, StopReason::Length),
+            "hook must receive Length stop reason"
+        );
+    }
+
+    // ── Edge: empty last_assistant_message ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_stop_hook_empty_last_message_does_not_panic() {
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(PassHook));
+        let ctx = StopContext {
+            stop_reason: StopReason::Stop,
+            session_id: "s".into(),
+            task_id: "t".into(),
+            turn_count: 0,
+            agent_name: "a".into(),
+            model: "m".into(),
+            last_assistant_message: "".into(), // empty — valid for first turn abort
+        };
+        let action = agent.call_stop_hook(&ctx).await;
+        assert!(matches!(action, StopAction::Pass));
+    }
+
+    // ── All StopReason variants reach the hook ────────────────────────────────
+
+    #[tokio::test]
+    async fn test_stop_hook_receives_error_stop_reason() {
+        use std::sync::{Arc, Mutex};
+
+        struct ReasonCapture {
+            captured: Arc<Mutex<Option<StopReason>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl StopHook for ReasonCapture {
+            async fn on_stop(&self, ctx: &StopContext) -> StopAction {
+                *self.captured.lock().unwrap() = Some(ctx.stop_reason.clone());
+                StopAction::Pass
+            }
+        }
+
+        let captured = Arc::new(Mutex::new(None));
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(ReasonCapture {
+            captured: captured.clone(),
+        }));
+
+        let ctx = StopContext {
+            stop_reason: StopReason::Error,
+            session_id: "s".into(),
+            task_id: "t".into(),
+            turn_count: 1,
+            agent_name: "a".into(),
+            model: "m".into(),
+            last_assistant_message: "".into(),
+        };
+        agent.call_stop_hook(&ctx).await;
+        let reason = captured.lock().unwrap().take().unwrap();
+        assert!(matches!(reason, StopReason::Error));
+    }
+
+    #[tokio::test]
+    async fn test_stop_hook_receives_aborted_stop_reason() {
+        use std::sync::{Arc, Mutex};
+
+        struct ReasonCapture {
+            captured: Arc<Mutex<Option<StopReason>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl StopHook for ReasonCapture {
+            async fn on_stop(&self, ctx: &StopContext) -> StopAction {
+                *self.captured.lock().unwrap() = Some(ctx.stop_reason.clone());
+                StopAction::Pass
+            }
+        }
+
+        let captured = Arc::new(Mutex::new(None));
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(ReasonCapture {
+            captured: captured.clone(),
+        }));
+
+        let ctx = StopContext {
+            stop_reason: StopReason::Aborted,
+            session_id: "s".into(),
+            task_id: "t".into(),
+            turn_count: 2,
+            agent_name: "a".into(),
+            model: "m".into(),
+            last_assistant_message: "Partially done.".into(),
+        };
+        agent.call_stop_hook(&ctx).await;
+        let reason = captured.lock().unwrap().take().unwrap();
+        assert!(matches!(reason, StopReason::Aborted));
+    }
+
+    #[tokio::test]
+    async fn test_stop_hook_receives_tool_use_stop_reason() {
+        use std::sync::{Arc, Mutex};
+
+        struct ReasonCapture {
+            captured: Arc<Mutex<Option<StopReason>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl StopHook for ReasonCapture {
+            async fn on_stop(&self, ctx: &StopContext) -> StopAction {
+                *self.captured.lock().unwrap() = Some(ctx.stop_reason.clone());
+                StopAction::Pass
+            }
+        }
+
+        let captured = Arc::new(Mutex::new(None));
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(ReasonCapture {
+            captured: captured.clone(),
+        }));
+
+        let ctx = StopContext {
+            stop_reason: StopReason::ToolUse,
+            session_id: "s".into(),
+            task_id: "t".into(),
+            turn_count: 4,
+            agent_name: "a".into(),
+            model: "m".into(),
+            last_assistant_message: "Using tool...".into(),
+        };
+        agent.call_stop_hook(&ctx).await;
+        let reason = captured.lock().unwrap().take().unwrap();
+        assert!(matches!(reason, StopReason::ToolUse));
+    }
+
+    // ── State combination: stateless behavior verification ────────────────────
+
+    #[tokio::test]
+    async fn test_stop_hook_is_stateless_multiple_calls_same_result() {
+        // call_stop_hook must return a consistent result across multiple calls
+        // with the same hook installed (hook is not consumed after one call).
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(PassHook));
+        let ctx = test_stop_context();
+
+        let action1 = agent.call_stop_hook(&ctx).await;
+        let action2 = agent.call_stop_hook(&ctx).await;
+        let action3 = agent.call_stop_hook(&ctx).await;
+
+        assert!(
+            matches!(action1, StopAction::Pass),
+            "first call must be Pass"
+        );
+        assert!(
+            matches!(action2, StopAction::Pass),
+            "second call must be Pass (hook not consumed)"
+        );
+        assert!(
+            matches!(action3, StopAction::Pass),
+            "third call must be Pass (hook reusable)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_call_count_tracked_by_stateful_hook() {
+        // A stateful hook tracks how many times it's been called.
+        // This verifies call_stop_hook does not consume or reset the hook.
+        use std::sync::{
+            Arc,
+            atomic::{AtomicU32, Ordering},
+        };
+
+        struct CountingHook {
+            count: Arc<AtomicU32>,
+        }
+
+        #[async_trait::async_trait]
+        impl StopHook for CountingHook {
+            async fn on_stop(&self, _ctx: &StopContext) -> StopAction {
+                self.count.fetch_add(1, Ordering::SeqCst);
+                StopAction::Pass
+            }
+        }
+
+        let count = Arc::new(AtomicU32::new(0));
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(CountingHook {
+            count: count.clone(),
+        }));
+
+        let ctx = test_stop_context();
+        agent.call_stop_hook(&ctx).await;
+        agent.call_stop_hook(&ctx).await;
+        agent.call_stop_hook(&ctx).await;
+
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            3,
+            "hook must be called exactly as many times as call_stop_hook is invoked"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stop_hook_replace_and_call_cycle() {
+        // State machine: install hook A → call → replace with hook B → call.
+        // Verifies hook lifecycle management (install, call, replace, call).
+        let mut agent = test_agent();
+
+        // Phase 1: ContinueHook installed and called
+        agent.set_stop_hook(Box::new(ContinueHook {
+            message: "phase1_feedback".into(),
+        }));
+        let ctx = test_stop_context();
+        let action1 = agent.call_stop_hook(&ctx).await;
+        assert!(matches!(action1, StopAction::Continue(_)));
+
+        // Phase 2: replaced with PassHook — previous hook fully discarded
+        agent.set_stop_hook(Box::new(PassHook));
+        let action2 = agent.call_stop_hook(&ctx).await;
+        assert!(
+            matches!(action2, StopAction::Pass),
+            "after replacement, new hook must be called, not the previous one"
+        );
+    }
+
+    // ── Hook panic safety ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_continue_action_message_is_non_empty() {
+        // When a Continue is returned, the injected message must be a non-empty
+        // string — an empty feedback message would silently fail the harness.
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(ContinueHook {
+            message: "meaningful feedback".into(),
+        }));
+        let ctx = test_stop_context();
+        let action = agent.call_stop_hook(&ctx).await;
+        match action {
+            StopAction::Continue(msg) => {
+                assert!(
+                    !msg.is_empty(),
+                    "Continue message must not be empty when hook provides feedback"
+                );
+                assert_eq!(msg, "meaningful feedback");
+            }
+            other => panic!("expected Continue, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fail_action_reason_is_non_empty() {
+        // A Fail action must carry a non-empty reason — empty string would make
+        // test failure silent.
+        let mut agent = test_agent();
+        agent.set_stop_hook(Box::new(FailHook {
+            reason: "assertion failed: output did not match expected".into(),
+        }));
+        let ctx = test_stop_context();
+        let action = agent.call_stop_hook(&ctx).await;
+        match action {
+            StopAction::Fail(reason) => {
+                assert!(
+                    !reason.is_empty(),
+                    "Fail reason must not be empty"
+                );
+                assert!(reason.contains("assertion failed"));
+            }
+            other => panic!("expected Fail, got {other:?}"),
+        }
     }
 }

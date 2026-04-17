@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+:root {
+  --fg:#1c1917; --fg2:#44403c; --fg3:#78716c;
+  --c-cli:#3b82f6;     --c-cli-f:rgba(59,130,246,0.08);
+  --c-runtime:#10b981; --c-runtime-f:rgba(16,185,129,0.08);
+  --c-sandbox:#d97706; --c-sandbox-f:rgba(217,119,6,0.08);
+  --c-protocol:#7c3aed; --c-protocol-f:rgba(124,58,237,0.08);
+  --c-runner:#6366f1;  --c-runner-f:rgba(99,102,241,0.08);
+  --c-guest:#ea580c;   --c-guest-f:rgba(234,88,12,0.08);
+  --arr:#a8a29e;
+}
+[data-theme="dark"] {
+  --fg:#e7e5e4; --fg2:#d4cfc9; --fg3:#a8a29e;
+  --c-cli:#60a5fa;     --c-cli-f:rgba(96,165,250,0.1);
+  --c-runtime:#34d399; --c-runtime-f:rgba(52,211,153,0.1);
+  --c-sandbox:#fbbf24; --c-sandbox-f:rgba(251,191,36,0.1);
+  --c-protocol:#a78bfa; --c-protocol-f:rgba(167,139,250,0.1);
+  --c-runner:#818cf8;  --c-runner-f:rgba(129,140,248,0.1);
+  --c-guest:#fb923c;   --c-guest-f:rgba(251,146,60,0.1);
+  --arr:#57534e;
+}
+html,body { margin:0; padding:0; background:transparent; overflow:hidden; }
+@media (prefers-reduced-motion:reduce) { * { animation-duration:0.01ms !important; } }
+</style>
+</head>
+<body>
+<svg viewBox="0 0 800 420" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;">
+  <defs>
+    <marker id="dep" markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <path d="M0,0.5 L0,6.5 L8,3.5 z" fill="var(--arr)"/>
+    </marker>
+  </defs>
+
+  <!-- ── DEPENDENCY ARROWS (behind nodes) ── -->
+
+  <!-- sage-cli → sage-runtime -->
+  <line x1="366" y1="68" x2="226" y2="152"
+        stroke="var(--arr)" stroke-width="1.5" marker-end="url(#dep)"/>
+  <!-- sage-cli → sage-runner -->
+  <line x1="434" y1="68" x2="574" y2="152"
+        stroke="var(--arr)" stroke-width="1.5" marker-end="url(#dep)"/>
+  <!-- sage-runtime → sage-sandbox -->
+  <line x1="200" y1="178" x2="200" y2="258"
+        stroke="var(--arr)" stroke-width="1.5" marker-end="url(#dep)"/>
+  <!-- sage-sandbox → sage-protocol -->
+  <line x1="200" y1="294" x2="200" y2="358"
+        stroke="var(--arr)" stroke-width="1.5" marker-end="url(#dep)"/>
+  <!-- sage-guest → sage-protocol -->
+  <line x1="564" y1="394" x2="294" y2="394"
+        stroke="var(--arr)" stroke-width="1.5" marker-end="url(#dep)"/>
+
+  <!-- Arrow labels -->
+  <text x="272" y="115" text-anchor="middle" transform="rotate(-28 272 115)"
+        font-family="system-ui,sans-serif" font-size="9.5" fill="var(--fg3)">depends</text>
+  <text x="528" y="115" text-anchor="middle" transform="rotate(28 528 115)"
+        font-family="system-ui,sans-serif" font-size="9.5" fill="var(--fg3)">depends</text>
+
+  <!-- ── NODES ── -->
+
+  <!-- sage-cli (top center, binary) -->
+  <rect x="300" y="14" width="200" height="58" rx="12"
+        fill="var(--c-cli-f)" stroke="var(--c-cli)" stroke-width="2"/>
+  <text x="400" y="40" text-anchor="middle" font-family="'SF Mono',monospace"
+        font-size="13" font-weight="800" fill="var(--c-cli)">sage-cli</text>
+  <text x="400" y="58" text-anchor="middle" font-family="system-ui,sans-serif"
+        font-size="10.5" fill="var(--fg3)">CLI 入口 · Caster 注册</text>
+
+  <!-- sage-runtime (mid left, GREEN = embedding point) -->
+  <rect x="90" y="152" width="220" height="58" rx="12"
+        fill="var(--c-runtime-f)" stroke="var(--c-runtime)" stroke-width="2"/>
+  <text x="200" y="178" text-anchor="middle" font-family="'SF Mono',monospace"
+        font-size="13" font-weight="800" fill="var(--c-runtime)">sage-runtime</text>
+  <text x="200" y="196" text-anchor="middle" font-family="system-ui,sans-serif"
+        font-size="10.5" fill="var(--fg3)">Agent 引擎 · 嵌入点</text>
+  <!-- "核心嵌入点" badge -->
+  <rect x="106" y="202" width="74" height="16" rx="8"
+        fill="var(--c-runtime)" fill-opacity="0.15"/>
+  <text x="143" y="213" text-anchor="middle" font-family="system-ui,sans-serif"
+        font-size="9" font-weight="700" fill="var(--c-runtime)">核心嵌入点</text>
+
+  <!-- sage-runner (mid right) -->
+  <rect x="490" y="152" width="220" height="58" rx="12"
+        fill="var(--c-runner-f)" stroke="var(--c-runner)" stroke-width="1.5"/>
+  <text x="600" y="178" text-anchor="middle" font-family="'SF Mono',monospace"
+        font-size="13" font-weight="800" fill="var(--c-runner)">sage-runner</text>
+  <text x="600" y="196" text-anchor="middle" font-family="system-ui,sans-serif"
+        font-size="10.5" fill="var(--fg3)">YAML 解析 · ToolPolicy · Craft</text>
+
+  <!-- sage-sandbox (below runtime) -->
+  <rect x="90" y="262" width="220" height="58" rx="12"
+        fill="var(--c-sandbox-f)" stroke="var(--c-sandbox)" stroke-width="1.5"/>
+  <text x="200" y="288" text-anchor="middle" font-family="'SF Mono',monospace"
+        font-size="13" font-weight="800" fill="var(--c-sandbox)">sage-sandbox</text>
+  <text x="200" y="306" text-anchor="middle" font-family="system-ui,sans-serif"
+        font-size="10.5" fill="var(--fg3)">VM Pool · Host SDK</text>
+
+  <!-- sage-protocol (bottom left, shared) -->
+  <rect x="90" y="362" width="220" height="50" rx="12"
+        fill="var(--c-protocol-f)" stroke="var(--c-protocol)" stroke-width="1.5"/>
+  <text x="200" y="386" text-anchor="middle" font-family="'SF Mono',monospace"
+        font-size="13" font-weight="800" fill="var(--c-protocol)">sage-protocol</text>
+  <text x="200" y="402" text-anchor="middle" font-family="system-ui,sans-serif"
+        font-size="10.5" fill="var(--fg3)">CBOR 线协议</text>
+
+  <!-- sage-guest (bottom right) -->
+  <rect x="490" y="362" width="220" height="50" rx="12"
+        fill="var(--c-guest-f)" stroke="var(--c-guest)" stroke-width="1.5"/>
+  <text x="600" y="386" text-anchor="middle" font-family="'SF Mono',monospace"
+        font-size="13" font-weight="800" fill="var(--c-guest)">sage-guest</text>
+  <text x="600" y="402" text-anchor="middle" font-family="system-ui,sans-serif"
+        font-size="10.5" fill="var(--fg3)">VM 内 PID 1 · musl 静态编译</text>
+
+  <!-- "共享" label on protocol arrow -->
+  <text x="428" y="398" text-anchor="middle" font-family="system-ui,sans-serif"
+        font-size="9.5" fill="var(--fg3)">Host/Guest 共用</text>
+
+  <!-- Legend (right column gap: y=228..348) -->
+  <rect x="496" y="228" width="212" height="122" rx="8"
+        fill="rgba(0,0,0,0.03)" stroke="rgba(0,0,0,0.08)" stroke-width="1"/>
+  <text x="602" y="246" text-anchor="middle" font-family="system-ui,sans-serif"
+        font-size="10" font-weight="700" fill="var(--fg3)">图例</text>
+  <!-- legend items -->
+  <rect x="510" y="254" width="12" height="12" rx="3" fill="none" stroke="var(--c-cli)" stroke-width="2"/>
+  <text x="528" y="264" font-family="system-ui,sans-serif" font-size="10" fill="var(--fg3)">CLI 二进制</text>
+  <rect x="510" y="274" width="12" height="12" rx="3" fill="none" stroke="var(--c-runtime)" stroke-width="2"/>
+  <text x="528" y="284" font-family="system-ui,sans-serif" font-size="10" fill="var(--fg3)">核心嵌入点</text>
+  <rect x="510" y="294" width="12" height="12" rx="3" fill="none" stroke="var(--c-sandbox)" stroke-width="2"/>
+  <text x="528" y="304" font-family="system-ui,sans-serif" font-size="10" fill="var(--fg3)">Host 侧库</text>
+  <rect x="510" y="314" width="12" height="12" rx="3" fill="none" stroke="var(--c-protocol)" stroke-width="2"/>
+  <text x="528" y="324" font-family="system-ui,sans-serif" font-size="10" fill="var(--fg3)">共享协议库</text>
+  <rect x="510" y="334" width="12" height="12" rx="3" fill="none" stroke="var(--c-guest)" stroke-width="2"/>
+  <text x="528" y="344" font-family="system-ui,sans-serif" font-size="10" fill="var(--fg3)">Guest 二进制</text>
+
+</svg>
+<script>
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.theme) document.documentElement.dataset.theme = e.data.theme;
+});
+if (window.matchMedia('(prefers-color-scheme: dark)').matches)
+  document.documentElement.dataset.theme = 'dark';
+</script>
+</body>
+</html>
