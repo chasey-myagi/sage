@@ -158,6 +158,13 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
             tracing::warn!(error = %e, "metrics finalize failed at chat close");
         }
     }
+    // Explicit SageSession teardown so Drop doesn't synthesize a
+    // SessionEnd(success=false) at ERROR level. `success` comes from the
+    // loop outcome above; any error from close() is logged but doesn't
+    // mask loop_result.
+    if let Err(e) = session.close(success).await {
+        tracing::warn!(error = %e, "session close failed after chat loop");
+    }
 
     loop_result
 }

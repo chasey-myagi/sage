@@ -212,6 +212,13 @@ pub async fn run_server(agent_name: &str, dev: bool) -> Result<()> {
     let _ = tokio::fs::remove_file(&sock_path).await;
     let _ = tokio::fs::remove_file(&pid_file).await;
     finalize_daemon_metrics(&shared_metrics, &loop_result).await;
+    // Explicit session close so the Drop path doesn't synthesize a noisy
+    // ERROR "SessionEnd emitted with success=false; caller forgot to
+    // invoke close()" when the daemon exits cleanly via Shutdown. success
+    // mirrors the accept-loop outcome so telemetry stays honest.
+    if let Err(e) = session.close(loop_result.is_ok()).await {
+        tracing::warn!(error = %e, "session close failed at daemon stop");
+    }
     tracing::info!(agent = agent_name, "daemon stopped");
     loop_result
 }

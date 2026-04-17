@@ -546,65 +546,72 @@ async fn run_single_case(
 
     let error_str: Option<String> = send_result.as_ref().err().map(|e| e.to_string());
 
-    // Agent-level error short-circuits immediately — regardless of criteria.
-    if let Some(ref err) = error_str {
-        return TestOutcome {
+    // Collect the TestOutcome first, then unconditionally close the
+    // session below. Avoids the ERROR-level "SageSession dropped without
+    // close()" log that `sage test` was tripping on every case.
+    let outcome = if let Some(ref err) = error_str {
+        // Agent-level error short-circuits immediately — regardless of criteria.
+        TestOutcome {
             case_name: case.name.clone(),
             result: CaseResult::Error(format!("agent error: {err}")),
             turns,
             duration_ms,
-        };
-    }
-
-    let last_text = last_assistant_text(session.messages());
-
-    // Sum assistant-turn token usage across the whole session so TokenBudget
-    // criteria get a real number to compare against (was hardcoded 0 before,
-    // making the criterion trivially pass — Linus flagged this in Sprint 9
-    // review and marked it "urgent").
-    let (input_tokens, output_tokens) = sum_assistant_tokens(session.messages());
-    // Sprint 9 → S10.x wiring: extract the actually-executed tool calls from
-    // ToolResultMessage records in the conversation. Ordered by execution
-    // sequence so ToolCalled criterion can assert ordering if needed later.
-    let tool_calls = extract_tool_calls(session.messages());
-
-    // Evaluate declarative criteria first (if any).
-    let criteria_result = if !case.criteria.is_empty() {
-        evaluate_criteria(
-            &case.criteria,
-            &last_text,
-            &tool_calls,
-            turns,
-            input_tokens,
-            output_tokens,
-            None,
-        )
+        }
     } else {
-        CaseResult::Pass
-    };
+        let last_text = last_assistant_text(session.messages());
 
-    // If criteria failed (or we already have an error result), short-circuit.
-    if !matches!(criteria_result, CaseResult::Pass) {
-        return TestOutcome {
-            case_name: case.name.clone(),
-            result: criteria_result,
-            turns,
-            duration_ms,
+        // Sum assistant-turn token usage across the whole session so TokenBudget
+        // criteria get a real number to compare against (was hardcoded 0 before,
+        // making the criterion trivially pass — Linus flagged this in Sprint 9
+        // review and marked it "urgent").
+        let (input_tokens, output_tokens) = sum_assistant_tokens(session.messages());
+        // Sprint 9 → S10.x wiring: extract the actually-executed tool calls from
+        // ToolResultMessage records in the conversation. Ordered by execution
+        // sequence so ToolCalled criterion can assert ordering if needed later.
+        let tool_calls = extract_tool_calls(session.messages());
+
+        // Evaluate declarative criteria first (if any).
+        let criteria_result = if !case.criteria.is_empty() {
+            evaluate_criteria(
+                &case.criteria,
+                &last_text,
+                &tool_calls,
+                turns,
+                input_tokens,
+                output_tokens,
+                None,
+            )
+        } else {
+            CaseResult::Pass
         };
-    }
 
-    // Run eval script if present.
-    let result = match &case.eval {
-        None => CaseResult::Pass,
-        Some(script) => run_eval_script(script, &last_text, suite_agent, &case.name).await,
+        if !matches!(criteria_result, CaseResult::Pass) {
+            TestOutcome {
+                case_name: case.name.clone(),
+                result: criteria_result,
+                turns,
+                duration_ms,
+            }
+        } else {
+            // Run eval script if present.
+            let result = match &case.eval {
+                None => CaseResult::Pass,
+                Some(script) => run_eval_script(script, &last_text, suite_agent, &case.name).await,
+            };
+            TestOutcome {
+                case_name: case.name.clone(),
+                result,
+                turns,
+                duration_ms,
+            }
+        }
     };
 
-    TestOutcome {
-        case_name: case.name.clone(),
-        result,
-        turns,
-        duration_ms,
+    let success = matches!(outcome.result, CaseResult::Pass);
+    if let Err(e) = session.close(success).await {
+        tracing::warn!(error = %e, "session close failed in harness case");
     }
+    outcome
 }
 
 // ── run_test_suite ────────────────────────────────────────────────────────────

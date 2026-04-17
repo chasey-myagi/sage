@@ -161,6 +161,14 @@ pub async fn run_skill_evaluate(agent: &str, skill: &str) -> Result<()> {
 
     let send_result = session.send(&user_msg, &sink).await;
 
+    // Close the eval session explicitly — Drop-without-close would log an
+    // ERROR at every `sage skill evaluate`. Success reflects whether the
+    // LLM turn itself succeeded; the rollback logic below reports the
+    // semantic outcome separately.
+    if let Err(e) = session.close(send_result.is_ok()).await {
+        tracing::warn!(error = %e, "eval session close failed");
+    }
+
     let after = tokio::fs::read(&skill_md).await.unwrap_or_default();
 
     // Rollback decision table (code-review Important #2 follow-up):
