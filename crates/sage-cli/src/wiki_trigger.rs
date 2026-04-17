@@ -3,6 +3,11 @@
 // The daemon reuses this function every time a client disconnects; it's the
 // narrowest possible unit so we can test the branching without spinning up
 // a real SageSession.
+//
+// NOTE (v0.0.3): fully tested but unwired — daemon tick integration lands
+// in v0.0.4 next to SkillEvaluation ticker. Dead-code allow keeps the
+// test coverage in place for when the wire-up happens.
+#![allow(dead_code)]
 
 use sage_runner::config::WikiConfig;
 

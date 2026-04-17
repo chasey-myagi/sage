@@ -64,6 +64,26 @@ struct ToolCallAccum {
     arguments: String,
 }
 
+/// Coerce a tool-call `arguments` string into a JSON value.
+///
+/// Semantics (v0.0.3.1 hotfix — previously the two call sites disagreed,
+/// sending Kimi into an infinite loop of empty `ls` calls):
+///
+/// - Empty or whitespace-only → `{}`. Many providers emit an empty
+///   arguments string for zero-arg tool calls; the tool itself will then
+///   surface its own "missing required parameter" error to the model,
+///   which is exactly the feedback the model needs to correct its call.
+/// - Non-empty, valid JSON → parsed value.
+/// - Non-empty, invalid JSON → `Err(serde_error)`, caller decides
+///   whether to block or fall back.
+fn coerce_tool_args(arguments: &str) -> serde_json::Result<serde_json::Value> {
+    let trimmed = arguments.trim();
+    if trimmed.is_empty() {
+        return Ok(serde_json::Value::Object(Default::default()));
+    }
+    serde_json::from_str(trimmed)
+}
+
 impl MessageAccumulator {
     fn new() -> Self {
         Self {
@@ -163,7 +183,7 @@ impl MessageAccumulator {
             content.push(Content::Text { text: self.text });
         }
         for tc in &self.tool_calls {
-            let args = serde_json::from_str(&tc.arguments).unwrap_or_else(|e| {
+            let args = coerce_tool_args(&tc.arguments).unwrap_or_else(|e| {
                 tracing::warn!(tool = %tc.name, error = %e, "tool call arguments are not valid JSON — using empty object");
                 serde_json::Value::Object(Default::default())
             });
@@ -248,7 +268,13 @@ async fn prepare_tool_call(
     tc: &ToolCallAccum,
     emit: &dyn AgentEventSink,
 ) -> Result<serde_json::Value, ToolResultMessage> {
-    let args: serde_json::Value = match serde_json::from_str(&tc.arguments) {
+    // Shares the coerce_tool_args semantics with the assistant-message
+    // builder: empty string → `{}` (tool surfaces its own missing-param
+    // error); non-empty invalid → block. Previously this site blocked
+    // even on empty strings, while the message builder silently wrote
+    // `{}` — the mismatch sent Kimi into an infinite loop because the
+    // tool result didn't match the tool call it thought it made.
+    let args: serde_json::Value = match coerce_tool_args(&tc.arguments) {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!(tool = %tc.name, error = %e, "tool call arguments are not valid JSON — blocking call");
@@ -954,6 +980,46 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // ── v0.0.3.1 hotfix: coerce_tool_args semantics ─────────────────────
+    //
+    // Regression test for the Kimi infinite-loop bug where an empty
+    // arguments string produced two divergent behaviours: the assistant
+    // message builder used `{}`, but `prepare_tool_call` blocked with
+    // "Invalid tool call arguments: EOF while parsing" — making the
+    // model's self-perceived call mismatch the tool result it saw.
+
+    #[test]
+    fn coerce_tool_args_empty_string_is_empty_object() {
+        let v = coerce_tool_args("").expect("empty must coerce");
+        assert_eq!(v, json!({}));
+    }
+
+    #[test]
+    fn coerce_tool_args_whitespace_only_is_empty_object() {
+        let v = coerce_tool_args("   \n  ").expect("whitespace must coerce");
+        assert_eq!(v, json!({}));
+    }
+
+    #[test]
+    fn coerce_tool_args_valid_object_parses_verbatim() {
+        let v = coerce_tool_args(r#"{"path":"src/lib.rs"}"#).expect("valid json");
+        assert_eq!(v, json!({"path": "src/lib.rs"}));
+    }
+
+    #[test]
+    fn coerce_tool_args_non_empty_invalid_returns_err() {
+        // Non-empty-but-invalid must still bubble up the parse error so
+        // callers that want to block (prepare_tool_call) can surface the
+        // explicit reason to the model.
+        let err = coerce_tool_args("{broken json").unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("expected")
+                || err.to_string().to_lowercase().contains("key")
+                || err.to_string().to_lowercase().contains("value"),
+            "parse error must describe the JSON problem: {err}"
+        );
+    }
 
     // ---------------------------------------------------------------
     // Context-capturing provider — records what LLM sees each call

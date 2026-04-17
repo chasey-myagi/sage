@@ -32,9 +32,16 @@ use tokio::{
 };
 
 // ── Protocol (mirrors daemon.rs — intentional copy to avoid coupling) ──
+//
+// Some variants (Ping / Shutdown on the client, Pong / ResetOk /
+// ShutdownOk plus various field tuples on the server) are declared for
+// schema completeness but not yet driven from this TUI path — serde
+// still needs them so the enum round-trips with daemon.rs. Silencing
+// dead_code at the enum level keeps the wire symmetry documented.
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(dead_code)]
 enum ClientMsg {
     Send { text: String },
     Reset,
@@ -44,6 +51,7 @@ enum ClientMsg {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(dead_code)]
 enum ServerMsg {
     TextDelta { text: String },
     ToolStart { name: String, id: String },

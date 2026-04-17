@@ -423,6 +423,11 @@ fn map_stop_reason(status: &str) -> StopReason {
 
 /// Get cost multiplier for service tier.
 /// flex = 0.5x cost, priority = 2x cost, default = 1x.
+///
+/// Mirrors pi-mono `openai-responses.ts` so cost reporting can align when
+/// the Rust side wires up service-tier pricing; kept alongside the port
+/// even though the caller isn't plumbed in v0.0.3.
+#[allow(dead_code)]
 fn get_service_tier_cost_multiplier(tier: &str) -> f64 {
     match tier {
         "flex" => 0.5,
