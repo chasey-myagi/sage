@@ -19,6 +19,8 @@ pub enum AgentLoopError {
     MaxTurnsReached,
     Cancelled,
     ProviderError(String),
+    /// A [`StopHook`] returned [`StopAction::Fail`] — the harness test failed.
+    TestFailed(String),
 }
 
 impl fmt::Display for AgentLoopError {
@@ -27,6 +29,7 @@ impl fmt::Display for AgentLoopError {
             AgentLoopError::MaxTurnsReached => write!(f, "max turns reached"),
             AgentLoopError::Cancelled => write!(f, "cancelled"),
             AgentLoopError::ProviderError(msg) => write!(f, "provider error: {msg}"),
+            AgentLoopError::TestFailed(reason) => write!(f, "harness test failed: {reason}"),
         }
     }
 }
@@ -318,6 +321,13 @@ async fn finalize_tool_call(
     let content = after_result.content.unwrap_or(output.content);
     let is_error = after_result.is_error.unwrap_or(output.is_error);
 
+    tracing::info!(
+        tool_name = %tc.name,
+        tool_call_id = %tc.id,
+        is_error,
+        "tool executed"
+    );
+
     emit.emit(AgentEvent::ToolExecutionEnd {
         tool_call_id: tc.id.clone(),
         tool_name: tc.name.clone(),
@@ -464,6 +474,17 @@ async fn try_compact(
     }
 }
 
+/// Generate a compact hex session identifier from the current wall-clock time.
+/// Not cryptographically unique, but sufficient for log correlation within a run.
+fn generate_session_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("{ms:013x}")
+}
+
 /// Run the three-layer agent loop.
 pub async fn run_agent_loop(
     agent: &mut Agent,
@@ -471,9 +492,15 @@ pub async fn run_agent_loop(
 ) -> Result<Vec<AgentMessage>, AgentLoopError> {
     let mut new_messages: Vec<AgentMessage> = Vec::new();
     let mut turn_count: usize = 0;
+    let session_id = generate_session_id();
+
+    // Stop-hook state: updated after each assistant message, consumed at natural stop.
+    let mut last_stop_reason = crate::types::StopReason::Stop;
+    let mut last_assistant_text = String::new();
 
     agent.set_streaming(true);
     emit.emit(AgentEvent::AgentStart).await;
+    tracing::info!("agent loop started");
 
     // Drain initial steering messages
     let mut pending: Vec<AgentMessage> = agent.drain_steering();
@@ -546,6 +573,8 @@ pub async fn run_agent_loop(
             // 3. Build context and call LLM
             let context = build_llm_context(agent);
             let tools = build_llm_tools(agent);
+            let llm_start = std::time::Instant::now();
+            tracing::info!("llm.request");
             let events = agent
                 .provider()
                 .complete(&agent.config().model, &context, &tools)
@@ -585,6 +614,12 @@ pub async fn run_agent_loop(
                 accum.push_event(event);
             }
             let (assistant_msg, tool_call_accums) = accum.build(&agent.config().model);
+            tracing::info!(
+                input_tokens = assistant_msg.usage.input,
+                output_tokens = assistant_msg.usage.output,
+                elapsed_ms = u64::try_from(llm_start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                "llm.response"
+            );
 
             // 5. Reactive compaction — check for context overflow in response
             if is_context_overflow(&assistant_msg, agent.config().model.context_window) {
@@ -598,8 +633,22 @@ pub async fn run_agent_loop(
 
             agent.push_message(AgentMessage::Assistant(assistant_msg.clone()));
             new_messages.push(AgentMessage::Assistant(assistant_msg.clone()));
-
             turn_count += 1;
+
+            // Track fields consumed by the stop hook at natural completion.
+            last_stop_reason = assistant_msg.stop_reason.clone();
+            last_assistant_text = assistant_msg
+                .content
+                .iter()
+                .filter_map(|c| {
+                    if let Content::Text { text } = c {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("");
 
             // 6. Check for early termination
             if matches!(
@@ -633,6 +682,8 @@ pub async fn run_agent_loop(
                 vec![]
             };
 
+            tracing::info!(turn = turn_count, "turn complete");
+
             emit.emit(AgentEvent::TurnEnd {
                 message: assistant_msg,
                 tool_results,
@@ -650,8 +701,41 @@ pub async fn run_agent_loop(
             continue 'outer;
         }
 
-        break;
+        // 10. Call stop hook at the natural completion point.
+        //     Continue(feedback) → steer the feedback and restart the outer loop.
+        //     Fail(reason)       → emit AgentEnd and return TestFailed error.
+        //     Pass               → fall through to normal AgentEnd.
+        {
+            let stop_ctx = crate::agent::StopContext {
+                stop_reason: last_stop_reason.clone(),
+                session_id: session_id.clone(),
+                task_id: session_id.clone(),
+                turn_count,
+                agent_name: agent.config().name.clone(),
+                model: agent.config().model.id.clone(),
+                last_assistant_message: last_assistant_text.clone(),
+            };
+            match agent.call_stop_hook(&stop_ctx).await {
+                crate::agent::StopAction::Pass => break,
+                crate::agent::StopAction::Continue(feedback) => {
+                    tracing::info!("stop hook requested continuation — steering feedback");
+                    pending.push(AgentMessage::User(UserMessage::from_text(&feedback)));
+                    continue 'outer;
+                }
+                crate::agent::StopAction::Fail(reason) => {
+                    tracing::info!(reason = %reason, "stop hook failed the harness test");
+                    emit.emit(AgentEvent::AgentEnd {
+                        messages: new_messages.clone(),
+                    })
+                    .await;
+                    agent.set_streaming(false);
+                    return Err(AgentLoopError::TestFailed(reason));
+                }
+            }
+        }
     }
+
+    tracing::info!(total_turns = turn_count, "agent loop completed");
 
     emit.emit(AgentEvent::AgentEnd {
         messages: new_messages.clone(),
@@ -885,6 +969,7 @@ mod tests {
 
     fn test_config() -> AgentLoopConfig {
         AgentLoopConfig {
+            name: "test-agent".into(),
             model: test_model(),
             system_prompt: "You are a test agent.".into(),
             max_turns: 10,
@@ -1187,6 +1272,7 @@ mod tests {
     #[tokio::test]
     async fn test_max_turns_prevents_infinite_loop() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "test".into(),
             max_turns: 2,
@@ -1412,6 +1498,7 @@ mod tests {
     #[tokio::test]
     async fn test_parallel_mode_executes_all_tools() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "test".into(),
             max_turns: 10,
@@ -1453,6 +1540,7 @@ mod tests {
     #[tokio::test]
     async fn test_sequential_mode_executes_all_tools() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "test".into(),
             max_turns: 10,
@@ -2045,6 +2133,7 @@ mod tests {
     #[tokio::test]
     async fn test_max_turns_zero_terminates_immediately() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "test".into(),
             max_turns: 0,
@@ -2079,6 +2168,7 @@ mod tests {
     #[tokio::test]
     async fn test_max_turns_one_allows_single_call() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "test".into(),
             max_turns: 1,
@@ -2120,6 +2210,7 @@ mod tests {
     #[tokio::test]
     async fn test_empty_system_prompt() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "".into(),
             max_turns: 10,
@@ -2560,6 +2651,7 @@ mod tests {
     #[tokio::test]
     async fn test_sequential_mode_respects_call_order() {
         let config = AgentLoopConfig {
+            name: String::new(),
             model: test_model(),
             system_prompt: "test".into(),
             max_turns: 10,
@@ -3025,5 +3117,303 @@ mod tests {
             assert_eq!(tool_name, "echo");
             assert_eq!(partial_result, r#"{"text":"hi"}"#);
         }
+    }
+
+    // ===============================================================
+    // Structured tracing span / event tests
+    // ===============================================================
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_agent_loop_started_emitted() {
+        let mut agent = make_agent(vec![text_response("hi")], ToolRegistry::new());
+        agent.steer(AgentMessage::User(UserMessage::from_text("hello")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("agent loop started"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_agent_loop_completed_emitted() {
+        let mut agent = make_agent(vec![text_response("hi")], ToolRegistry::new());
+        agent.steer(AgentMessage::User(UserMessage::from_text("hello")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("agent loop completed"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_turn_complete_emitted_after_each_turn() {
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"x"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("go")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        // Two turns: one for tool call, one for text response
+        assert!(logs_contain("turn complete"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_tool_executed_emitted_on_success() {
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"hello"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("echo it")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("tool executed"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_tool_executed_is_error_true_on_fail_tool() {
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "fail", r#"{}"#),
+                text_response("ok"),
+            ],
+            echo_fail_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("run fail")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("tool executed"));
+        // Verify the field value is `true`, not just that the field name appears
+        assert!(logs_contain("is_error=true"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_llm_call_is_logged() {
+        // "llm.request" fires before the LLM call; "llm.response" fires after
+        // with input_tokens, output_tokens, and elapsed_ms fields.
+        let mut agent = make_agent(vec![text_response("answer")], ToolRegistry::new());
+        agent.steer(AgentMessage::User(UserMessage::from_text("question")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("llm.request"), "request log must fire before LLM call");
+        assert!(logs_contain("llm.response"), "response log must fire after LLM call with usage");
+        assert!(logs_contain("elapsed_ms"), "response log must include latency");
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_no_tool_executed_log_when_no_tool_calls() {
+        // A pure text response should not emit "tool executed"
+        let mut agent = make_agent(vec![text_response("just text")], ToolRegistry::new());
+        agent.steer(AgentMessage::User(UserMessage::from_text("no tools")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        // agent loop events should still fire; tool executed should NOT appear
+        assert!(logs_contain("agent loop started"));
+        assert!(logs_contain("agent loop completed"));
+        assert!(!logs_contain("tool executed"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_tool_name_field_in_tool_executed_log() {
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"test"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("use echo")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        // The structured log should include the tool_name field value
+        assert!(logs_contain("tool_name=echo"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_multi_turn_emits_multiple_turn_complete_logs() {
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"step1"}"#),
+                tool_call_response("tc2", "echo", r#"{"text":"step2"}"#),
+                text_response("all done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("three turns")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        // "turn complete" should appear at least once per LLM response
+        assert!(logs_contain("turn complete"));
+        // The completion log should report total_turns=3 (one per LLM response)
+        assert!(logs_contain("total_turns=3"), "3-response run should log total_turns=3");
+        assert!(logs_contain("agent loop completed"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_turn_complete_field_values() {
+        // Two LLM responses → two turns logged with 1-indexed turn numbers
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"x"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("go")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        // turn_count is 1-indexed (incremented before "turn complete" is logged)
+        assert!(logs_contain("turn=1"), "first turn should log turn=1");
+        assert!(logs_contain("turn=2"), "second turn should log turn=2");
+        // Completion log reflects total
+        assert!(logs_contain("total_turns=2"), "2-response run should report total_turns=2");
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_provider_error_early_termination_not_logged_as_completed() {
+        // When the LLM returns Error event → StopReason::Error → early return.
+        // The agent loop exits before "turn complete" or "agent loop completed" are logged.
+        let mut agent = make_agent(
+            vec![vec![AssistantMessageEvent::Error("api error".into())]],
+            ToolRegistry::new(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("test")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("agent loop started"), "loop start must always be logged");
+        // Early return path does NOT reach "turn complete" or "agent loop completed"
+        assert!(!logs_contain("turn complete"), "error path exits before turn complete log");
+        assert!(
+            !logs_contain("agent loop completed"),
+            "error path exits before completion log"
+        );
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_aborted_stop_reason_skips_completed_log() {
+        // StopReason::Aborted also triggers early return — same path as Error.
+        // Both are checked at "if matches!(stop_reason, Error | Aborted)".
+        let mut agent = make_agent(
+            vec![vec![AssistantMessageEvent::Done {
+                stop_reason: StopReason::Aborted,
+            }]],
+            ToolRegistry::new(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("test")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("agent loop started"));
+        assert!(!logs_contain("turn complete"), "Aborted exits before turn complete log");
+        assert!(
+            !logs_contain("agent loop completed"),
+            "Aborted exits before completion log"
+        );
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_tool_executed_is_error_false_on_success() {
+        // Successful tool execution → is_error=false in the log.
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"ok"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("run echo")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("tool executed"));
+        assert!(logs_contain("is_error=false"));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_tool_call_id_field_in_tool_executed_log() {
+        // "tool executed" log includes tool_call_id field.
+        let mut agent = make_agent(
+            vec![
+                tool_call_response("my-call-id", "echo", r#"{"text":"x"}"#),
+                text_response("done"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("echo")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("tool executed"));
+        assert!(logs_contain("my-call-id"), "tool_call_id value should appear in log");
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_span_max_turns_reached_skips_completed_log() {
+        // When turn_count >= max_turns the loop returns early before
+        // "agent loop completed" is logged.
+        let mut config = test_config();
+        config.max_turns = 1;
+        // Two responses: first would trigger another turn, but max_turns=1 stops it.
+        let mut agent = make_agent_with_config(
+            config,
+            vec![
+                tool_call_response("tc1", "echo", r#"{"text":"x"}"#),
+                text_response("never reached"),
+            ],
+            echo_registry(),
+        );
+        agent.steer(AgentMessage::User(UserMessage::from_text("go")));
+        let sink = CollectorSink::new();
+
+        run_agent_loop(&mut agent, &sink).await.unwrap();
+
+        assert!(logs_contain("agent loop started"));
+        // max_turns early return skips the completion log
+        assert!(
+            !logs_contain("agent loop completed"),
+            "max_turns exit should not reach completion log"
+        );
     }
 }

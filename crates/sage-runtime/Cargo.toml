@@ -4,7 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Agent runtime: loop, LLM providers, tools"
+description = "Agent execution engine: LLM providers, tool dispatch, and event streaming for Sage"
+keywords = ["agent", "llm", "anthropic", "ai", "async"]
+categories = ["asynchronous", "development-tools"]
 
 [dependencies]
 sage-protocol = { workspace = true }
@@ -33,3 +35,4 @@ libc = { workspace = true }
 tokio = { workspace = true, features = ["full", "test-util"] }
 mockito = "1"
 serial_test = { workspace = true }
+tracing-test = { workspace = true }

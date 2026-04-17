@@ -1,7 +1,10 @@
 // SageEngine — builder-pattern API for creating and running AI agents.
 // "SQLite of AI Agents" — zero-config embed, single crate dependency.
 
-use crate::agent::{AfterToolCallHook, Agent, AgentLoopConfig, BeforeToolCallHook, TransformContextHook};
+use crate::agent::{
+    AfterToolCallHook, Agent, AgentLoopConfig, BeforeToolCallHook, StopAction, StopContext,
+    StopHook, TransformContextHook,
+};
 use crate::agent_loop::{AgentLoopError, run_agent_loop};
 use crate::event::{AgentEvent, AgentEventSink, EventReceiver, EventSender, EventStream};
 use crate::llm::types::*;
@@ -58,6 +61,9 @@ pub enum SageError {
 
     #[error("sandbox error: {0}")]
     Sandbox(String),
+
+    #[error("agent timed out after {0}s")]
+    Timeout(u64),
 }
 
 // ── resolve_or_construct_model ────────────────────────────────────────
@@ -220,6 +226,7 @@ impl AgentEventSink for ChannelSink {
 /// Agent instance on each `run()` call.
 pub struct SageEngine {
     // Agent config
+    name: String,
     system_prompt: String,
     max_turns: usize,
     timeout_secs: Option<u64>,
@@ -246,6 +253,7 @@ pub struct SageEngine {
     before_hook: Option<Arc<dyn BeforeToolCallHook>>,
     after_hook: Option<Arc<dyn AfterToolCallHook>>,
     transform_context_hook: Option<Arc<dyn TransformContextHook>>,
+    stop_hook: Option<Arc<dyn StopHook>>,
 
     // Context budget override
     context_budget: Option<crate::compaction::ContextBudget>,
@@ -267,6 +275,7 @@ impl std::fmt::Debug for SageEngine {
 impl SageEngine {
     pub fn builder() -> SageEngineBuilder {
         SageEngineBuilder {
+            name: None,
             system_prompt: None,
             max_turns: None,
             timeout_secs: None,
@@ -285,6 +294,7 @@ impl SageEngine {
             before_hook: None,
             after_hook: None,
             transform_context_hook: None,
+            stop_hook: None,
             context_budget: None,
         }
     }
@@ -376,6 +386,7 @@ impl SageEngine {
             budget.apply_to(&mut compaction);
         }
         let loop_config = AgentLoopConfig {
+            name: self.name.clone(),
             model,
             system_prompt: self.system_prompt.clone(),
             max_turns: self.max_turns,
@@ -396,6 +407,9 @@ impl SageEngine {
         }
         if let Some(ref hook) = self.transform_context_hook {
             agent.set_transform_context(Box::new(ArcTransformContextHook(Arc::clone(hook))));
+        }
+        if let Some(ref hook) = self.stop_hook {
+            agent.set_stop_hook(Box::new(ArcStopHook(Arc::clone(hook))));
         }
 
         // 6. Steer initial message
@@ -465,6 +479,146 @@ impl SageEngine {
     pub fn timeout_secs(&self) -> Option<u64> {
         self.timeout_secs
     }
+
+    /// Create a stateful [`SageSession`] that persists conversation history
+    /// across multiple [`SageSession::send`] calls.
+    ///
+    /// Unlike [`run`], which creates a fresh agent for every invocation,
+    /// `session()` builds the agent once. This is the entry point for daemon
+    /// and interactive chat modes where the agent must remember prior turns.
+    ///
+    /// Sandbox lifecycle is not managed by the session — pass `dev: true` via
+    /// [`build_engine_for_agent`] (in `sage-cli`) to skip VM creation.
+    pub async fn session(&self) -> Result<SageSession, SageError> {
+        // 1. Resolve model + provider (same logic as run())
+        let (model, provider): (Model, Arc<dyn LlmProvider>) = match &self.custom_llm_provider {
+            Some(p) => {
+                let model = custom_model(
+                    &self.provider_name,
+                    &self.model_id,
+                    self.max_tokens,
+                    self.base_url.as_deref(),
+                    self.api_key_env.as_deref(),
+                );
+                (model, Arc::clone(p))
+            }
+            None => {
+                let model = resolve_or_construct_model(
+                    &self.provider_name,
+                    &self.model_id,
+                    self.max_tokens,
+                    self.base_url.as_deref(),
+                    self.api_key_env.as_deref(),
+                )?;
+                static PROVIDERS_INIT: std::sync::Once = std::sync::Once::new();
+                PROVIDERS_INIT.call_once(llm::register_builtin_providers);
+                (model, Arc::new(RoutingProvider))
+            }
+        };
+
+        // 2. Use direct backend (sessions don't manage sandbox lifecycle)
+        let backend: Arc<dyn ToolBackend> =
+            self.backend.clone().unwrap_or_else(|| LocalBackend::new());
+        let mut registry = ToolRegistry::new();
+        for name in &self.builtin_tool_names {
+            if let Some(tool) = tools::create_tool(name, backend.clone()) {
+                registry.register(tool);
+            } else {
+                tracing::warn!(tool_name = %name, "unknown builtin tool name — skipped");
+            }
+        }
+        for tool in &self.extra_tools {
+            registry.register(Box::new(ArcTool(Arc::clone(tool))));
+        }
+
+        // 3. AgentLoopConfig
+        let mut compaction = crate::compaction::CompactionSettings::default();
+        if let Some(ref budget) = self.context_budget {
+            budget.apply_to(&mut compaction);
+        }
+        let loop_config = AgentLoopConfig {
+            name: self.name.clone(),
+            model,
+            system_prompt: self.system_prompt.clone(),
+            max_turns: self.max_turns,
+            tool_execution_mode: self.tool_execution_mode,
+            tool_policy: self.tool_policy.clone(),
+            compaction,
+        };
+
+        // 4. Create Agent
+        let mut agent = Agent::new(loop_config, Box::new(ArcProvider(provider)), registry);
+
+        // 5. Set hooks
+        if let Some(ref hook) = self.before_hook {
+            agent.set_before_tool_call(Box::new(ArcBeforeHook(Arc::clone(hook))));
+        }
+        if let Some(ref hook) = self.after_hook {
+            agent.set_after_tool_call(Box::new(ArcAfterHook(Arc::clone(hook))));
+        }
+        if let Some(ref hook) = self.transform_context_hook {
+            agent.set_transform_context(Box::new(ArcTransformContextHook(Arc::clone(hook))));
+        }
+        if let Some(ref hook) = self.stop_hook {
+            agent.set_stop_hook(Box::new(ArcStopHook(Arc::clone(hook))));
+        }
+
+        Ok(SageSession {
+            agent,
+            timeout_secs: self.timeout_secs,
+        })
+    }
+}
+
+// ── SageSession ───────────────────────────────────────────────────────
+
+/// Stateful multi-turn agent session.
+///
+/// Obtained via [`SageEngine::session`]. The agent retains its full
+/// conversation history across successive [`send`][SageSession::send] calls,
+/// enabling contextual follow-up without re-sending prior turns.
+pub struct SageSession {
+    agent: Agent,
+    timeout_secs: Option<u64>,
+}
+
+impl SageSession {
+    /// Steer a user message and run the agent loop, streaming events to `sink`.
+    ///
+    /// The agent's message history is preserved on return, so a subsequent
+    /// `send()` inherits the full conversation context.
+    pub async fn send(
+        &mut self,
+        message: &str,
+        sink: &dyn AgentEventSink,
+    ) -> Result<(), SageError> {
+        self.agent
+            .steer(AgentMessage::User(UserMessage::from_text(message)));
+        match self.timeout_secs {
+            Some(secs) => tokio::time::timeout(
+                std::time::Duration::from_secs(secs),
+                run_agent_loop(&mut self.agent, sink),
+            )
+            .await
+            .map_err(|_| SageError::Timeout(secs))?
+            .map(|_| ())
+            .map_err(SageError::AgentLoop),
+            None => run_agent_loop(&mut self.agent, sink)
+                .await
+                .map(|_| ())
+                .map_err(SageError::AgentLoop),
+        }
+    }
+
+    /// Clear all conversation history — the next `send()` starts fresh.
+    pub fn reset(&mut self) {
+        self.agent.messages_mut().clear();
+    }
+
+    /// Read-only view of the current conversation history.
+    pub fn messages(&self) -> &[AgentMessage] {
+        self.agent.messages()
+    }
 }
 
 // ── Arc wrappers for hooks and tools ──────────────────────────────────
@@ -496,6 +650,15 @@ impl TransformContextHook for ArcTransformContextHook {
     }
 }
 
+struct ArcStopHook(Arc<dyn StopHook>);
+
+#[async_trait::async_trait]
+impl StopHook for ArcStopHook {
+    async fn on_stop(&self, ctx: &StopContext) -> StopAction {
+        self.0.on_stop(ctx).await
+    }
+}
+
 /// Wraps `Arc<dyn AgentTool>` so it can be registered as `Box<dyn AgentTool>`.
 struct ArcTool(Arc<dyn AgentTool>);
 
@@ -518,6 +681,7 @@ impl AgentTool for ArcTool {
 // ── SageEngineBuilder ─────────────────────────────────────────────────
 
 pub struct SageEngineBuilder {
+    name: Option<String>,
     system_prompt: Option<String>,
     max_turns: Option<usize>,
     timeout_secs: Option<u64>,
@@ -536,11 +700,17 @@ pub struct SageEngineBuilder {
     before_hook: Option<Arc<dyn BeforeToolCallHook>>,
     after_hook: Option<Arc<dyn AfterToolCallHook>>,
     transform_context_hook: Option<Arc<dyn TransformContextHook>>,
+    stop_hook: Option<Arc<dyn StopHook>>,
     context_budget: Option<crate::compaction::ContextBudget>,
 }
 
 impl SageEngineBuilder {
     // ── Agent config ──
+
+    pub fn name(mut self, name: &str) -> Self {
+        self.name = Some(name.to_string());
+        self
+    }
 
     pub fn system_prompt(mut self, prompt: &str) -> Self {
         self.system_prompt = Some(prompt.to_string());
@@ -670,6 +840,15 @@ impl SageEngineBuilder {
         self
     }
 
+    /// Set a hook called when the agent is about to stop.
+    ///
+    /// Returning [`StopAction::Continue`] injects feedback and restarts the loop —
+    /// the core mechanism for the Harness evaluator-driven iteration.
+    pub fn on_stop(mut self, hook: impl StopHook + 'static) -> Self {
+        self.stop_hook = Some(Arc::new(hook));
+        self
+    }
+
     /// Set an explicit context budget. Overrides the per-field thresholds in
     /// the default [`CompactionSettings`] with computed values.
     pub fn context_budget(mut self, budget: crate::compaction::ContextBudget) -> Self {
@@ -702,6 +881,7 @@ impl SageEngineBuilder {
         });
 
         Ok(SageEngine {
+            name: self.name.unwrap_or_default(),
             system_prompt,
             max_turns: self.max_turns.unwrap_or(10),
             timeout_secs: self.timeout_secs.filter(|secs| *secs > 0),
@@ -722,6 +902,7 @@ impl SageEngineBuilder {
             before_hook: self.before_hook,
             after_hook: self.after_hook,
             transform_context_hook: self.transform_context_hook,
+            stop_hook: self.stop_hook,
             context_budget: self.context_budget,
         })
     }
