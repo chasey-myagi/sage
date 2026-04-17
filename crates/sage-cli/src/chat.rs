@@ -157,6 +157,14 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
 
     let config = crate::serve::load_agent_config(agent).await?;
     let engine = crate::serve::build_engine_for_agent(&config, dev).await?;
+
+    // Sprint 11 #56: keep a clone of the engine's cancel token so Ctrl+C can
+    // signal cooperative cancellation to any future wiring inside the agent
+    // loop. MVP only reacts at the readline boundary — v0.0.2 wiring will
+    // propagate the token into session.send()'s select! so mid-turn Ctrl+C
+    // actually aborts LLM streaming and tool execution.
+    let cancel_token = engine.cancel_token().clone();
+
     let mut session = engine
         .session()
         .await
@@ -166,6 +174,7 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin());
 
     println!("Connected to '{agent}'. Type /exit to quit, /reset to clear history.");
+    println!("(Ctrl+C to interrupt; EOF / Ctrl+D to quit.)");
     println!();
 
     loop {
@@ -174,7 +183,19 @@ pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
         std::io::stdout().flush()?;
 
         let mut line = String::new();
-        let n = stdin.read_line(&mut line).await?;
+        let n = tokio::select! {
+            res = stdin.read_line(&mut line) => res?,
+            _ = tokio::signal::ctrl_c() => {
+                // Signal any downstream wiring to abort, then exit the
+                // chat loop. MVP: this fires only while waiting for input
+                // (not mid-turn). Mid-turn Ctrl+C abort is v0.0.2 follow-up
+                // once the token is wired into agent_loop/tool/LLM stream.
+                cancel_token.cancel();
+                println!();
+                println!("^C received; closing chat session.");
+                break;
+            }
+        };
         if n == 0 {
             break; // EOF (Ctrl+D)
         }
