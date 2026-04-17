@@ -104,6 +104,11 @@ impl sage_runtime::event::AgentEventSink for TerminalSink {
 /// Loads the agent config, builds a [`SageSession`], and enters a read-eval loop.
 /// Built-in slash commands: `/exit` to quit, `/reset` to clear history.
 pub async fn run_chat(agent: &str, dev: bool) -> anyhow::Result<()> {
+    // Task #85 defense-in-depth. `load_agent_config` also validates, but
+    // running the check at every CLI entry point means a malicious
+    // `--agent ../foo` can never reach `sage_agents_dir().join(agent)`
+    // via an unvalidated path. The cost is one comparison — negligible.
+    crate::serve::validate_agent_name(agent)?;
     let config = crate::serve::load_agent_config(agent).await?;
     let engine = crate::serve::build_engine_for_agent(&config, dev).await?;
 

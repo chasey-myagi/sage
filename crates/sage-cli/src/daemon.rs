@@ -151,6 +151,7 @@ async fn write_msg_to(writer: &Arc<Mutex<OwnedWriteHalf>>, msg: &ServerMsg) {
 /// Binds a Unix socket, writes a PID file, then accepts one client connection
 /// at a time. Runs until a `Shutdown` message is received.
 pub async fn run_server(agent_name: &str, dev: bool) -> Result<()> {
+    crate::serve::validate_agent_name(agent_name)?;
     let config = crate::serve::load_agent_config(agent_name).await?;
     let engine = crate::serve::build_engine_for_agent(&config, dev).await?;
     let mut session = engine
@@ -257,6 +258,7 @@ async fn handle_client(
 
 /// Connect to a running daemon and enter an interactive session.
 pub async fn connect_interactive(agent_name: &str) -> Result<()> {
+    crate::serve::validate_agent_name(agent_name)?;
     let sock_path = socket_path(agent_name);
     let stream = tokio::net::UnixStream::connect(&sock_path)
         .await
@@ -354,6 +356,7 @@ pub async fn connect_interactive(agent_name: &str) -> Result<()> {
 
 /// Send a single message to a running daemon and print the response.
 pub async fn send_one(agent_name: &str, text: &str) -> Result<()> {
+    crate::serve::validate_agent_name(agent_name)?;
     let sock_path = socket_path(agent_name);
     let stream = tokio::net::UnixStream::connect(&sock_path)
         .await
@@ -400,6 +403,7 @@ pub async fn send_one(agent_name: &str, text: &str) -> Result<()> {
 ///
 /// Re-execs the current binary with the hidden `__daemon-server__` subcommand.
 pub async fn start_daemon(agent_name: &str, dev: bool) -> Result<()> {
+    crate::serve::validate_agent_name(agent_name)?;
     // Already running?
     if let Some(pid) = read_pid(agent_name).await {
         if is_process_alive(pid) {
@@ -446,6 +450,7 @@ pub async fn start_daemon(agent_name: &str, dev: bool) -> Result<()> {
 /// First tries a `Shutdown` message via the Unix socket; falls back to
 /// SIGTERM if the socket is unavailable.
 pub async fn stop_daemon(agent_name: &str) -> Result<()> {
+    crate::serve::validate_agent_name(agent_name)?;
     let sock_path = socket_path(agent_name);
 
     if sock_path.exists() {

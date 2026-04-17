@@ -52,7 +52,7 @@ async fn write_if_new(path: &std::path::Path, content: impl AsRef<[u8]>) -> Resu
 ///
 /// Uses `Path::components()` rather than string matching so the check is
 /// platform-aware and handles all separator forms correctly.
-fn validate_agent_name(name: &str) -> Result<()> {
+pub(crate) fn validate_agent_name(name: &str) -> Result<()> {
     if name.is_empty() {
         anyhow::bail!("agent name cannot be empty");
     }
@@ -359,6 +359,7 @@ pub(crate) fn record_session_model(provider: &str, model: &str) {
 /// `needs_only` filters to crafts that qualify for an automatic
 /// SkillEvaluation session.
 pub async fn run_skill_score(agent: &str, needs_only: bool) -> Result<()> {
+    validate_agent_name(agent)?;
     let agent_dir = sage_agents_dir()?.join(agent);
     let metrics_dir = agent_dir.join("workspace").join("metrics");
     let records = crate::skill_scorer::load_task_records(&metrics_dir);
@@ -418,6 +419,11 @@ pub async fn build_system_prompt(
 /// provider would only surface when the engine tries to instantiate the model,
 /// which is too late for `sage chat` / `sage start` UX.
 pub async fn load_agent_config(name: &str) -> anyhow::Result<AgentConfig> {
+    // Task #85: single defense-in-depth gate. Every caller that takes an
+    // `agent: &str` from the CLI ultimately funnels through here (or
+    // `validate_agent`), so rejecting `../` / absolute paths once covers
+    // the whole path-injection surface.
+    validate_agent_name(name)?;
     let config_path = sage_agents_dir()?.join(name).join("config.yaml");
     let yaml = tokio::fs::read_to_string(&config_path)
         .await
@@ -854,6 +860,35 @@ mod tests {
     #[test]
     fn validate_agent_name_rejects_backslash() {
         assert!(validate_agent_name("evil\\path").is_err());
+    }
+
+    // ── Task #85: load_agent_config gates path-injection at the one entry
+    //             every CLI path funnels through ─────────────────────────
+
+    #[tokio::test]
+    async fn load_agent_config_rejects_path_traversal_names() {
+        // A malicious `--agent ../../etc/passwd` must not even reach the
+        // file read step; validate_agent_name fires first so no I/O or
+        // disk-presence leak occurs.
+        let err = load_agent_config("../../etc/passwd").await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("must not contain path separators") || msg.contains("invalid"),
+            "error must name path-traversal rejection, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn load_agent_config_rejects_absolute_path_names() {
+        let err = load_agent_config("/etc/shadow").await.unwrap_err();
+        assert!(err.to_string().contains("invalid") || err.to_string().contains("must not"));
+    }
+
+    #[tokio::test]
+    async fn load_agent_config_rejects_empty_name() {
+        // Empty is the trivial class all other gates should also catch,
+        // so this is the minimal regression anchor.
+        assert!(load_agent_config("").await.is_err());
     }
 
     // ── build_engine_from_config ──────────────────────────────────────────────
