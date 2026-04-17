@@ -5,6 +5,42 @@
 // buildSystemPrompt() pattern but kept simple: sections → flat String,
 // no provider-specific cache_control plumbing at this layer.
 
+/// Platform-level "how a Sage agent works" methodology.
+///
+/// Every Sage agent shares this section — it defines the discover /
+/// execute / sediment / evolve skeleton that makes a Sage agent what it
+/// is. Per-agent configs contribute only the domain `goal` (one-line
+/// "what this agent does for me"); the methodology is not a per-agent
+/// choice.
+///
+/// Baked into the binary via `include_str!` so every driver (CLI chat,
+/// daemon, channel adapters) picks up the same text without file-system
+/// lookups at runtime.
+pub const SAGE_CORE_PROMPT: &str = include_str!("core_prompt.md");
+
+/// Compose the default Sage system prompt from a per-agent goal.
+///
+/// Output layout:
+///   <SAGE_CORE_PROMPT>
+///
+///   ## Your goal
+///
+///   <goal>
+///
+/// Drivers may append memory / skill-index / etc. sections using the
+/// [`SystemPromptBuilder`] API.
+pub fn compose_sage_prompt(goal: &str) -> String {
+    let goal = goal.trim();
+    if goal.is_empty() {
+        return SAGE_CORE_PROMPT.trim_end().to_string();
+    }
+    format!(
+        "{}\n\n## Your goal\n\n{}",
+        SAGE_CORE_PROMPT.trim_end(),
+        goal
+    )
+}
+
 /// A single section of a system prompt.
 #[derive(Debug, Clone)]
 pub struct PromptSection {
@@ -191,6 +227,38 @@ mod tests {
     fn from_str_conversion() {
         let sp: SystemPrompt = "You are a helpful assistant.".into();
         assert_eq!(sp.to_string(), "You are a helpful assistant.");
+    }
+
+    #[test]
+    fn sage_core_prompt_is_non_empty_and_mentions_pillars() {
+        // The methodology is load-bearing — any regression that guts it
+        // should fail fast at test time rather than silently ship an
+        // empty skeleton.
+        assert!(!SAGE_CORE_PROMPT.is_empty());
+        for pillar in ["发现信息", "执行任务", "沉淀信息", "根据用户历史优化"] {
+            assert!(
+                SAGE_CORE_PROMPT.contains(pillar),
+                "core prompt must keep the '{pillar}' pillar"
+            );
+        }
+    }
+
+    #[test]
+    fn compose_sage_prompt_includes_core_and_goal() {
+        let out = compose_sage_prompt("替我完成飞书上的日常操作");
+        assert!(out.contains("发现信息"), "core skeleton must be present");
+        assert!(out.contains("## Your goal"), "goal section header present");
+        assert!(out.contains("替我完成飞书上的日常操作"), "goal text appears");
+    }
+
+    #[test]
+    fn compose_sage_prompt_empty_goal_returns_core_only() {
+        // Defensive — if a caller forgets to set goal the core skeleton
+        // still ships, rather than emitting a stray "## Your goal" header
+        // with no body.
+        let out = compose_sage_prompt("   ");
+        assert!(!out.contains("## Your goal"));
+        assert!(out.contains("发现信息"));
     }
 
     #[test]

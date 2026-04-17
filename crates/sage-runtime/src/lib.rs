@@ -26,7 +26,9 @@ pub use compaction::ContextBudget;
 pub use engine::{SageEngine, SageEngineBuilder, SageError, SageSession, SandboxSettings};
 pub use event::{AgentEvent, EventReceiver};
 pub use hook::{HookBus, HookEvent, HookHandler, HookOutcome, HookReceiver};
-pub use system_prompt::{PromptSection, SystemPrompt, SystemPromptBuilder};
+pub use system_prompt::{
+    compose_sage_prompt, PromptSection, SystemPrompt, SystemPromptBuilder, SAGE_CORE_PROMPT,
+};
 pub use tools::AgentTool as SageTool;
 
 #[cfg(test)]
