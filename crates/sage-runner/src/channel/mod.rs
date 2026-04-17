@@ -32,7 +32,11 @@ impl ChannelAdapter for FeishuChannel {
     async fn send(&self, text: &str) -> Result<()> {
         // TODO: POST a Feishu card message to self.webhook_url
         // Card format: { "msg_type": "text", "content": { "text": text } }
-        tracing::info!(channel = "feishu", chars = text.len(), "channel send (stub — not wired)");
+        tracing::info!(
+            channel = "feishu",
+            chars = text.len(),
+            "channel send (stub — not wired)"
+        );
         Ok(())
     }
 

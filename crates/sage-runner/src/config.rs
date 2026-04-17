@@ -475,10 +475,7 @@ pub enum SessionType {
 }
 
 fn default_auto_load() -> Vec<String> {
-    vec![
-        "AGENT.md".to_string(),
-        "memory/MEMORY.md".to_string(),
-    ]
+    vec!["AGENT.md".to_string(), "memory/MEMORY.md".to_string()]
 }
 
 /// Configuration for a single hook command.
@@ -1872,7 +1869,10 @@ sandbox:
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
         let sb = config.sandbox.unwrap();
         assert_eq!(sb.network, NetworkPolicy::Whitelist);
-        assert_eq!(sb.allowed_hosts, vec!["api.openai.com", "api.anthropic.com"]);
+        assert_eq!(
+            sb.allowed_hosts,
+            vec!["api.openai.com", "api.anthropic.com"]
+        );
     }
 
     #[test]
@@ -2412,7 +2412,14 @@ sandbox:
 
     #[test]
     fn network_policy_case_sensitive_rejects_capitalized() {
-        for value in &["Full", "FULL", "Airgapped", "AIRGAPPED", "Whitelist", "WHITELIST"] {
+        for value in &[
+            "Full",
+            "FULL",
+            "Airgapped",
+            "AIRGAPPED",
+            "Whitelist",
+            "WHITELIST",
+        ] {
             let yaml = format!(
                 r#"
 name: t
@@ -2612,7 +2619,10 @@ sandbox:
         assert_eq!(parsed.cpus, 4);
         assert_eq!(parsed.memory_mib, 2048);
         assert_eq!(parsed.network, NetworkPolicy::Whitelist);
-        assert_eq!(parsed.allowed_hosts, vec!["api.example.com", "*.internal.net"]);
+        assert_eq!(
+            parsed.allowed_hosts,
+            vec!["api.example.com", "*.internal.net"]
+        );
         assert_eq!(parsed.security.seccomp, false);
         assert_eq!(parsed.security.landlock, true);
         assert_eq!(parsed.security.max_file_size_mb, 200);
@@ -2696,10 +2706,7 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 
     #[test]
     fn sandbox_config_workspace_host_absent_by_default() {
-        let yaml = format!(
-            "{}\nsandbox:\n  cpus: 1\n  memory_mib: 512\n",
-            MINIMAL_YAML
-        );
+        let yaml = format!("{}\nsandbox:\n  cpus: 1\n  memory_mib: 512\n", MINIMAL_YAML);
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let sb = config.sandbox.unwrap();
         assert!(
@@ -2716,13 +2723,8 @@ constraints: { max_turns: 1, timeout_secs: 1 }
         );
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let sb = config.sandbox.unwrap();
-        let path = sb
-            .workspace_host
-            .expect("workspace_host should be Some");
-        assert_eq!(
-            path.to_string_lossy(),
-            "/var/lib/sage/agents/feishu"
-        );
+        let path = sb.workspace_host.expect("workspace_host should be Some");
+        assert_eq!(path.to_string_lossy(), "/var/lib/sage/agents/feishu");
     }
 
     #[test]
@@ -2733,14 +2735,9 @@ constraints: { max_turns: 1, timeout_secs: 1 }
         );
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let sb = config.sandbox.unwrap();
-        let path = sb
-            .workspace_host
-            .expect("workspace_host should be Some");
+        let path = sb.workspace_host.expect("workspace_host should be Some");
         let s = path.to_string_lossy();
-        assert!(
-            !s.starts_with('~'),
-            "tilde must be expanded, got: {s}"
-        );
+        assert!(!s.starts_with('~'), "tilde must be expanded, got: {s}");
         assert!(
             s.ends_with("workspace/feishu"),
             "path should end with workspace/feishu, got: {s}"
@@ -2778,7 +2775,10 @@ sandbox:
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
         let sb = config.sandbox.unwrap();
-        assert!(sb.workspace_host.is_none(), "workspace_host defaults to None");
+        assert!(
+            sb.workspace_host.is_none(),
+            "workspace_host defaults to None"
+        );
     }
 
     #[test]
@@ -2809,10 +2809,7 @@ sandbox:
 
     #[test]
     fn memory_inject_mode_prepend_system_parses() {
-        let yaml = format!(
-            "{}\nmemory:\n  inject_as: prepend_system\n",
-            MINIMAL_YAML
-        );
+        let yaml = format!("{}\nmemory:\n  inject_as: prepend_system\n", MINIMAL_YAML);
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let mem = config.memory.expect("memory should be Some");
         assert!(
@@ -2823,10 +2820,7 @@ sandbox:
 
     #[test]
     fn memory_inject_mode_initial_message_parses() {
-        let yaml = format!(
-            "{}\nmemory:\n  inject_as: initial_message\n",
-            MINIMAL_YAML
-        );
+        let yaml = format!("{}\nmemory:\n  inject_as: initial_message\n", MINIMAL_YAML);
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let mem = config.memory.unwrap();
         assert!(matches!(mem.inject_as, MemoryInjectMode::InitialMessage));
@@ -2834,10 +2828,7 @@ sandbox:
 
     #[test]
     fn memory_config_default_auto_load_contains_agent_md() {
-        let yaml = format!(
-            "{}\nmemory:\n  inject_as: prepend_system\n",
-            MINIMAL_YAML
-        );
+        let yaml = format!("{}\nmemory:\n  inject_as: prepend_system\n", MINIMAL_YAML);
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let mem = config.memory.unwrap();
         assert!(
@@ -2849,10 +2840,7 @@ sandbox:
 
     #[test]
     fn memory_config_default_auto_load_contains_memory_md() {
-        let yaml = format!(
-            "{}\nmemory:\n  inject_as: prepend_system\n",
-            MINIMAL_YAML
-        );
+        let yaml = format!("{}\nmemory:\n  inject_as: prepend_system\n", MINIMAL_YAML);
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let mem = config.memory.unwrap();
         assert!(
@@ -2887,7 +2875,11 @@ sandbox:
             MINIMAL_YAML
         );
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
-        let st = config.memory.unwrap().session_type.expect("session_type should be Some");
+        let st = config
+            .memory
+            .unwrap()
+            .session_type
+            .expect("session_type should be Some");
         assert!(matches!(st, SessionType::UserDriven));
     }
 
@@ -2932,10 +2924,7 @@ sandbox:
 
     #[test]
     fn session_type_absent_defaults_to_none() {
-        let yaml = format!(
-            "{}\nmemory:\n  inject_as: prepend_system\n",
-            MINIMAL_YAML
-        );
+        let yaml = format!("{}\nmemory:\n  inject_as: prepend_system\n", MINIMAL_YAML);
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         assert!(config.memory.unwrap().session_type.is_none());
     }
@@ -2948,13 +2937,12 @@ sandbox:
         // target type is String. workspace_host: 123 therefore parses as Some("123").
         // This documents the actual behaviour — callers should validate the resulting
         // path before use.
-        let yaml = format!(
-            "{}\nsandbox:\n  workspace_host: 123\n",
-            MINIMAL_YAML
-        );
+        let yaml = format!("{}\nsandbox:\n  workspace_host: 123\n", MINIMAL_YAML);
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let sb = config.sandbox.unwrap();
-        let path = sb.workspace_host.expect("integer is coerced to string Some(\"123\")");
+        let path = sb
+            .workspace_host
+            .expect("integer is coerced to string Some(\"123\")");
         assert_eq!(path.to_string_lossy(), "123");
     }
 
@@ -2965,7 +2953,10 @@ sandbox:
             MINIMAL_YAML
         );
         let result = serde_yaml::from_str::<AgentConfig>(&yaml);
-        assert!(result.is_err(), "list-type workspace_host must return a parse error");
+        assert!(
+            result.is_err(),
+            "list-type workspace_host must return a parse error"
+        );
     }
 
     // ── M2: boundary ─────────────────────────────────────────────────────────
@@ -2973,13 +2964,12 @@ sandbox:
     #[test]
     fn sandbox_config_workspace_host_empty_string_parses_to_empty_path() {
         // Empty string is accepted by the parser; validation is the caller's job
-        let yaml = format!(
-            "{}\nsandbox:\n  workspace_host: \"\"\n",
-            MINIMAL_YAML
-        );
+        let yaml = format!("{}\nsandbox:\n  workspace_host: \"\"\n", MINIMAL_YAML);
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let sb = config.sandbox.unwrap();
-        let path = sb.workspace_host.expect("empty string should parse as Some");
+        let path = sb
+            .workspace_host
+            .expect("empty string should parse as Some");
         assert_eq!(path.to_string_lossy(), "");
     }
 
@@ -3027,10 +3017,7 @@ sandbox:
 
     #[test]
     fn memory_inject_mode_invalid_value_returns_error() {
-        let yaml = format!(
-            "{}\nmemory:\n  inject_as: bad_mode\n",
-            MINIMAL_YAML
-        );
+        let yaml = format!("{}\nmemory:\n  inject_as: bad_mode\n", MINIMAL_YAML);
         let result = serde_yaml::from_str::<AgentConfig>(&yaml);
         assert!(
             result.is_err(),
@@ -3041,10 +3028,7 @@ sandbox:
     #[test]
     fn memory_inject_mode_missing_returns_error() {
         // inject_as has no default — omitting it when memory section exists is an error
-        let yaml = format!(
-            "{}\nmemory:\n  auto_load: [\"AGENT.md\"]\n",
-            MINIMAL_YAML
-        );
+        let yaml = format!("{}\nmemory:\n  auto_load: [\"AGENT.md\"]\n", MINIMAL_YAML);
         let result = serde_yaml::from_str::<AgentConfig>(&yaml);
         assert!(
             result.is_err(),
@@ -3068,12 +3052,12 @@ sandbox:
     #[test]
     fn memory_inject_mode_integer_type_returns_error() {
         // inject_as must be a string — integer value should fail
-        let yaml = format!(
-            "{}\nmemory:\n  inject_as: 1\n",
-            MINIMAL_YAML
-        );
+        let yaml = format!("{}\nmemory:\n  inject_as: 1\n", MINIMAL_YAML);
         let result = serde_yaml::from_str::<AgentConfig>(&yaml);
-        assert!(result.is_err(), "integer inject_as must return a parse error");
+        assert!(
+            result.is_err(),
+            "integer inject_as must return a parse error"
+        );
     }
 
     // ── M3: boundary ─────────────────────────────────────────────────────────
@@ -3141,10 +3125,7 @@ memory:
         let mem = config.memory.unwrap();
         assert_eq!(mem.auto_load.len(), 2);
         assert!(matches!(mem.inject_as, MemoryInjectMode::PrependSystem));
-        assert!(matches!(
-            mem.session_type.unwrap(),
-            SessionType::UserDriven
-        ));
+        assert!(matches!(mem.session_type.unwrap(), SessionType::UserDriven));
     }
 
     // ── Sprint 3 — v0.8: SandboxMode ─────────────────────────────────────────
@@ -3160,7 +3141,11 @@ memory:
         let yaml = minimal_yaml_with_sandbox("");
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let sb = config.sandbox.unwrap();
-        assert_eq!(sb.mode, SandboxMode::Microvm, "default mode should be Microvm");
+        assert_eq!(
+            sb.mode,
+            SandboxMode::Microvm,
+            "default mode should be Microvm"
+        );
     }
 
     #[test]
@@ -3192,7 +3177,10 @@ memory:
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let sb = config.sandbox.unwrap();
         assert_eq!(sb.mode, SandboxMode::Host);
-        assert!(sb.workspace_host.is_some(), "other fields must be preserved alongside mode: host");
+        assert!(
+            sb.workspace_host.is_some(),
+            "other fields must be preserved alongside mode: host"
+        );
     }
 
     #[test]
@@ -3200,11 +3188,17 @@ memory:
         // Verify SandboxMode::Host serialises back to "host"
         let mode = SandboxMode::Host;
         let s = serde_yaml::to_string(&mode).unwrap();
-        assert!(s.trim() == "host", "Host must serialise to 'host', got: {s:?}");
+        assert!(
+            s.trim() == "host",
+            "Host must serialise to 'host', got: {s:?}"
+        );
 
         let mode = SandboxMode::Microvm;
         let s = serde_yaml::to_string(&mode).unwrap();
-        assert!(s.trim() == "microvm", "Microvm must serialise to 'microvm', got: {s:?}");
+        assert!(
+            s.trim() == "microvm",
+            "Microvm must serialise to 'microvm', got: {s:?}"
+        );
     }
 
     // ── Sprint 3 — v0.8: RootfsTier ──────────────────────────────────────────
@@ -3214,7 +3208,11 @@ memory:
         let yaml = minimal_yaml_with_sandbox("");
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let sb = config.sandbox.unwrap();
-        assert_eq!(sb.rootfs, RootfsTier::Minimal, "default rootfs should be Minimal");
+        assert_eq!(
+            sb.rootfs,
+            RootfsTier::Minimal,
+            "default rootfs should be Minimal"
+        );
     }
 
     #[test]
@@ -3244,11 +3242,17 @@ memory:
     fn rootfs_tier_roundtrips_via_serde_yaml() {
         let tier = RootfsTier::Standard;
         let s = serde_yaml::to_string(&tier).unwrap();
-        assert!(s.trim() == "standard", "Standard must serialise to 'standard', got: {s:?}");
+        assert!(
+            s.trim() == "standard",
+            "Standard must serialise to 'standard', got: {s:?}"
+        );
 
         let tier = RootfsTier::Minimal;
         let s = serde_yaml::to_string(&tier).unwrap();
-        assert!(s.trim() == "minimal", "Minimal must serialise to 'minimal', got: {s:?}");
+        assert!(
+            s.trim() == "minimal",
+            "Minimal must serialise to 'minimal', got: {s:?}"
+        );
     }
 
     #[test]
@@ -3266,8 +3270,16 @@ memory:
         let yaml = minimal_yaml_with_sandbox("  network: airgapped\n  exec_timeout_secs: 30\n");
         let config: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let sb = config.sandbox.unwrap();
-        assert_eq!(sb.mode, SandboxMode::Microvm, "missing mode defaults to Microvm");
-        assert_eq!(sb.rootfs, RootfsTier::Minimal, "missing rootfs defaults to Minimal");
+        assert_eq!(
+            sb.mode,
+            SandboxMode::Microvm,
+            "missing mode defaults to Microvm"
+        );
+        assert_eq!(
+            sb.rootfs,
+            RootfsTier::Minimal,
+            "missing rootfs defaults to Minimal"
+        );
     }
 
     #[test]
@@ -3285,14 +3297,20 @@ memory:
         // YAML integer where a string enum is expected must fail cleanly
         let yaml = minimal_yaml_with_sandbox("  mode: 1\n");
         let result = serde_yaml::from_str::<AgentConfig>(&yaml);
-        assert!(result.is_err(), "integer-typed mode must fail: expected string enum 'microvm'/'host'");
+        assert!(
+            result.is_err(),
+            "integer-typed mode must fail: expected string enum 'microvm'/'host'"
+        );
     }
 
     #[test]
     fn rootfs_tier_integer_type_returns_error() {
         let yaml = minimal_yaml_with_sandbox("  rootfs: 2\n");
         let result = serde_yaml::from_str::<AgentConfig>(&yaml);
-        assert!(result.is_err(), "integer-typed rootfs must fail: expected string enum");
+        assert!(
+            result.is_err(),
+            "integer-typed rootfs must fail: expected string enum"
+        );
     }
 
     // ── Sprint 3 — v0.8: SandboxMode::with_dev_override ─────────────────────
@@ -3301,19 +3319,31 @@ memory:
     fn dev_override_true_forces_host_mode() {
         // --dev=true must translate to SandboxMode::Host regardless of config value
         let result = SandboxMode::Microvm.with_dev_override(true);
-        assert_eq!(result, SandboxMode::Host, "--dev=true must override to Host");
+        assert_eq!(
+            result,
+            SandboxMode::Host,
+            "--dev=true must override to Host"
+        );
     }
 
     #[test]
     fn dev_override_false_preserves_microvm() {
         let result = SandboxMode::Microvm.with_dev_override(false);
-        assert_eq!(result, SandboxMode::Microvm, "--dev=false must leave Microvm unchanged");
+        assert_eq!(
+            result,
+            SandboxMode::Microvm,
+            "--dev=false must leave Microvm unchanged"
+        );
     }
 
     #[test]
     fn dev_override_false_preserves_host() {
         let result = SandboxMode::Host.with_dev_override(false);
-        assert_eq!(result, SandboxMode::Host, "--dev=false must leave Host unchanged");
+        assert_eq!(
+            result,
+            SandboxMode::Host,
+            "--dev=false must leave Host unchanged"
+        );
     }
 
     // ========================================================================
@@ -3397,8 +3427,7 @@ hooks:
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
         let hooks = config.hooks.unwrap();
         assert_eq!(
-            hooks.pre_tool_use[0].timeout_secs,
-            None,
+            hooks.pre_tool_use[0].timeout_secs, None,
             "timeout_secs must be None when omitted"
         );
     }
@@ -3467,7 +3496,9 @@ constraints: { max_turns: 1, timeout_secs: 1 }
 hooks: {}
 "#;
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
-        let hooks = config.hooks.expect("hooks: {} must deserialize as Some(HooksConfig)");
+        let hooks = config
+            .hooks
+            .expect("hooks: {} must deserialize as Some(HooksConfig)");
         assert!(
             hooks.pre_tool_use.is_empty(),
             "pre_tool_use should be empty when omitted"
@@ -3483,7 +3514,10 @@ hooks: {}
     fn agent_without_hooks_field_is_none() {
         // FEISHU_YAML has no hooks field — backward compat must give None
         let config: AgentConfig = serde_yaml::from_str(FEISHU_YAML).unwrap();
-        assert!(config.hooks.is_none(), "omitted hooks field must deserialize as None");
+        assert!(
+            config.hooks.is_none(),
+            "omitted hooks field must deserialize as None"
+        );
     }
 
     // ── HarnessConfig parsing ─────────────────────────────────────────────────
@@ -3547,7 +3581,10 @@ harness:
     #[test]
     fn agent_without_harness_field_is_none() {
         let config: AgentConfig = serde_yaml::from_str(FEISHU_YAML).unwrap();
-        assert!(config.harness.is_none(), "omitted harness field must be None");
+        assert!(
+            config.harness.is_none(),
+            "omitted harness field must be None"
+        );
     }
 
     // ── Backward compatibility ────────────────────────────────────────────────
@@ -3794,17 +3831,35 @@ harness:
         // Default must produce empty Vecs for every one of the 8 event fields,
         // including the 5 added in Sprint 6.
         let hc = HooksConfig::default();
-        assert!(hc.pre_tool_use.is_empty(), "pre_tool_use must default to empty");
-        assert!(hc.post_tool_use.is_empty(), "post_tool_use must default to empty");
+        assert!(
+            hc.pre_tool_use.is_empty(),
+            "pre_tool_use must default to empty"
+        );
+        assert!(
+            hc.post_tool_use.is_empty(),
+            "post_tool_use must default to empty"
+        );
         assert!(hc.stop.is_empty(), "stop must default to empty");
-        assert!(hc.session_start.is_empty(), "session_start must default to empty");
-        assert!(hc.session_end.is_empty(), "session_end must default to empty");
+        assert!(
+            hc.session_start.is_empty(),
+            "session_start must default to empty"
+        );
+        assert!(
+            hc.session_end.is_empty(),
+            "session_end must default to empty"
+        );
         assert!(
             hc.user_prompt_submit.is_empty(),
             "user_prompt_submit must default to empty"
         );
-        assert!(hc.pre_compact.is_empty(), "pre_compact must default to empty");
-        assert!(hc.post_compact.is_empty(), "post_compact must default to empty");
+        assert!(
+            hc.pre_compact.is_empty(),
+            "pre_compact must default to empty"
+        );
+        assert!(
+            hc.post_compact.is_empty(),
+            "post_compact must default to empty"
+        );
     }
 
     #[test]
@@ -3907,14 +3962,26 @@ hooks:
         assert_eq!(hooks.pre_tool_use.len(), 1);
         assert_eq!(hooks.post_tool_use.len(), 1);
         assert_eq!(hooks.stop.len(), 1);
-        assert!(hooks.session_start.is_empty(), "session_start defaults to empty");
-        assert!(hooks.session_end.is_empty(), "session_end defaults to empty");
+        assert!(
+            hooks.session_start.is_empty(),
+            "session_start defaults to empty"
+        );
+        assert!(
+            hooks.session_end.is_empty(),
+            "session_end defaults to empty"
+        );
         assert!(
             hooks.user_prompt_submit.is_empty(),
             "user_prompt_submit defaults to empty"
         );
-        assert!(hooks.pre_compact.is_empty(), "pre_compact defaults to empty");
-        assert!(hooks.post_compact.is_empty(), "post_compact defaults to empty");
+        assert!(
+            hooks.pre_compact.is_empty(),
+            "pre_compact defaults to empty"
+        );
+        assert!(
+            hooks.post_compact.is_empty(),
+            "post_compact defaults to empty"
+        );
     }
 
     #[test]
@@ -4012,7 +4079,10 @@ hooks:
         let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
         let hooks = config.hooks.unwrap();
         assert_eq!(hooks.user_prompt_submit.len(), 1);
-        assert_eq!(hooks.user_prompt_submit[0].command, "/scripts/log-prompt.sh");
+        assert_eq!(
+            hooks.user_prompt_submit[0].command,
+            "/scripts/log-prompt.sh"
+        );
         assert_eq!(hooks.user_prompt_submit[0].timeout_secs, None);
     }
 

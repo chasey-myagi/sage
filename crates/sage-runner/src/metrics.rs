@@ -21,11 +21,7 @@ fn now_unix_ms() -> u64 {
 /// `unique` disambiguates the tmp path so concurrent writers targeting the
 /// same `dest` never trample each other's half-written bytes. Callers pass
 /// the task_id (or any run-unique string) as `unique`.
-async fn write_atomic(
-    dest: &std::path::Path,
-    bytes: &[u8],
-    unique: &str,
-) -> anyhow::Result<()> {
+async fn write_atomic(dest: &std::path::Path, bytes: &[u8], unique: &str) -> anyhow::Result<()> {
     let tmp = {
         let mut p = dest.as_os_str().to_owned();
         p.push(".");
@@ -210,13 +206,11 @@ impl MetricsCollector {
             let metrics_dir = self.workspace_dir.join("metrics");
             tokio::fs::create_dir_all(&metrics_dir)
                 .await
-                .with_context(|| {
-                    format!("create metrics dir at {}", metrics_dir.display())
-                })?;
+                .with_context(|| format!("create metrics dir at {}", metrics_dir.display()))?;
 
             let record_path = metrics_dir.join(format!("{}.json", self.record.task_id));
-            let record_json = serde_json::to_vec_pretty(&self.record)
-                .context("serialize task record")?;
+            let record_json =
+                serde_json::to_vec_pretty(&self.record).context("serialize task record")?;
             write_atomic(&record_path, &record_json, &self.record.task_id).await?;
 
             let summary_path = metrics_dir.join("summary.json");
@@ -231,8 +225,8 @@ impl MetricsCollector {
                 .unwrap_or_default();
             records.insert(0, self.record.clone());
             records.truncate(SUMMARY_MAX_ENTRIES);
-            let summary_json = serde_json::to_vec_pretty(&SummaryFile { records })
-                .context("serialize summary")?;
+            let summary_json =
+                serde_json::to_vec_pretty(&SummaryFile { records }).context("serialize summary")?;
             write_atomic(&summary_path, &summary_json, &self.record.task_id).await?;
         }
 
@@ -335,8 +329,8 @@ mod tests {
 
     fn read_summary(workspace_dir: &Path) -> serde_json::Value {
         let path = workspace_dir.join("metrics").join("summary.json");
-        let bytes = std::fs::read(&path)
-            .unwrap_or_else(|e| panic!("read summary.json at {path:?}: {e}"));
+        let bytes =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("read summary.json at {path:?}: {e}"));
         serde_json::from_slice(&bytes).expect("summary.json must be valid JSON")
     }
 
@@ -344,13 +338,19 @@ mod tests {
 
     #[test]
     fn task_record_task_id_not_empty() {
-        let rec = TaskRecord::new("feishu".to_string(), "claude-haiku-4-5-20251001".to_string());
+        let rec = TaskRecord::new(
+            "feishu".to_string(),
+            "claude-haiku-4-5-20251001".to_string(),
+        );
         assert!(!rec.task_id.is_empty());
     }
 
     #[test]
     fn task_record_task_id_is_ulid_format() {
-        let rec = TaskRecord::new("feishu".to_string(), "claude-haiku-4-5-20251001".to_string());
+        let rec = TaskRecord::new(
+            "feishu".to_string(),
+            "claude-haiku-4-5-20251001".to_string(),
+        );
         assert!(
             is_ulid(&rec.task_id),
             "task_id '{}' is not a valid ULID (expected 26-char Crockford base32)",
@@ -362,12 +362,18 @@ mod tests {
     fn task_record_two_records_have_distinct_ids() {
         let a = TaskRecord::new("agent".to_string(), "model".to_string());
         let b = TaskRecord::new("agent".to_string(), "model".to_string());
-        assert_ne!(a.task_id, b.task_id, "every TaskRecord must receive a unique ULID");
+        assert_ne!(
+            a.task_id, b.task_id,
+            "every TaskRecord must receive a unique ULID"
+        );
     }
 
     #[test]
     fn task_record_new_stores_identity_and_zeros_counters() {
-        let rec = TaskRecord::new("feishu".to_string(), "claude-haiku-4-5-20251001".to_string());
+        let rec = TaskRecord::new(
+            "feishu".to_string(),
+            "claude-haiku-4-5-20251001".to_string(),
+        );
         assert_eq!(rec.agent_name, "feishu");
         assert_eq!(rec.model, "claude-haiku-4-5-20251001");
         assert_eq!(rec.turn_count, 0);
@@ -375,7 +381,10 @@ mod tests {
         assert_eq!(rec.input_tokens, 0);
         assert_eq!(rec.output_tokens, 0);
         assert_eq!(rec.compaction_count, 0);
-        assert!(!rec.success, "new TaskRecord must not be pre-marked as successful");
+        assert!(
+            !rec.success,
+            "new TaskRecord must not be pre-marked as successful"
+        );
     }
 
     #[test]
@@ -410,7 +419,10 @@ mod tests {
 
     #[test]
     fn task_record_new_extended_fields_default_to_zero_empty_or_none() {
-        let rec = TaskRecord::new("feishu".to_string(), "claude-haiku-4-5-20251001".to_string());
+        let rec = TaskRecord::new(
+            "feishu".to_string(),
+            "claude-haiku-4-5-20251001".to_string(),
+        );
         assert_eq!(rec.config_hash, "");
         assert_eq!(rec.started_at, 0);
         assert_eq!(rec.ended_at, 0);
@@ -425,7 +437,10 @@ mod tests {
 
     #[test]
     fn task_record_new_zeros_legacy_counters() {
-        let rec = TaskRecord::new("feishu".to_string(), "claude-haiku-4-5-20251001".to_string());
+        let rec = TaskRecord::new(
+            "feishu".to_string(),
+            "claude-haiku-4-5-20251001".to_string(),
+        );
         assert_eq!(rec.agent_name, "feishu");
         assert_eq!(rec.model, "claude-haiku-4-5-20251001");
         assert_eq!(rec.input_tokens, 0);
@@ -438,8 +453,10 @@ mod tests {
 
     #[test]
     fn task_record_serde_roundtrip_preserves_all_fields() {
-        let mut rec =
-            TaskRecord::new("feishu".to_string(), "claude-haiku-4-5-20251001".to_string());
+        let mut rec = TaskRecord::new(
+            "feishu".to_string(),
+            "claude-haiku-4-5-20251001".to_string(),
+        );
         rec.config_hash = "deadbeef".into();
         rec.started_at = 1_700_000_000_000;
         rec.ended_at = 1_700_000_001_500;
