@@ -110,7 +110,7 @@ pub async fn run_skill_evaluate(agent: &str, skill: &str) -> Result<()> {
     // prompt augments rather than replaces it.
     let user_msg = format!(
         "{EVAL_PROMPT}\n\n\
-         TARGET: workspace/skills/{skill}/SKILL.md\n\
+         TARGET: skills/{skill}/SKILL.md\n\
          Current size: {} bytes. Read, revise, write back, then /exit.",
         before.len()
     );

@@ -6,7 +6,8 @@ template or reference the skill actually uses.
 
 ## Your job
 
-1. Read `workspace/skills/<skill-name>/SKILL.md` in full.
+1. Read `skills/<skill-name>/SKILL.md` in full (path is relative to
+   the agent's workspace root; no `workspace/` prefix).
 2. Produce a revised version that:
    - **Preserves every command template, flag, and reference** the skill
      depends on. Losing a template breaks the skill — that's unacceptable.

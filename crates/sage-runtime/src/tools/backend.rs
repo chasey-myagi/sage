@@ -295,6 +295,135 @@ mod tests {
     // shell
     // ===================================================================
 
+    // ── workspace_root routing — regression tests for v0.0.3 fix ─────────
+    //
+    // LocalBackend::with_workspace(root) must resolve relative paths
+    // against `root` for read/write/list, and run shell commands with
+    // `current_dir` at `root`. Absolute paths must pass through
+    // verbatim. These behaviours are load-bearing — without them, a
+    // model that sends `read workspace/skills/INDEX.md` resolves against
+    // the user's shell cwd and always misses.
+
+    #[tokio::test]
+    async fn workspace_read_resolves_relative_against_root() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let skills_dir = tmp.path().join("skills").join("demo");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        std::fs::write(skills_dir.join("SKILL.md"), b"frontmatter body").unwrap();
+
+        let backend = LocalBackend::with_workspace(tmp.path().to_path_buf());
+        // Model-style relative path: starts at the workspace root, not cwd.
+        let bytes = backend
+            .read_file("skills/demo/SKILL.md")
+            .await
+            .expect("relative read must resolve against workspace_root");
+        assert_eq!(bytes, b"frontmatter body");
+    }
+
+    #[tokio::test]
+    async fn workspace_read_absolute_path_passes_through() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let abs = tmp.path().join("elsewhere.txt");
+        std::fs::write(&abs, b"absolute content").unwrap();
+
+        // Different workspace root than the file's parent — absolute path
+        // must still reach the file. workspace_root only rewrites relative
+        // paths, never absolute ones.
+        let other_ws = tempfile::TempDir::new().unwrap();
+        let backend = LocalBackend::with_workspace(other_ws.path().to_path_buf());
+        let bytes = backend
+            .read_file(abs.to_str().unwrap())
+            .await
+            .expect("absolute path must pass through");
+        assert_eq!(bytes, b"absolute content");
+    }
+
+    #[tokio::test]
+    async fn workspace_read_without_root_uses_cwd_relative() {
+        // Legacy LocalBackend::new() keeps the old process-cwd behaviour
+        // so existing tests / non-agent callers aren't broken.
+        let backend = LocalBackend::new();
+        // Read a file from the current crate root that we know exists.
+        // (Cargo.toml is present for every test run.)
+        let out = backend.read_file("Cargo.toml").await;
+        assert!(out.is_ok(), "new() must still resolve against cwd");
+    }
+
+    #[tokio::test]
+    async fn workspace_write_creates_files_under_root() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let backend = LocalBackend::with_workspace(tmp.path().to_path_buf());
+
+        backend
+            .write_file("memory/NOTES.md", b"hello")
+            .await
+            .expect("workspace write must succeed");
+
+        // Written file lands under the workspace root, NOT the process cwd.
+        let expected = tmp.path().join("memory").join("NOTES.md");
+        assert!(expected.exists(), "file must materialize at workspace/memory/NOTES.md");
+        assert_eq!(std::fs::read(&expected).unwrap(), b"hello");
+    }
+
+    #[tokio::test]
+    async fn workspace_list_dir_resolves_relative_against_root() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let sub = tmp.path().join("skills");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("a.md"), b"").unwrap();
+        std::fs::write(sub.join("b.md"), b"").unwrap();
+
+        let backend = LocalBackend::with_workspace(tmp.path().to_path_buf());
+        let entries = backend
+            .list_dir("skills")
+            .await
+            .expect("relative list must resolve against workspace_root");
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"a.md"));
+        assert!(names.contains(&"b.md"));
+    }
+
+    #[tokio::test]
+    async fn workspace_shell_cwd_is_root() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // Create a marker file at the root so `pwd` output can be compared
+        // indirectly via `ls`.
+        std::fs::write(tmp.path().join("marker.txt"), b"").unwrap();
+
+        let backend = LocalBackend::with_workspace(tmp.path().to_path_buf());
+        let out = backend.shell("pwd && ls marker.txt", 10).await.unwrap();
+        assert!(out.success, "shell must succeed with cwd at workspace_root");
+        // pwd output on macOS may prepend /private to /var (symlink); both
+        // end with the tempdir basename, which is sufficient.
+        let basename = tmp.path().file_name().unwrap().to_string_lossy();
+        assert!(
+            out.stdout.contains(basename.as_ref()),
+            "pwd must include workspace basename '{basename}', got: {}",
+            out.stdout
+        );
+        assert!(out.stdout.contains("marker.txt"), "ls must see marker.txt");
+    }
+
+    #[tokio::test]
+    async fn workspace_read_error_message_includes_resolved_path() {
+        // When the model sends a bad relative path the error should help
+        // it self-correct — including the resolved path (not just the raw
+        // input) tells the model "you asked for X, I looked at Y".
+        let tmp = tempfile::TempDir::new().unwrap();
+        let backend = LocalBackend::with_workspace(tmp.path().to_path_buf());
+        let err = backend
+            .read_file("nope/missing.md")
+            .await
+            .expect_err("missing file must error");
+        let root_basename = tmp.path().file_name().unwrap().to_string_lossy();
+        assert!(
+            err.contains(root_basename.as_ref()) || err.contains("nope/missing.md"),
+            "error should identify the resolved location, got: {err}"
+        );
+    }
+
+    // ── Original shell tests (no workspace_root) ──────────────────────────
+
     #[tokio::test]
     async fn test_local_shell_echo() {
         let backend = local();

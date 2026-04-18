@@ -140,11 +140,14 @@ pub(crate) async fn init_agent_at(
 
     // Task #88: AGENT.md is minimal — just tells the agent how to find the
     // rest. The skill corpus is navigated via `workspace/skills/INDEX.md`.
+    // Paths in this template are relative to the agent's workspace root
+    // (the LocalBackend's `workspace_root`), so no `workspace/` prefix —
+    // `skills/INDEX.md` is the correct form the model should emit.
     let agent_md_content = format!(
         "# {name}\n\n\
          ## Instructions\n\n\
-         需要工具 / 资料 / 过往经验时，先读 `workspace/skills/INDEX.md` 查可用 skill，\n\
-         再按需 `Read workspace/skills/<name>/SKILL.md` 取详情。每完成一个任务，\n\
+         需要工具 / 资料 / 过往经验时，先读 `skills/INDEX.md` 查可用 skill，\n\
+         再按需 `Read skills/<name>/SKILL.md` 取详情。每完成一个任务，\n\
          主动更新 INDEX.md 和涉及的 SKILL.md，沉淀经验。\n"
     );
     write_if_new(&agent_dir.join("AGENT.md"), agent_md_content).await?;
