@@ -48,11 +48,47 @@ pub trait ToolBackend: Send + Sync {
 }
 
 /// Local backend — executes directly on the host using tokio I/O.
-pub struct LocalBackend;
+///
+/// `workspace_root` (optional) anchors relative paths and shell cwd to
+/// the agent's workspace directory. Without it, relative paths resolve
+/// against the process cwd — which is wherever the user launched `sage`,
+/// so a model that says `read workspace/skills/INDEX.md` would hit the
+/// wrong place. With `workspace_root` set, the backend joins relative
+/// paths onto the root and runs shell commands with `current_dir` at
+/// that root. Absolute paths always pass through verbatim.
+pub struct LocalBackend {
+    workspace_root: Option<std::path::PathBuf>,
+}
 
 impl LocalBackend {
+    /// Legacy constructor — relative paths resolve against process cwd.
+    /// Prefer [`LocalBackend::with_workspace`] for agent use.
     pub fn new() -> Arc<Self> {
-        Arc::new(Self)
+        Arc::new(Self {
+            workspace_root: None,
+        })
+    }
+
+    /// Construct a backend anchored at `root` (agent's workspace_host).
+    /// Every relative path / shell cwd becomes relative to `root`.
+    pub fn with_workspace(root: std::path::PathBuf) -> Arc<Self> {
+        Arc::new(Self {
+            workspace_root: Some(root),
+        })
+    }
+
+    /// Resolve a caller-supplied path against `workspace_root`.
+    /// Absolute paths pass through; relative paths are joined onto the
+    /// root when it is set, else left as-is (process-cwd relative).
+    fn resolve(&self, path: &str) -> std::path::PathBuf {
+        let p = std::path::Path::new(path);
+        if p.is_absolute() {
+            return p.to_path_buf();
+        }
+        match &self.workspace_root {
+            Some(root) => root.join(p),
+            None => p.to_path_buf(),
+        }
     }
 }
 
@@ -64,6 +100,13 @@ impl ToolBackend for LocalBackend {
             .arg(command)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
+
+        // Anchor every shell invocation at the workspace so `ls`, `cat`,
+        // and domain CLIs (lark-cli, git, etc.) all see the same cwd the
+        // read/write tools do.
+        if let Some(root) = &self.workspace_root {
+            cmd.current_dir(root);
+        }
 
         #[cfg(unix)]
         cmd.process_group(0);
@@ -126,28 +169,31 @@ impl ToolBackend for LocalBackend {
     }
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, String> {
-        tokio::fs::read(path)
+        let resolved = self.resolve(path);
+        tokio::fs::read(&resolved)
             .await
-            .map_err(|e| format!("read {path}: {e}"))
+            .map_err(|e| format!("read {}: {}", resolved.display(), e))
     }
 
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), String> {
+        let resolved = self.resolve(path);
         // Create parent directories if needed (unconditional to avoid TOCTOU race)
-        if let Some(parent) = std::path::Path::new(path).parent() {
+        if let Some(parent) = resolved.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
-                .map_err(|e| format!("create dirs for {path}: {e}"))?;
+                .map_err(|e| format!("create dirs for {}: {}", resolved.display(), e))?;
         }
-        tokio::fs::write(path, data)
+        tokio::fs::write(&resolved, data)
             .await
-            .map_err(|e| format!("write {path}: {e}"))
+            .map_err(|e| format!("write {}: {}", resolved.display(), e))
     }
 
     async fn list_dir(&self, path: &str) -> Result<Vec<DirEntry>, String> {
+        let resolved = self.resolve(path);
         let mut entries = Vec::new();
-        let mut dir = tokio::fs::read_dir(path)
+        let mut dir = tokio::fs::read_dir(&resolved)
             .await
-            .map_err(|e| format!("read_dir {path}: {e}"))?;
+            .map_err(|e| format!("read_dir {}: {}", resolved.display(), e))?;
         while let Some(entry) = dir.next_entry().await.map_err(|e| e.to_string())? {
             let metadata = entry.metadata().await.map_err(|e| e.to_string())?;
             entries.push(DirEntry {

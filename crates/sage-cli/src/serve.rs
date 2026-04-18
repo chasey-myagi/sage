@@ -490,9 +490,25 @@ pub async fn build_engine_for_agent(config: &AgentConfig, dev: bool) -> anyhow::
     let tool_names = config.tools.tool_names();
     let tool_name_refs: Vec<&str> = tool_names.iter().map(|s| s.as_str()).collect();
 
+    // Workspace-rooted LocalBackend so relative paths like
+    // `workspace/skills/INDEX.md` resolve against the agent's
+    // `sandbox.workspace_host` (or `~/.sage/agents/<name>/workspace` by
+    // default), not the user's shell cwd when they invoked `sage chat`.
+    // This only affects host-mode execution — SandboxBackend inside a
+    // microVM already has its own chroot at /workspace.
+    let workspace_root = config
+        .sandbox
+        .as_ref()
+        .and_then(|s| s.workspace_host.clone())
+        .unwrap_or_else(|| agent_dir.join("workspace"));
+    let host_backend = sage_runtime::tools::backend::LocalBackend::with_workspace(
+        workspace_root.clone(),
+    );
+
     let mut builder = SageEngine::builder()
         .name(&config.name)
         .system_prompt(&system_prompt)
+        .backend(host_backend)
         .provider(&config.llm.provider)
         .model(&config.llm.model)
         // Sprint 12 M1: pass Option<u32> straight through — the builder and
