@@ -8,8 +8,8 @@ use std::io::{self, BufRead, Write};
 use std::path::Path;
 
 use crate::utils::oauth::{
-    OAuthAuthInfo, OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt,
-    get_oauth_provider, get_oauth_providers,
+    OAuthAuthInfo, OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, get_oauth_provider,
+    get_oauth_providers,
 };
 
 const AUTH_FILE: &str = "auth.json";

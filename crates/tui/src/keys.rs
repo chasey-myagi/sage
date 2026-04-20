@@ -2,7 +2,6 @@
 ///
 /// Supports both legacy terminal sequences and Kitty keyboard protocol.
 /// See: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
-
 use std::sync::atomic::{AtomicBool, Ordering};
 
 // =============================================================================
@@ -30,8 +29,12 @@ pub fn is_kitty_protocol_active() -> bool {
 pub struct KeyId(pub String);
 
 impl KeyId {
-    pub fn new(s: impl Into<String>) -> Self { Self(s.into()) }
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl std::fmt::Display for KeyId {
@@ -41,35 +44,51 @@ impl std::fmt::Display for KeyId {
 }
 
 impl From<&str> for KeyId {
-    fn from(s: &str) -> Self { Self(s.to_owned()) }
+    fn from(s: &str) -> Self {
+        Self(s.to_owned())
+    }
 }
 
 impl From<String> for KeyId {
-    fn from(s: String) -> Self { Self(s) }
+    fn from(s: String) -> Self {
+        Self(s)
+    }
 }
 
 impl AsRef<str> for KeyId {
-    fn as_ref(&self) -> &str { &self.0 }
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
 }
 
 impl PartialEq<str> for KeyId {
-    fn eq(&self, other: &str) -> bool { self.0 == other }
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
 }
 
 impl PartialEq<&str> for KeyId {
-    fn eq(&self, other: &&str) -> bool { self.0 == *other }
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
 }
 
 impl PartialEq<String> for KeyId {
-    fn eq(&self, other: &String) -> bool { &self.0 == other }
+    fn eq(&self, other: &String) -> bool {
+        &self.0 == other
+    }
 }
 
 impl PartialEq<KeyId> for String {
-    fn eq(&self, other: &KeyId) -> bool { self == &other.0 }
+    fn eq(&self, other: &KeyId) -> bool {
+        self == &other.0
+    }
 }
 
 impl PartialEq<KeyId> for &str {
-    fn eq(&self, other: &KeyId) -> bool { *self == other.0 }
+    fn eq(&self, other: &KeyId) -> bool {
+        *self == other.0
+    }
 }
 
 /// Helper functions for creating typed key identifiers.
@@ -178,11 +197,7 @@ pub mod key {
 fn symbol_keys() -> &'static std::collections::HashSet<char> {
     use std::sync::OnceLock;
     static SET: OnceLock<std::collections::HashSet<char>> = OnceLock::new();
-    SET.get_or_init(|| {
-        "`-=[]\\;',./!@#$%^&*()_+|~{}:<>?"
-            .chars()
-            .collect()
-    })
+    SET.get_or_init(|| "`-=[]\\;',./!@#$%^&*()_+|~{}:<>?".chars().collect())
 }
 
 const MOD_SHIFT: u32 = 1;
@@ -420,15 +435,17 @@ fn parse_event_type(s: Option<&str>) -> KeyEventType {
 
 fn parse_kitty_sequence(data: &str) -> Option<ParsedKittySequence> {
     // CSI u format: \x1b[<cp>[:<shifted>[:<base>]][;<mod>[:<event>]]u
-    let re_csi_u = regex::Regex::new(
-        r"^\x1b\[(\d+)(?::(\d*))?(?::(\d+))?(?:;(\d+))?(?::(\d+))?u$",
-    )
-    .unwrap();
+    let re_csi_u =
+        regex::Regex::new(r"^\x1b\[(\d+)(?::(\d*))?(?::(\d+))?(?:;(\d+))?(?::(\d+))?u$").unwrap();
     if let Some(caps) = re_csi_u.captures(data) {
         let codepoint = caps[1].parse::<i32>().ok()?;
-        let shifted_key = caps
-            .get(2)
-            .and_then(|m| if m.as_str().is_empty() { None } else { m.as_str().parse::<i32>().ok() });
+        let shifted_key = caps.get(2).and_then(|m| {
+            if m.as_str().is_empty() {
+                None
+            } else {
+                m.as_str().parse::<i32>().ok()
+            }
+        });
         let base_layout_key = caps.get(3).and_then(|m| m.as_str().parse::<i32>().ok());
         let mod_value = caps
             .get(4)
@@ -528,8 +545,8 @@ fn matches_kitty_sequence(data: &str, expected_codepoint: i32, expected_modifier
         if blk == expected_codepoint {
             let cp = parsed.codepoint;
             let is_latin = (97..=122).contains(&cp);
-            let is_known_symbol = cp >= 0
-                && symbol_keys().contains(&char::from_u32(cp as u32).unwrap_or('\0'));
+            let is_known_symbol =
+                cp >= 0 && symbol_keys().contains(&char::from_u32(cp as u32).unwrap_or('\0'));
             if !is_latin && !is_known_symbol {
                 return true;
             }
@@ -598,7 +615,11 @@ fn is_digit_key(key: &str) -> bool {
     key.len() == 1 && key.chars().next().map_or(false, |c| c.is_ascii_digit())
 }
 
-fn matches_printable_modify_other_keys(data: &str, expected_keycode: i32, expected_modifier: u32) -> bool {
+fn matches_printable_modify_other_keys(
+    data: &str,
+    expected_keycode: i32,
+    expected_modifier: u32,
+) -> bool {
     if expected_modifier == 0 {
         return false;
     }
@@ -951,7 +972,11 @@ pub fn matches_key(data: &str, key_id: &str) -> bool {
 
                 if ctrl && shift && !alt {
                     return matches_kitty_sequence(data, codepoint, MOD_SHIFT + MOD_CTRL)
-                        || matches_printable_modify_other_keys(data, codepoint, MOD_SHIFT + MOD_CTRL);
+                        || matches_printable_modify_other_keys(
+                            data,
+                            codepoint,
+                            MOD_SHIFT + MOD_CTRL,
+                        );
                 }
 
                 if shift && !ctrl && !alt {
@@ -1000,21 +1025,45 @@ pub fn parse_key(data: &str) -> Option<String> {
         return Some(key_id.to_string());
     }
 
-    if data == "\x1b" { return Some("escape".to_string()); }
-    if data == "\x1c" { return Some("ctrl+\\".to_string()); }
-    if data == "\x1d" { return Some("ctrl+]".to_string()); }
-    if data == "\x1f" { return Some("ctrl+-".to_string()); }
-    if data == "\x1b\x1b" { return Some("ctrl+alt+[".to_string()); }
-    if data == "\x1b\x1c" { return Some("ctrl+alt+\\".to_string()); }
-    if data == "\x1b\x1d" { return Some("ctrl+alt+]".to_string()); }
-    if data == "\x1b\x1f" { return Some("ctrl+alt+-".to_string()); }
-    if data == "\t" { return Some("tab".to_string()); }
+    if data == "\x1b" {
+        return Some("escape".to_string());
+    }
+    if data == "\x1c" {
+        return Some("ctrl+\\".to_string());
+    }
+    if data == "\x1d" {
+        return Some("ctrl+]".to_string());
+    }
+    if data == "\x1f" {
+        return Some("ctrl+-".to_string());
+    }
+    if data == "\x1b\x1b" {
+        return Some("ctrl+alt+[".to_string());
+    }
+    if data == "\x1b\x1c" {
+        return Some("ctrl+alt+\\".to_string());
+    }
+    if data == "\x1b\x1d" {
+        return Some("ctrl+alt+]".to_string());
+    }
+    if data == "\x1b\x1f" {
+        return Some("ctrl+alt+-".to_string());
+    }
+    if data == "\t" {
+        return Some("tab".to_string());
+    }
     if data == "\r" || (!kitty && data == "\n") || data == "\x1bOM" {
         return Some("enter".to_string());
     }
-    if data == "\x00" { return Some("ctrl+space".to_string()); }
-    if data == " " { return Some("space".to_string()); }
-    if data == "\x7f" { return Some("backspace".to_string()); }
+    if data == "\x00" {
+        return Some("ctrl+space".to_string());
+    }
+    if data == " " {
+        return Some("space".to_string());
+    }
+    if data == "\x7f" {
+        return Some("backspace".to_string());
+    }
     if data == "\x08" {
         return Some(if is_windows_terminal_session() {
             "ctrl+backspace".to_string()
@@ -1022,12 +1071,24 @@ pub fn parse_key(data: &str) -> Option<String> {
             "backspace".to_string()
         });
     }
-    if data == "\x1b[Z" { return Some("shift+tab".to_string()); }
-    if !kitty && data == "\x1b\r" { return Some("alt+enter".to_string()); }
-    if !kitty && data == "\x1b " { return Some("alt+space".to_string()); }
-    if data == "\x1b\x7f" || data == "\x1b\x08" { return Some("alt+backspace".to_string()); }
-    if !kitty && data == "\x1bB" { return Some("alt+left".to_string()); }
-    if !kitty && data == "\x1bF" { return Some("alt+right".to_string()); }
+    if data == "\x1b[Z" {
+        return Some("shift+tab".to_string());
+    }
+    if !kitty && data == "\x1b\r" {
+        return Some("alt+enter".to_string());
+    }
+    if !kitty && data == "\x1b " {
+        return Some("alt+space".to_string());
+    }
+    if data == "\x1b\x7f" || data == "\x1b\x08" {
+        return Some("alt+backspace".to_string());
+    }
+    if !kitty && data == "\x1bB" {
+        return Some("alt+left".to_string());
+    }
+    if !kitty && data == "\x1bF" {
+        return Some("alt+right".to_string());
+    }
 
     if !kitty && data.len() == 2 && data.starts_with('\x1b') {
         let code = data.as_bytes()[1] as u32;
@@ -1039,15 +1100,33 @@ pub fn parse_key(data: &str) -> Option<String> {
         }
     }
 
-    if data == "\x1b[A" { return Some("up".to_string()); }
-    if data == "\x1b[B" { return Some("down".to_string()); }
-    if data == "\x1b[C" { return Some("right".to_string()); }
-    if data == "\x1b[D" { return Some("left".to_string()); }
-    if data == "\x1b[H" || data == "\x1bOH" { return Some("home".to_string()); }
-    if data == "\x1b[F" || data == "\x1bOF" { return Some("end".to_string()); }
-    if data == "\x1b[3~" { return Some("delete".to_string()); }
-    if data == "\x1b[5~" { return Some("pageUp".to_string()); }
-    if data == "\x1b[6~" { return Some("pageDown".to_string()); }
+    if data == "\x1b[A" {
+        return Some("up".to_string());
+    }
+    if data == "\x1b[B" {
+        return Some("down".to_string());
+    }
+    if data == "\x1b[C" {
+        return Some("right".to_string());
+    }
+    if data == "\x1b[D" {
+        return Some("left".to_string());
+    }
+    if data == "\x1b[H" || data == "\x1bOH" {
+        return Some("home".to_string());
+    }
+    if data == "\x1b[F" || data == "\x1bOF" {
+        return Some("end".to_string());
+    }
+    if data == "\x1b[3~" {
+        return Some("delete".to_string());
+    }
+    if data == "\x1b[5~" {
+        return Some("pageUp".to_string());
+    }
+    if data == "\x1b[6~" {
+        return Some("pageDown".to_string());
+    }
 
     // Raw Ctrl+letter
     if data.len() == 1 {
@@ -1063,46 +1142,65 @@ pub fn parse_key(data: &str) -> Option<String> {
     None
 }
 
-fn format_parsed_key(codepoint: i32, modifier: u32, base_layout_key: Option<i32>) -> Option<String> {
+fn format_parsed_key(
+    codepoint: i32,
+    modifier: u32,
+    base_layout_key: Option<i32>,
+) -> Option<String> {
     let is_latin = (97..=122).contains(&codepoint);
     let is_digit = (48..=57).contains(&codepoint);
-    let is_known_symbol = codepoint >= 0
-        && symbol_keys().contains(&char::from_u32(codepoint as u32).unwrap_or('\0'));
+    let is_known_symbol =
+        codepoint >= 0 && symbol_keys().contains(&char::from_u32(codepoint as u32).unwrap_or('\0'));
     let effective_cp = if is_latin || is_digit || is_known_symbol {
         codepoint
     } else {
         base_layout_key.unwrap_or(codepoint)
     };
 
-    let key_name = if effective_cp == CP_ESCAPE { "escape" }
-        else if effective_cp == CP_TAB { "tab" }
-        else if effective_cp == CP_ENTER || effective_cp == CP_KP_ENTER { "enter" }
-        else if effective_cp == CP_SPACE { "space" }
-        else if effective_cp == CP_BACKSPACE { "backspace" }
-        else if effective_cp == CP_DELETE { "delete" }
-        else if effective_cp == CP_INSERT { "insert" }
-        else if effective_cp == CP_HOME { "home" }
-        else if effective_cp == CP_END { "end" }
-        else if effective_cp == CP_PAGE_UP { "pageUp" }
-        else if effective_cp == CP_PAGE_DOWN { "pageDown" }
-        else if effective_cp == CP_ARROW_UP { "up" }
-        else if effective_cp == CP_ARROW_DOWN { "down" }
-        else if effective_cp == CP_ARROW_LEFT { "left" }
-        else if effective_cp == CP_ARROW_RIGHT { "right" }
-        else {
-            // For printable chars, return with modifiers computed inline
-            if effective_cp >= 0 {
-                if let Some(ch) = char::from_u32(effective_cp as u32) {
-                    let is_printable = (is_latin || is_digit || is_known_symbol)
-                        && (48..=126).contains(&effective_cp);
-                    if is_printable {
-                        let key_str = ch.to_string();
-                        return format_key_name_with_modifiers(&key_str, modifier);
-                    }
+    let key_name = if effective_cp == CP_ESCAPE {
+        "escape"
+    } else if effective_cp == CP_TAB {
+        "tab"
+    } else if effective_cp == CP_ENTER || effective_cp == CP_KP_ENTER {
+        "enter"
+    } else if effective_cp == CP_SPACE {
+        "space"
+    } else if effective_cp == CP_BACKSPACE {
+        "backspace"
+    } else if effective_cp == CP_DELETE {
+        "delete"
+    } else if effective_cp == CP_INSERT {
+        "insert"
+    } else if effective_cp == CP_HOME {
+        "home"
+    } else if effective_cp == CP_END {
+        "end"
+    } else if effective_cp == CP_PAGE_UP {
+        "pageUp"
+    } else if effective_cp == CP_PAGE_DOWN {
+        "pageDown"
+    } else if effective_cp == CP_ARROW_UP {
+        "up"
+    } else if effective_cp == CP_ARROW_DOWN {
+        "down"
+    } else if effective_cp == CP_ARROW_LEFT {
+        "left"
+    } else if effective_cp == CP_ARROW_RIGHT {
+        "right"
+    } else {
+        // For printable chars, return with modifiers computed inline
+        if effective_cp >= 0 {
+            if let Some(ch) = char::from_u32(effective_cp as u32) {
+                let is_printable =
+                    (is_latin || is_digit || is_known_symbol) && (48..=126).contains(&effective_cp);
+                if is_printable {
+                    let key_str = ch.to_string();
+                    return format_key_name_with_modifiers(&key_str, modifier);
                 }
             }
-            return None;
-        };
+        }
+        return None;
+    };
 
     format_key_name_with_modifiers(key_name, modifier)
 }
@@ -1118,17 +1216,22 @@ const KITTY_PRINTABLE_ALLOWED_MODIFIERS: u32 = MOD_SHIFT | LOCK_MASK;
 /// When Kitty keyboard protocol flag 1 is active, terminals send CSI-u sequences
 /// for all keys, including plain printable characters.
 pub fn decode_kitty_printable(data: &str) -> Option<char> {
-    let re = regex::Regex::new(
-        r"^\x1b\[(\d+)(?::(\d*))?(?::(\d+))?(?:;(\d+))?(?::(\d+))?u$",
-    )
-    .unwrap();
+    let re =
+        regex::Regex::new(r"^\x1b\[(\d+)(?::(\d*))?(?::(\d+))?(?:;(\d+))?(?::(\d+))?u$").unwrap();
     let caps = re.captures(data)?;
 
     let codepoint = caps[1].parse::<u32>().ok()?;
-    let shifted_key = caps
-        .get(2)
-        .and_then(|m| if m.as_str().is_empty() { None } else { m.as_str().parse::<u32>().ok() });
-    let mod_value = caps.get(4).and_then(|m| m.as_str().parse::<u32>().ok()).unwrap_or(1);
+    let shifted_key = caps.get(2).and_then(|m| {
+        if m.as_str().is_empty() {
+            None
+        } else {
+            m.as_str().parse::<u32>().ok()
+        }
+    });
+    let mod_value = caps
+        .get(4)
+        .and_then(|m| m.as_str().parse::<u32>().ok())
+        .unwrap_or(1);
     let modifier = mod_value.saturating_sub(1);
 
     // Only accept plain or Shift-modified
@@ -1399,8 +1502,14 @@ mod tests {
         assert!(matches_key("\x1b[27;5;127~", "ctrl+backspace"));
         assert!(matches_key("\x1b[27;3;127~", "alt+backspace"));
         assert_eq!(parse_key("\x1b[27;1;127~"), Some("backspace".to_string()));
-        assert_eq!(parse_key("\x1b[27;5;127~"), Some("ctrl+backspace".to_string()));
-        assert_eq!(parse_key("\x1b[27;3;127~"), Some("alt+backspace".to_string()));
+        assert_eq!(
+            parse_key("\x1b[27;5;127~"),
+            Some("ctrl+backspace".to_string())
+        );
+        assert_eq!(
+            parse_key("\x1b[27;3;127~"),
+            Some("alt+backspace".to_string())
+        );
     }
 
     #[test]

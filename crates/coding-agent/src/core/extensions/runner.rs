@@ -42,9 +42,7 @@ const RESERVED_KEYBINDINGS: &[&str] = &[
 // ============================================================================
 
 /// A boxed handler that takes (event_json, context_snapshot) and returns an optional result JSON.
-pub type HandlerFn = Box<
-    dyn Fn(&Value, &ExtensionContextSnapshot) -> Option<Value> + Send + Sync,
->;
+pub type HandlerFn = Box<dyn Fn(&Value, &ExtensionContextSnapshot) -> Option<Value> + Send + Sync>;
 
 // ============================================================================
 // Extension Shortcut (simplified — no TUI KeyId in Rust)
@@ -368,11 +366,7 @@ impl ExtensionRunner {
     }
 
     /// Emit `resources_discover` event and collect paths from all handlers.
-    pub fn emit_resources_discover(
-        &self,
-        cwd: &str,
-        reason: &str,
-    ) -> ResourcesDiscoverResult {
+    pub fn emit_resources_discover(&self, cwd: &str, reason: &str) -> ResourcesDiscoverResult {
         let event = serde_json::json!({
             "type": "resources_discover",
             "cwd": cwd,
@@ -417,11 +411,7 @@ impl ExtensionRunner {
     }
 
     /// Emit `input` event. Returns the final text after all transforms.
-    pub fn emit_input(
-        &self,
-        text: &str,
-        source: InputSource,
-    ) -> InputEventResult {
+    pub fn emit_input(&self, text: &str, source: InputSource) -> InputEventResult {
         let ctx = self.create_context_snapshot();
         let mut current_text = text.to_string();
 
@@ -463,7 +453,11 @@ impl ExtensionRunner {
     // Session before events (can cancel)
     // =========================================================================
 
-    pub fn emit_session_before_switch(&self, reason: &str, target: Option<&str>) -> SessionBeforeSwitchResult {
+    pub fn emit_session_before_switch(
+        &self,
+        reason: &str,
+        target: Option<&str>,
+    ) -> SessionBeforeSwitchResult {
         let event = serde_json::json!({
             "type": "session_before_switch",
             "reason": reason,
@@ -496,7 +490,10 @@ impl ExtensionRunner {
         SessionBeforeForkResult::default()
     }
 
-    pub fn emit_session_before_compact(&self, custom_instructions: Option<&str>) -> SessionBeforeCompactResult {
+    pub fn emit_session_before_compact(
+        &self,
+        custom_instructions: Option<&str>,
+    ) -> SessionBeforeCompactResult {
         let event = serde_json::json!({
             "type": "session_before_compact",
             "customInstructions": custom_instructions,

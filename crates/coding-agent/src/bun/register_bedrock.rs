@@ -43,9 +43,14 @@ impl fmt::Display for CredentialError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CredentialError::NotFound => {
-                write!(f, "no AWS credentials found in environment or credential files")
+                write!(
+                    f,
+                    "no AWS credentials found in environment or credential files"
+                )
             }
-            CredentialError::MalformedFile(msg) => write!(f, "malformed AWS credential file: {msg}"),
+            CredentialError::MalformedFile(msg) => {
+                write!(f, "malformed AWS credential file: {msg}")
+            }
             CredentialError::ProfileNotFound(p) => {
                 write!(f, "AWS profile \"{p}\" not found in credentials or config")
             }
@@ -74,7 +79,10 @@ pub fn discover_aws_credentials() -> Result<AwsCredentials, CredentialError> {
     let profile = active_profile();
 
     // 1. Environment variables
-    if let (Some(key), Some(secret)) = (env_nonempty("AWS_ACCESS_KEY_ID"), env_nonempty("AWS_SECRET_ACCESS_KEY")) {
+    if let (Some(key), Some(secret)) = (
+        env_nonempty("AWS_ACCESS_KEY_ID"),
+        env_nonempty("AWS_SECRET_ACCESS_KEY"),
+    ) {
         let token = env_nonempty("AWS_SESSION_TOKEN");
         let region = resolve_region(&profile);
         return Ok(AwsCredentials {
@@ -244,7 +252,8 @@ mod tests {
 
     #[test]
     fn parses_default_profile() {
-        let ini = "[default]\naws_access_key_id = AKIADEFAULT\naws_secret_access_key = secretDEFAULT\n";
+        let ini =
+            "[default]\naws_access_key_id = AKIADEFAULT\naws_secret_access_key = secretDEFAULT\n";
         let result = parse_credentials_file(ini, "default");
         assert!(result.is_some());
         let (key, secret, token) = result.unwrap();
@@ -272,7 +281,8 @@ mod tests {
 
     #[test]
     fn parses_session_token() {
-        let ini = "[default]\naws_access_key_id = K\naws_secret_access_key = S\naws_session_token = T\n";
+        let ini =
+            "[default]\naws_access_key_id = K\naws_secret_access_key = S\naws_session_token = T\n";
         let (_, _, token) = parse_credentials_file(ini, "default").unwrap();
         assert_eq!(token.as_deref(), Some("T"));
     }
@@ -289,13 +299,19 @@ mod tests {
     #[test]
     fn parses_default_region() {
         let ini = "[default]\nregion = ap-southeast-1\noutput = json\n";
-        assert_eq!(parse_config_region(ini, "default").as_deref(), Some("ap-southeast-1"));
+        assert_eq!(
+            parse_config_region(ini, "default").as_deref(),
+            Some("ap-southeast-1")
+        );
     }
 
     #[test]
     fn parses_named_profile_region() {
         let ini = "[default]\nregion = us-east-1\n\n[profile prod]\nregion = eu-west-1\n";
-        assert_eq!(parse_config_region(ini, "prod").as_deref(), Some("eu-west-1"));
+        assert_eq!(
+            parse_config_region(ini, "prod").as_deref(),
+            Some("eu-west-1")
+        );
     }
 
     #[test]

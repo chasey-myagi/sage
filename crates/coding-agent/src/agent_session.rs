@@ -10,7 +10,7 @@ use std::sync::Arc;
 use agent_core::agent::{Agent, AgentOptions};
 use agent_core::agent_loop::LlmProvider;
 use agent_core::tools::backend::LocalBackend;
-use agent_core::tools::{create_tool, AgentTool as SimpleTool, ToolOutput};
+use agent_core::tools::{AgentTool as SimpleTool, ToolOutput, create_tool};
 use agent_core::types::{AgentToolResult, Content, OnUpdateFn};
 use ai::registry::{ApiProviderRegistry, StreamOptions};
 use ai::types::{AssistantMessageEvent, InputType, Model, ModelCost};
@@ -142,15 +142,16 @@ fn build_model(provider_id: Option<&str>, model_id: Option<&str>) -> anyhow::Res
 
 /// Create the default coding-agent tools backed by the local filesystem,
 /// wrapped as `types::AgentTool` for use with `Agent`.
-fn create_default_tools(
-    backend: Arc<LocalBackend>,
-) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
+fn create_default_tools(backend: Arc<LocalBackend>) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
     ["bash", "read", "write", "edit", "grep", "find", "ls"]
         .iter()
-        .filter_map(|name| create_tool(name, Arc::clone(&backend) as Arc<dyn agent_core::tools::backend::ToolBackend>))
-        .map(|t| -> Arc<dyn agent_core::types::AgentTool> {
-            Arc::new(ToolAdapter::new(t))
+        .filter_map(|name| {
+            create_tool(
+                name,
+                Arc::clone(&backend) as Arc<dyn agent_core::tools::backend::ToolBackend>,
+            )
         })
+        .map(|t| -> Arc<dyn agent_core::types::AgentTool> { Arc::new(ToolAdapter::new(t)) })
         .collect()
 }
 
@@ -230,7 +231,10 @@ pub async fn run_agent_session(
     });
 
     // 6. Send the message and wait.
-    agent.prompt_text(message).await.map_err(|e| anyhow::anyhow!(e))?;
+    agent
+        .prompt_text(message)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
 
     Ok(())
 }

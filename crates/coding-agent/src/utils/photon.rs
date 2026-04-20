@@ -61,9 +61,11 @@ impl PhotonImage {
     /// constructor takes (raw_pixels, width, height) despite the TypeScript
     /// call passing (dst, newH, newW) after a rotate where the dimensions swap.
     pub fn from_raw_rgba(pixels: Vec<u8>, width: u32, height: u32) -> Self {
-        let buf = image::RgbaImage::from_raw(width, height, pixels)
-            .expect("pixel buffer size mismatch");
-        Self { inner: DynamicImage::ImageRgba8(buf) }
+        let buf =
+            image::RgbaImage::from_raw(width, height, pixels).expect("pixel buffer size mismatch");
+        Self {
+            inner: DynamicImage::ImageRgba8(buf),
+        }
     }
 
     pub fn inner(&self) -> &DynamicImage {

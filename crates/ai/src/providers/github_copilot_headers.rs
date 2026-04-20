@@ -49,10 +49,19 @@ pub fn has_copilot_vision_input(messages: &[LlmMessage]) -> bool {
 ///
 /// Conditionally sets:
 /// - `Copilot-Vision-Request`: `"true"` when `has_images` is true
-pub fn build_copilot_dynamic_headers(messages: &[LlmMessage], has_images: bool) -> Vec<(String, String)> {
+pub fn build_copilot_dynamic_headers(
+    messages: &[LlmMessage],
+    has_images: bool,
+) -> Vec<(String, String)> {
     let mut headers = vec![
-        ("X-Initiator".to_string(), infer_copilot_initiator(messages).to_string()),
-        ("Openai-Intent".to_string(), "conversation-edits".to_string()),
+        (
+            "X-Initiator".to_string(),
+            infer_copilot_initiator(messages).to_string(),
+        ),
+        (
+            "Openai-Intent".to_string(),
+            "conversation-edits".to_string(),
+        ),
     ];
 
     if has_images {
@@ -132,8 +141,10 @@ mod tests {
         }];
         let headers = build_copilot_dynamic_headers(&messages, false);
 
-        let header_map: std::collections::HashMap<&str, &str> =
-            headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let header_map: std::collections::HashMap<&str, &str> = headers
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
 
         assert_eq!(header_map.get("X-Initiator"), Some(&"user"));
         assert_eq!(header_map.get("Openai-Intent"), Some(&"conversation-edits"));
@@ -149,8 +160,10 @@ mod tests {
         }];
         let headers = build_copilot_dynamic_headers(&messages, true);
 
-        let header_map: std::collections::HashMap<&str, &str> =
-            headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let header_map: std::collections::HashMap<&str, &str> = headers
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
 
         assert_eq!(header_map.get("Copilot-Vision-Request"), Some(&"true"));
     }

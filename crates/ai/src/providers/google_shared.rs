@@ -215,7 +215,10 @@ mod tests {
 
     #[test]
     fn test_retain_thought_signature_incoming_non_empty() {
-        assert_eq!(retain_thought_signature(Some("old"), Some("new")), Some("new"));
+        assert_eq!(
+            retain_thought_signature(Some("old"), Some("new")),
+            Some("new")
+        );
     }
 
     #[test]

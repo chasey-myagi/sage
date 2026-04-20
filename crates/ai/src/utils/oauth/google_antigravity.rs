@@ -6,12 +6,12 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use serde::Deserialize;
-use tokio::sync::oneshot;
 use super::oauth_page::{oauth_error_html, oauth_success_html};
 use super::pkce::generate_pkce;
 use super::types::{OAuthAuthInfo, OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface};
+use async_trait::async_trait;
+use serde::Deserialize;
+use tokio::sync::oneshot;
 
 // Antigravity OAuth credentials — obtain from Google Cloud Console and set at build time.
 // Override via GOOGLE_ANTIGRAVITY_CLIENT_ID / GOOGLE_ANTIGRAVITY_CLIENT_SECRET env vars.
@@ -70,7 +70,8 @@ impl CallbackServer {
 
 async fn start_callback_server() -> anyhow::Result<CallbackServer> {
     let addr: SocketAddr = "127.0.0.1:51121".parse().unwrap();
-    let listener = tokio::net::TcpListener::bind(addr).await
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to bind port 51121: {e}"))?;
 
     let (code_tx, code_rx) = oneshot::channel::<Option<(String, String)>>();
@@ -114,7 +115,9 @@ async fn start_callback_server() -> anyhow::Result<CallbackServer> {
     });
 
     let shutdown_arc = Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
-    let cancel_arc = Arc::new(tokio::sync::Mutex::new(Option::<oneshot::Sender<Option<(String, String)>>>::None));
+    let cancel_arc = Arc::new(tokio::sync::Mutex::new(
+        Option::<oneshot::Sender<Option<(String, String)>>>::None,
+    ));
 
     // We re-use code_tx as our cancel mechanism: sending None cancels waiting
     Ok(CallbackServer {
@@ -131,11 +134,19 @@ async fn handle_callback(
     let fake_url = format!("http://localhost{path_and_query}");
     let url = match url::Url::parse(&fake_url) {
         Ok(u) => u,
-        Err(_) => return ("404 Not Found", oauth_error_html("Callback route not found.", None)),
+        Err(_) => {
+            return (
+                "404 Not Found",
+                oauth_error_html("Callback route not found.", None),
+            );
+        }
     };
 
     if url.path() != "/oauth-callback" {
-        return ("404 Not Found", oauth_error_html("Callback route not found.", None));
+        return (
+            "404 Not Found",
+            oauth_error_html("Callback route not found.", None),
+        );
     }
 
     let params: std::collections::HashMap<_, _> = url.query_pairs().collect();
@@ -161,7 +172,10 @@ async fn handle_callback(
                 oauth_success_html("Google authentication completed. You can close this window."),
             )
         }
-        _ => ("400 Bad Request", oauth_error_html("Missing code or state parameter.", None)),
+        _ => (
+            "400 Bad Request",
+            oauth_error_html("Missing code or state parameter.", None),
+        ),
     }
 }
 
@@ -207,9 +221,20 @@ async fn discover_project(access_token: &str) -> (String, bool) {
             reqwest::header::AUTHORIZATION,
             format!("Bearer {access_token}").parse().unwrap(),
         );
-        h.insert(reqwest::header::CONTENT_TYPE, "application/json".parse().unwrap());
-        h.insert("User-Agent", "google-api-nodejs-client/9.15.1".parse().unwrap());
-        h.insert("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1".parse().unwrap());
+        h.insert(
+            reqwest::header::CONTENT_TYPE,
+            "application/json".parse().unwrap(),
+        );
+        h.insert(
+            "User-Agent",
+            "google-api-nodejs-client/9.15.1".parse().unwrap(),
+        );
+        h.insert(
+            "X-Goog-Api-Client",
+            "google-cloud-sdk vscode_cloudshelleditor/0.1"
+                .parse()
+                .unwrap(),
+        );
         h.insert(
             "Client-Metadata",
             serde_json::json!({
@@ -240,7 +265,13 @@ async fn discover_project(access_token: &str) -> (String, bool) {
 
     for endpoint in &endpoints {
         let url = format!("{endpoint}/v1internal:loadCodeAssist");
-        match client.post(&url).headers(headers.clone()).json(&body).send().await {
+        match client
+            .post(&url)
+            .headers(headers.clone())
+            .json(&body)
+            .send()
+            .await
+        {
             Ok(resp) if resp.status().is_success() => {
                 if let Ok(data) = resp.json::<LoadCodeAssistPayload>().await {
                     match data.cloudaicompanion_project {
@@ -291,7 +322,10 @@ async fn get_user_email(access_token: &str) -> Option<String> {
 /// Refresh an Antigravity access token.
 ///
 /// Mirrors `refreshAntigravityToken()` from `google-antigravity.ts`.
-pub async fn refresh_antigravity_token(refresh_token: &str, project_id: &str) -> anyhow::Result<OAuthCredentials> {
+pub async fn refresh_antigravity_token(
+    refresh_token: &str,
+    project_id: &str,
+) -> anyhow::Result<OAuthCredentials> {
     let client = reqwest::Client::new();
     let response = client
         .post(TOKEN_URL)
@@ -326,8 +360,10 @@ pub async fn refresh_antigravity_token(refresh_token: &str, project_id: &str) ->
     let expires = now_ms + data.expires_in * 1000 - 5 * 60 * 1000;
     let new_refresh = data.refresh_token.as_deref().unwrap_or(refresh_token);
 
-    Ok(OAuthCredentials::new(new_refresh, &data.access_token, expires)
-        .with_extra("projectId", project_id))
+    Ok(
+        OAuthCredentials::new(new_refresh, &data.access_token, expires)
+            .with_extra("projectId", project_id),
+    )
 }
 
 /// Full login flow for Antigravity OAuth.
@@ -336,7 +372,9 @@ pub async fn refresh_antigravity_token(refresh_token: &str, project_id: &str) ->
 pub async fn login_antigravity(
     on_auth: impl Fn(OAuthAuthInfo),
     on_progress: Option<impl Fn(String)>,
-    on_manual_code_input: Option<impl Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>>,
+    on_manual_code_input: Option<
+        impl Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>,
+    >,
 ) -> anyhow::Result<OAuthCredentials> {
     let pkce = generate_pkce();
     let progress = |msg: &str| {
@@ -374,10 +412,8 @@ pub async fn login_antigravity(
 
     if let Some(ref manual_fn) = on_manual_code_input {
         let manual_future = manual_fn();
-        let (manual_res, server_res) = tokio::join!(
-            async { Some(manual_future.await) },
-            server.wait_for_code(),
-        );
+        let (manual_res, server_res) =
+            tokio::join!(async { Some(manual_future.await) }, server.wait_for_code(),);
 
         if let Some((browser_code, browser_state)) = server_res {
             if browser_state != state {
@@ -496,13 +532,19 @@ impl OAuthProviderInterface for AntigravityOAuthProvider {
     async fn login(&self, callbacks: OAuthLoginCallbacks) -> anyhow::Result<OAuthCredentials> {
         login_antigravity(
             |info| (callbacks.on_auth)(info),
-            callbacks.on_progress.as_ref().map(|f| move |msg: String| f(msg)),
+            callbacks
+                .on_progress
+                .as_ref()
+                .map(|f| move |msg: String| f(msg)),
             callbacks.on_manual_code_input.as_ref().map(|f| move || f()),
         )
         .await
     }
 
-    async fn refresh_token(&self, credentials: &OAuthCredentials) -> anyhow::Result<OAuthCredentials> {
+    async fn refresh_token(
+        &self,
+        credentials: &OAuthCredentials,
+    ) -> anyhow::Result<OAuthCredentials> {
         let project_id = credentials
             .extra_str("projectId")
             .ok_or_else(|| anyhow::anyhow!("Antigravity credentials missing projectId"))?

@@ -159,44 +159,40 @@ impl TextStyle {
                     self.fg = Some(ANSI_COLORS[(c - 30) as usize].to_string());
                 }
                 // Extended foreground colour
-                38 if params.len() > i + 1 => {
-                    match params[i + 1] {
-                        5 if params.len() > i + 2 => {
-                            self.fg = Some(color256_to_hex(params[i + 2] as u8));
-                            i += 2;
-                        }
-                        2 if params.len() > i + 4 => {
-                            let r = params[i + 2];
-                            let g = params[i + 3];
-                            let b = params[i + 4];
-                            self.fg = Some(format!("rgb({r},{g},{b})"));
-                            i += 4;
-                        }
-                        _ => {}
+                38 if params.len() > i + 1 => match params[i + 1] {
+                    5 if params.len() > i + 2 => {
+                        self.fg = Some(color256_to_hex(params[i + 2] as u8));
+                        i += 2;
                     }
-                }
+                    2 if params.len() > i + 4 => {
+                        let r = params[i + 2];
+                        let g = params[i + 3];
+                        let b = params[i + 4];
+                        self.fg = Some(format!("rgb({r},{g},{b})"));
+                        i += 4;
+                    }
+                    _ => {}
+                },
                 39 => self.fg = None,
                 // Standard background colours
                 c @ 40..=47 => {
                     self.bg = Some(ANSI_COLORS[(c - 40) as usize].to_string());
                 }
                 // Extended background colour
-                48 if params.len() > i + 1 => {
-                    match params[i + 1] {
-                        5 if params.len() > i + 2 => {
-                            self.bg = Some(color256_to_hex(params[i + 2] as u8));
-                            i += 2;
-                        }
-                        2 if params.len() > i + 4 => {
-                            let r = params[i + 2];
-                            let g = params[i + 3];
-                            let b = params[i + 4];
-                            self.bg = Some(format!("rgb({r},{g},{b})"));
-                            i += 4;
-                        }
-                        _ => {}
+                48 if params.len() > i + 1 => match params[i + 1] {
+                    5 if params.len() > i + 2 => {
+                        self.bg = Some(color256_to_hex(params[i + 2] as u8));
+                        i += 2;
                     }
-                }
+                    2 if params.len() > i + 4 => {
+                        let r = params[i + 2];
+                        let g = params[i + 3];
+                        let b = params[i + 4];
+                        self.bg = Some(format!("rgb({r},{g},{b})"));
+                        i += 4;
+                    }
+                    _ => {}
+                },
                 49 => self.bg = None,
                 // Bright foreground colours
                 c @ 90..=97 => {

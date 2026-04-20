@@ -28,7 +28,10 @@ pub fn truncate_to_visual_lines(
     padding_x: usize,
 ) -> VisualTruncateResult {
     if text.is_empty() {
-        return VisualTruncateResult { visual_lines: vec![], skipped_count: 0 };
+        return VisualTruncateResult {
+            visual_lines: vec![],
+            skipped_count: 0,
+        };
     }
 
     let effective_width = (width as usize).saturating_sub(padding_x * 2).max(1);
@@ -45,13 +48,19 @@ pub fn truncate_to_visual_lines(
     }
 
     if all_visual.len() <= max_visual_lines {
-        return VisualTruncateResult { visual_lines: all_visual, skipped_count: 0 };
+        return VisualTruncateResult {
+            visual_lines: all_visual,
+            skipped_count: 0,
+        };
     }
 
     let skipped_count = all_visual.len() - max_visual_lines;
     let visual_lines = all_visual[skipped_count..].to_vec();
 
-    VisualTruncateResult { visual_lines, skipped_count }
+    VisualTruncateResult {
+        visual_lines,
+        skipped_count,
+    }
 }
 
 /// Wrap a single line at `max_width` visible columns.
@@ -102,7 +111,10 @@ mod tests {
     #[test]
     fn long_text_truncated_from_start() {
         // 10 lines, max 3
-        let text: String = (0..10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let text: String = (0..10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let r = truncate_to_visual_lines(&text, 3, 80, 0);
         assert_eq!(r.visual_lines.len(), 3);
         assert_eq!(r.skipped_count, 7);

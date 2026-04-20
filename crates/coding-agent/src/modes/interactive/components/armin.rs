@@ -6,7 +6,7 @@
 
 use tui::tui::Component;
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor};
+use crate::modes::interactive::theme::{ThemeColor, get_theme};
 
 const WIDTH: usize = 31;
 const HEIGHT: usize = 36;

@@ -121,8 +121,7 @@ impl ThinkingSelectorComponent {
     /// Move selection down.
     pub fn select_down(&mut self) {
         if !self.available_levels.is_empty() {
-            self.selected_index =
-                (self.selected_index + 1).min(self.available_levels.len() - 1);
+            self.selected_index = (self.selected_index + 1).min(self.available_levels.len() - 1);
         }
     }
 
@@ -178,7 +177,11 @@ mod tests {
 
     #[test]
     fn initial_selection_matches_current() {
-        let available = vec![ThinkingLevel::Low, ThinkingLevel::Medium, ThinkingLevel::High];
+        let available = vec![
+            ThinkingLevel::Low,
+            ThinkingLevel::Medium,
+            ThinkingLevel::High,
+        ];
         let sel = ThinkingSelectorComponent::new(ThinkingLevel::Medium, available);
         assert_eq!(sel.selected_index, 1);
         assert_eq!(sel.selected_level(), Some(ThinkingLevel::Medium));

@@ -17,8 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const DEFAULT_ENDPOINT: &str = "https://cloudcode-pa.googleapis.com";
 const ANTIGRAVITY_DAILY_ENDPOINT: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
 const ANTIGRAVITY_AUTOPUSH_ENDPOINT: &str = "https://autopush-cloudcode-pa.sandbox.googleapis.com";
-const ANTIGRAVITY_SYSTEM_INSTRUCTION: &str =
-    "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\
+const ANTIGRAVITY_SYSTEM_INSTRUCTION: &str = "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\
 You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.\
 **Absolute paths only**\
 **Proactiveness**";
@@ -98,9 +97,7 @@ fn get_disabled_thinking_config(model_id: &str) -> Value {
 }
 
 fn needs_claude_thinking_beta_header(model: &Model) -> bool {
-    model.provider == "google-antigravity"
-        && model.id.starts_with("claude-")
-        && model.reasoning
+    model.provider == "google-antigravity" && model.id.starts_with("claude-") && model.reasoning
 }
 
 // ---------------------------------------------------------------------------
@@ -154,8 +151,7 @@ fn get_antigravity_headers() -> Vec<(String, String)> {
 // ---------------------------------------------------------------------------
 
 fn is_retryable_error(status: u16, error_text: &str) -> bool {
-    matches!(status, 429 | 500 | 502 | 503 | 504)
-        || regex_match_retryable(error_text)
+    matches!(status, 429 | 500 | 502 | 503 | 504) || regex_match_retryable(error_text)
 }
 
 fn regex_match_retryable(text: &str) -> bool {
@@ -358,7 +354,11 @@ pub fn build_request(
         });
     }
 
-    let user_agent = if is_antigravity { "antigravity" } else { "pi-coding-agent" };
+    let user_agent = if is_antigravity {
+        "antigravity"
+    } else {
+        "pi-coding-agent"
+    };
     let request_type_prefix = if is_antigravity { "agent" } else { "pi" };
     let random_suffix: String = {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -510,11 +510,26 @@ fn parse_cloud_code_sse_data(data: &str) -> Vec<AssistantMessageEvent> {
 
 fn parse_usage_metadata(response_data: &Value, events: &mut Vec<AssistantMessageEvent>) {
     if let Some(usage) = response_data.get("usageMetadata") {
-        let prompt_tokens = usage.get("promptTokenCount").and_then(|v| v.as_u64()).unwrap_or(0);
-        let cache_read = usage.get("cachedContentTokenCount").and_then(|v| v.as_u64()).unwrap_or(0);
-        let candidates_tokens = usage.get("candidatesTokenCount").and_then(|v| v.as_u64()).unwrap_or(0);
-        let thoughts_tokens = usage.get("thoughtsTokenCount").and_then(|v| v.as_u64()).unwrap_or(0);
-        let total_tokens = usage.get("totalTokenCount").and_then(|v| v.as_u64()).unwrap_or(0);
+        let prompt_tokens = usage
+            .get("promptTokenCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let cache_read = usage
+            .get("cachedContentTokenCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let candidates_tokens = usage
+            .get("candidatesTokenCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let thoughts_tokens = usage
+            .get("thoughtsTokenCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let total_tokens = usage
+            .get("totalTokenCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
 
         // pi-mono: input = promptTokenCount - cachedContentTokenCount (fresh tokens only)
         let input = prompt_tokens.saturating_sub(cache_read);
@@ -607,14 +622,20 @@ impl ApiProvider for GoogleGeminiCliProvider {
 
         // Build request headers
         let mut req_headers: Vec<(String, String)> = vec![
-            ("Authorization".to_string(), format!("Bearer {access_token}")),
+            (
+                "Authorization".to_string(),
+                format!("Bearer {access_token}"),
+            ),
             ("Content-Type".to_string(), "application/json".to_string()),
             ("Accept".to_string(), "text/event-stream".to_string()),
         ];
         req_headers.extend(headers);
 
         if needs_claude_thinking_beta_header(model) {
-            req_headers.push(("anthropic-beta".to_string(), CLAUDE_THINKING_BETA_HEADER.to_string()));
+            req_headers.push((
+                "anthropic-beta".to_string(),
+                CLAUDE_THINKING_BETA_HEADER.to_string(),
+            ));
         }
 
         // Model and per-request headers
@@ -630,7 +651,7 @@ impl ApiProvider for GoogleGeminiCliProvider {
             Err(e) => {
                 return vec![AssistantMessageEvent::Error(format!(
                     "Failed to serialize request: {e}"
-                ))]
+                ))];
             }
         };
 
@@ -700,7 +721,7 @@ impl ApiProvider for GoogleGeminiCliProvider {
             None => {
                 return vec![AssistantMessageEvent::Error(
                     last_error.unwrap_or_else(|| "Failed after retries".to_string()),
-                )]
+                )];
             }
         };
 
@@ -714,7 +735,9 @@ impl ApiProvider for GoogleGeminiCliProvider {
             let chunk = match chunk_result {
                 Ok(b) => b,
                 Err(e) => {
-                    events.push(AssistantMessageEvent::Error(format!("Stream read error: {e}")));
+                    events.push(AssistantMessageEvent::Error(format!(
+                        "Stream read error: {e}"
+                    )));
                     return events;
                 }
             };
@@ -876,17 +899,35 @@ mod tests {
 
     #[test]
     fn test_get_gemini_cli_thinking_level_flash() {
-        assert_eq!(get_gemini_cli_thinking_level(ReasoningLevel::Minimal, "gemini-3-flash"), "MINIMAL");
-        assert_eq!(get_gemini_cli_thinking_level(ReasoningLevel::Low, "gemini-3-flash"), "LOW");
-        assert_eq!(get_gemini_cli_thinking_level(ReasoningLevel::Medium, "gemini-3-flash"), "MEDIUM");
-        assert_eq!(get_gemini_cli_thinking_level(ReasoningLevel::High, "gemini-3-flash"), "HIGH");
+        assert_eq!(
+            get_gemini_cli_thinking_level(ReasoningLevel::Minimal, "gemini-3-flash"),
+            "MINIMAL"
+        );
+        assert_eq!(
+            get_gemini_cli_thinking_level(ReasoningLevel::Low, "gemini-3-flash"),
+            "LOW"
+        );
+        assert_eq!(
+            get_gemini_cli_thinking_level(ReasoningLevel::Medium, "gemini-3-flash"),
+            "MEDIUM"
+        );
+        assert_eq!(
+            get_gemini_cli_thinking_level(ReasoningLevel::High, "gemini-3-flash"),
+            "HIGH"
+        );
     }
 
     #[test]
     fn test_get_gemini_cli_thinking_level_pro() {
         // Pro: Minimal/Low → LOW, Medium/High → HIGH
-        assert_eq!(get_gemini_cli_thinking_level(ReasoningLevel::Minimal, "gemini-3-pro-exp"), "LOW");
-        assert_eq!(get_gemini_cli_thinking_level(ReasoningLevel::High, "gemini-3-pro-exp"), "HIGH");
+        assert_eq!(
+            get_gemini_cli_thinking_level(ReasoningLevel::Minimal, "gemini-3-pro-exp"),
+            "LOW"
+        );
+        assert_eq!(
+            get_gemini_cli_thinking_level(ReasoningLevel::High, "gemini-3-pro-exp"),
+            "HIGH"
+        );
     }
 
     #[test]

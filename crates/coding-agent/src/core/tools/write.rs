@@ -12,12 +12,14 @@ pub const TOOL_NAME: &str = "write";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tools::{all_tool_descriptors, ToolName};
+    use crate::core::tools::{ToolName, all_tool_descriptors};
 
     #[test]
     fn tool_name_constant_matches_enum() {
         let descs = all_tool_descriptors();
-        let desc = descs.get(&ToolName::Write).expect("write descriptor must exist");
+        let desc = descs
+            .get(&ToolName::Write)
+            .expect("write descriptor must exist");
         assert_eq!(desc.name.to_string(), TOOL_NAME);
     }
 
@@ -31,7 +33,9 @@ mod tests {
     fn write_description_mentions_overwrite() {
         let descs = all_tool_descriptors();
         let desc = descs[&ToolName::Write].description;
-        assert!(desc.contains("overwrites") || desc.contains("overwrite") || desc.contains("Creates"));
+        assert!(
+            desc.contains("overwrites") || desc.contains("overwrite") || desc.contains("Creates")
+        );
     }
 
     #[test]

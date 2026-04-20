@@ -1,5 +1,4 @@
 /// EditorComponent trait — interface for custom editor implementations.
-
 use crate::autocomplete::AutocompleteProvider;
 use crate::tui::Component;
 

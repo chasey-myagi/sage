@@ -15,7 +15,7 @@ pub const DEFAULT_LIMIT: usize = 500;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tools::{all_tool_descriptors, ToolName};
+    use crate::core::tools::{ToolName, all_tool_descriptors};
 
     #[test]
     fn tool_name_constant_matches_enum() {

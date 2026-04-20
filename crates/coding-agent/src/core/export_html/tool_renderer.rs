@@ -112,7 +112,10 @@ impl ToolHtmlRenderer {
         });
         let expanded = rendered.expanded.map(|lines| lines);
 
-        Some(RenderedToolResult { collapsed, expanded })
+        Some(RenderedToolResult {
+            collapsed,
+            expanded,
+        })
     }
 }
 
@@ -181,7 +184,11 @@ mod tests {
         ) -> Option<RenderedToolResult> {
             if name == "known" {
                 Some(RenderedToolResult {
-                    collapsed: Some(if is_error { "error".to_string() } else { "ok".to_string() }),
+                    collapsed: Some(if is_error {
+                        "error".to_string()
+                    } else {
+                        "ok".to_string()
+                    }),
                     expanded: Some("expanded".to_string()),
                 })
             } else {
@@ -234,7 +241,13 @@ mod tests {
     #[test]
     fn noop_renderer_always_returns_none() {
         let hr = ToolHtmlRenderer::new(Box::new(NoopToolRenderer));
-        assert!(hr.render_call("id", "bash", &serde_json::json!({})).is_none());
-        assert!(hr.render_result("id", "bash", &[], &serde_json::json!({}), false).is_none());
+        assert!(
+            hr.render_call("id", "bash", &serde_json::json!({}))
+                .is_none()
+        );
+        assert!(
+            hr.render_result("id", "bash", &[], &serde_json::json!({}), false)
+                .is_none()
+        );
     }
 }

@@ -113,8 +113,7 @@ mod tests {
     #[test]
     fn combines_stdin_file_text_and_first_message() {
         let mut messages = vec!["Explain it".to_string(), "Second message".to_string()];
-        let result =
-            build_initial_message(&mut messages, Some("file\n"), None, Some("stdin\n"));
+        let result = build_initial_message(&mut messages, Some("file\n"), None, Some("stdin\n"));
         assert_eq!(
             result.initial_message.as_deref(),
             Some("stdin\nfile\nExplain it")

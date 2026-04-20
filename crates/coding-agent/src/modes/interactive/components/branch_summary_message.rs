@@ -2,13 +2,13 @@
 //!
 //! Translated from `components/branch-summary-message.ts`.
 
-use tui::tui::{Component, Container};
+use tui::components::markdown::{DefaultTextStyle, Markdown, MarkdownTheme};
 use tui::components::spacer::Spacer;
 use tui::components::text::Text;
-use tui::components::markdown::{Markdown, MarkdownTheme, DefaultTextStyle};
+use tui::tui::{Component, Container};
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor};
 use crate::modes::interactive::components::keybinding_hints::key_text;
+use crate::modes::interactive::theme::{ThemeColor, get_theme};
 
 /// A branch summary message produced after branching.
 #[derive(Debug, Clone)]
@@ -25,7 +25,10 @@ pub struct BranchSummaryMessageComponent {
 
 impl BranchSummaryMessageComponent {
     pub fn new(message: BranchSummaryMessage) -> Self {
-        Self { message, expanded: false }
+        Self {
+            message,
+            expanded: false,
+        }
     }
 
     pub fn set_expanded(&mut self, expanded: bool) {
@@ -36,16 +39,46 @@ impl BranchSummaryMessageComponent {
 fn build_md_theme() -> MarkdownTheme {
     let t = get_theme();
     MarkdownTheme {
-        heading: Box::new({ let t2 = t.clone(); move |s: &str| t2.fg(ThemeColor::MdHeading, s) }),
-        link: Box::new({ let t2 = t.clone(); move |s: &str| t2.fg(ThemeColor::MdLink, s) }),
-        link_url: Box::new({ let t2 = t.clone(); move |s: &str| t2.fg(ThemeColor::MdLinkUrl, s) }),
-        code: Box::new({ let t2 = t.clone(); move |s: &str| t2.fg(ThemeColor::MdCode, s) }),
-        code_block: Box::new({ let t2 = t.clone(); move |s: &str| t2.fg(ThemeColor::MdCodeBlock, s) }),
-        code_block_border: Box::new({ let t2 = t.clone(); move |s: &str| t2.fg(ThemeColor::MdCodeBlockBorder, s) }),
-        quote: Box::new({ let t2 = t.clone(); move |s: &str| t2.fg(ThemeColor::MdQuote, s) }),
-        quote_border: Box::new({ let t2 = t.clone(); move |s: &str| t2.fg(ThemeColor::MdQuoteBorder, s) }),
-        hr: Box::new({ let t2 = t.clone(); move |s: &str| t2.fg(ThemeColor::MdHr, s) }),
-        list_bullet: Box::new({ let t2 = t.clone(); move |s: &str| t2.fg(ThemeColor::MdListBullet, s) }),
+        heading: Box::new({
+            let t2 = t.clone();
+            move |s: &str| t2.fg(ThemeColor::MdHeading, s)
+        }),
+        link: Box::new({
+            let t2 = t.clone();
+            move |s: &str| t2.fg(ThemeColor::MdLink, s)
+        }),
+        link_url: Box::new({
+            let t2 = t.clone();
+            move |s: &str| t2.fg(ThemeColor::MdLinkUrl, s)
+        }),
+        code: Box::new({
+            let t2 = t.clone();
+            move |s: &str| t2.fg(ThemeColor::MdCode, s)
+        }),
+        code_block: Box::new({
+            let t2 = t.clone();
+            move |s: &str| t2.fg(ThemeColor::MdCodeBlock, s)
+        }),
+        code_block_border: Box::new({
+            let t2 = t.clone();
+            move |s: &str| t2.fg(ThemeColor::MdCodeBlockBorder, s)
+        }),
+        quote: Box::new({
+            let t2 = t.clone();
+            move |s: &str| t2.fg(ThemeColor::MdQuote, s)
+        }),
+        quote_border: Box::new({
+            let t2 = t.clone();
+            move |s: &str| t2.fg(ThemeColor::MdQuoteBorder, s)
+        }),
+        hr: Box::new({
+            let t2 = t.clone();
+            move |s: &str| t2.fg(ThemeColor::MdHr, s)
+        }),
+        list_bullet: Box::new({
+            let t2 = t.clone();
+            move |s: &str| t2.fg(ThemeColor::MdListBullet, s)
+        }),
         bold: Box::new(|s: &str| format!("\x1b[1m{s}\x1b[22m")),
         italic: Box::new(|s: &str| format!("\x1b[3m{s}\x1b[23m")),
         strikethrough: Box::new(|s: &str| format!("\x1b[9m{s}\x1b[29m")),

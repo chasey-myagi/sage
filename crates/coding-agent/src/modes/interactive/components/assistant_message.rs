@@ -4,12 +4,12 @@
 //!
 //! Renders an assistant turn with optional thinking blocks.
 
-use tui::tui::{Component, Container};
+use tui::components::markdown::{DefaultTextStyle, Markdown, MarkdownTheme};
 use tui::components::spacer::Spacer;
-use tui::components::markdown::{Markdown, DefaultTextStyle, MarkdownTheme};
 use tui::components::text::Text;
+use tui::tui::{Component, Container};
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor};
+use crate::modes::interactive::theme::{ThemeColor, get_theme};
 
 // ============================================================================
 // Message types (simplified from pi-ai)
@@ -114,7 +114,8 @@ impl AssistantMessageComponent {
                     if self.hide_thinking_block {
                         let t2 = get_theme();
                         let label = t2.italic(&t2.fg(ThemeColor::ThinkingText, "Thinking..."));
-                        self.content_container.add_child(Box::new(Text::new(label, 1, 0)));
+                        self.content_container
+                            .add_child(Box::new(Text::new(label, 1, 0)));
                         if has_visible_after {
                             self.content_container.add_child(Box::new(Spacer::new(1)));
                         }
@@ -147,24 +148,31 @@ impl AssistantMessageComponent {
         }
 
         // Show abort/error at the end if no tool calls
-        let has_tool_calls = message.content.iter().any(|c| matches!(c, ContentBlock::ToolCall { .. }));
+        let has_tool_calls = message
+            .content
+            .iter()
+            .any(|c| matches!(c, ContentBlock::ToolCall { .. }));
         if !has_tool_calls {
             match message.stop_reason.as_ref() {
                 Some(StopReason::Aborted) => {
-                    let msg = message.error_message.as_deref()
+                    let msg = message
+                        .error_message
+                        .as_deref()
                         .filter(|m| *m != "Request was aborted")
                         .unwrap_or("Operation aborted");
                     let t2 = get_theme();
                     let err_text = t2.fg(ThemeColor::Error, msg);
                     self.content_container.add_child(Box::new(Spacer::new(1)));
-                    self.content_container.add_child(Box::new(Text::new(err_text, 1, 0)));
+                    self.content_container
+                        .add_child(Box::new(Text::new(err_text, 1, 0)));
                 }
                 Some(StopReason::Error) => {
                     let t2 = get_theme();
                     let msg = message.error_message.as_deref().unwrap_or("Unknown error");
                     let err_text = t2.fg(ThemeColor::Error, &format!("Error: {msg}"));
                     self.content_container.add_child(Box::new(Spacer::new(1)));
-                    self.content_container.add_child(Box::new(Text::new(err_text, 1, 0)));
+                    self.content_container
+                        .add_child(Box::new(Text::new(err_text, 1, 0)));
                 }
                 _ => {}
             }
@@ -257,33 +265,45 @@ mod tests {
     #[test]
     fn text_message_renders() {
         let msg = AssistantMessage {
-            content: vec![ContentBlock::Text { text: "Hello world".to_string() }],
+            content: vec![ContentBlock::Text {
+                text: "Hello world".to_string(),
+            }],
             stop_reason: None,
             error_message: None,
         };
         let comp = AssistantMessageComponent::new(Some(msg), false);
         let lines = comp.render(80);
         let text = lines.join("\n");
-        assert!(text.contains("Hello world"), "Expected 'Hello world' in: {text:?}");
+        assert!(
+            text.contains("Hello world"),
+            "Expected 'Hello world' in: {text:?}"
+        );
     }
 
     #[test]
     fn thinking_hidden_shows_label() {
         let msg = AssistantMessage {
-            content: vec![ContentBlock::Thinking { thinking: "deep thought".to_string() }],
+            content: vec![ContentBlock::Thinking {
+                thinking: "deep thought".to_string(),
+            }],
             stop_reason: None,
             error_message: None,
         };
         let comp = AssistantMessageComponent::new(Some(msg), true);
         let lines = comp.render(80);
         let text = lines.join("\n");
-        assert!(text.contains("Thinking..."), "Expected 'Thinking...' in: {text:?}");
+        assert!(
+            text.contains("Thinking..."),
+            "Expected 'Thinking...' in: {text:?}"
+        );
     }
 
     #[test]
     fn error_stop_reason_shows_error() {
         let msg = AssistantMessage {
-            content: vec![ContentBlock::Text { text: "partial".to_string() }],
+            content: vec![ContentBlock::Text {
+                text: "partial".to_string(),
+            }],
             stop_reason: Some(StopReason::Error),
             error_message: Some("Something broke".to_string()),
         };

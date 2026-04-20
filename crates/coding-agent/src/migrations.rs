@@ -4,10 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::config::{get_agent_dir, get_bin_dir, CONFIG_DIR_NAME};
+use crate::config::{CONFIG_DIR_NAME, get_agent_dir, get_bin_dir};
 
-const MIGRATION_GUIDE_URL: &str =
-    "https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/CHANGELOG.md#extensions-migration";
+const MIGRATION_GUIDE_URL: &str = "https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/CHANGELOG.md#extensions-migration";
 const EXTENSIONS_DOC_URL: &str =
     "https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md";
 
@@ -37,7 +36,8 @@ pub fn migrate_auth_to_auth_json() -> Vec<String> {
     // Migrate oauth.json
     if oauth_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&oauth_path) {
-            if let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(&content)
+            if let Ok(serde_json::Value::Object(obj)) =
+                serde_json::from_str::<serde_json::Value>(&content)
             {
                 for (provider, cred) in obj {
                     if let serde_json::Value::Object(mut cred_obj) = cred {
@@ -74,10 +74,8 @@ pub fn migrate_auth_to_auth_json() -> Vec<String> {
                                     "key".into(),
                                     serde_json::Value::String(key_str.into()),
                                 );
-                                migrated.insert(
-                                    provider.clone(),
-                                    serde_json::Value::Object(cred_obj),
-                                );
+                                migrated
+                                    .insert(provider.clone(), serde_json::Value::Object(cred_obj));
                                 providers.push(provider);
                             }
                         }
@@ -104,10 +102,8 @@ pub fn migrate_auth_to_auth_json() -> Vec<String> {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(
-                    &auth_path,
-                    std::fs::Permissions::from_mode(0o600),
-                );
+                let _ =
+                    std::fs::set_permissions(&auth_path, std::fs::Permissions::from_mode(0o600));
             }
         }
     }
@@ -371,7 +367,10 @@ pub fn run_migrations(cwd: Option<&Path>) -> MigrationResult {
     migrate_tools_to_bin();
     let deprecation_warnings = migrate_extension_system(cwd);
 
-    MigrationResult { migrated_auth_providers, deprecation_warnings }
+    MigrationResult {
+        migrated_auth_providers,
+        deprecation_warnings,
+    }
 }
 
 // ============================================================================

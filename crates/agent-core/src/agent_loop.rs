@@ -6,8 +6,8 @@
 // Tool execution is either sequential or parallel as configured.
 
 use crate::compaction::{
-    apply_compaction, calculate_context_tokens, compact, is_context_overflow, microcompact,
-    prepare_compaction, should_compact, should_microcompact, CompactionReason, CompactionSettings,
+    CompactionReason, CompactionSettings, apply_compaction, calculate_context_tokens, compact,
+    is_context_overflow, microcompact, prepare_compaction, should_compact, should_microcompact,
 };
 use crate::event::AgentEvent;
 use crate::types::*;
@@ -75,22 +75,46 @@ pub struct AgentLoopConfig {
     pub convert_to_llm: Box<dyn Fn(&[AgentMessage]) -> Vec<LlmMessage> + Send + Sync>,
 
     /// Optional transform applied to messages before `convert_to_llm`.
-    pub transform_context: Option<Box<dyn Fn(Vec<AgentMessage>) -> futures::future::BoxFuture<'static, Vec<AgentMessage>> + Send + Sync>>,
+    pub transform_context: Option<
+        Box<
+            dyn Fn(Vec<AgentMessage>) -> futures::future::BoxFuture<'static, Vec<AgentMessage>>
+                + Send
+                + Sync,
+        >,
+    >,
 
     /// Returns steering messages to inject mid-run.
-    pub get_steering_messages: Option<Box<dyn Fn() -> futures::future::BoxFuture<'static, Vec<AgentMessage>> + Send + Sync>>,
+    pub get_steering_messages: Option<
+        Box<dyn Fn() -> futures::future::BoxFuture<'static, Vec<AgentMessage>> + Send + Sync>,
+    >,
 
     /// Returns follow-up messages after the agent would otherwise stop.
-    pub get_follow_up_messages: Option<Box<dyn Fn() -> futures::future::BoxFuture<'static, Vec<AgentMessage>> + Send + Sync>>,
+    pub get_follow_up_messages: Option<
+        Box<dyn Fn() -> futures::future::BoxFuture<'static, Vec<AgentMessage>> + Send + Sync>,
+    >,
 
     /// Tool execution mode.
     pub tool_execution: ToolExecutionMode,
 
     /// Called before a tool is executed.
-    pub before_tool_call: Option<Box<dyn Fn(BeforeToolCallContext) -> futures::future::BoxFuture<'static, BeforeToolCallResult> + Send + Sync>>,
+    pub before_tool_call: Option<
+        Box<
+            dyn Fn(
+                    BeforeToolCallContext,
+                ) -> futures::future::BoxFuture<'static, BeforeToolCallResult>
+                + Send
+                + Sync,
+        >,
+    >,
 
     /// Called after a tool finishes executing.
-    pub after_tool_call: Option<Box<dyn Fn(AfterToolCallContext) -> futures::future::BoxFuture<'static, AfterToolCallResult> + Send + Sync>>,
+    pub after_tool_call: Option<
+        Box<
+            dyn Fn(AfterToolCallContext) -> futures::future::BoxFuture<'static, AfterToolCallResult>
+                + Send
+                + Sync,
+        >,
+    >,
 
     /// Available tools.
     pub tools: Vec<Arc<dyn AgentTool>>,
@@ -171,10 +195,7 @@ pub async fn run_agent_loop_continue(
             "Cannot continue: no messages in context".into(),
         ));
     }
-    if matches!(
-        context.messages.last(),
-        Some(AgentMessage::Assistant(_))
-    ) {
+    if matches!(context.messages.last(), Some(AgentMessage::Assistant(_))) {
         return Err(AgentLoopError::ProviderError(
             "Cannot continue from message role: assistant".into(),
         ));
@@ -213,11 +234,12 @@ async fn run_loop(
 ) {
     let mut first_turn = true;
 
-    let mut pending_messages: Vec<AgentMessage> = if let Some(get_steering) = &config.get_steering_messages {
-        get_steering().await
-    } else {
-        vec![]
-    };
+    let mut pending_messages: Vec<AgentMessage> =
+        if let Some(get_steering) = &config.get_steering_messages {
+            get_steering().await
+        } else {
+            vec![]
+        };
 
     loop {
         let mut has_more_tool_calls = true;
@@ -278,9 +300,11 @@ async fn run_loop(
                 .content
                 .iter()
                 .filter_map(|c| match c {
-                    Content::ToolCall { id, name, arguments } => {
-                        Some((id.clone(), name.clone(), arguments.clone()))
-                    }
+                    Content::ToolCall {
+                        id,
+                        name,
+                        arguments,
+                    } => Some((id.clone(), name.clone(), arguments.clone())),
                     _ => None,
                 })
                 .collect();
@@ -325,8 +349,8 @@ async fn run_loop(
                 let context_window = config.model.context_window as u32;
 
                 let overflow = is_context_overflow(&assistant_message, context_window);
-                let needs_compact = overflow
-                    || should_compact(context_tokens, context_window, settings);
+                let needs_compact =
+                    overflow || should_compact(context_tokens, context_window, settings);
 
                 if needs_compact {
                     let reason = if overflow {
@@ -452,7 +476,9 @@ async fn stream_assistant_response(
         temperature: None,
     };
 
-    let events = provider.complete(&config.model, &llm_context, &llm_tools).await;
+    let events = provider
+        .complete(&config.model, &llm_context, &llm_tools)
+        .await;
 
     let mut accum = MessageAccumulator::new();
     let mut emitted_start = false;
@@ -472,8 +498,7 @@ async fn stream_assistant_response(
                 accum.text.push_str(delta);
                 last_delta = delta.clone();
                 let partial = accum.build_partial(&config.model);
-                *context.messages.last_mut().unwrap() =
-                    AgentMessage::Assistant(partial.clone());
+                *context.messages.last_mut().unwrap() = AgentMessage::Assistant(partial.clone());
                 emit(AgentEvent::MessageUpdate {
                     message: AgentMessage::Assistant(partial),
                     delta: last_delta.clone(),
@@ -493,7 +518,10 @@ async fn stream_assistant_response(
                     });
                 }
             }
-            AssistantMessageEvent::ThinkingBlockEnd { signature, redacted } => {
+            AssistantMessageEvent::ThinkingBlockEnd {
+                signature,
+                redacted,
+            } => {
                 let thinking = std::mem::take(&mut accum.current_thinking);
                 let sig = if signature.is_empty() {
                     None
@@ -513,7 +541,10 @@ async fn stream_assistant_response(
                     arguments: String::new(),
                 });
             }
-            AssistantMessageEvent::ToolCallDelta { id, arguments_delta } => {
+            AssistantMessageEvent::ToolCallDelta {
+                id,
+                arguments_delta,
+            } => {
                 // Match by id when present; fall back to the last tool call when the
                 // provider sends an empty id (e.g. DashScope streaming format where
                 // only the first chunk carries the tool call id).
@@ -550,10 +581,11 @@ async fn stream_assistant_response(
         emit(AgentEvent::MessageStart {
             message: AgentMessage::Assistant(final_message.clone()),
         });
-        context.messages.push(AgentMessage::Assistant(final_message.clone()));
+        context
+            .messages
+            .push(AgentMessage::Assistant(final_message.clone()));
     } else {
-        *context.messages.last_mut().unwrap() =
-            AgentMessage::Assistant(final_message.clone());
+        *context.messages.last_mut().unwrap() = AgentMessage::Assistant(final_message.clone());
     }
     emit(AgentEvent::MessageEnd {
         message: AgentMessage::Assistant(final_message.clone()),
@@ -650,9 +682,8 @@ impl MessageAccumulator {
             });
         }
         for tc in &self.tool_calls {
-            let args = coerce_tool_args(&tc.arguments).unwrap_or_else(|_| {
-                serde_json::Value::Object(Default::default())
-            });
+            let args = coerce_tool_args(&tc.arguments)
+                .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
             content.push(Content::ToolCall {
                 id: tc.id.clone(),
                 name: tc.name.clone(),
@@ -677,9 +708,8 @@ impl MessageAccumulator {
             content.push(Content::Text { text: self.text });
         }
         for tc in self.tool_calls {
-            let args = coerce_tool_args(&tc.arguments).unwrap_or_else(|_| {
-                serde_json::Value::Object(Default::default())
-            });
+            let args = coerce_tool_args(&tc.arguments)
+                .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
             content.push(Content::ToolCall {
                 id: tc.id,
                 name: tc.name,
@@ -710,10 +740,19 @@ async fn execute_tool_calls(
 ) -> Vec<ToolResultMessage> {
     match config.tool_execution {
         ToolExecutionMode::Sequential => {
-            execute_tool_calls_sequential(context, assistant_message, tool_calls, config, emit, token).await
+            execute_tool_calls_sequential(
+                context,
+                assistant_message,
+                tool_calls,
+                config,
+                emit,
+                token,
+            )
+            .await
         }
         ToolExecutionMode::Parallel => {
-            execute_tool_calls_parallel(context, assistant_message, tool_calls, config, emit, token).await
+            execute_tool_calls_parallel(context, assistant_message, tool_calls, config, emit, token)
+                .await
         }
     }
 }
@@ -733,14 +772,37 @@ async fn execute_tool_calls_sequential(
             tool_name: name.clone(),
             args: args.clone(),
         });
-        let preparation = prepare_tool_call(context, assistant_message, id, name, args, config).await;
+        let preparation =
+            prepare_tool_call(context, assistant_message, id, name, args, config).await;
         match preparation {
             PreparedToolCall::Immediate { result, is_error } => {
                 results.push(emit_tool_call_outcome(id, name, result, is_error, emit).await);
             }
-            PreparedToolCall::Ready { tool, validated_args } => {
-                let executed = execute_prepared_tool_call(id, name, &tool, validated_args, emit, token.clone()).await;
-                let final_result = finalize_tool_call(context, assistant_message, id, name, args, executed.result, executed.is_error, config, emit).await;
+            PreparedToolCall::Ready {
+                tool,
+                validated_args,
+            } => {
+                let executed = execute_prepared_tool_call(
+                    id,
+                    name,
+                    &tool,
+                    validated_args,
+                    emit,
+                    token.clone(),
+                )
+                .await;
+                let final_result = finalize_tool_call(
+                    context,
+                    assistant_message,
+                    id,
+                    name,
+                    args,
+                    executed.result,
+                    executed.is_error,
+                    config,
+                    emit,
+                )
+                .await;
                 results.push(final_result);
             }
         }
@@ -757,7 +819,14 @@ async fn execute_tool_calls_parallel(
     token: Option<CancellationToken>,
 ) -> Vec<ToolResultMessage> {
     let mut immediate_results: Vec<(usize, ToolResultMessage)> = Vec::new();
-    let mut runnable: Vec<(usize, String, String, serde_json::Value, Arc<dyn AgentTool>, serde_json::Value)> = Vec::new();
+    let mut runnable: Vec<(
+        usize,
+        String,
+        String,
+        serde_json::Value,
+        Arc<dyn AgentTool>,
+        serde_json::Value,
+    )> = Vec::new();
 
     for (idx, (id, name, args)) in tool_calls.iter().enumerate() {
         emit(AgentEvent::ToolExecutionStart {
@@ -765,19 +834,36 @@ async fn execute_tool_calls_parallel(
             tool_name: name.clone(),
             args: args.clone(),
         });
-        let preparation = prepare_tool_call(context, assistant_message, id, name, args, config).await;
+        let preparation =
+            prepare_tool_call(context, assistant_message, id, name, args, config).await;
         match preparation {
             PreparedToolCall::Immediate { result, is_error } => {
                 let tr = emit_tool_call_outcome(id, name, result, is_error, emit).await;
                 immediate_results.push((idx, tr));
             }
-            PreparedToolCall::Ready { tool, validated_args } => {
-                runnable.push((idx, id.clone(), name.clone(), args.clone(), tool, validated_args));
+            PreparedToolCall::Ready {
+                tool,
+                validated_args,
+            } => {
+                runnable.push((
+                    idx,
+                    id.clone(),
+                    name.clone(),
+                    args.clone(),
+                    tool,
+                    validated_args,
+                ));
             }
         }
     }
 
-    let mut running: Vec<(usize, String, String, serde_json::Value, tokio::task::JoinHandle<ExecutedToolCall>)> = Vec::new();
+    let mut running: Vec<(
+        usize,
+        String,
+        String,
+        serde_json::Value,
+        tokio::task::JoinHandle<ExecutedToolCall>,
+    )> = Vec::new();
     for (idx, id, name, orig_args, tool, validated_args) in runnable {
         let id_c = id.clone();
         let name_c = name.clone();
@@ -793,12 +879,25 @@ async fn execute_tool_calls_parallel(
     for (idx, id, name, args, handle) in running {
         let executed = handle.await.unwrap_or_else(|e| ExecutedToolCall {
             result: AgentToolResult {
-                content: vec![Content::Text { text: format!("Tool panicked: {e}") }],
+                content: vec![Content::Text {
+                    text: format!("Tool panicked: {e}"),
+                }],
                 details: serde_json::Value::Null,
             },
             is_error: true,
         });
-        let final_result = finalize_tool_call(context, assistant_message, &id, &name, &args, executed.result, executed.is_error, config, emit).await;
+        let final_result = finalize_tool_call(
+            context,
+            assistant_message,
+            &id,
+            &name,
+            &args,
+            executed.result,
+            executed.is_error,
+            config,
+            emit,
+        )
+        .await;
         parallel_results.push((idx, final_result));
     }
 
@@ -809,8 +908,14 @@ async fn execute_tool_calls_parallel(
 }
 
 enum PreparedToolCall {
-    Immediate { result: AgentToolResult, is_error: bool },
-    Ready { tool: Arc<dyn AgentTool>, validated_args: serde_json::Value },
+    Immediate {
+        result: AgentToolResult,
+        is_error: bool,
+    },
+    Ready {
+        tool: Arc<dyn AgentTool>,
+        validated_args: serde_json::Value,
+    },
 }
 
 struct ExecutedToolCall {
@@ -908,7 +1013,9 @@ async fn prepare_tool_call(
         };
         let result = before(ctx).await;
         if result.block {
-            let reason = result.reason.unwrap_or_else(|| "Tool execution was blocked".into());
+            let reason = result
+                .reason
+                .unwrap_or_else(|| "Tool execution was blocked".into());
             return PreparedToolCall::Immediate {
                 result: create_error_result(&reason),
                 is_error: true,
@@ -947,7 +1054,10 @@ async fn execute_prepared_tool_call(
     });
 
     let result = tool.execute(id, args, token, Some(&on_update)).await;
-    ExecutedToolCall { result, is_error: false }
+    ExecutedToolCall {
+        result,
+        is_error: false,
+    }
 }
 
 async fn finalize_tool_call(
@@ -1020,7 +1130,9 @@ async fn emit_tool_call_outcome(
 
 fn create_error_result(message: &str) -> AgentToolResult {
     AgentToolResult {
-        content: vec![Content::Text { text: message.to_string() }],
+        content: vec![Content::Text {
+            text: message.to_string(),
+        }],
         details: serde_json::Value::Object(Default::default()),
     }
 }
@@ -1062,7 +1174,11 @@ pub fn default_convert_to_llm(messages: &[AgentMessage]) -> Vec<LlmMessage> {
                     .content
                     .iter()
                     .filter_map(|c| match c {
-                        Content::ToolCall { id, name, arguments } => Some(LlmToolCall {
+                        Content::ToolCall {
+                            id,
+                            name,
+                            arguments,
+                        } => Some(LlmToolCall {
                             id: id.clone(),
                             function: LlmFunctionCall {
                                 name: name.clone(),
@@ -1077,7 +1193,11 @@ pub fn default_convert_to_llm(messages: &[AgentMessage]) -> Vec<LlmMessage> {
                     .content
                     .iter()
                     .filter_map(|c| match c {
-                        Content::Thinking { thinking, signature, redacted } => Some(ThinkingBlock {
+                        Content::Thinking {
+                            thinking,
+                            signature,
+                            redacted,
+                        } => Some(ThinkingBlock {
                             thinking: thinking.clone(),
                             signature: signature.clone(),
                             redacted: *redacted,
@@ -1107,14 +1227,12 @@ pub fn default_convert_to_llm(messages: &[AgentMessage]) -> Vec<LlmMessage> {
                     tool_name: Some(r.tool_name.clone()),
                 })
             }
-            AgentMessage::CompactionSummary(cs) => {
-                Some(LlmMessage::User {
-                    content: vec![LlmContent::Text(format!(
-                        "[Previous conversation summary]\n\n{}",
-                        cs.summary
-                    ))],
-                })
-            }
+            AgentMessage::CompactionSummary(cs) => Some(LlmMessage::User {
+                content: vec![LlmContent::Text(format!(
+                    "[Previous conversation summary]\n\n{}",
+                    cs.summary
+                ))],
+            }),
         })
         .collect()
 }
@@ -1133,16 +1251,26 @@ mod loop_tests {
     fn done_response(text: &str) -> Vec<AssistantMessageEvent> {
         vec![
             AssistantMessageEvent::TextDelta(text.to_string()),
-            AssistantMessageEvent::Done { stop_reason: SR::Stop },
+            AssistantMessageEvent::Done {
+                stop_reason: SR::Stop,
+            },
         ]
     }
 
     fn tool_call_response(id: &str, name: &str, args: &str) -> Vec<AssistantMessageEvent> {
         vec![
-            AssistantMessageEvent::ToolCallStart { id: id.to_string(), name: name.to_string() },
-            AssistantMessageEvent::ToolCallDelta { id: id.to_string(), arguments_delta: args.to_string() },
+            AssistantMessageEvent::ToolCallStart {
+                id: id.to_string(),
+                name: name.to_string(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                id: id.to_string(),
+                arguments_delta: args.to_string(),
+            },
             AssistantMessageEvent::ToolCallEnd { id: id.to_string() },
-            AssistantMessageEvent::Done { stop_reason: SR::ToolUse },
+            AssistantMessageEvent::Done {
+                stop_reason: SR::ToolUse,
+            },
         ]
     }
 
@@ -1179,7 +1307,10 @@ mod loop_tests {
         Arc::new(|_| {})
     }
 
-    fn collecting_emit() -> (Arc<dyn Fn(AgentEvent) + Send + Sync>, Arc<Mutex<Vec<AgentEvent>>>) {
+    fn collecting_emit() -> (
+        Arc<dyn Fn(AgentEvent) + Send + Sync>,
+        Arc<Mutex<Vec<AgentEvent>>>,
+    ) {
         let events = Arc::new(Mutex::new(Vec::<AgentEvent>::new()));
         let events_clone = Arc::clone(&events);
         let emit: Arc<dyn Fn(AgentEvent) + Send + Sync> = Arc::new(move |e| {
@@ -1198,25 +1329,36 @@ mod loop_tests {
         let context = make_context(vec![]);
         let (emit, events) = collecting_emit();
 
-        let messages = run_agent_loop(vec![user_msg("Hello")], context, config, provider, emit, None).await;
+        let messages = run_agent_loop(
+            vec![user_msg("Hello")],
+            context,
+            config,
+            provider,
+            emit,
+            None,
+        )
+        .await;
 
         assert_eq!(messages.len(), 2);
         assert!(matches!(messages[0], AgentMessage::User(_)));
         assert!(matches!(messages[1], AgentMessage::Assistant(_)));
 
         let collected = events.lock().unwrap();
-        let types: Vec<&str> = collected.iter().map(|e| match e {
-            AgentEvent::AgentStart => "agent_start",
-            AgentEvent::AgentEnd { .. } => "agent_end",
-            AgentEvent::TurnStart => "turn_start",
-            AgentEvent::TurnEnd { .. } => "turn_end",
-            AgentEvent::MessageStart { .. } => "message_start",
-            AgentEvent::MessageEnd { .. } => "message_end",
-            AgentEvent::MessageUpdate { .. } => "message_update",
-            AgentEvent::ToolExecutionStart { .. } => "tool_execution_start",
-            AgentEvent::ToolExecutionEnd { .. } => "tool_execution_end",
-            _ => "other",
-        }).collect();
+        let types: Vec<&str> = collected
+            .iter()
+            .map(|e| match e {
+                AgentEvent::AgentStart => "agent_start",
+                AgentEvent::AgentEnd { .. } => "agent_end",
+                AgentEvent::TurnStart => "turn_start",
+                AgentEvent::TurnEnd { .. } => "turn_end",
+                AgentEvent::MessageStart { .. } => "message_start",
+                AgentEvent::MessageEnd { .. } => "message_end",
+                AgentEvent::MessageUpdate { .. } => "message_update",
+                AgentEvent::ToolExecutionStart { .. } => "tool_execution_start",
+                AgentEvent::ToolExecutionEnd { .. } => "tool_execution_end",
+                _ => "other",
+            })
+            .collect();
 
         assert!(types.contains(&"agent_start"), "missing agent_start");
         assert!(types.contains(&"turn_start"), "missing turn_start");
@@ -1265,11 +1407,22 @@ mod loop_tests {
         });
 
         let context = make_context(old_messages);
-        run_agent_loop(vec![user_msg("new message")], context, config, provider, no_emit(), None).await;
+        run_agent_loop(
+            vec![user_msg("new message")],
+            context,
+            config,
+            provider,
+            no_emit(),
+            None,
+        )
+        .await;
 
         // transformContext should have been called, keeping only last 2
         let count = *transformed_count.lock().unwrap();
-        assert_eq!(count, 2, "transformContext should have pruned to 2 messages");
+        assert_eq!(
+            count, 2,
+            "transformContext should have pruned to 2 messages"
+        );
     }
 
     /// Translated from: "should handle tool calls and results"
@@ -1279,16 +1432,30 @@ mod loop_tests {
 
         #[async_trait::async_trait]
         impl AgentTool for EchoTool {
-            fn name(&self) -> &str { "echo" }
-            fn label(&self) -> &str { "Echo" }
-            fn description(&self) -> &str { "Echo tool" }
+            fn name(&self) -> &str {
+                "echo"
+            }
+            fn label(&self) -> &str {
+                "Echo"
+            }
+            fn description(&self) -> &str {
+                "Echo tool"
+            }
             fn parameters_schema(&self) -> serde_json::Value {
                 serde_json::json!({"type": "object", "properties": {"value": {"type": "string"}}})
             }
-            async fn execute(&self, _id: &str, args: serde_json::Value, _signal: Option<tokio_util::sync::CancellationToken>, _on_update: Option<&crate::types::OnUpdateFn>) -> AgentToolResult {
+            async fn execute(
+                &self,
+                _id: &str,
+                args: serde_json::Value,
+                _signal: Option<tokio_util::sync::CancellationToken>,
+                _on_update: Option<&crate::types::OnUpdateFn>,
+            ) -> AgentToolResult {
                 let val = args["value"].as_str().unwrap_or("").to_string();
                 AgentToolResult {
-                    content: vec![Content::Text { text: format!("echoed: {val}") }],
+                    content: vec![Content::Text {
+                        text: format!("echoed: {val}"),
+                    }],
                     details: serde_json::Value::Null,
                 }
             }
@@ -1319,11 +1486,23 @@ mod loop_tests {
         let context = make_context(vec![]);
         let (emit, events) = collecting_emit();
 
-        run_agent_loop(vec![user_msg("echo something")], context, config, provider, emit, None).await;
+        run_agent_loop(
+            vec![user_msg("echo something")],
+            context,
+            config,
+            provider,
+            emit,
+            None,
+        )
+        .await;
 
         let collected = events.lock().unwrap();
-        let tool_start = collected.iter().find(|e| matches!(e, AgentEvent::ToolExecutionStart { .. }));
-        let tool_end = collected.iter().find(|e| matches!(e, AgentEvent::ToolExecutionEnd { .. }));
+        let tool_start = collected
+            .iter()
+            .find(|e| matches!(e, AgentEvent::ToolExecutionStart { .. }));
+        let tool_end = collected
+            .iter()
+            .find(|e| matches!(e, AgentEvent::ToolExecutionEnd { .. }));
         assert!(tool_start.is_some(), "expected tool_execution_start");
         assert!(tool_end.is_some(), "expected tool_execution_end");
         if let Some(AgentEvent::ToolExecutionEnd { is_error, .. }) = tool_end {
@@ -1347,13 +1526,25 @@ mod loop_tests {
 
         #[async_trait::async_trait]
         impl AgentTool for OrderedEchoTool {
-            fn name(&self) -> &str { "echo" }
-            fn label(&self) -> &str { "Echo" }
-            fn description(&self) -> &str { "Echo tool" }
+            fn name(&self) -> &str {
+                "echo"
+            }
+            fn label(&self) -> &str {
+                "Echo"
+            }
+            fn description(&self) -> &str {
+                "Echo tool"
+            }
             fn parameters_schema(&self) -> serde_json::Value {
                 serde_json::json!({"type": "object"})
             }
-            async fn execute(&self, id: &str, args: serde_json::Value, _signal: Option<tokio_util::sync::CancellationToken>, _on_update: Option<&crate::types::OnUpdateFn>) -> AgentToolResult {
+            async fn execute(
+                &self,
+                id: &str,
+                args: serde_json::Value,
+                _signal: Option<tokio_util::sync::CancellationToken>,
+                _on_update: Option<&crate::types::OnUpdateFn>,
+            ) -> AgentToolResult {
                 let val = args["value"].as_str().unwrap_or("").to_string();
                 if val == "first" {
                     // Signal we started, then wait for release
@@ -1367,22 +1558,45 @@ mod loop_tests {
                     self.first_done.notify_one();
                 }
                 AgentToolResult {
-                    content: vec![Content::Text { text: format!("echoed: {val}") }],
+                    content: vec![Content::Text {
+                        text: format!("echoed: {val}"),
+                    }],
                     details: serde_json::Value::Null,
                 }
             }
         }
 
         let tool_response = vec![
-            AssistantMessageEvent::ToolCallStart { id: "tool-1".into(), name: "echo".into() },
-            AssistantMessageEvent::ToolCallDelta { id: "tool-1".into(), arguments_delta: r#"{"value":"first"}"#.into() },
-            AssistantMessageEvent::ToolCallEnd { id: "tool-1".into() },
-            AssistantMessageEvent::ToolCallStart { id: "tool-2".into(), name: "echo".into() },
-            AssistantMessageEvent::ToolCallDelta { id: "tool-2".into(), arguments_delta: r#"{"value":"second"}"#.into() },
-            AssistantMessageEvent::ToolCallEnd { id: "tool-2".into() },
-            AssistantMessageEvent::Done { stop_reason: SR::ToolUse },
+            AssistantMessageEvent::ToolCallStart {
+                id: "tool-1".into(),
+                name: "echo".into(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                id: "tool-1".into(),
+                arguments_delta: r#"{"value":"first"}"#.into(),
+            },
+            AssistantMessageEvent::ToolCallEnd {
+                id: "tool-1".into(),
+            },
+            AssistantMessageEvent::ToolCallStart {
+                id: "tool-2".into(),
+                name: "echo".into(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                id: "tool-2".into(),
+                arguments_delta: r#"{"value":"second"}"#.into(),
+            },
+            AssistantMessageEvent::ToolCallEnd {
+                id: "tool-2".into(),
+            },
+            AssistantMessageEvent::Done {
+                stop_reason: SR::ToolUse,
+            },
         ];
-        let provider = Arc::new(StatefulProvider::new(vec![tool_response, done_response("done")]));
+        let provider = Arc::new(StatefulProvider::new(vec![
+            tool_response,
+            done_response("done"),
+        ]));
 
         let config = Arc::new(AgentLoopConfig {
             model: test_model(),
@@ -1406,20 +1620,39 @@ mod loop_tests {
         let context = make_context(vec![]);
         let (emit, events) = collecting_emit();
 
-        run_agent_loop(vec![user_msg("echo both")], context, config, provider, emit, None).await;
+        run_agent_loop(
+            vec![user_msg("echo both")],
+            context,
+            config,
+            provider,
+            emit,
+            None,
+        )
+        .await;
 
         // Collect tool result IDs from message_end events, in emission order
-        let result_ids: Vec<String> = events.lock().unwrap().iter().filter_map(|e| {
-            if let AgentEvent::MessageEnd { message: AgentMessage::ToolResult(tr) } = e {
-                Some(tr.tool_call_id.clone())
-            } else {
-                None
-            }
-        }).collect();
+        let result_ids: Vec<String> = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| {
+                if let AgentEvent::MessageEnd {
+                    message: AgentMessage::ToolResult(tr),
+                } = e
+                {
+                    Some(tr.tool_call_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         // Results should be in source order (tool-1 before tool-2)
-        assert_eq!(result_ids, vec!["tool-1", "tool-2"],
-            "parallel tool results should be emitted in source call order");
+        assert_eq!(
+            result_ids,
+            vec!["tool-1", "tool-2"],
+            "parallel tool results should be emitted in source call order"
+        );
     }
 
     /// Translated from: "should inject queued messages after all tool calls complete"
@@ -1441,30 +1674,67 @@ mod loop_tests {
 
         #[async_trait::async_trait]
         impl AgentTool for CountingEcho {
-            fn name(&self) -> &str { "echo" }
-            fn label(&self) -> &str { "Echo" }
-            fn description(&self) -> &str { "Echo" }
-            fn parameters_schema(&self) -> serde_json::Value { serde_json::json!({"type": "object"}) }
-            async fn execute(&self, _id: &str, args: serde_json::Value, _signal: Option<tokio_util::sync::CancellationToken>, _on_update: Option<&crate::types::OnUpdateFn>) -> AgentToolResult {
+            fn name(&self) -> &str {
+                "echo"
+            }
+            fn label(&self) -> &str {
+                "Echo"
+            }
+            fn description(&self) -> &str {
+                "Echo"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({"type": "object"})
+            }
+            async fn execute(
+                &self,
+                _id: &str,
+                args: serde_json::Value,
+                _signal: Option<tokio_util::sync::CancellationToken>,
+                _on_update: Option<&crate::types::OnUpdateFn>,
+            ) -> AgentToolResult {
                 self.count.fetch_add(1, Ordering::SeqCst);
                 let val = args["value"].as_str().unwrap_or("").to_string();
                 AgentToolResult {
-                    content: vec![Content::Text { text: format!("ok:{val}") }],
+                    content: vec![Content::Text {
+                        text: format!("ok:{val}"),
+                    }],
                     details: serde_json::Value::Null,
                 }
             }
         }
 
         let two_tool_response = vec![
-            AssistantMessageEvent::ToolCallStart { id: "tool-1".into(), name: "echo".into() },
-            AssistantMessageEvent::ToolCallDelta { id: "tool-1".into(), arguments_delta: r#"{"value":"first"}"#.into() },
-            AssistantMessageEvent::ToolCallEnd { id: "tool-1".into() },
-            AssistantMessageEvent::ToolCallStart { id: "tool-2".into(), name: "echo".into() },
-            AssistantMessageEvent::ToolCallDelta { id: "tool-2".into(), arguments_delta: r#"{"value":"second"}"#.into() },
-            AssistantMessageEvent::ToolCallEnd { id: "tool-2".into() },
-            AssistantMessageEvent::Done { stop_reason: SR::ToolUse },
+            AssistantMessageEvent::ToolCallStart {
+                id: "tool-1".into(),
+                name: "echo".into(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                id: "tool-1".into(),
+                arguments_delta: r#"{"value":"first"}"#.into(),
+            },
+            AssistantMessageEvent::ToolCallEnd {
+                id: "tool-1".into(),
+            },
+            AssistantMessageEvent::ToolCallStart {
+                id: "tool-2".into(),
+                name: "echo".into(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                id: "tool-2".into(),
+                arguments_delta: r#"{"value":"second"}"#.into(),
+            },
+            AssistantMessageEvent::ToolCallEnd {
+                id: "tool-2".into(),
+            },
+            AssistantMessageEvent::Done {
+                stop_reason: SR::ToolUse,
+            },
         ];
-        let provider = Arc::new(StatefulProvider::new(vec![two_tool_response, done_response("done")]));
+        let provider = Arc::new(StatefulProvider::new(vec![
+            two_tool_response,
+            done_response("done"),
+        ]));
 
         let delivered = Arc::new(Mutex::new(false));
         let delivered_clone = Arc::clone(&delivered);
@@ -1502,17 +1772,28 @@ mod loop_tests {
         let context = make_context(vec![]);
         let (emit, events) = collecting_emit();
 
-        run_agent_loop(vec![user_msg("start")], context, config, provider, emit, None).await;
+        run_agent_loop(
+            vec![user_msg("start")],
+            context,
+            config,
+            provider,
+            emit,
+            None,
+        )
+        .await;
 
         let collected = events.lock().unwrap();
 
         // Find tool result events and steering message start events, in order
-        let sequence: Vec<String> = collected.iter().filter_map(|e| {
-            match e {
-                AgentEvent::MessageStart { message: AgentMessage::ToolResult(tr) } => {
-                    Some(format!("tool:{}", tr.tool_call_id))
-                }
-                AgentEvent::MessageStart { message: AgentMessage::User(u) } => {
+        let sequence: Vec<String> = collected
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::MessageStart {
+                    message: AgentMessage::ToolResult(tr),
+                } => Some(format!("tool:{}", tr.tool_call_id)),
+                AgentEvent::MessageStart {
+                    message: AgentMessage::User(u),
+                } => {
                     if let Some(Content::Text { text }) = u.content.first() {
                         if text == "interrupt" {
                             return Some("interrupt".to_string());
@@ -1521,15 +1802,33 @@ mod loop_tests {
                     None
                 }
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
 
-        assert!(sequence.contains(&"interrupt".to_string()), "interrupt not found in sequence");
-        let tool1_pos = sequence.iter().position(|s| s == "tool:tool-1").unwrap_or(usize::MAX);
-        let tool2_pos = sequence.iter().position(|s| s == "tool:tool-2").unwrap_or(usize::MAX);
-        let interrupt_pos = sequence.iter().position(|s| s == "interrupt").unwrap_or(usize::MAX);
-        assert!(tool1_pos < interrupt_pos, "tool-1 should come before interrupt");
-        assert!(tool2_pos < interrupt_pos, "tool-2 should come before interrupt");
+        assert!(
+            sequence.contains(&"interrupt".to_string()),
+            "interrupt not found in sequence"
+        );
+        let tool1_pos = sequence
+            .iter()
+            .position(|s| s == "tool:tool-1")
+            .unwrap_or(usize::MAX);
+        let tool2_pos = sequence
+            .iter()
+            .position(|s| s == "tool:tool-2")
+            .unwrap_or(usize::MAX);
+        let interrupt_pos = sequence
+            .iter()
+            .position(|s| s == "interrupt")
+            .unwrap_or(usize::MAX);
+        assert!(
+            tool1_pos < interrupt_pos,
+            "tool-1 should come before interrupt"
+        );
+        assert!(
+            tool2_pos < interrupt_pos,
+            "tool-2 should come before interrupt"
+        );
     }
 
     // ── agentLoopContinue with AgentMessage ───────────────────────────────
@@ -1544,8 +1843,10 @@ mod loop_tests {
         let result = run_agent_loop_continue(context, config, provider, no_emit(), None).await;
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains("no messages in context") || err_msg.contains("Cannot continue"),
-            "error should mention no messages: {err_msg}");
+        assert!(
+            err_msg.contains("no messages in context") || err_msg.contains("Cannot continue"),
+            "error should mention no messages: {err_msg}"
+        );
     }
 
     /// Translated from: "should continue from existing context without emitting user message events"
@@ -1566,17 +1867,29 @@ mod loop_tests {
 
         // Should NOT have a user MessageEnd event (existing user is not re-emitted)
         let collected = events.lock().unwrap();
-        let user_message_ends: Vec<_> = collected.iter().filter(|e| {
-            matches!(e, AgentEvent::MessageEnd { message: AgentMessage::User(_) })
-        }).collect();
-        assert!(user_message_ends.is_empty(),
-            "continue should not re-emit existing user message end events");
+        let user_message_ends: Vec<_> = collected
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    AgentEvent::MessageEnd {
+                        message: AgentMessage::User(_)
+                    }
+                )
+            })
+            .collect();
+        assert!(
+            user_message_ends.is_empty(),
+            "continue should not re-emit existing user message end events"
+        );
     }
 
     /// Translated from: "should allow custom message types as last message (caller responsibility)"
     #[tokio::test]
     async fn agent_loop_continue_accepts_context_ending_in_user_message() {
-        let provider = Arc::new(StatefulProvider::new(vec![done_response("Response to custom message")]));
+        let provider = Arc::new(StatefulProvider::new(vec![done_response(
+            "Response to custom message",
+        )]));
 
         // Use a user message as stand-in for a "custom" message type (we can't do open union in Rust)
         let custom_msg = AgentMessage::User(UserMessage::from_text("Hook content"));
@@ -1604,8 +1917,10 @@ mod loop_tests {
         let result = run_agent_loop_continue(context, config, provider, no_emit(), None).await;
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains("Cannot continue from message role: assistant"),
-            "unexpected error: {err_msg}");
+        assert!(
+            err_msg.contains("Cannot continue from message role: assistant"),
+            "unexpected error: {err_msg}"
+        );
     }
 }
 
@@ -1651,7 +1966,9 @@ mod tests {
     #[test]
     fn test_default_convert_to_llm_user_message() {
         let messages = vec![AgentMessage::User(UserMessage {
-            content: vec![Content::Text { text: "hello".into() }],
+            content: vec![Content::Text {
+                text: "hello".into(),
+            }],
             timestamp: 0,
         })];
         let llm = default_convert_to_llm(&messages);
@@ -1676,7 +1993,9 @@ mod tests {
         let messages = vec![AgentMessage::ToolResult(ToolResultMessage {
             tool_call_id: "tc1".into(),
             tool_name: "bash".into(),
-            content: vec![Content::Text { text: "output".into() }],
+            content: vec![Content::Text {
+                text: "output".into(),
+            }],
             details: None,
             is_error: false,
             timestamp: 0,
@@ -1716,7 +2035,10 @@ mod tests {
 
     #[test]
     fn test_agent_loop_error_display() {
-        assert_eq!(format!("{}", AgentLoopError::MaxTurnsReached), "max turns reached");
+        assert_eq!(
+            format!("{}", AgentLoopError::MaxTurnsReached),
+            "max turns reached"
+        );
         assert_eq!(format!("{}", AgentLoopError::Cancelled), "cancelled");
         assert!(format!("{}", AgentLoopError::ProviderError("oops".into())).contains("oops"));
     }
@@ -1739,7 +2061,10 @@ mod tests {
         let result = validate_tool_arguments("my_tool", &schema, &args);
         assert!(result.is_err());
         let msg = result.unwrap_err();
-        assert!(msg.contains("my_tool"), "error should mention tool name: {msg}");
+        assert!(
+            msg.contains("my_tool"),
+            "error should mention tool name: {msg}"
+        );
         assert!(msg.contains("null"), "error should mention null: {msg}");
     }
 
@@ -1791,8 +2116,14 @@ mod tests {
         let result = validate_tool_arguments("write_file", &schema, &args);
         assert!(result.is_err());
         let msg = result.unwrap_err();
-        assert!(msg.contains("write_file"), "should mention tool name: {msg}");
-        assert!(msg.contains("content"), "should mention missing field: {msg}");
+        assert!(
+            msg.contains("write_file"),
+            "should mention tool name: {msg}"
+        );
+        assert!(
+            msg.contains("content"),
+            "should mention missing field: {msg}"
+        );
     }
 
     #[test]

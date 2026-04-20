@@ -112,10 +112,7 @@ impl FooterDataProvider {
     /// `"detached"` is returned for detached-HEAD state.
     pub fn get_git_branch(&mut self) -> Option<&str> {
         if self.cached_branch.is_none() {
-            let branch = self
-                .head_path
-                .as_deref()
-                .and_then(read_branch_from_head);
+            let branch = self.head_path.as_deref().and_then(read_branch_from_head);
             self.cached_branch = Some(branch);
         }
         self.cached_branch.as_ref().unwrap().as_deref()
@@ -144,7 +141,8 @@ impl FooterDataProvider {
     pub fn set_extension_status(&mut self, key: &str, text: Option<&str>) {
         match text {
             Some(t) => {
-                self.extension_statuses.insert(key.to_string(), t.to_string());
+                self.extension_statuses
+                    .insert(key.to_string(), t.to_string());
             }
             None => {
                 self.extension_statuses.remove(key);
@@ -233,7 +231,10 @@ mod tests {
         let mut provider = FooterDataProvider::new(dir.path());
         provider.set_extension_status("my-ext", Some("running"));
         assert_eq!(
-            provider.get_extension_statuses().get("my-ext").map(|s| s.as_str()),
+            provider
+                .get_extension_statuses()
+                .get("my-ext")
+                .map(|s| s.as_str()),
             Some("running")
         );
     }

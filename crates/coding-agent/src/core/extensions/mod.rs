@@ -9,10 +9,10 @@ pub mod wrapper;
 
 // Re-export commonly used items
 pub use loader::{
-    create_extension_runtime, discover_extension_paths, discover_extensions_in_dir,
-    expand_path, resolve_path,
+    create_extension_runtime, discover_extension_paths, discover_extensions_in_dir, expand_path,
+    resolve_path,
 };
-pub use runner::{emit_session_shutdown_event, ExtensionData, ExtensionRunner};
+pub use runner::{ExtensionData, ExtensionRunner, emit_session_shutdown_event};
 pub use types::{
     BeforeAgentStartEventResult, ExtensionContextSnapshot, ExtensionError, ExtensionFlag,
     ExtensionRuntimeState, FlagType, FlagValue, InputEventResult, InputSource, LoadExtensionError,
@@ -22,4 +22,4 @@ pub use types::{
     SessionBeforeTreeResult, SessionDirectoryResult, SourceInfo, SourceOrigin, SourceScope,
     ToolDefinition, ToolInfo,
 };
-pub use wrapper::{wrap_registered_tool, wrap_registered_tools, WrappedTool};
+pub use wrapper::{WrappedTool, wrap_registered_tool, wrap_registered_tools};

@@ -69,8 +69,7 @@ impl OAuthSelectorComponent {
     /// Move selection down.
     pub fn select_down(&mut self) {
         if !self.providers.is_empty() {
-            self.selected_index =
-                (self.selected_index + 1).min(self.providers.len() - 1);
+            self.selected_index = (self.selected_index + 1).min(self.providers.len() - 1);
         }
     }
 
@@ -122,8 +121,16 @@ mod tests {
 
     fn make_providers() -> Vec<OAuthProviderInfo> {
         vec![
-            OAuthProviderInfo { id: "anthropic".into(), name: "Anthropic".into(), is_logged_in: true },
-            OAuthProviderInfo { id: "google".into(), name: "Google".into(), is_logged_in: false },
+            OAuthProviderInfo {
+                id: "anthropic".into(),
+                name: "Anthropic".into(),
+                is_logged_in: true,
+            },
+            OAuthProviderInfo {
+                id: "google".into(),
+                name: "Google".into(),
+                is_logged_in: false,
+            },
         ]
     }
 
@@ -142,7 +149,10 @@ mod tests {
     #[test]
     fn initial_selection() {
         let sel = OAuthSelectorComponent::new(OAuthSelectorMode::Login, make_providers());
-        assert_eq!(sel.selected_provider().map(|p| p.id.as_str()), Some("anthropic"));
+        assert_eq!(
+            sel.selected_provider().map(|p| p.id.as_str()),
+            Some("anthropic")
+        );
     }
 
     #[test]

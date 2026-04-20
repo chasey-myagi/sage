@@ -5303,7 +5303,8 @@ pub fn resolve_model(provider: &str, model_id: &str) -> Option<Model> {
 /// - GPT-5.2 / GPT-5.3 / GPT-5.4 model families
 /// - Opus 4.6 models (xhigh maps to adaptive effort "max" on Anthropic-compatible providers)
 pub fn supports_xhigh(model: &Model) -> bool {
-    if model.id.contains("gpt-5.2") || model.id.contains("gpt-5.3") || model.id.contains("gpt-5.4") {
+    if model.id.contains("gpt-5.2") || model.id.contains("gpt-5.3") || model.id.contains("gpt-5.4")
+    {
         return true;
     }
     if model.id.contains("opus-4-6") || model.id.contains("opus-4.6") {
@@ -7005,8 +7006,7 @@ mod tests {
     #[test]
     fn test_supports_xhigh_gpt_5_2_returns_true() {
         // gpt-5.2 family should return true (Rust adds 5.2 and 5.3 beyond pi-mono's 5.4).
-        let model = resolve_model("github-copilot", "gpt-5.2")
-            .expect("gpt-5.2 must be in catalog");
+        let model = resolve_model("github-copilot", "gpt-5.2").expect("gpt-5.2 must be in catalog");
         assert!(supports_xhigh(&model));
     }
 
@@ -7046,8 +7046,7 @@ mod tests {
     #[test]
     fn test_supports_xhigh_gpt_5_1_returns_false() {
         // gpt-5.1 is not in the xhigh list.
-        let model = resolve_model("github-copilot", "gpt-5.1")
-            .expect("gpt-5.1 must be in catalog");
+        let model = resolve_model("github-copilot", "gpt-5.1").expect("gpt-5.1 must be in catalog");
         assert!(!supports_xhigh(&model));
     }
 
@@ -7055,12 +7054,7 @@ mod tests {
     // calculate_cost
     // ========================================================================
 
-    fn make_cost_config(
-        input: f64,
-        output: f64,
-        cache_read: f64,
-        cache_write: f64,
-    ) -> ModelCost {
+    fn make_cost_config(input: f64, output: f64, cache_read: f64, cache_write: f64) -> ModelCost {
         ModelCost {
             input_per_million: input,
             output_per_million: output,

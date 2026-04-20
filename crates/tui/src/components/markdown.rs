@@ -2,7 +2,6 @@
 ///
 /// Uses `pulldown-cmark` for parsing, supporting tables, nested lists, and
 /// inline formatting with proper ANSI style context tracking.
-
 use std::cell::RefCell;
 
 use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
@@ -94,7 +93,11 @@ struct RenderCtx<'a> {
 
 impl<'a> RenderCtx<'a> {
     fn new(theme: &'a MarkdownTheme, content_width: usize) -> Self {
-        let indent = theme.code_block_indent.as_deref().unwrap_or("  ").to_string();
+        let indent = theme
+            .code_block_indent
+            .as_deref()
+            .unwrap_or("  ")
+            .to_string();
         Self {
             theme,
             content_width,
@@ -171,7 +174,10 @@ impl<'a> RenderCtx<'a> {
             return;
         }
         // Wrap and push each wrapped line
-        let wrapped = wrap_text_with_ansi(&text, self.content_width.saturating_sub(self.quote_depth * 2));
+        let wrapped = wrap_text_with_ansi(
+            &text,
+            self.content_width.saturating_sub(self.quote_depth * 2),
+        );
         for wl in wrapped {
             self.push_line(wl);
         }
@@ -185,7 +191,10 @@ impl<'a> RenderCtx<'a> {
             2 => (self.theme.heading)(&(self.theme.bold)(&text)),
             _ => {
                 let prefix = "#".repeat(level) + " ";
-                format!("{}{text}", (self.theme.heading)(&(self.theme.bold)(&prefix)))
+                format!(
+                    "{}{text}",
+                    (self.theme.heading)(&(self.theme.bold)(&prefix))
+                )
             }
         };
         self.push_line(styled);
@@ -464,11 +473,13 @@ fn render_markdown(text: &str, content_width: usize, theme: &MarkdownTheme) -> V
                 ctx.flush_table();
             }
             Event::End(TagEnd::TableHead) => {
-                ctx.table_rows.push(std::mem::take(&mut ctx.table_current_row));
+                ctx.table_rows
+                    .push(std::mem::take(&mut ctx.table_current_row));
                 ctx.in_table_head = false;
             }
             Event::End(TagEnd::TableRow) => {
-                ctx.table_rows.push(std::mem::take(&mut ctx.table_current_row));
+                ctx.table_rows
+                    .push(std::mem::take(&mut ctx.table_current_row));
             }
             Event::End(TagEnd::TableCell) => {
                 let cell = std::mem::take(&mut ctx.cell_buf);
@@ -622,7 +633,9 @@ impl Markdown {
     }
 
     fn apply_default_style(&self, text: &str) -> String {
-        let Some(style) = &self.default_text_style else { return text.to_string() };
+        let Some(style) = &self.default_text_style else {
+            return text.to_string();
+        };
         let mut styled = text.to_string();
         if let Some(color_fn) = &style.color {
             styled = color_fn(&styled);
@@ -688,7 +701,10 @@ impl Component for Markdown {
         // Add margins and background
         let left_margin = " ".repeat(self.padding_x);
         let right_margin = " ".repeat(self.padding_x);
-        let bg_fn = self.default_text_style.as_ref().and_then(|s| s.bg_color.as_ref());
+        let bg_fn = self
+            .default_text_style
+            .as_ref()
+            .and_then(|s| s.bg_color.as_ref());
         let mut content_lines: Vec<String> = Vec::new();
 
         for line in &wrapped_lines {
@@ -698,7 +714,11 @@ impl Component for Markdown {
             }
             let line_with_margins = format!("{left_margin}{line}{right_margin}");
             if let Some(bg) = bg_fn {
-                content_lines.push(apply_background_to_line(&line_with_margins, width, bg.as_ref()));
+                content_lines.push(apply_background_to_line(
+                    &line_with_margins,
+                    width,
+                    bg.as_ref(),
+                ));
             } else {
                 let visible_len = visible_width(&line_with_margins);
                 let padding_needed = width.saturating_sub(visible_len);
@@ -866,7 +886,13 @@ mod tests {
     #[test]
     fn test_nested_list_simple() {
         // pulldown-cmark handles nested lists properly
-        let m = Markdown::new("- Item 1\n  - Nested 1.1\n  - Nested 1.2\n- Item 2", 0, 0, default_theme(), None);
+        let m = Markdown::new(
+            "- Item 1\n  - Nested 1.1\n  - Nested 1.2\n- Item 2",
+            0,
+            0,
+            default_theme(),
+            None,
+        );
         let lines = m.render(80);
         assert!(!lines.is_empty());
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
@@ -966,9 +992,18 @@ mod tests {
     #[test]
     fn test_heading_followed_by_paragraph_spacing() {
         // Should have one blank line between heading and following paragraph
-        let m = Markdown::new("# Hello\n\nThis is a paragraph", 0, 0, default_theme(), None);
+        let m = Markdown::new(
+            "# Hello\n\nThis is a paragraph",
+            0,
+            0,
+            default_theme(),
+            None,
+        );
         let lines = m.render(80);
-        let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l).trim_end().to_string()).collect();
+        let plain: Vec<String> = lines
+            .iter()
+            .map(|l| strip_ansi(l).trim_end().to_string())
+            .collect();
         let heading_idx = plain.iter().position(|l| l.contains("Hello")).unwrap();
         let after = &plain[heading_idx + 1..];
         let empty_count = after.iter().take_while(|l| l.is_empty()).count();
@@ -981,7 +1016,10 @@ mod tests {
         let m = Markdown::new("# Hello", 0, 0, default_theme(), None);
         let lines = m.render(80);
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
-        assert!(plain.iter().any(|l| l.contains("Hello")), "heading should render content");
+        assert!(
+            plain.iter().any(|l| l.contains("Hello")),
+            "heading should render content"
+        );
     }
 
     // ==========================================================================
@@ -994,7 +1032,10 @@ mod tests {
         let lines = m.render(80);
         let joined = lines.join("\n");
         assert!(joined.contains("world"));
-        assert!(joined.contains("\x1b[1m"), "bold text should have bold ANSI code");
+        assert!(
+            joined.contains("\x1b[1m"),
+            "bold text should have bold ANSI code"
+        );
     }
 
     #[test]
@@ -1004,7 +1045,10 @@ mod tests {
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
         assert!(plain.iter().any(|l| l.contains("world")));
         let joined = lines.join("\n");
-        assert!(joined.contains("\x1b[1m"), "bold text __ should have bold ANSI code");
+        assert!(
+            joined.contains("\x1b[1m"),
+            "bold text __ should have bold ANSI code"
+        );
     }
 
     #[test]
@@ -1014,7 +1058,10 @@ mod tests {
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
         assert!(plain.iter().any(|l| l.contains("world")));
         let joined = lines.join("\n");
-        assert!(joined.contains("\x1b[3m"), "italic text should have italic ANSI code");
+        assert!(
+            joined.contains("\x1b[3m"),
+            "italic text should have italic ANSI code"
+        );
     }
 
     #[test]
@@ -1024,7 +1071,10 @@ mod tests {
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
         assert!(plain.iter().any(|l| l.contains("world")));
         let joined = lines.join("\n");
-        assert!(joined.contains("\x1b[3m"), "italic text _ should have italic ANSI code");
+        assert!(
+            joined.contains("\x1b[3m"),
+            "italic text _ should have italic ANSI code"
+        );
     }
 
     #[test]
@@ -1034,7 +1084,10 @@ mod tests {
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
         assert!(plain.iter().any(|l| l.contains("world")));
         let joined = lines.join("\n");
-        assert!(joined.contains("\x1b[9m"), "strikethrough text should have strikethrough ANSI code");
+        assert!(
+            joined.contains("\x1b[9m"),
+            "strikethrough text should have strikethrough ANSI code"
+        );
     }
 
     #[test]
@@ -1088,20 +1141,35 @@ mod tests {
             None,
         );
         let lines = m.render(80);
-        let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l).trim_end().to_string()).collect();
+        let plain: Vec<String> = lines
+            .iter()
+            .map(|l| strip_ansi(l).trim_end().to_string())
+            .collect();
         let closing_idx = plain.iter().position(|l| l == "```").unwrap();
         let after = &plain[closing_idx + 1..];
         let empty_count = after.iter().take_while(|l| l.is_empty()).count();
-        assert_eq!(empty_count, 1, "expected exactly 1 blank line after code block");
+        assert_eq!(
+            empty_count, 1,
+            "expected exactly 1 blank line after code block"
+        );
     }
 
     #[test]
     fn test_code_block_no_trailing_blank_when_last() {
         // Just verify the code content is present.
-        let m = Markdown::new("```js\nconst hello = 'world';\n```", 0, 0, default_theme(), None);
+        let m = Markdown::new(
+            "```js\nconst hello = 'world';\n```",
+            0,
+            0,
+            default_theme(),
+            None,
+        );
         let lines = m.render(80);
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
-        assert!(plain.iter().any(|l| l.contains("const hello")), "code block should render code content");
+        assert!(
+            plain.iter().any(|l| l.contains("const hello")),
+            "code block should render code content"
+        );
     }
 
     #[test]
@@ -1151,8 +1219,14 @@ mod tests {
             None,
         );
         let lines = m.render(80);
-        let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l).trim_end().to_string()).collect();
-        let quote_idx = plain.iter().position(|l| l.contains("This is a quote")).unwrap();
+        let plain: Vec<String> = lines
+            .iter()
+            .map(|l| strip_ansi(l).trim_end().to_string())
+            .collect();
+        let quote_idx = plain
+            .iter()
+            .position(|l| l.contains("This is a quote"))
+            .unwrap();
         let after = &plain[quote_idx + 1..];
         let empty_count = after.iter().take_while(|l| l.is_empty()).count();
         assert_eq!(empty_count, 1, "expected 1 blank line after blockquote");
@@ -1163,8 +1237,14 @@ mod tests {
         let m = Markdown::new("> This is a quote", 0, 0, default_theme(), None);
         let lines = m.render(80);
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
-        assert!(plain.iter().any(|l| l.contains("This is a quote")), "should have quote content");
-        assert!(plain.iter().any(|l| l.contains("│")), "should have quote border");
+        assert!(
+            plain.iter().any(|l| l.contains("This is a quote")),
+            "should have quote content"
+        );
+        assert!(
+            plain.iter().any(|l| l.contains("│")),
+            "should have quote border"
+        );
     }
 
     #[test]
@@ -1177,26 +1257,51 @@ mod tests {
         assert!(all.contains("Foo"), "should contain 'Foo'");
         assert!(all.contains("bar"), "should contain 'bar'");
         // At least one line should have the quote border
-        assert!(plain.iter().any(|l| l.contains("│")), "should have quote border");
+        assert!(
+            plain.iter().any(|l| l.contains("│")),
+            "should have quote border"
+        );
     }
 
     #[test]
     fn test_blockquote_wraps_long_lines() {
-        let long_text = "This is a very long blockquote line that should wrap to multiple lines when rendered";
+        let long_text =
+            "This is a very long blockquote line that should wrap to multiple lines when rendered";
         let m = Markdown::new(&format!("> {long_text}"), 0, 0, default_theme(), None);
         let lines = m.render(30);
-        let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l).trim_end().to_string()).collect();
-        let content: Vec<&str> = plain.iter().filter(|l| !l.is_empty()).map(|s| s.as_str()).collect();
-        assert!(content.len() > 1, "expected multiple wrapped lines, got: {:?}", content);
+        let plain: Vec<String> = lines
+            .iter()
+            .map(|l| strip_ansi(l).trim_end().to_string())
+            .collect();
+        let content: Vec<&str> = plain
+            .iter()
+            .filter(|l| !l.is_empty())
+            .map(|s| s.as_str())
+            .collect();
+        assert!(
+            content.len() > 1,
+            "expected multiple wrapped lines, got: {:?}",
+            content
+        );
         // Every content line should have the quote border
         for line in &content {
-            assert!(line.starts_with("│ "), "wrapped line should have quote border: {:?}", line);
+            assert!(
+                line.starts_with("│ "),
+                "wrapped line should have quote border: {:?}",
+                line
+            );
         }
     }
 
     #[test]
     fn test_blockquote_inline_formatting_preserved() {
-        let m = Markdown::new("> Quote with **bold** and `code`", 0, 0, default_theme(), None);
+        let m = Markdown::new(
+            "> Quote with **bold** and `code`",
+            0,
+            0,
+            default_theme(),
+            None,
+        );
         let lines = m.render(80);
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
         let all_plain = plain.join(" ");
@@ -1204,8 +1309,14 @@ mod tests {
         assert!(all_plain.contains("code"), "should preserve 'code'");
         let joined = lines.join("\n");
         assert!(joined.contains("\x1b[1m"), "should have bold styling");
-        assert!(joined.contains("\x1b[33m"), "should have code styling (yellow)");
-        assert!(joined.contains("\x1b[3m"), "should have italic from quote styling");
+        assert!(
+            joined.contains("\x1b[33m"),
+            "should have code styling (yellow)"
+        );
+        assert!(
+            joined.contains("\x1b[3m"),
+            "should have italic from quote styling"
+        );
     }
 
     // ==========================================================================
@@ -1222,9 +1333,18 @@ mod tests {
 
     #[test]
     fn test_hr_spacing_one_blank_line_after() {
-        let m = Markdown::new("hello world\n\n---\n\nagain, hello world", 0, 0, default_theme(), None);
+        let m = Markdown::new(
+            "hello world\n\n---\n\nagain, hello world",
+            0,
+            0,
+            default_theme(),
+            None,
+        );
         let lines = m.render(80);
-        let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l).trim_end().to_string()).collect();
+        let plain: Vec<String> = lines
+            .iter()
+            .map(|l| strip_ansi(l).trim_end().to_string())
+            .collect();
         let hr_idx = plain.iter().position(|l| l.contains("─")).unwrap();
         let after = &plain[hr_idx + 1..];
         let empty_count = after.iter().take_while(|l| l.is_empty()).count();
@@ -1236,7 +1356,10 @@ mod tests {
         let m = Markdown::new("---", 0, 0, default_theme(), None);
         let lines = m.render(80);
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
-        assert!(plain.iter().any(|l| l.contains("─")), "divider should render hr character");
+        assert!(
+            plain.iter().any(|l| l.contains("─")),
+            "divider should render hr character"
+        );
     }
 
     #[test]
@@ -1263,32 +1386,59 @@ mod tests {
     fn test_link_autolinked_email_no_mailto_prefix() {
         // autolinked email: "Contact user@example.com for help"
         // Should NOT show "mailto:" prefix
-        let m = Markdown::new("Contact user@example.com for help", 0, 0, default_theme(), None);
+        let m = Markdown::new(
+            "Contact user@example.com for help",
+            0,
+            0,
+            default_theme(),
+            None,
+        );
         let lines = m.render(80);
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
         let joined = plain.join(" ");
         assert!(joined.contains("user@example.com"), "should contain email");
-        assert!(!joined.contains("mailto:"), "should not show mailto: prefix");
+        assert!(
+            !joined.contains("mailto:"),
+            "should not show mailto: prefix"
+        );
     }
 
     #[test]
     fn test_link_explicit_with_different_text_shows_url() {
-        let m = Markdown::new("[click here](https://example.com)", 0, 0, default_theme(), None);
+        let m = Markdown::new(
+            "[click here](https://example.com)",
+            0,
+            0,
+            default_theme(),
+            None,
+        );
         let lines = m.render(80);
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
         let joined = plain.join(" ");
         assert!(joined.contains("click here"), "should contain link text");
-        assert!(joined.contains("(https://example.com)"), "should show URL in parentheses");
+        assert!(
+            joined.contains("(https://example.com)"),
+            "should show URL in parentheses"
+        );
     }
 
     #[test]
     fn test_link_explicit_mailto_with_different_text() {
-        let m = Markdown::new("[Email me](mailto:test@example.com)", 0, 0, default_theme(), None);
+        let m = Markdown::new(
+            "[Email me](mailto:test@example.com)",
+            0,
+            0,
+            default_theme(),
+            None,
+        );
         let lines = m.render(80);
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
         let joined = plain.join(" ");
         assert!(joined.contains("Email me"), "should contain link text");
-        assert!(joined.contains("(mailto:test@example.com)"), "should show mailto URL");
+        assert!(
+            joined.contains("(mailto:test@example.com)"),
+            "should show mailto URL"
+        );
     }
 
     // ==========================================================================
@@ -1377,8 +1527,14 @@ mod tests {
         );
         let lines = m.render(80);
         let joined = lines.join("\n");
-        assert!(joined.contains("inline code"), "should contain the inline code text");
-        assert!(joined.contains("\x1b[33m"), "inline code should be styled yellow");
+        assert!(
+            joined.contains("inline code"),
+            "should contain the inline code text"
+        );
+        assert!(
+            joined.contains("\x1b[33m"),
+            "inline code should be styled yellow"
+        );
     }
 
     // ==========================================================================
@@ -1387,19 +1543,40 @@ mod tests {
 
     #[test]
     fn test_paragraph_spacing_between_two_paragraphs() {
-        let m = Markdown::new("First paragraph\n\nSecond paragraph", 0, 0, default_theme(), None);
+        let m = Markdown::new(
+            "First paragraph\n\nSecond paragraph",
+            0,
+            0,
+            default_theme(),
+            None,
+        );
         let lines = m.render(80);
-        let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l).trim_end().to_string()).collect();
-        let first_idx = plain.iter().position(|l| l.contains("First paragraph")).unwrap();
-        let second_idx = plain.iter().position(|l| l.contains("Second paragraph")).unwrap();
-        assert!(second_idx > first_idx + 1, "should have blank line(s) between paragraphs");
+        let plain: Vec<String> = lines
+            .iter()
+            .map(|l| strip_ansi(l).trim_end().to_string())
+            .collect();
+        let first_idx = plain
+            .iter()
+            .position(|l| l.contains("First paragraph"))
+            .unwrap();
+        let second_idx = plain
+            .iter()
+            .position(|l| l.contains("Second paragraph"))
+            .unwrap();
+        assert!(
+            second_idx > first_idx + 1,
+            "should have blank line(s) between paragraphs"
+        );
     }
 
     #[test]
     fn test_paragraph_no_trailing_blank_when_last() {
         let m = Markdown::new("Just a paragraph", 0, 0, default_theme(), None);
         let lines = m.render(80);
-        let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l).trim_end().to_string()).collect();
+        let plain: Vec<String> = lines
+            .iter()
+            .map(|l| strip_ansi(l).trim_end().to_string())
+            .collect();
         // Just verify content is present
         assert!(plain.iter().any(|l| l.contains("Just a paragraph")));
     }
@@ -1410,7 +1587,13 @@ mod tests {
 
     #[test]
     fn test_combined_heading_list() {
-        let m = Markdown::new("# Test Document\n\n- Item 1\n- Item 2", 0, 0, default_theme(), None);
+        let m = Markdown::new(
+            "# Test Document\n\n- Item 1\n- Item 2",
+            0,
+            0,
+            default_theme(),
+            None,
+        );
         let lines = m.render(80);
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
         assert!(plain.iter().any(|l| l.contains("Test Document")));
@@ -1459,11 +1642,20 @@ mod tests {
 
     #[test]
     fn test_html_in_code_blocks_visible() {
-        let m = Markdown::new("```html\n<div>Some HTML</div>\n```", 0, 0, default_theme(), None);
+        let m = Markdown::new(
+            "```html\n<div>Some HTML</div>\n```",
+            0,
+            0,
+            default_theme(),
+            None,
+        );
         let lines = m.render(80);
         let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
         let joined = plain.join("\n");
-        assert!(joined.contains("<div>") && joined.contains("</div>"), "HTML in code blocks should be visible");
+        assert!(
+            joined.contains("<div>") && joined.contains("</div>"),
+            "HTML in code blocks should be visible"
+        );
     }
 
     // ==========================================================================
@@ -1489,14 +1681,20 @@ mod tests {
         let m = Markdown::new("Some text", 0, 0, default_theme(), None);
         let lines1 = m.render(80);
         let lines2 = m.render(80);
-        assert_eq!(lines1, lines2, "second render should return same cached result");
+        assert_eq!(
+            lines1, lines2,
+            "second render should return same cached result"
+        );
     }
 
     #[test]
     fn test_whitespace_only_renders_empty() {
         let m = Markdown::new("   \n\n   ", 0, 0, default_theme(), None);
         let lines = m.render(80);
-        assert!(lines.is_empty(), "whitespace-only text should render as empty");
+        assert!(
+            lines.is_empty(),
+            "whitespace-only text should render as empty"
+        );
     }
 
     // ==========================================================================
@@ -1508,11 +1706,19 @@ mod tests {
         let m = Markdown::new("Hello", 2, 0, default_theme(), None);
         let lines = m.render(40);
         // Content lines should start with 2 spaces (left margin)
-        let content_lines: Vec<&str> = lines.iter().filter(|l| strip_ansi(l).contains("Hello")).map(|s| s.as_str()).collect();
+        let content_lines: Vec<&str> = lines
+            .iter()
+            .filter(|l| strip_ansi(l).contains("Hello"))
+            .map(|s| s.as_str())
+            .collect();
         assert!(!content_lines.is_empty(), "should have content line");
         // The first 2 characters should be spaces
         let plain = strip_ansi(content_lines[0]);
-        assert!(plain.starts_with("  "), "content should have 2-space left margin, got: {:?}", &plain[..2.min(plain.len())]);
+        assert!(
+            plain.starts_with("  "),
+            "content should have 2-space left margin, got: {:?}",
+            &plain[..2.min(plain.len())]
+        );
     }
 
     #[test]
@@ -1520,9 +1726,15 @@ mod tests {
         let m = Markdown::new("Hello", 0, 1, default_theme(), None);
         let lines = m.render(40);
         // Should have at least one blank line at start and end
-        assert!(lines.len() >= 3, "should have top padding + content + bottom padding");
+        assert!(
+            lines.len() >= 3,
+            "should have top padding + content + bottom padding"
+        );
         let first_plain = strip_ansi(&lines[0]).trim().to_string();
-        assert!(first_plain.is_empty() || first_plain == " ".repeat(40).trim(), "first line should be blank padding");
+        assert!(
+            first_plain.is_empty() || first_plain == " ".repeat(40).trim(),
+            "first line should be blank padding"
+        );
     }
 
     // ==========================================================================

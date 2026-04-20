@@ -18,8 +18,8 @@ mod utils;
 
 use std::env;
 
-use cli::args::{parse_args, print_help, Args, Mode};
-use config::{get_agent_dir, is_truthy_env_flag, APP_NAME, VERSION};
+use cli::args::{Args, Mode, parse_args, print_help};
+use config::{APP_NAME, VERSION, get_agent_dir, is_truthy_env_flag};
 use core::model_registry::ModelRegistry;
 use core::settings_manager::SettingsManager;
 use modes::interactive::{InteractiveMode, InteractiveModeOptions};
@@ -102,7 +102,13 @@ fn parse_package_command(args: &[String]) -> Option<PackageCommandOptions> {
         }
     }
 
-    Some(PackageCommandOptions { command, source, local, help, invalid_option })
+    Some(PackageCommandOptions {
+        command,
+        source,
+        local,
+        help,
+        invalid_option,
+    })
 }
 
 async fn handle_package_command(args: &[String]) -> bool {
@@ -117,7 +123,10 @@ async fn handle_package_command(args: &[String]) -> bool {
 
     if let Some(ref invalid) = opts.invalid_option {
         eprintln!("Unknown option {invalid} for \"{}\".", opts.command);
-        eprintln!("Use \"{APP_NAME} --help\" or \"{}\".", get_package_command_usage(&opts.command));
+        eprintln!(
+            "Use \"{APP_NAME} --help\" or \"{}\".",
+            get_package_command_usage(&opts.command)
+        );
         std::process::exit(1);
     }
 
@@ -272,7 +281,11 @@ fn read_piped_stdin() -> Option<String> {
     let mut content = String::new();
     let _ = std::io::stdin().read_to_string(&mut content);
     let trimmed = content.trim().to_string();
-    if trimmed.is_empty() { None } else { Some(trimmed) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 /// Build the initial message from CLI messages and optional stdin content.
@@ -297,7 +310,10 @@ fn list_models(registry: &ModelRegistry, pattern: Option<&str>) {
         if let Some(p) = pattern {
             eprintln!("No models found matching \"{p}\"");
         } else {
-            eprintln!("No models loaded. Create {} to add models.", config::get_models_path().display());
+            eprintln!(
+                "No models loaded. Create {} to add models.",
+                config::get_models_path().display()
+            );
         }
         return;
     }

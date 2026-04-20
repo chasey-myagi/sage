@@ -1,5 +1,4 @@
 /// Spacer component — renders N empty lines.
-
 use crate::tui::Component;
 
 pub struct Spacer {
@@ -8,7 +7,9 @@ pub struct Spacer {
 
 impl Spacer {
     pub fn new(lines: usize) -> Self {
-        Self { lines: lines.max(1) }
+        Self {
+            lines: lines.max(1),
+        }
     }
 
     pub fn set_lines(&mut self, lines: usize) {

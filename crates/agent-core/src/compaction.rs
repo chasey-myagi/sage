@@ -292,16 +292,8 @@ fn safe_truncate(s: &str, max_bytes: usize) -> &str {
 /// Estimate token count for a single AgentMessage using chars/4 heuristic.
 pub fn estimate_message_tokens(msg: &AgentMessage) -> u32 {
     let chars = match msg {
-        AgentMessage::User(u) => u
-            .content
-            .iter()
-            .map(content_char_count)
-            .sum::<usize>(),
-        AgentMessage::Assistant(a) => a
-            .content
-            .iter()
-            .map(content_char_count)
-            .sum::<usize>(),
+        AgentMessage::User(u) => u.content.iter().map(content_char_count).sum::<usize>(),
+        AgentMessage::Assistant(a) => a.content.iter().map(content_char_count).sum::<usize>(),
         AgentMessage::ToolResult(tr) => {
             let raw: usize = tr.content.iter().map(content_char_count).sum();
             raw.min(TOOL_RESULT_TRUNCATE_CHARS)
@@ -449,7 +441,10 @@ pub fn microcompact(
         if i < think_cutoff
             && let AgentMessage::Assistant(a) = msg
         {
-            let had_thinking = a.content.iter().any(|c| matches!(c, Content::Thinking { .. }));
+            let had_thinking = a
+                .content
+                .iter()
+                .any(|c| matches!(c, Content::Thinking { .. }));
             if had_thinking {
                 a.content.retain(|c| !matches!(c, Content::Thinking { .. }));
             }
@@ -1227,7 +1222,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 5000,
-        ..Default::default()
+            ..Default::default()
         };
         // threshold = 10000 - 1000 = 9000
         // exactly at threshold: NOT compact (need to exceed)
@@ -1487,7 +1482,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 300,
-        ..Default::default()
+            ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None);
         assert!(prep.is_some());
@@ -1506,7 +1501,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 300,
-        ..Default::default()
+            ..Default::default()
         };
         let prep = prepare_compaction(
             &messages,
@@ -1530,7 +1525,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 100_000,
-        ..Default::default()
+            ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None);
         assert!(prep.is_none());
@@ -1561,7 +1556,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 300,
-        ..Default::default()
+            ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None).unwrap();
 
@@ -1595,7 +1590,7 @@ mod tests {
                 enabled: true,
                 reserve_tokens: 1000,
                 keep_recent_tokens: 100,
-            ..Default::default()
+                ..Default::default()
             },
             None,
         )
@@ -1896,7 +1891,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 5000,
-        ..Default::default()
+            ..Default::default()
         };
         // saturating_sub: 0 - 1000 = 0, any tokens > 0 → compact
         assert!(should_compact(1, 0, &settings));
@@ -2036,7 +2031,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1000,
             keep_recent_tokens: 300,
-        ..Default::default()
+            ..Default::default()
         };
         let mut prep =
             prepare_compaction(&messages, 50000, &settings, Some("## Goal\nBuild module X"))
@@ -2245,7 +2240,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 500,
             keep_recent_tokens: 100, // Keep only last ~1-2 messages
-        ..Default::default()
+            ..Default::default()
         };
 
         // Step 1: Prepare
@@ -2308,7 +2303,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 500,
             keep_recent_tokens: 150,
-        ..Default::default()
+            ..Default::default()
         };
 
         // Second round prepare — previous summary comes from the CompactionSummary message
@@ -2403,7 +2398,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 50,
-        ..Default::default()
+            ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None);
         // Degradation: still produces a preparation (cuts at ToolResult)
@@ -2538,7 +2533,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 50,
-        ..Default::default()
+            ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None).unwrap();
 
@@ -2567,7 +2562,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 50,
-        ..Default::default()
+            ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None).unwrap();
 
@@ -2595,7 +2590,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 50,
-        ..Default::default()
+            ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None).unwrap();
 
@@ -2789,7 +2784,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 50, // only keep last ~50 tokens
-        ..Default::default()
+            ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None);
         assert!(prep.is_some());
@@ -2841,7 +2836,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 100,
-        ..Default::default()
+            ..Default::default()
         };
         let prep_r1 = prepare_compaction(&messages_r1, 50000, &settings, None).unwrap();
 
@@ -3115,7 +3110,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 100,
             keep_recent_tokens: 50,
-        ..Default::default()
+            ..Default::default()
         };
         let prep = prepare_compaction(&messages, 50000, &settings, None).unwrap();
 

@@ -30,10 +30,7 @@ impl ExtensionEditorComponent {
     ///
     /// * `title` — label displayed above the editor.
     /// * `prefill` — optional initial text.
-    pub fn new(
-        title: impl Into<String>,
-        prefill: Option<String>,
-    ) -> Self {
+    pub fn new(title: impl Into<String>, prefill: Option<String>) -> Self {
         Self {
             text: prefill.unwrap_or_default(),
             focused: false,

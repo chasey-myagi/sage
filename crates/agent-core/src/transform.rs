@@ -2,9 +2,7 @@
 // Adapted from ai/src/transform.rs for agent-core types (ToolResultMessage has details field).
 
 use crate::types::*;
-use ai::types::{
-    LlmContent, LlmFunctionCall, LlmMessage, LlmTool, LlmToolCall, ThinkingBlock,
-};
+use ai::types::{LlmContent, LlmFunctionCall, LlmMessage, LlmTool, LlmToolCall, ThinkingBlock};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TOOL_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);

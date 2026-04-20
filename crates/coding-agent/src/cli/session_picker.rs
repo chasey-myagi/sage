@@ -40,10 +40,13 @@ pub fn select_session(sessions_loader: &SessionsLoader) -> Option<PathBuf> {
 
     println!("Available sessions:");
     for (i, session) in sessions.iter().enumerate() {
-        let name = session
-            .name
-            .as_deref()
-            .unwrap_or_else(|| session.path.file_name().and_then(|n| n.to_str()).unwrap_or("?"));
+        let name = session.name.as_deref().unwrap_or_else(|| {
+            session
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?")
+        });
         println!("  {}. {}", i + 1, name);
         println!("     {}", session.path.display());
     }
@@ -88,10 +91,7 @@ pub fn load_sessions_from_dir(dir: &std::path::Path) -> Vec<SessionInfo> {
     }
 
     // Sort by last modified (newest first)
-    sessions.sort_by(|a, b| {
-        b.last_modified
-            .cmp(&a.last_modified)
-    });
+    sessions.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
 
     sessions
 }

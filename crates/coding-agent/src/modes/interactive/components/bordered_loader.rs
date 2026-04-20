@@ -2,13 +2,13 @@
 //!
 //! Translated from `components/bordered-loader.ts`.
 
-use tui::tui::{Component, Container};
 use tui::components::spacer::Spacer;
 use tui::components::text::Text;
+use tui::tui::{Component, Container};
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor};
 use crate::modes::interactive::components::dynamic_border::DynamicBorder;
 use crate::modes::interactive::components::keybinding_hints::key_hint;
+use crate::modes::interactive::theme::{ThemeColor, get_theme};
 
 // ============================================================================
 // Spinner frames
@@ -55,7 +55,8 @@ impl BorderedLoader {
             move |s: &str| t2.fg(ThemeColor::Border, s)
         };
 
-        self.container.add_child(Box::new(DynamicBorder::with_color(border_fn.clone())));
+        self.container
+            .add_child(Box::new(DynamicBorder::with_color(border_fn.clone())));
 
         let spinner = SPINNER_FRAMES[self.frame];
         let spinner_colored = t.fg(ThemeColor::Accent, spinner);
@@ -70,10 +71,11 @@ impl BorderedLoader {
         }
 
         self.container.add_child(Box::new(Spacer::new(1)));
-        self.container.add_child(Box::new(DynamicBorder::with_color({
-            let t3 = t.clone();
-            move |s: &str| t3.fg(ThemeColor::Border, s)
-        })));
+        self.container
+            .add_child(Box::new(DynamicBorder::with_color({
+                let t3 = t.clone();
+                move |s: &str| t3.fg(ThemeColor::Border, s)
+            })));
     }
 }
 
@@ -96,7 +98,10 @@ mod tests {
         let loader = BorderedLoader::new("Loading...", false);
         let lines = loader.render(80);
         let text = lines.join("\n");
-        assert!(text.contains("Loading..."), "Expected 'Loading...' in: {text:?}");
+        assert!(
+            text.contains("Loading..."),
+            "Expected 'Loading...' in: {text:?}"
+        );
     }
 
     #[test]

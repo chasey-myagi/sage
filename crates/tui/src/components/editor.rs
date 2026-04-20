@@ -7,13 +7,12 @@
 /// (text buffer, cursor movement, insertion/deletion, submit/change callbacks)
 /// plus hooks for the optional features exposed by `EditorComponent`. Advanced
 /// pi-mono features can be layered on top incrementally.
-
 use crate::autocomplete::AutocompleteProvider;
 use crate::editor_component::EditorComponent;
 use crate::keybindings::get_keybindings;
 use crate::keys::decode_kitty_printable;
 use crate::kill_ring::KillRing;
-use crate::tui::{Component, Focusable, CURSOR_MARKER};
+use crate::tui::{CURSOR_MARKER, Component, Focusable};
 use crate::undo_stack::UndoStack;
 use crate::utils::{is_punctuation_char, is_whitespace_char, visible_width, wrap_text_with_ansi};
 
@@ -31,7 +30,9 @@ impl EditorTheme {
     where
         F: Fn(&str) -> String + Send + Sync + 'static,
     {
-        Self { border_color: Box::new(border_color) }
+        Self {
+            border_color: Box::new(border_color),
+        }
     }
 }
 
@@ -96,10 +97,7 @@ pub struct Editor {
 impl Editor {
     pub fn new(theme: EditorTheme, options: EditorOptions) -> Self {
         let padding_x = options.padding_x.unwrap_or(0);
-        let autocomplete_max_visible = options
-            .autocomplete_max_visible
-            .unwrap_or(5)
-            .clamp(3, 20);
+        let autocomplete_max_visible = options.autocomplete_max_visible.unwrap_or(5).clamp(3, 20);
 
         Self {
             state: EditorState {
@@ -450,7 +448,11 @@ impl Editor {
             Some(idx) => {
                 let text = self.history[idx].clone();
                 let lines: Vec<String> = text.split('\n').map(|s| s.to_string()).collect();
-                let lines = if lines.is_empty() { vec![String::new()] } else { lines };
+                let lines = if lines.is_empty() {
+                    vec![String::new()]
+                } else {
+                    lines
+                };
                 self.state.cursor_line = lines.len() - 1;
                 self.state.cursor_col = lines[self.state.cursor_line].chars().count();
                 self.state.lines = lines;
@@ -553,18 +555,23 @@ impl Editor {
             self.state.lines[old_line] = remaining;
         } else {
             // Simplification: delete across lines — join them.
-            let chunk_above = self.state.lines[self.state.cursor_line]
-                [byte_offset_for_col(&self.state.lines[self.state.cursor_line], self.state.cursor_col)..]
+            let chunk_above = self.state.lines[self.state.cursor_line][byte_offset_for_col(
+                &self.state.lines[self.state.cursor_line],
+                self.state.cursor_col,
+            )..]
                 .to_string();
-            let removed_below = self.state.lines.drain(self.state.cursor_line + 1..=old_line).collect::<Vec<_>>();
+            let removed_below = self
+                .state
+                .lines
+                .drain(self.state.cursor_line + 1..=old_line)
+                .collect::<Vec<_>>();
             let mut deleted_text = chunk_above.clone();
             for (i, l) in removed_below.iter().enumerate() {
                 deleted_text.push('\n');
                 if i == removed_below.len() - 1 {
                     let byte_old_col = byte_offset_for_col(l, old_col);
                     deleted_text.push_str(&l[..byte_old_col]);
-                }
-                else {
+                } else {
                     deleted_text.push_str(l);
                 }
             }
@@ -733,7 +740,10 @@ impl Editor {
     }
 
     fn handle_paste(&mut self, content: &str) {
-        let cleaned = content.replace("\r\n", "\n").replace('\r', "\n").replace('\t', "    ");
+        let cleaned = content
+            .replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .replace('\t', "    ");
         self.push_undo();
         self.insert_text_raw(&cleaned);
         self.last_action = None;
@@ -773,14 +783,20 @@ impl Focusable for Editor {
 
 impl Component for Editor {
     fn render(&self, width: u16) -> Vec<String> {
-        let content_width = (width as usize).saturating_sub(self.padding_x as usize * 2).max(1);
+        let content_width = (width as usize)
+            .saturating_sub(self.padding_x as usize * 2)
+            .max(1);
         let pad = " ".repeat(self.padding_x as usize);
 
         let mut output: Vec<String> = Vec::new();
         for (line_idx, line) in self.state.lines.iter().enumerate() {
             // Word-wrap line to content_width using ANSI-aware wrap.
             let wrapped = wrap_text_with_ansi(line, content_width);
-            let wrapped = if wrapped.is_empty() { vec![String::new()] } else { wrapped };
+            let wrapped = if wrapped.is_empty() {
+                vec![String::new()]
+            } else {
+                wrapped
+            };
 
             // Determine which visual chunk contains the cursor for this logical line.
             let mut cursor_on_line = None;
@@ -795,7 +811,10 @@ impl Component for Editor {
                     remaining -= chunk_char_count;
                 }
                 if cursor_on_line.is_none() {
-                    cursor_on_line = Some((wrapped.len() - 1, wrapped.last().map(|c| c.chars().count()).unwrap_or(0)));
+                    cursor_on_line = Some((
+                        wrapped.len() - 1,
+                        wrapped.last().map(|c| c.chars().count()).unwrap_or(0),
+                    ));
                 }
             }
 
@@ -811,7 +830,12 @@ impl Component for Editor {
                 };
                 let visible = visible_width(&line_out);
                 let padded = if visible < width as usize {
-                    format!("{pad}{line_out}{}", " ".repeat((width as usize).saturating_sub(visible + self.padding_x as usize * 2)))
+                    format!(
+                        "{pad}{line_out}{}",
+                        " ".repeat(
+                            (width as usize).saturating_sub(visible + self.padding_x as usize * 2)
+                        )
+                    )
                 } else {
                     format!("{pad}{line_out}")
                 };
@@ -1003,7 +1027,11 @@ impl EditorComponent for Editor {
         // Push undo so the caller can undo programmatic setText calls.
         self.push_undo();
         let lines: Vec<String> = text.split('\n').map(|s| s.to_string()).collect();
-        let lines = if lines.is_empty() { vec![String::new()] } else { lines };
+        let lines = if lines.is_empty() {
+            vec![String::new()]
+        } else {
+            lines
+        };
         self.state.cursor_line = lines.len() - 1;
         self.state.cursor_col = lines[self.state.cursor_line].chars().count();
         self.state.lines = lines;
@@ -1093,7 +1121,10 @@ mod tests {
     use super::*;
 
     fn editor() -> Editor {
-        Editor::new(EditorTheme::new(|s| s.to_string()), EditorOptions::default())
+        Editor::new(
+            EditorTheme::new(|s| s.to_string()),
+            EditorOptions::default(),
+        )
     }
 
     #[test]
@@ -2213,8 +2244,11 @@ mod tests {
         let lines = <Editor as Component>::render(&e, width);
         // Each content line should not exceed width
         for line in &lines {
-            assert!(crate::utils::visible_width(line) <= width as usize,
-                "Line exceeded width: {:?}", line);
+            assert!(
+                crate::utils::visible_width(line) <= width as usize,
+                "Line exceeded width: {:?}",
+                line
+            );
         }
     }
 
@@ -2235,8 +2269,11 @@ mod tests {
         e.set_text("Check https://example.com/very/long/path/that/exceeds/width here");
         let lines = <Editor as Component>::render(&e, width);
         for line in &lines {
-            assert!(crate::utils::visible_width(line) <= width as usize,
-                "Line exceeded width: {:?}", line);
+            assert!(
+                crate::utils::visible_width(line) <= width as usize,
+                "Line exceeded width: {:?}",
+                line
+            );
         }
     }
 
@@ -2286,7 +2323,10 @@ mod tests {
             }
         }
         e.set_autocomplete_provider(Box::new(MockProvider { call_count: cc }));
-        <Editor as Component>::handle_input(&mut e, "\x1b[200~look at @node_modules/react/index.js please\x1b[201~");
+        <Editor as Component>::handle_input(
+            &mut e,
+            "\x1b[200~look at @node_modules/react/index.js please\x1b[201~",
+        );
         assert_eq!(e.get_text(), "look at @node_modules/react/index.js please");
         assert_eq!(*call_count.lock().unwrap(), 0);
     }

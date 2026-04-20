@@ -115,12 +115,7 @@ pub fn classify_provider_error(
 ///   byte-identical to what they would see if the error flowed up as a
 ///   structured `SageError`.
 /// - Otherwise ⇒ render the generic `"API error {status}: {body_excerpt}"`.
-pub fn format_provider_error(
-    provider: &str,
-    model_id: &str,
-    status: u16,
-    body: &str,
-) -> String {
+pub fn format_provider_error(provider: &str, model_id: &str, status: u16, body: &str) -> String {
     if let Some(err) = classify_provider_error(provider, model_id, status, body) {
         return err.to_string();
     }
@@ -332,8 +327,14 @@ mod tests {
         // invalid-model body → output 包含 provider name 和 model_id
         let body = r#"{"error":{"message":"Invalid model: kimi-k99","type":"invalid_request_error","code":"invalid_model"}}"#;
         let out = format_provider_error("kimi", "kimi-k99", 400, body);
-        assert!(out.contains("kimi"), "output should mention provider 'kimi', got: {out}");
-        assert!(out.contains("kimi-k99"), "output should mention model_id 'kimi-k99', got: {out}");
+        assert!(
+            out.contains("kimi"),
+            "output should mention provider 'kimi', got: {out}"
+        );
+        assert!(
+            out.contains("kimi-k99"),
+            "output should mention model_id 'kimi-k99', got: {out}"
+        );
     }
 
     #[test]
@@ -406,11 +407,17 @@ mod tests {
         // 不论哪个路径，status code 都应该出现在输出里
         let body_400 = r#"{"error":{"message":"Invalid model: foo","type":"invalid_request_error","code":"model_not_found"}}"#;
         let out_400 = format_provider_error("openai", "gpt-99", 400, body_400);
-        assert!(out_400.contains("400"), "status 400 should appear in output, got: {out_400}");
+        assert!(
+            out_400.contains("400"),
+            "status 400 should appear in output, got: {out_400}"
+        );
 
         let body_429 = r#"{"error":{"message":"Rate limit exceeded","type":"rate_limit_error"}}"#;
         let out_429 = format_provider_error("openai", "gpt-4o", 429, body_429);
-        assert!(out_429.contains("429"), "status 429 should appear in output, got: {out_429}");
+        assert!(
+            out_429.contains("429"),
+            "status 429 should appear in output, got: {out_429}"
+        );
     }
 
     #[test]
@@ -472,13 +479,23 @@ mod tests {
 
     #[test]
     fn classify_provider_error_returns_some_invalid_model_for_matching_body() {
-        let err = classify_provider_error("kimi", "kimi-k99", 400, r#"{"error":{"code":"model_not_found"}}"#);
+        let err = classify_provider_error(
+            "kimi",
+            "kimi-k99",
+            400,
+            r#"{"error":{"code":"model_not_found"}}"#,
+        );
         assert!(err.is_some());
     }
 
     #[test]
     fn classify_provider_error_returns_none_for_rate_limit() {
-        let err = classify_provider_error("kimi", "kimi-k99", 429, r#"{"error":{"type":"rate_limit_error"}}"#);
+        let err = classify_provider_error(
+            "kimi",
+            "kimi-k99",
+            429,
+            r#"{"error":{"type":"rate_limit_error"}}"#,
+        );
         assert!(err.is_none());
     }
 
@@ -492,8 +509,14 @@ mod tests {
         // mid-char and panic. char-based truncation handles this cleanly.
         let body = "模型不存在".repeat(60); // 300 CJK chars, 900 bytes
         let out = body_excerpt(&body);
-        assert!(out.ends_with("..."), "long body should be truncated with ellipsis");
-        assert!(out.chars().count() <= 203, "truncated output should be ≤200 chars + '...'");
+        assert!(
+            out.ends_with("..."),
+            "long body should be truncated with ellipsis"
+        );
+        assert!(
+            out.chars().count() <= 203,
+            "truncated output should be ≤200 chars + '...'"
+        );
     }
 
     #[test]
@@ -509,8 +532,10 @@ mod tests {
         let body = r#"{"error":{"code":"invalid_model","message":"模型 kimi-k99 不存在，请检查模型名称"}}"#;
         let msg = format_provider_error("kimi", "kimi-k99", 400, body);
         assert!(msg.contains("kimi-k99"));
-        assert!(msg.contains("模型") || msg.contains("不存在"),
-            "excerpt should include Chinese error text, got: {msg}");
+        assert!(
+            msg.contains("模型") || msg.contains("不存在"),
+            "excerpt should include Chinese error text, got: {msg}"
+        );
     }
 
     // ========================================================================

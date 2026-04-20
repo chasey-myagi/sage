@@ -171,7 +171,10 @@ pub fn process_proxy_event(
             None
         }
 
-        ProxyEvent::TextDelta { content_index, delta } => {
+        ProxyEvent::TextDelta {
+            content_index,
+            delta,
+        } => {
             let idx = *content_index;
             if let Some(Some(PartialContent::Text { text, .. })) = partial_content.get_mut(idx) {
                 text.push_str(delta);
@@ -206,7 +209,10 @@ pub fn process_proxy_event(
             None
         }
 
-        ProxyEvent::ThinkingDelta { content_index, delta } => {
+        ProxyEvent::ThinkingDelta {
+            content_index,
+            delta,
+        } => {
             let idx = *content_index;
             if let Some(Some(PartialContent::Thinking { thinking, .. })) =
                 partial_content.get_mut(idx)
@@ -258,10 +264,14 @@ pub fn process_proxy_event(
             })
         }
 
-        ProxyEvent::ToolcallDelta { content_index, delta } => {
+        ProxyEvent::ToolcallDelta {
+            content_index,
+            delta,
+        } => {
             let idx = *content_index;
-            if let Some(Some(PartialContent::ToolCall { partial_json, id, .. })) =
-                partial_content.get_mut(idx)
+            if let Some(Some(PartialContent::ToolCall {
+                partial_json, id, ..
+            })) = partial_content.get_mut(idx)
             {
                 partial_json.push_str(delta);
                 Some(AssistantMessageEvent::ToolCallDelta {
@@ -352,7 +362,10 @@ pub async fn collect_proxy_events(
         .header("Content-Type", "application/json")
         .json(&body);
 
-    let response = req.send().await.map_err(|e| format!("Proxy request failed: {e}"))?;
+    let response = req
+        .send()
+        .await
+        .map_err(|e| format!("Proxy request failed: {e}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -360,11 +373,20 @@ pub async fn collect_proxy_events(
         let error_msg = serde_json::from_str::<serde_json::Value>(&body)
             .ok()
             .and_then(|v| v["error"].as_str().map(|s| s.to_string()))
-            .unwrap_or_else(|| format!("{} {}", status.as_u16(), status.canonical_reason().unwrap_or("")));
+            .unwrap_or_else(|| {
+                format!(
+                    "{} {}",
+                    status.as_u16(),
+                    status.canonical_reason().unwrap_or("")
+                )
+            });
         return Err(format!("Proxy error: {error_msg}"));
     }
 
-    let text = response.text().await.map_err(|e| format!("Failed to read proxy response: {e}"))?;
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read proxy response: {e}"))?;
 
     let mut events = Vec::new();
     let mut partial_content: Vec<Option<PartialContent>> = Vec::new();

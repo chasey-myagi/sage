@@ -233,8 +233,14 @@ mod tests {
         let input = r"\uD83D\uDE48 between \uD800 and \uD83D\uDE48";
         let out = sanitize_surrogates(input);
         // Both paired surrogates should survive; the lone \uD800 should be stripped
-        assert!(out.contains(r"\uD83D\uDE48"), "paired surrogates should be kept");
-        assert!(!out.contains(r"\uD800 "), "lone high surrogate should be removed");
+        assert!(
+            out.contains(r"\uD83D\uDE48"),
+            "paired surrogates should be kept"
+        );
+        assert!(
+            !out.contains(r"\uD800 "),
+            "lone high surrogate should be removed"
+        );
     }
 
     // --- truncated escape at end of string ----------------------------------

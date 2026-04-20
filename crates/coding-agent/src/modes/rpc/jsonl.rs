@@ -42,10 +42,7 @@ pub fn write_json_line<W: Write, T: Serialize>(writer: &mut W, value: &T) -> any
 ///
 /// Returns an error only on I/O failure; parse errors for individual lines
 /// are left to the caller.
-pub fn read_jsonl_lines<R: BufRead, F: FnMut(String)>(
-    reader: R,
-    mut on_line: F,
-) -> io::Result<()> {
+pub fn read_jsonl_lines<R: BufRead, F: FnMut(String)>(reader: R, mut on_line: F) -> io::Result<()> {
     let mut buffer = String::new();
     let mut reader = reader;
 
@@ -53,7 +50,10 @@ pub fn read_jsonl_lines<R: BufRead, F: FnMut(String)>(
         let n = reader.read_line(&mut buffer)?;
         if n == 0 {
             // EOF — emit any remaining content
-            let line = buffer.trim_end_matches('\n').trim_end_matches('\r').to_string();
+            let line = buffer
+                .trim_end_matches('\n')
+                .trim_end_matches('\r')
+                .to_string();
             if !line.is_empty() {
                 on_line(line);
             }
@@ -87,10 +87,7 @@ pub mod async_reader {
 
     /// Async version of `read_jsonl_lines`. Reads lines from a tokio
     /// `AsyncBufRead` and calls `on_line` for each non-empty record.
-    pub async fn read_jsonl_lines_async<R, F>(
-        reader: R,
-        mut on_line: F,
-    ) -> std::io::Result<()>
+    pub async fn read_jsonl_lines_async<R, F>(reader: R, mut on_line: F) -> std::io::Result<()>
     where
         R: AsyncBufRead + Unpin,
         F: FnMut(String),
@@ -126,10 +123,7 @@ mod tests {
         let line = serialize_json_line(&value).unwrap();
         // The string should contain the raw code points, not their escape sequences
         let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-        assert_eq!(
-            parsed["text"].as_str().unwrap(),
-            "a\u{2028}b\u{2029}c"
-        );
+        assert_eq!(parsed["text"].as_str().unwrap(), "a\u{2028}b\u{2029}c");
     }
 
     #[test]
@@ -162,10 +156,7 @@ mod tests {
         let line = serialize_json_line(&value).unwrap();
 
         let mut lines = Vec::new();
-        read_jsonl_lines(std::io::BufReader::new(line.as_bytes()), |l| {
-            lines.push(l)
-        })
-        .unwrap();
+        read_jsonl_lines(std::io::BufReader::new(line.as_bytes()), |l| lines.push(l)).unwrap();
 
         assert_eq!(lines.len(), 1);
         let parsed: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();

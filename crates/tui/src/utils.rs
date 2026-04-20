@@ -1,6 +1,5 @@
 /// Utility functions for terminal text rendering.
 /// Handles ANSI codes, grapheme widths, text wrapping, and truncation.
-
 use unicode_width::UnicodeWidthChar;
 
 // =============================================================================
@@ -106,8 +105,25 @@ pub fn extract_ansi_code(s: &str, pos: usize) -> Option<(&str, usize)> {
             let mut j = pos + 2;
             while j < bytes.len() {
                 let b = bytes[j];
-                if matches!(b, b'm' | b'G' | b'K' | b'H' | b'J' | b'A' | b'B' | b'C' | b'D'
-                    | b'u' | b'h' | b'l' | b't' | b'~' | b'Z' | b'F' | b'f') {
+                if matches!(
+                    b,
+                    b'm' | b'G'
+                        | b'K'
+                        | b'H'
+                        | b'J'
+                        | b'A'
+                        | b'B'
+                        | b'C'
+                        | b'D'
+                        | b'u'
+                        | b'h'
+                        | b'l'
+                        | b't'
+                        | b'~'
+                        | b'Z'
+                        | b'F'
+                        | b'f'
+                ) {
                     return Some((&s[pos..j + 1], j + 1 - pos));
                 }
                 j += 1;
@@ -165,7 +181,11 @@ pub fn wrap_text_with_ansi(text: &str, width: usize) -> Vec<String> {
     let mut tracker = AnsiCodeTracker::new();
 
     for input_line in &input_lines {
-        let prefix = if !result.is_empty() { tracker.get_active_codes() } else { String::new() };
+        let prefix = if !result.is_empty() {
+            tracker.get_active_codes()
+        } else {
+            String::new()
+        };
         let wrapped = wrap_single_line(&format!("{prefix}{input_line}"), width);
         result.extend(wrapped);
         update_tracker_from_text(input_line, &mut tracker);
@@ -248,7 +268,10 @@ fn wrap_single_line(line: &str, width: usize) -> Vec<String> {
     if wrapped.is_empty() {
         vec![String::new()]
     } else {
-        wrapped.into_iter().map(|l| l.trim_end().to_string()).collect()
+        wrapped
+            .into_iter()
+            .map(|l| l.trim_end().to_string())
+            .collect()
     }
 }
 
@@ -352,7 +375,11 @@ pub fn truncate_to_width(text: &str, max_width: usize, ellipsis: &str, pad: bool
         return String::new();
     }
     if text.is_empty() {
-        return if pad { " ".repeat(max_width) } else { String::new() };
+        return if pad {
+            " ".repeat(max_width)
+        } else {
+            String::new()
+        };
     }
 
     let ellipsis_width = visible_width(ellipsis);
@@ -370,14 +397,25 @@ pub fn truncate_to_width(text: &str, max_width: usize, ellipsis: &str, pad: bool
         // text_width > max_width guaranteed here
         let clipped = truncate_fragment_to_width(ellipsis, max_width);
         if clipped.1 == 0 {
-            return if pad { " ".repeat(max_width) } else { String::new() };
+            return if pad {
+                " ".repeat(max_width)
+            } else {
+                String::new()
+            };
         }
         return finalize_truncated_result("", 0, &clipped.0, clipped.1, max_width, pad);
     }
 
     let target_width = max_width - ellipsis_width;
     let prefix = truncate_fragment_to_width(text, target_width);
-    finalize_truncated_result(&prefix.0, prefix.1, ellipsis, ellipsis_width, max_width, pad)
+    finalize_truncated_result(
+        &prefix.0,
+        prefix.1,
+        ellipsis,
+        ellipsis_width,
+        max_width,
+        pad,
+    )
 }
 
 fn truncate_fragment_to_width(text: &str, max_width: usize) -> (String, usize) {
@@ -553,7 +591,11 @@ pub fn extract_segments(
 
         current_col += w;
         i += ch_len;
-        let stop = if after_len == 0 { current_col >= before_end } else { current_col >= after_end };
+        let stop = if after_len == 0 {
+            current_col >= before_end
+        } else {
+            current_col >= after_end
+        };
         if stop {
             break;
         }
@@ -575,11 +617,36 @@ pub fn is_whitespace_char(ch: char) -> bool {
 pub fn is_punctuation_char(ch: char) -> bool {
     matches!(
         ch,
-        '(' | ')' | '{' | '}' | '[' | ']' | '<' | '>'
-        | '.' | ',' | ';' | ':' | '\'' | '"' | '!'
-        | '?' | '+' | '-' | '=' | '*' | '/' | '\\'
-        | '|' | '&' | '%' | '^' | '$' | '#' | '@'
-        | '~' | '`'
+        '(' | ')'
+            | '{'
+            | '}'
+            | '['
+            | ']'
+            | '<'
+            | '>'
+            | '.'
+            | ','
+            | ';'
+            | ':'
+            | '\''
+            | '"'
+            | '!'
+            | '?'
+            | '+'
+            | '-'
+            | '='
+            | '*'
+            | '/'
+            | '\\'
+            | '|'
+            | '&'
+            | '%'
+            | '^'
+            | '$'
+            | '#'
+            | '@'
+            | '~'
+            | '`'
     )
 }
 
@@ -640,7 +707,11 @@ impl AnsiCodeTracker {
                     } else if parts.get(i + 1) == Some(&"2") && parts.get(i + 4).is_some() {
                         let color_code = format!(
                             "{};{};{};{};{}",
-                            parts[i], parts[i + 1], parts[i + 2], parts[i + 3], parts[i + 4]
+                            parts[i],
+                            parts[i + 1],
+                            parts[i + 2],
+                            parts[i + 3],
+                            parts[i + 4]
                         );
                         if code == 38 {
                             self.fg_color = Some(color_code);
@@ -661,7 +732,10 @@ impl AnsiCodeTracker {
                 8 => self.hidden = true,
                 9 => self.strikethrough = true,
                 21 => self.bold = false,
-                22 => { self.bold = false; self.dim = false; }
+                22 => {
+                    self.bold = false;
+                    self.dim = false;
+                }
                 23 => self.italic = false,
                 24 => self.underline = false,
                 25 => self.blink = false,
@@ -692,16 +766,36 @@ impl AnsiCodeTracker {
 
     pub fn get_active_codes(&self) -> String {
         let mut codes: Vec<String> = Vec::new();
-        if self.bold { codes.push("1".into()); }
-        if self.dim { codes.push("2".into()); }
-        if self.italic { codes.push("3".into()); }
-        if self.underline { codes.push("4".into()); }
-        if self.blink { codes.push("5".into()); }
-        if self.inverse { codes.push("7".into()); }
-        if self.hidden { codes.push("8".into()); }
-        if self.strikethrough { codes.push("9".into()); }
-        if let Some(ref fg) = self.fg_color { codes.push(fg.clone()); }
-        if let Some(ref bg) = self.bg_color { codes.push(bg.clone()); }
+        if self.bold {
+            codes.push("1".into());
+        }
+        if self.dim {
+            codes.push("2".into());
+        }
+        if self.italic {
+            codes.push("3".into());
+        }
+        if self.underline {
+            codes.push("4".into());
+        }
+        if self.blink {
+            codes.push("5".into());
+        }
+        if self.inverse {
+            codes.push("7".into());
+        }
+        if self.hidden {
+            codes.push("8".into());
+        }
+        if self.strikethrough {
+            codes.push("9".into());
+        }
+        if let Some(ref fg) = self.fg_color {
+            codes.push(fg.clone());
+        }
+        if let Some(ref bg) = self.bg_color {
+            codes.push(bg.clone());
+        }
         if codes.is_empty() {
             String::new()
         } else {
@@ -1006,7 +1100,10 @@ mod tests {
     #[test]
     fn test_truncate_wide_ellipsis_safety() {
         assert_eq!(truncate_to_width("abcdef", 1, "🙂", false), "");
-        assert_eq!(truncate_to_width("abcdef", 2, "🙂", false), "\x1b[0m🙂\x1b[0m");
+        assert_eq!(
+            truncate_to_width("abcdef", 2, "🙂", false),
+            "\x1b[0m🙂\x1b[0m"
+        );
         assert!(visible_width(&truncate_to_width("abcdef", 2, "🙂", false)) <= 2);
     }
 
@@ -1062,7 +1159,11 @@ mod tests {
     fn test_streaming_emoji_intermediates_non_zero_width() {
         // Common emoji used in streaming contexts — verify they have non-zero width
         for sample in &["👍", "✅", "⚡"] {
-            assert!(visible_width(sample) > 0, "Expected {} to have non-zero width", sample);
+            assert!(
+                visible_width(sample) > 0,
+                "Expected {} to have non-zero width",
+                sample
+            );
         }
     }
 

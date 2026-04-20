@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::source_info::{create_synthetic_source_info, SourceInfo};
+use super::source_info::{SourceInfo, create_synthetic_source_info};
 
 // ============================================================================
 // Types
@@ -112,9 +112,18 @@ pub fn substitute_args(content: &str, args: &[String]) -> String {
             let start = if start_raw == 0 { 0 } else { start_raw - 1 };
             if let Some(len_str) = caps.get(2) {
                 let length: usize = len_str.as_str().parse().unwrap_or(0);
-                args.iter().skip(start).take(length).cloned().collect::<Vec<_>>().join(" ")
+                args.iter()
+                    .skip(start)
+                    .take(length)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" ")
             } else {
-                args.iter().skip(start).cloned().collect::<Vec<_>>().join(" ")
+                args.iter()
+                    .skip(start)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" ")
             }
         })
         .into_owned();
@@ -225,7 +234,9 @@ pub struct LoadPromptTemplatesOptions {
 ///
 /// Mirrors `loadPromptTemplates()` from TypeScript.
 pub fn load_prompt_templates(options: LoadPromptTemplatesOptions) -> Vec<PromptTemplate> {
-    let cwd = options.cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let cwd = options
+        .cwd
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     let include_defaults = options.include_defaults.unwrap_or(true);
     let mut templates = Vec::new();
 
@@ -405,10 +416,7 @@ mod tests {
     #[test]
     fn substitute_args_mixed_at_and_arguments() {
         let args = vec!["a".to_string(), "b".to_string()];
-        assert_eq!(
-            substitute_args("$@ and $ARGUMENTS", &args),
-            "a b and a b"
-        );
+        assert_eq!(substitute_args("$@ and $ARGUMENTS", &args), "a b and a b");
     }
 
     #[test]
@@ -428,21 +436,14 @@ mod tests {
 
     #[test]
     fn substitute_args_unicode() {
-        let args = vec![
-            "日本語".to_string(),
-            "🎉".to_string(),
-            "café".to_string(),
-        ];
+        let args = vec!["日本語".to_string(), "🎉".to_string(), "café".to_string()];
         assert_eq!(substitute_args("$ARGUMENTS", &args), "日本語 🎉 café");
     }
 
     #[test]
     fn substitute_args_newlines_and_tabs() {
         let args = vec!["line1\nline2".to_string(), "tab\tthere".to_string()];
-        assert_eq!(
-            substitute_args("$1 $2", &args),
-            "line1\nline2 tab\tthere"
-        );
+        assert_eq!(substitute_args("$1 $2", &args), "line1\nline2 tab\tthere");
     }
 
     #[test]
@@ -454,10 +455,7 @@ mod tests {
     #[test]
     fn substitute_args_quoted_args_with_spaces() {
         let args = vec!["first arg".to_string(), "second arg".to_string()];
-        assert_eq!(
-            substitute_args("$ARGUMENTS", &args),
-            "first arg second arg"
-        );
+        assert_eq!(substitute_args("$ARGUMENTS", &args), "first arg second arg");
     }
 
     #[test]
@@ -524,10 +522,7 @@ mod tests {
     fn substitute_args_non_matching_patterns_preserved() {
         let args = vec!["a".to_string()];
         // $A, $$, $ (bare), $ARGS → all preserved
-        assert_eq!(
-            substitute_args("$A $$ $ $ARGS", &args),
-            "$A $$ $ $ARGS"
-        );
+        assert_eq!(substitute_args("$A $$ $ $ARGS", &args), "$A $$ $ $ARGS");
     }
 
     #[test]
@@ -564,10 +559,7 @@ mod tests {
     #[test]
     fn substitute_args_multi_digit_numbered() {
         let args: Vec<String> = (0..15).map(|i| format!("val{}", i)).collect();
-        assert_eq!(
-            substitute_args("$10 $12 $15", &args),
-            "val9 val11 val14"
-        );
+        assert_eq!(substitute_args("$10 $12 $15", &args), "val9 val11 val14");
     }
 
     #[test]
@@ -611,14 +603,20 @@ mod tests {
 
     #[test]
     fn slice_from_index() {
-        assert_eq!(substitute_args("${@:2}", &s(&["a", "b", "c", "d"])), "b c d");
+        assert_eq!(
+            substitute_args("${@:2}", &s(&["a", "b", "c", "d"])),
+            "b c d"
+        );
         assert_eq!(substitute_args("${@:1}", &s(&["a", "b", "c"])), "a b c");
         assert_eq!(substitute_args("${@:3}", &s(&["a", "b", "c", "d"])), "c d");
     }
 
     #[test]
     fn slice_with_length() {
-        assert_eq!(substitute_args("${@:2:2}", &s(&["a", "b", "c", "d"])), "b c");
+        assert_eq!(
+            substitute_args("${@:2:2}", &s(&["a", "b", "c", "d"])),
+            "b c"
+        );
         assert_eq!(substitute_args("${@:1:1}", &s(&["a", "b", "c"])), "a");
         assert_eq!(substitute_args("${@:3:1}", &s(&["a", "b", "c", "d"])), "c");
         assert_eq!(
@@ -684,10 +682,7 @@ mod tests {
 
     #[test]
     fn slice_zero_start_is_all_args() {
-        assert_eq!(
-            substitute_args("${@:0}", &s(&["a", "b", "c"])),
-            "a b c"
-        );
+        assert_eq!(substitute_args("${@:0}", &s(&["a", "b", "c"])), "a b c");
     }
 
     #[test]
@@ -705,10 +700,7 @@ mod tests {
     #[test]
     fn slice_in_middle_of_text() {
         assert_eq!(
-            substitute_args(
-                "Process ${@:2} with $1",
-                &s(&["tool", "file1", "file2"])
-            ),
+            substitute_args("Process ${@:2} with $1", &s(&["tool", "file1", "file2"])),
             "Process file1 file2 with tool"
         );
     }
@@ -782,10 +774,7 @@ mod tests {
 
     #[test]
     fn parse_command_args_simple() {
-        assert_eq!(
-            parse_command_args("a b c"),
-            vec!["a", "b", "c"]
-        );
+        assert_eq!(parse_command_args("a b c"), vec!["a", "b", "c"]);
     }
 
     #[test]
@@ -922,8 +911,8 @@ mod tests {
 
     #[test]
     fn expand_prompt_template_found() {
-        use std::path::PathBuf;
         use crate::core::source_info::create_synthetic_source_info;
+        use std::path::PathBuf;
 
         let template = PromptTemplate {
             name: "greet".to_string(),

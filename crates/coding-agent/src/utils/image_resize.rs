@@ -8,7 +8,7 @@
 use base64::Engine as _;
 
 use crate::utils::exif_orientation::apply_exif_orientation;
-use crate::utils::photon::{resize, PhotonImage, SamplingFilter};
+use crate::utils::photon::{PhotonImage, SamplingFilter, resize};
 
 // ============================================================================
 // Public types
@@ -77,18 +77,31 @@ fn encode_png(image: &PhotonImage) -> Option<EncodedCandidate> {
     let bytes = image.get_bytes().ok()?;
     let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
     let encoded_size = data.len();
-    Some(EncodedCandidate { data, encoded_size, mime_type: "image/png".to_owned() })
+    Some(EncodedCandidate {
+        data,
+        encoded_size,
+        mime_type: "image/png".to_owned(),
+    })
 }
 
 fn encode_jpeg(image: &PhotonImage, quality: u8) -> Option<EncodedCandidate> {
     let bytes = image.get_bytes_jpeg(quality).ok()?;
     let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
     let encoded_size = data.len();
-    Some(EncodedCandidate { data, encoded_size, mime_type: "image/jpeg".to_owned() })
+    Some(EncodedCandidate {
+        data,
+        encoded_size,
+        mime_type: "image/jpeg".to_owned(),
+    })
 }
 
 /// Try PNG + a range of JPEG qualities at `(width, height)` and return all candidates.
-fn try_encodings(image: &PhotonImage, width: u32, height: u32, jpeg_qualities: &[u8]) -> Vec<EncodedCandidate> {
+fn try_encodings(
+    image: &PhotonImage,
+    width: u32,
+    height: u32,
+    jpeg_qualities: &[u8],
+) -> Vec<EncodedCandidate> {
     let resized = resize(image, width, height, SamplingFilter::Lanczos3);
     let mut candidates = Vec::new();
     if let Some(png) = encode_png(&resized) {
@@ -118,10 +131,15 @@ fn try_encodings(image: &PhotonImage, width: u32, height: u32, jpeg_qualities: &
 /// 3. Resize to `max_width`/`max_height` maintaining aspect ratio.
 /// 4. Try PNG + JPEG at several qualities; pick the first candidate under `max_bytes`.
 /// 5. Progressively reduce dimensions by 25% until the limit is met or 1×1.
-pub fn resize_image(img: &ImageContent, options: Option<ImageResizeOptions>) -> Option<ResizedImage> {
+pub fn resize_image(
+    img: &ImageContent,
+    options: Option<ImageResizeOptions>,
+) -> Option<ResizedImage> {
     let opts = options.unwrap_or_default();
 
-    let raw = base64::engine::general_purpose::STANDARD.decode(&img.data).ok()?;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(&img.data)
+        .ok()?;
     let input_base64_size = img.data.len();
 
     let raw_image = PhotonImage::new_from_byteslice(&raw).ok()?;
@@ -151,11 +169,13 @@ pub fn resize_image(img: &ImageContent, options: Option<ImageResizeOptions>) -> 
     let mut target_height = original_height;
 
     if target_width > opts.max_width {
-        target_height = (target_height as f64 * opts.max_width as f64 / target_width as f64).round() as u32;
+        target_height =
+            (target_height as f64 * opts.max_width as f64 / target_width as f64).round() as u32;
         target_width = opts.max_width;
     }
     if target_height > opts.max_height {
-        target_width = (target_width as f64 * opts.max_height as f64 / target_height as f64).round() as u32;
+        target_width =
+            (target_width as f64 * opts.max_height as f64 / target_height as f64).round() as u32;
         target_height = opts.max_height;
     }
     target_width = target_width.max(1);
@@ -192,8 +212,18 @@ pub fn resize_image(img: &ImageContent, options: Option<ImageResizeOptions>) -> 
             break;
         }
 
-        let next_width = if current_width == 1 { 1 } else { (current_width as f64 * 0.75).floor() as u32 }.max(1);
-        let next_height = if current_height == 1 { 1 } else { (current_height as f64 * 0.75).floor() as u32 }.max(1);
+        let next_width = if current_width == 1 {
+            1
+        } else {
+            (current_width as f64 * 0.75).floor() as u32
+        }
+        .max(1);
+        let next_height = if current_height == 1 {
+            1
+        } else {
+            (current_height as f64 * 0.75).floor() as u32
+        }
+        .max(1);
 
         if next_width == current_width && next_height == current_height {
             break;
@@ -218,11 +248,7 @@ pub fn format_dimension_note(result: &ResizedImage) -> Option<String> {
     let scale = result.original_width as f64 / result.width as f64;
     Some(format!(
         "[Image: original {}x{}, displayed at {}x{}. Multiply coordinates by {:.2} to map to original image.]",
-        result.original_width,
-        result.original_height,
-        result.width,
-        result.height,
-        scale,
+        result.original_width, result.original_height, result.width, result.height, scale,
     ))
 }
 
@@ -248,7 +274,10 @@ mod tests {
     #[test]
     fn small_image_not_resized() {
         let data = tiny_png_b64(10, 10);
-        let img = ImageContent { data, mime_type: "image/png".to_owned() };
+        let img = ImageContent {
+            data,
+            mime_type: "image/png".to_owned(),
+        };
         let result = resize_image(&img, None).unwrap();
         assert!(!result.was_resized);
     }
@@ -256,7 +285,10 @@ mod tests {
     #[test]
     fn dimension_note_only_when_resized() {
         let data = tiny_png_b64(10, 10);
-        let img = ImageContent { data, mime_type: "image/png".to_owned() };
+        let img = ImageContent {
+            data,
+            mime_type: "image/png".to_owned(),
+        };
         let result = resize_image(&img, None).unwrap();
         assert!(format_dimension_note(&result).is_none());
     }
@@ -264,7 +296,10 @@ mod tests {
     #[test]
     fn oversized_image_gets_resized() {
         let data = tiny_png_b64(3000, 3000);
-        let img = ImageContent { data, mime_type: "image/png".to_owned() };
+        let img = ImageContent {
+            data,
+            mime_type: "image/png".to_owned(),
+        };
         let result = resize_image(&img, None).unwrap();
         assert!(result.was_resized);
         assert!(result.width <= 2000);

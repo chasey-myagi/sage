@@ -175,9 +175,7 @@ pub fn get_shell_env() -> Vec<(String, String)> {
     let delim = if cfg!(windows) { ';' } else { ':' };
     let current_path = std::env::var(&path_key).unwrap_or_default();
 
-    let has_bin_dir = current_path
-        .split(delim)
-        .any(|entry| entry == bin_dir_str);
+    let has_bin_dir = current_path.split(delim).any(|entry| entry == bin_dir_str);
 
     let updated_path = if has_bin_dir {
         current_path.clone()

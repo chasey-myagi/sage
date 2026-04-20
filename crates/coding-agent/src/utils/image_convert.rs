@@ -18,10 +18,7 @@ use crate::utils::photon::PhotonImage;
 /// - the image cannot be decoded
 ///
 /// Mirrors `convertToPng()` from TypeScript.
-pub fn convert_to_png(
-    base64_data: &str,
-    mime_type: &str,
-) -> Option<ConvertedImage> {
+pub fn convert_to_png(base64_data: &str, mime_type: &str) -> Option<ConvertedImage> {
     // Already PNG — no conversion needed.
     if mime_type == "image/png" {
         return Some(ConvertedImage {
@@ -68,10 +65,7 @@ mod tests {
         let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 0, 255]));
         let mut buf = Vec::new();
         image::DynamicImage::ImageRgba8(img)
-            .write_to(
-                &mut std::io::Cursor::new(&mut buf),
-                image::ImageFormat::Png,
-            )
+            .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
             .unwrap();
         base64::engine::general_purpose::STANDARD.encode(&buf)
     }

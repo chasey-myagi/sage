@@ -1,5 +1,4 @@
 /// CancellableLoader — Loader that can be cancelled with Escape.
-
 use tokio_util::sync::CancellationToken;
 
 use crate::components::loader::Loader;
@@ -24,7 +23,11 @@ impl CancellableLoader {
         M: Fn(&str) -> String + Send + Sync + 'static,
     {
         let loader = Loader::new(spinner_color_fn, message_color_fn, message, request_render);
-        Self { loader, cancel_token: CancellationToken::new(), on_abort: None }
+        Self {
+            loader,
+            cancel_token: CancellationToken::new(),
+            on_abort: None,
+        }
     }
 
     /// Set callback for when user presses Escape.

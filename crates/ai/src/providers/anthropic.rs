@@ -549,10 +549,7 @@ fn transform_messages(messages: &[LlmMessage]) -> Vec<LlmMessage> {
 
     for msg in &pass1 {
         match msg {
-            LlmMessage::Assistant {
-                tool_calls,
-                ..
-            } => {
+            LlmMessage::Assistant { tool_calls, .. } => {
                 // Flush any previously-orphaned calls before processing this assistant msg
                 if !pending_tool_call_ids.is_empty() {
                     for (id, name) in pending_tool_call_ids.drain(..) {
@@ -2464,10 +2461,7 @@ mod tests {
         assert_eq!(sys.len(), 1);
         assert_eq!(sys[0]["type"], "text");
         assert!(
-            sys[0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("Claude Code"),
+            sys[0]["text"].as_str().unwrap().contains("Claude Code"),
             "OAuth must inject Claude Code identity block"
         );
     }
@@ -2530,8 +2524,8 @@ mod tests {
         ];
         let result = convert_tools(&tools, true);
 
-        assert_eq!(result[0]["name"], "Read");  // mapped
-        assert_eq!(result[1]["name"], "Bash");  // mapped
+        assert_eq!(result[0]["name"], "Read"); // mapped
+        assert_eq!(result[1]["name"], "Bash"); // mapped
         assert_eq!(result[2]["name"], "my_custom"); // unknown, unchanged
     }
 
@@ -2686,7 +2680,11 @@ mod tests {
         // Should be: assistant, synthetic tool result, user
         assert_eq!(transformed.len(), 3);
         match &transformed[1] {
-            LlmMessage::Tool { tool_call_id, content, .. } => {
+            LlmMessage::Tool {
+                tool_call_id,
+                content,
+                ..
+            } => {
                 assert_eq!(tool_call_id, "tc_orphan");
                 assert!(content.contains("No result provided"));
             }
@@ -2774,19 +2772,17 @@ mod tests {
     #[test]
     fn test_transform_orphan_at_end_of_messages() {
         // Orphaned tool call at end of message list (no following message)
-        let messages = vec![
-            LlmMessage::Assistant {
-                content: String::new(),
-                tool_calls: vec![LlmToolCall {
-                    id: "tc_end".into(),
-                    function: LlmFunctionCall {
-                        name: "bash".into(),
-                        arguments: r#"{}"#.into(),
-                    },
-                }],
-                thinking_blocks: vec![],
-            },
-        ];
+        let messages = vec![LlmMessage::Assistant {
+            content: String::new(),
+            tool_calls: vec![LlmToolCall {
+                id: "tc_end".into(),
+                function: LlmFunctionCall {
+                    name: "bash".into(),
+                    arguments: r#"{}"#.into(),
+                },
+            }],
+            thinking_blocks: vec![],
+        }];
 
         let transformed = transform_messages(&messages);
 
@@ -2849,7 +2845,11 @@ mod tests {
         // then another user msg — OR the synthetic tool_result and real user
         // are both present as separate user messages.
         // Either way there should be ≥3 items: assistant + synthetic tool_result + real user.
-        assert!(result.len() >= 3, "expected ≥3 messages, got {}", result.len());
+        assert!(
+            result.len() >= 3,
+            "expected ≥3 messages, got {}",
+            result.len()
+        );
 
         // First is the assistant message
         assert_eq!(result[0]["role"], "assistant");
@@ -2857,15 +2857,13 @@ mod tests {
         assert!(assistant_blocks.iter().any(|b| b["type"] == "tool_use"));
 
         // Find the synthetic tool_result user message
-        let tool_result_msg = result
-            .iter()
-            .find(|m| {
-                m["role"] == "user"
-                    && m["content"]
-                        .as_array()
-                        .map(|arr| arr.iter().any(|b| b["type"] == "tool_result"))
-                        .unwrap_or(false)
-            });
+        let tool_result_msg = result.iter().find(|m| {
+            m["role"] == "user"
+                && m["content"]
+                    .as_array()
+                    .map(|arr| arr.iter().any(|b| b["type"] == "tool_result"))
+                    .unwrap_or(false)
+        });
         assert!(
             tool_result_msg.is_some(),
             "expected a user message with tool_result block"

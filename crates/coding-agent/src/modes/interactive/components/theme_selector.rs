@@ -2,13 +2,13 @@
 //!
 //! Translated from `components/theme-selector.ts`.
 
-use tui::tui::{Component, Container};
 use tui::components::spacer::Spacer;
 use tui::components::text::Text;
+use tui::tui::{Component, Container};
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor};
 use crate::modes::interactive::components::dynamic_border::DynamicBorder;
 use crate::modes::interactive::components::keybinding_hints::key_hint;
+use crate::modes::interactive::theme::{ThemeColor, get_theme};
 
 /// Available built-in theme names.
 pub const BUILTIN_THEMES: &[&str] = &["dark", "light"];
@@ -27,10 +27,7 @@ impl ThemeSelectorComponent {
     pub fn new(current_theme: impl Into<String>) -> Self {
         let current = current_theme.into();
         let themes: Vec<String> = BUILTIN_THEMES.iter().map(|s| s.to_string()).collect();
-        let selected_index = themes
-            .iter()
-            .position(|t| t == &current)
-            .unwrap_or(0);
+        let selected_index = themes.iter().position(|t| t == &current).unwrap_or(0);
 
         Self {
             themes,
@@ -110,7 +107,11 @@ impl Component for ThemeSelectorComponent {
             } else {
                 theme_name.clone()
             };
-            let current_mark = if is_current { t.fg(ThemeColor::Muted, " (current)") } else { String::new() };
+            let current_mark = if is_current {
+                t.fg(ThemeColor::Muted, " (current)")
+            } else {
+                String::new()
+            };
 
             container.add_child(Box::new(Text::new(
                 format!("{prefix}{name_str}{current_mark}"),

@@ -16,9 +16,9 @@
 //! operation on the same key before proceeding.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::Path;
 use std::sync::Mutex;
-use std::future::Future;
 
 // ============================================================================
 // Queue key helper
@@ -31,13 +31,11 @@ use std::future::Future;
 ///
 /// Mirrors `getMutationQueueKey()` from `file-mutation-queue.ts`.
 fn get_mutation_queue_key(file_path: &str) -> String {
-    let resolved = Path::new(file_path)
-        .canonicalize()
-        .unwrap_or_else(|_| {
-            // Fallback: join with cwd
-            let cwd = std::env::current_dir().unwrap_or_default();
-            cwd.join(file_path)
-        });
+    let resolved = Path::new(file_path).canonicalize().unwrap_or_else(|_| {
+        // Fallback: join with cwd
+        let cwd = std::env::current_dir().unwrap_or_default();
+        cwd.join(file_path)
+    });
     resolved.to_string_lossy().into_owned()
 }
 
@@ -52,8 +50,7 @@ fn get_mutation_queue_key(file_path: &str) -> String {
 /// same path are serialized correctly.
 ///
 /// The map itself is guarded by a global `Mutex<HashMap<...>>`.
-static FILE_MUTEXES: Mutex<Option<HashMap<String, std::sync::Arc<Mutex<()>>>>> =
-    Mutex::new(None);
+static FILE_MUTEXES: Mutex<Option<HashMap<String, std::sync::Arc<Mutex<()>>>>> = Mutex::new(None);
 
 fn get_or_create_file_mutex(key: &str) -> std::sync::Arc<Mutex<()>> {
     let mut guard = FILE_MUTEXES.lock().expect("FILE_MUTEXES poisoned");
@@ -110,8 +107,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     // ---- get_mutation_queue_key ----
 
@@ -137,14 +134,10 @@ mod tests {
         let path = "/tmp/sage_fmq_test_same.txt";
 
         let c = Arc::clone(&counter);
-        let r1 = with_file_mutation_queue_sync(path, || {
-            c.fetch_add(1, Ordering::SeqCst)
-        });
+        let r1 = with_file_mutation_queue_sync(path, || c.fetch_add(1, Ordering::SeqCst));
 
         let c = Arc::clone(&counter);
-        let r2 = with_file_mutation_queue_sync(path, || {
-            c.fetch_add(1, Ordering::SeqCst)
-        });
+        let r2 = with_file_mutation_queue_sync(path, || c.fetch_add(1, Ordering::SeqCst));
 
         // Results should be 0 and 1 respectively (serialized)
         assert_eq!(r1, 0);

@@ -215,7 +215,6 @@ impl ToolBackend for LocalBackend {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,7 +304,10 @@ mod tests {
 
         // Written file lands under the workspace root, NOT the process cwd.
         let expected = tmp.path().join("memory").join("NOTES.md");
-        assert!(expected.exists(), "file must materialize at workspace/memory/NOTES.md");
+        assert!(
+            expected.exists(),
+            "file must materialize at workspace/memory/NOTES.md"
+        );
         assert_eq!(std::fs::read(&expected).unwrap(), b"hello");
     }
 
@@ -526,5 +528,4 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
-
 }

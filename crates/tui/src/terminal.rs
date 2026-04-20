@@ -1,5 +1,4 @@
 /// Terminal trait and ProcessTerminal implementation.
-
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -204,7 +203,8 @@ impl Terminal for CrosstermTerminal {
                                 if !seq.is_empty() {
                                     // Check for Kitty protocol response
                                     if !kitty_active.load(Ordering::SeqCst) {
-                                        let kitty_re = regex::Regex::new(r"^\x1b\[\?(\d+)u$").unwrap();
+                                        let kitty_re =
+                                            regex::Regex::new(r"^\x1b\[\?(\d+)u$").unwrap();
                                         if kitty_re.is_match(&seq) {
                                             kitty_active.store(true, Ordering::SeqCst);
                                             set_kitty_protocol_active(true);
@@ -274,8 +274,8 @@ impl Terminal for CrosstermTerminal {
     }
 
     fn drain_input(&self, max_ms: u64, idle_ms: u64) {
-        use std::time::{Duration, Instant};
         use crossterm::event::{poll, read};
+        use std::time::{Duration, Instant};
 
         let deadline = Instant::now() + Duration::from_millis(max_ms);
         let idle_dur = Duration::from_millis(idle_ms);
@@ -371,7 +371,11 @@ fn key_event_to_sequence(event: &crossterm::event::KeyEvent) -> String {
         }
         KeyCode::Enter => "\r".to_string(),
         KeyCode::Tab => {
-            if shift { "\x1b[Z".to_string() } else { "\t".to_string() }
+            if shift {
+                "\x1b[Z".to_string()
+            } else {
+                "\t".to_string()
+            }
         }
         KeyCode::Backspace => "\x7f".to_string(),
         KeyCode::Delete => "\x1b[3~".to_string(),

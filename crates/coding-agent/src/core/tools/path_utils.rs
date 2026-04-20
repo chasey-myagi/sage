@@ -15,9 +15,8 @@ use std::path::Path;
 /// Unicode spaces that macOS uses in various contexts.
 const UNICODE_SPACES: &[char] = &[
     '\u{00A0}', // NO-BREAK SPACE
-    '\u{2000}', '\u{2001}', '\u{2002}', '\u{2003}', '\u{2004}',
-    '\u{2005}', '\u{2006}', '\u{2007}', '\u{2008}', '\u{2009}',
-    '\u{200A}', // various width spaces
+    '\u{2000}', '\u{2001}', '\u{2002}', '\u{2003}', '\u{2004}', '\u{2005}', '\u{2006}', '\u{2007}',
+    '\u{2008}', '\u{2009}', '\u{200A}', // various width spaces
     '\u{202F}', // NARROW NO-BREAK SPACE
     '\u{205F}', // MEDIUM MATHEMATICAL SPACE
     '\u{3000}', // IDEOGRAPHIC SPACE

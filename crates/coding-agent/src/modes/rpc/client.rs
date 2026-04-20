@@ -112,7 +112,11 @@ impl RpcClient {
         args.extend(self.options.args.clone());
 
         let mut cmd = Command::new("node");
-        cmd.arg(&cli_path).args(&args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.arg(&cli_path)
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         if let Some(ref cwd) = self.options.cwd {
             cmd.current_dir(cwd);
@@ -271,7 +275,9 @@ impl RpcClient {
         let response = self.send_blocking(serde_json::json!({"type": "get_commands"}))?;
         let data = self.get_data(response)?;
         Ok(serde_json::from_value(
-            data.get("commands").cloned().unwrap_or(Value::Array(vec![])),
+            data.get("commands")
+                .cloned()
+                .unwrap_or(Value::Array(vec![])),
         )?)
     }
 
@@ -280,7 +286,10 @@ impl RpcClient {
     // =========================================================================
 
     fn send_raw(&mut self, cmd: &Value) -> anyhow::Result<()> {
-        let stdin = self.stdin.as_mut().ok_or_else(|| anyhow::anyhow!("Client not started"))?;
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Client not started"))?;
         let line = serialize_json_line(cmd)?;
         stdin.write_all(line.as_bytes())?;
         stdin.flush()?;
@@ -298,7 +307,9 @@ impl RpcClient {
             reqs.insert(
                 id,
                 PendingRequest {
-                    resolve: Some(Box::new(move |r| { let _ = tx.send(r); })),
+                    resolve: Some(Box::new(move |r| {
+                        let _ = tx.send(r);
+                    })),
                     reject: None,
                 },
             );
@@ -306,13 +317,22 @@ impl RpcClient {
 
         self.send_raw(&cmd)?;
 
-        rx.recv_timeout(Duration::from_secs(30))
-            .map_err(|_| anyhow::anyhow!("Timeout waiting for response to {}", cmd.get("type").unwrap_or(&Value::Null)))
+        rx.recv_timeout(Duration::from_secs(30)).map_err(|_| {
+            anyhow::anyhow!(
+                "Timeout waiting for response to {}",
+                cmd.get("type").unwrap_or(&Value::Null)
+            )
+        })
     }
 
     fn get_data(&self, response: RpcResponse) -> anyhow::Result<Value> {
         if !response.success {
-            anyhow::bail!("{}", response.error.unwrap_or_else(|| "Unknown error".to_string()));
+            anyhow::bail!(
+                "{}",
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string())
+            );
         }
         Ok(response.data.unwrap_or(Value::Null))
     }

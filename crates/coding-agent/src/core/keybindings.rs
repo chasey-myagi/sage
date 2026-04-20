@@ -138,7 +138,10 @@ pub fn migrate_keybinding_names(config: KeybindingsConfig) -> (KeybindingsConfig
     let mut migrated = false;
 
     for (key, value) in &config {
-        let new_key = migrations.get(key.as_str()).copied().unwrap_or(key.as_str());
+        let new_key = migrations
+            .get(key.as_str())
+            .copied()
+            .unwrap_or(key.as_str());
         if new_key != key {
             migrated = true;
         }

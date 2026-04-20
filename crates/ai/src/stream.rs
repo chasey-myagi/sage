@@ -884,7 +884,9 @@ mod tests {
         let data = r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_001","type":"function","function":{"name":"bash","arguments":""}}]},"index":0}]}"#;
         let events = parse_sse_chunk_multi(data).unwrap();
         assert_eq!(events.len(), 1);
-        assert!(matches!(&events[0], AssistantMessageEvent::ToolCallStart { name, .. } if name == "bash"));
+        assert!(
+            matches!(&events[0], AssistantMessageEvent::ToolCallStart { name, .. } if name == "bash")
+        );
     }
 
     #[test]
@@ -930,7 +932,10 @@ mod tests {
         let data = r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"cmd\":"}}]},"index":0}]}"#;
         let events = parse_sse_chunk_multi(data).unwrap();
         assert_eq!(events.len(), 1);
-        assert!(matches!(&events[0], AssistantMessageEvent::ToolCallDelta { .. }));
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ToolCallDelta { .. }
+        ));
     }
 
     #[test]
@@ -974,7 +979,10 @@ mod tests {
             AssistantMessageEvent::ToolCallDelta { id, .. } => id.clone(),
             _ => panic!("expected ToolCallDelta"),
         };
-        assert_eq!(start_id, delta_id, "ToolCallDelta should carry the same id as ToolCallStart");
+        assert_eq!(
+            start_id, delta_id,
+            "ToolCallDelta should carry the same id as ToolCallStart"
+        );
     }
 
     // ========================================================================
@@ -1023,12 +1031,15 @@ mod tests {
     #[test]
     fn test_parse_finish_reason_null_is_not_done() {
         // finish_reason: null 表示流还未结束，不应返回 Done
-        let data = r#"{"choices":[{"delta":{"content":"partial"},"finish_reason":null,"index":0}]}"#;
+        let data =
+            r#"{"choices":[{"delta":{"content":"partial"},"finish_reason":null,"index":0}]}"#;
         let event = parse_sse_chunk(data).unwrap();
         // Should be TextDelta, not Done
         match event {
             Some(AssistantMessageEvent::TextDelta(s)) => assert_eq!(s, "partial"),
-            Some(AssistantMessageEvent::Done { .. }) => panic!("finish_reason: null should not produce Done"),
+            Some(AssistantMessageEvent::Done { .. }) => {
+                panic!("finish_reason: null should not produce Done")
+            }
             other => panic!("unexpected: {:?}", other),
         }
     }

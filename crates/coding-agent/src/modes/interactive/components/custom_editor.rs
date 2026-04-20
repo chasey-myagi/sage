@@ -117,11 +117,11 @@ impl CustomEditor {
         // 3. Escape / interrupt
         if data == "\x1b" || data == "\x03" {
             // ESC or Ctrl+C
-            let handler = self
-                .on_escape
-                .as_ref()
-                .map(|h| h as &dyn Fn())
-                .or_else(|| self.action_handlers.get("app.interrupt").map(|h| h as &dyn Fn()));
+            let handler = self.on_escape.as_ref().map(|h| h as &dyn Fn()).or_else(|| {
+                self.action_handlers
+                    .get("app.interrupt")
+                    .map(|h| h as &dyn Fn())
+            });
             if let Some(h) = handler {
                 h();
                 return true;
@@ -143,7 +143,8 @@ impl CustomEditor {
 
         // 5. Other registered actions (skip interrupt and exit checked above)
         for (&action, handler) in &self.action_handlers {
-            if action != "app.interrupt" && action != "app.exit" && matches_keybinding(data, action) {
+            if action != "app.interrupt" && action != "app.exit" && matches_keybinding(data, action)
+            {
                 handler();
                 return true;
             }

@@ -16,7 +16,7 @@ use agent_core::types::ThinkingLevel;
 
 use crate::config::get_agent_dir;
 use crate::core::agent_session::{AgentSession, AgentSessionConfig, ScopedModel};
-use crate::core::session_manager::{get_default_session_dir, SessionManager};
+use crate::core::session_manager::{SessionManager, get_default_session_dir};
 use crate::core::settings_manager::SettingsManager;
 use crate::core::tools::ToolName;
 
@@ -116,9 +116,9 @@ pub fn create_agent_session(
         .agent_dir
         .unwrap_or_else(|| get_agent_dir().to_path_buf());
 
-    let settings_manager = options.settings_manager.unwrap_or_else(|| {
-        SettingsManager::create(&cwd, &agent_dir)
-    });
+    let settings_manager = options
+        .settings_manager
+        .unwrap_or_else(|| SettingsManager::create(&cwd, &agent_dir));
 
     let thinking_level = options.thinking_level.unwrap_or_else(|| {
         settings_manager
@@ -130,9 +130,9 @@ pub fn create_agent_session(
     let cwd_str = cwd.to_string_lossy().to_string();
     let session_dir = get_default_session_dir(&cwd_str, Some(&agent_dir));
 
-    let session_manager = options.session_manager.unwrap_or_else(|| {
-        SessionManager::create(&cwd_str, Some(&session_dir))
-    });
+    let session_manager = options
+        .session_manager
+        .unwrap_or_else(|| SessionManager::create(&cwd_str, Some(&session_dir)));
 
     // active_tool_names is resolved but not yet used in AgentSessionConfig
     // (stored in session after construction, when tool registration is added).
@@ -243,8 +243,7 @@ mod tests {
 
     #[test]
     fn builder_with_tools() {
-        let builder = AgentSessionBuilder::new()
-            .with_tools(vec![ToolName::Read, ToolName::Grep]);
+        let builder = AgentSessionBuilder::new().with_tools(vec![ToolName::Read, ToolName::Grep]);
         assert!(builder.options.tools.is_some());
         let tools = builder.options.tools.unwrap();
         assert_eq!(tools.len(), 2);

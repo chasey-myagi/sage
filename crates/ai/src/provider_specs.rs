@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use super::types::{api, ProviderCompat, ThinkingFormat};
+use super::types::{ProviderCompat, ThinkingFormat, api};
 
 /// 单个 Provider 的静态元数据。
 pub struct ProviderSpec {
@@ -262,9 +262,7 @@ pub fn list_providers() -> &'static [ProviderSpec] {
 }
 
 static PROVIDER_MAP: LazyLock<HashMap<&'static str, &'static ProviderSpec>> =
-    LazyLock::new(|| {
-        PROVIDERS.iter().map(|spec| (spec.id, spec)).collect()
-    });
+    LazyLock::new(|| PROVIDERS.iter().map(|spec| (spec.id, spec)).collect());
 
 /// 按 id 查找 Provider。大小写敏感；找不到返回 None。
 pub fn resolve_provider(id: &str) -> Option<&'static ProviderSpec> {
@@ -403,8 +401,10 @@ mod tests {
             ("amazon-bedrock", api::BEDROCK_CONVERSE_STREAM),
             ("google-vertex", api::GOOGLE_VERTEX),
         ];
-        let actual: Vec<(&str, &str)> =
-            list_providers().iter().map(|s| (s.id, s.api_kind)).collect();
+        let actual: Vec<(&str, &str)> = list_providers()
+            .iter()
+            .map(|s| (s.id, s.api_kind))
+            .collect();
         if actual.as_slice() != EXPECTED {
             panic!(
                 "\nProvider spec snapshot drift detected.\n\
@@ -683,8 +683,6 @@ mod tests {
     #[test]
     fn google_default_context_window_is_gemini_scale() {
         // Gemini 1.5 Pro: 1M+ context。默认不能被 OpenAI 家的 128K 拖下来。
-        assert!(
-            resolve_provider("google").unwrap().default_context_window >= 1_000_000,
-        );
+        assert!(resolve_provider("google").unwrap().default_context_window >= 1_000_000,);
     }
 }

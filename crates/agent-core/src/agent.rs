@@ -115,7 +115,11 @@ pub struct AgentOptions {
 
 impl AgentOptions {
     /// Create options with sensible defaults. Requires model + system_prompt + provider.
-    pub fn new(model: Model, system_prompt: impl Into<String>, provider: Arc<dyn LlmProvider>) -> Self {
+    pub fn new(
+        model: Model,
+        system_prompt: impl Into<String>,
+        provider: Arc<dyn LlmProvider>,
+    ) -> Self {
         Self {
             model,
             system_prompt: system_prompt.into(),
@@ -561,7 +565,7 @@ impl Agent {
     pub async fn continue_run(&mut self) -> Result<(), String> {
         if self.is_streaming {
             return Err(
-                "Agent is already processing. Wait for completion before continuing.".into()
+                "Agent is already processing. Wait for completion before continuing.".into(),
             );
         }
         if self.messages.is_empty() {
@@ -627,7 +631,10 @@ impl Agent {
         self.error = None;
 
         // Reuse a pre-allocated token (e.g. from abort_handle()); otherwise create a fresh one.
-        let token = self.cancellation.take().unwrap_or_else(CancellationToken::new);
+        let token = self
+            .cancellation
+            .take()
+            .unwrap_or_else(CancellationToken::new);
         self.cancellation = Some(token.clone());
 
         // Capture queue drainers as closures.
@@ -665,13 +672,22 @@ impl Agent {
             },
             get_api_key,
             max_retry_delay_ms,
-            transform_context: transform_hook.map(|h| -> Box<dyn Fn(Vec<AgentMessage>) -> futures::future::BoxFuture<'static, Vec<AgentMessage>> + Send + Sync> {
-                let h = Arc::clone(&h);
-                Box::new(move |msgs| {
+            transform_context: transform_hook.map(
+                |h| -> Box<
+                    dyn Fn(
+                            Vec<AgentMessage>,
+                        )
+                            -> futures::future::BoxFuture<'static, Vec<AgentMessage>>
+                        + Send
+                        + Sync,
+                > {
                     let h = Arc::clone(&h);
-                    Box::pin(async move { h.transform_context(msgs).await })
-                })
-            }),
+                    Box::new(move |msgs| {
+                        let h = Arc::clone(&h);
+                        Box::pin(async move { h.transform_context(msgs).await })
+                    })
+                },
+            ),
             get_steering_messages: Some({
                 let sq = Arc::clone(&steering_queue_clone);
                 Box::new(move || {
@@ -710,18 +726,36 @@ impl Agent {
                     })
                 })
             }),
-            before_tool_call: before_hook.map(|h| -> Box<dyn Fn(BeforeToolCallContext) -> futures::future::BoxFuture<'static, BeforeToolCallResult> + Send + Sync> {
-                Box::new(move |ctx| {
-                    let h = Arc::clone(&h);
-                    Box::pin(async move { h.before_tool_call(&ctx).await })
-                })
-            }),
-            after_tool_call: after_hook.map(|h| -> Box<dyn Fn(AfterToolCallContext) -> futures::future::BoxFuture<'static, AfterToolCallResult> + Send + Sync> {
-                Box::new(move |ctx| {
-                    let h = Arc::clone(&h);
-                    Box::pin(async move { h.after_tool_call(&ctx).await })
-                })
-            }),
+            before_tool_call: before_hook.map(
+                |h| -> Box<
+                    dyn Fn(
+                            BeforeToolCallContext,
+                        )
+                            -> futures::future::BoxFuture<'static, BeforeToolCallResult>
+                        + Send
+                        + Sync,
+                > {
+                    Box::new(move |ctx| {
+                        let h = Arc::clone(&h);
+                        Box::pin(async move { h.before_tool_call(&ctx).await })
+                    })
+                },
+            ),
+            after_tool_call: after_hook.map(
+                |h| -> Box<
+                    dyn Fn(
+                            AfterToolCallContext,
+                        )
+                            -> futures::future::BoxFuture<'static, AfterToolCallResult>
+                        + Send
+                        + Sync,
+                > {
+                    Box::new(move |ctx| {
+                        let h = Arc::clone(&h);
+                        Box::pin(async move { h.after_tool_call(&ctx).await })
+                    })
+                },
+            ),
             compaction_settings: None,
         });
 
@@ -745,7 +779,9 @@ impl Agent {
             if let Some(msgs) = messages {
                 run_agent_loop(msgs, context, config, provider, emit, Some(token_clone)).await
             } else {
-                match run_agent_loop_continue(context, config, provider, emit, Some(token_clone)).await {
+                match run_agent_loop_continue(context, config, provider, emit, Some(token_clone))
+                    .await
+                {
                     Ok(msgs) => msgs,
                     Err(_) => vec![],
                 }
@@ -1191,7 +1227,9 @@ mod tests {
     #[test]
     fn ts_agent_steer_queued_not_in_messages() {
         let mut agent = Agent::new(test_opts());
-        agent.steer(AgentMessage::User(UserMessage::from_text("Steering message")));
+        agent.steer(AgentMessage::User(UserMessage::from_text(
+            "Steering message",
+        )));
         // Steering message is queued but not yet in state.messages
         assert!(agent.messages().is_empty());
         assert!(agent.has_queued_messages());
@@ -1201,7 +1239,9 @@ mod tests {
     #[test]
     fn ts_agent_follow_up_queued_not_in_messages() {
         let mut agent = Agent::new(test_opts());
-        agent.follow_up(AgentMessage::User(UserMessage::from_text("Follow-up message")));
+        agent.follow_up(AgentMessage::User(UserMessage::from_text(
+            "Follow-up message",
+        )));
         // Follow-up message is queued but not yet in state.messages
         assert!(agent.messages().is_empty());
         assert!(agent.has_queued_messages());
@@ -1229,9 +1269,11 @@ mod tests {
         agent.is_streaming = true;
 
         // A second prompt while streaming should return an error
-        let result = agent.prompt_messages(vec![
-            AgentMessage::User(UserMessage::from_text("Second message"))
-        ]).await;
+        let result = agent
+            .prompt_messages(vec![AgentMessage::User(UserMessage::from_text(
+                "Second message",
+            ))])
+            .await;
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -1289,7 +1331,9 @@ mod tests {
             ) -> Vec<ai::types::AssistantMessageEvent> {
                 vec![
                     ai::types::AssistantMessageEvent::TextDelta("Processed".into()),
-                    ai::types::AssistantMessageEvent::Done { stop_reason: ai::types::StopReason::Stop },
+                    ai::types::AssistantMessageEvent::Done {
+                        stop_reason: ai::types::StopReason::Stop,
+                    },
                 ]
             }
         }
@@ -1305,7 +1349,9 @@ mod tests {
         ]);
 
         // Queue a follow-up
-        agent.follow_up(AgentMessage::User(UserMessage::from_text("Queued follow-up")));
+        agent.follow_up(AgentMessage::User(UserMessage::from_text(
+            "Queued follow-up",
+        )));
 
         let result = agent.continue_run().await;
         assert!(result.is_ok(), "continue should succeed: {:?}", result);
@@ -1313,15 +1359,23 @@ mod tests {
         // The queued follow-up should now appear in messages
         let has_follow_up = agent.messages().iter().any(|m| {
             if let AgentMessage::User(u) = m {
-                u.content.iter().any(|c| matches!(c, Content::Text { text } if text == "Queued follow-up"))
+                u.content
+                    .iter()
+                    .any(|c| matches!(c, Content::Text { text } if text == "Queued follow-up"))
             } else {
                 false
             }
         });
-        assert!(has_follow_up, "queued follow-up should be in messages after continue");
+        assert!(
+            has_follow_up,
+            "queued follow-up should be in messages after continue"
+        );
 
         // Last message should be assistant
-        assert!(matches!(agent.messages().last(), Some(AgentMessage::Assistant(_))));
+        assert!(matches!(
+            agent.messages().last(),
+            Some(AgentMessage::Assistant(_))
+        ));
     }
 
     /// agent.test.ts: "continue() should keep one-at-a-time steering semantics from assistant tail"
@@ -1330,7 +1384,9 @@ mod tests {
         let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let call_count_clone = Arc::clone(&call_count);
 
-        struct CountingProvider { count: Arc<std::sync::atomic::AtomicUsize> }
+        struct CountingProvider {
+            count: Arc<std::sync::atomic::AtomicUsize>,
+        }
 
         #[async_trait::async_trait]
         impl LlmProvider for CountingProvider {
@@ -1343,13 +1399,17 @@ mod tests {
                 let n = self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                 vec![
                     ai::types::AssistantMessageEvent::TextDelta(format!("Processed {n}")),
-                    ai::types::AssistantMessageEvent::Done { stop_reason: ai::types::StopReason::Stop },
+                    ai::types::AssistantMessageEvent::Done {
+                        stop_reason: ai::types::StopReason::Stop,
+                    },
                 ]
             }
         }
 
         let mut opts = test_opts();
-        opts.provider = Arc::new(CountingProvider { count: Arc::clone(&call_count_clone) });
+        opts.provider = Arc::new(CountingProvider {
+            count: Arc::clone(&call_count_clone),
+        });
         opts.steering_mode = QueueMode::OneAtATime;
         let mut agent = Agent::new(opts);
 
@@ -1367,7 +1427,10 @@ mod tests {
         assert!(result.is_ok(), "continue should succeed: {:?}", result);
 
         // With OneAtATime: one steering message → one LLM call; the second stays queued
-        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 1,
-            "OneAtATime should deliver one steering message per continue() call");
+        assert_eq!(
+            call_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "OneAtATime should deliver one steering message per continue() call"
+        );
     }
 }

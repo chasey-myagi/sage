@@ -30,7 +30,11 @@ fn is_complete_sequence(data: &str) -> SequenceStatus {
     if after_esc.starts_with('[') {
         if after_esc.starts_with("[M") {
             // Old-style mouse: ESC[M + 3 bytes = 6 total
-            return if data.len() >= 6 { SequenceStatus::Complete } else { SequenceStatus::Incomplete };
+            return if data.len() >= 6 {
+                SequenceStatus::Complete
+            } else {
+                SequenceStatus::Incomplete
+            };
         }
         return is_complete_csi_sequence(data);
     }
@@ -44,7 +48,11 @@ fn is_complete_sequence(data: &str) -> SequenceStatus {
         return is_complete_apc_sequence(data);
     }
     if after_esc.starts_with('O') {
-        return if after_esc.len() >= 2 { SequenceStatus::Complete } else { SequenceStatus::Incomplete };
+        return if after_esc.len() >= 2 {
+            SequenceStatus::Complete
+        } else {
+            SequenceStatus::Incomplete
+        };
     }
     if after_esc.len() == 1 {
         return SequenceStatus::Complete;
@@ -220,7 +228,8 @@ impl StdinBuffer {
 
             if let Some(end_idx) = self.paste_buffer.find(BRACKETED_PASTE_END) {
                 let content = self.paste_buffer[..end_idx].to_string();
-                let remaining = self.paste_buffer[end_idx + BRACKETED_PASTE_END.len()..].to_string();
+                let remaining =
+                    self.paste_buffer[end_idx + BRACKETED_PASTE_END.len()..].to_string();
                 self.paste_mode = false;
                 self.paste_buffer.clear();
                 events.push(StdinEvent::Paste(content));
@@ -247,7 +256,8 @@ impl StdinBuffer {
 
             if let Some(end_idx) = self.paste_buffer.find(BRACKETED_PASTE_END) {
                 let content = self.paste_buffer[..end_idx].to_string();
-                let remaining = self.paste_buffer[end_idx + BRACKETED_PASTE_END.len()..].to_string();
+                let remaining =
+                    self.paste_buffer[end_idx + BRACKETED_PASTE_END.len()..].to_string();
                 self.paste_mode = false;
                 self.paste_buffer.clear();
                 events.push(StdinEvent::Paste(content));
@@ -385,8 +395,14 @@ mod tests {
 
     #[test]
     fn test_is_complete_osc_sequence() {
-        assert_eq!(is_complete_sequence("\x1b]0;title\x07"), SequenceStatus::Complete);
-        assert_eq!(is_complete_sequence("\x1b]0;title"), SequenceStatus::Incomplete);
+        assert_eq!(
+            is_complete_sequence("\x1b]0;title\x07"),
+            SequenceStatus::Complete
+        );
+        assert_eq!(
+            is_complete_sequence("\x1b]0;title"),
+            SequenceStatus::Incomplete
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -560,7 +576,10 @@ mod tests {
     fn test_kitty_multiple_batched_events() {
         let mut buf = new_buf();
         let data = collect_data(buf.process("\x1b[97u\x1b[97;1:3u\x1b[98u\x1b[98;1:3u"));
-        assert_eq!(data, vec!["\x1b[97u", "\x1b[97;1:3u", "\x1b[98u", "\x1b[98;1:3u"]);
+        assert_eq!(
+            data,
+            vec!["\x1b[97u", "\x1b[97;1:3u", "\x1b[98u", "\x1b[98;1:3u"]
+        );
     }
 
     #[test]
@@ -595,7 +614,10 @@ mod tests {
     fn test_kitty_rapid_typing_simulation() {
         let mut buf = new_buf();
         let data = collect_data(buf.process("\x1b[104u\x1b[104;1:3u\x1b[105u\x1b[105;1:3u"));
-        assert_eq!(data, vec!["\x1b[104u", "\x1b[104;1:3u", "\x1b[105u", "\x1b[105;1:3u"]);
+        assert_eq!(
+            data,
+            vec!["\x1b[104u", "\x1b[104;1:3u", "\x1b[105u", "\x1b[105;1:3u"]
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -637,7 +659,10 @@ mod tests {
     fn test_multiple_mouse_events() {
         let mut buf = new_buf();
         let data = collect_data(buf.process("\x1b[<35;1;1m\x1b[<35;2;2m\x1b[<35;3;3m"));
-        assert_eq!(data, vec!["\x1b[<35;1;1m", "\x1b[<35;2;2m", "\x1b[<35;3;3m"]);
+        assert_eq!(
+            data,
+            vec!["\x1b[<35;1;1m", "\x1b[<35;2;2m", "\x1b[<35;3;3m"]
+        );
     }
 
     #[test]
@@ -744,15 +769,23 @@ mod tests {
         let mut buf = new_buf();
         let input = format!("{BRACKETED_PASTE_START}hello world{BRACKETED_PASTE_END}");
         let events = buf.process(&input);
-        let pastes = collect_paste(events.iter().filter_map(|e| match e {
-            StdinEvent::Paste(s) => Some(StdinEvent::Paste(s.clone())),
-            _ => None,
-        }).collect());
+        let pastes = collect_paste(
+            events
+                .iter()
+                .filter_map(|e| match e {
+                    StdinEvent::Paste(s) => Some(StdinEvent::Paste(s.clone())),
+                    _ => None,
+                })
+                .collect(),
+        );
         // Use the raw events
-        let all_pastes: Vec<String> = events.into_iter().filter_map(|e| match e {
-            StdinEvent::Paste(s) => Some(s),
-            _ => None,
-        }).collect();
+        let all_pastes: Vec<String> = events
+            .into_iter()
+            .filter_map(|e| match e {
+                StdinEvent::Paste(s) => Some(s),
+                _ => None,
+            })
+            .collect();
         assert_eq!(all_pastes, vec!["hello world"]);
     }
 
@@ -760,16 +793,34 @@ mod tests {
     fn test_bracketed_paste_in_chunks() {
         let mut buf = new_buf();
 
-        let e1: Vec<_> = buf.process("\x1b[200~").into_iter()
-            .filter_map(|e| match e { StdinEvent::Paste(s) => Some(s), _ => None }).collect();
+        let e1: Vec<_> = buf
+            .process("\x1b[200~")
+            .into_iter()
+            .filter_map(|e| match e {
+                StdinEvent::Paste(s) => Some(s),
+                _ => None,
+            })
+            .collect();
         assert!(e1.is_empty());
 
-        let e2: Vec<_> = buf.process("hello ").into_iter()
-            .filter_map(|e| match e { StdinEvent::Paste(s) => Some(s), _ => None }).collect();
+        let e2: Vec<_> = buf
+            .process("hello ")
+            .into_iter()
+            .filter_map(|e| match e {
+                StdinEvent::Paste(s) => Some(s),
+                _ => None,
+            })
+            .collect();
         assert!(e2.is_empty());
 
-        let e3: Vec<_> = buf.process("world\x1b[201~").into_iter()
-            .filter_map(|e| match e { StdinEvent::Paste(s) => Some(s), _ => None }).collect();
+        let e3: Vec<_> = buf
+            .process("world\x1b[201~")
+            .into_iter()
+            .filter_map(|e| match e {
+                StdinEvent::Paste(s) => Some(s),
+                _ => None,
+            })
+            .collect();
         assert_eq!(e3, vec!["hello world"]);
     }
 
@@ -778,8 +829,13 @@ mod tests {
         let mut buf = new_buf();
         buf.process("a");
         let mid_events = buf.process("\x1b[200~pasted\x1b[201~");
-        let pastes: Vec<_> = mid_events.into_iter()
-            .filter_map(|e| match e { StdinEvent::Paste(s) => Some(s), _ => None }).collect();
+        let pastes: Vec<_> = mid_events
+            .into_iter()
+            .filter_map(|e| match e {
+                StdinEvent::Paste(s) => Some(s),
+                _ => None,
+            })
+            .collect();
         let data_b = collect_data(buf.process("b"));
 
         assert_eq!(pastes, vec!["pasted"]);
@@ -790,8 +846,13 @@ mod tests {
     fn test_bracketed_paste_with_newlines() {
         let mut buf = new_buf();
         let events = buf.process("\x1b[200~line1\nline2\nline3\x1b[201~");
-        let pastes: Vec<_> = events.into_iter()
-            .filter_map(|e| match e { StdinEvent::Paste(s) => Some(s), _ => None }).collect();
+        let pastes: Vec<_> = events
+            .into_iter()
+            .filter_map(|e| match e {
+                StdinEvent::Paste(s) => Some(s),
+                _ => None,
+            })
+            .collect();
         assert_eq!(pastes, vec!["line1\nline2\nline3"]);
     }
 
@@ -799,8 +860,13 @@ mod tests {
     fn test_bracketed_paste_with_unicode() {
         let mut buf = new_buf();
         let events = buf.process("\x1b[200~Hello 世界 🎉\x1b[201~");
-        let pastes: Vec<_> = events.into_iter()
-            .filter_map(|e| match e { StdinEvent::Paste(s) => Some(s), _ => None }).collect();
+        let pastes: Vec<_> = events
+            .into_iter()
+            .filter_map(|e| match e {
+                StdinEvent::Paste(s) => Some(s),
+                _ => None,
+            })
+            .collect();
         assert_eq!(pastes, vec!["Hello 世界 🎉"]);
     }
 

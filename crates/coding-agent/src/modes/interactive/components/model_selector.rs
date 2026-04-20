@@ -4,13 +4,13 @@
 //!
 //! Provides a searchable model selection list above the editor.
 
-use tui::tui::{Component, Container};
 use tui::components::spacer::Spacer;
 use tui::components::text::Text;
+use tui::tui::{Component, Container};
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor};
 use crate::modes::interactive::components::dynamic_border::DynamicBorder;
 use crate::modes::interactive::components::keybinding_hints::key_hint;
+use crate::modes::interactive::theme::{ThemeColor, get_theme};
 
 /// A model entry in the selector.
 #[derive(Debug, Clone)]
@@ -32,10 +32,7 @@ pub struct ModelSelectorComponent {
 }
 
 impl ModelSelectorComponent {
-    pub fn new(
-        models: Vec<ModelItem>,
-        current_model_id: Option<String>,
-    ) -> Self {
+    pub fn new(models: Vec<ModelItem>, current_model_id: Option<String>) -> Self {
         let n = models.len();
         let mut comp = Self {
             models,
@@ -152,7 +149,11 @@ impl Component for ModelSelectorComponent {
             0
         };
 
-        for (rel_idx, &abs_idx) in self.filtered[start..].iter().take(visible_count).enumerate() {
+        for (rel_idx, &abs_idx) in self.filtered[start..]
+            .iter()
+            .take(visible_count)
+            .enumerate()
+        {
             let model = &self.models[abs_idx];
             let is_selected = start + rel_idx == self.selected_index;
             let is_current = self.current_model_id.as_deref() == Some(&model.id);
@@ -164,7 +165,11 @@ impl Component for ModelSelectorComponent {
                 model.id.clone()
             };
             let provider_str = t.fg(ThemeColor::Dim, &format!(" ({})", model.provider));
-            let current_mark = if is_current { t.fg(ThemeColor::Muted, " ✓") } else { String::new() };
+            let current_mark = if is_current {
+                t.fg(ThemeColor::Muted, " ✓")
+            } else {
+                String::new()
+            };
 
             let line = format!("{prefix}{id_str}{provider_str}{current_mark}");
             container.add_child(Box::new(Text::new(line, 1, 0)));
@@ -204,8 +209,16 @@ mod tests {
 
     fn sample_models() -> Vec<ModelItem> {
         vec![
-            ModelItem { id: "claude-3-5-sonnet".to_string(), provider: "anthropic".to_string(), label: "anthropic/claude-3-5-sonnet".to_string() },
-            ModelItem { id: "gpt-4o".to_string(), provider: "openai".to_string(), label: "openai/gpt-4o".to_string() },
+            ModelItem {
+                id: "claude-3-5-sonnet".to_string(),
+                provider: "anthropic".to_string(),
+                label: "anthropic/claude-3-5-sonnet".to_string(),
+            },
+            ModelItem {
+                id: "gpt-4o".to_string(),
+                provider: "openai".to_string(),
+                label: "openai/gpt-4o".to_string(),
+            },
         ]
     }
 

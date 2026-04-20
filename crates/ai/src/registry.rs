@@ -78,10 +78,10 @@ pub trait ApiProvider: Send + Sync {
     ) -> Pin<Box<dyn futures::Stream<Item = AssistantMessageEvent> + Send + 'a>> {
         // Default: collect from the legacy `stream()` and replay as a stream.
         // Providers override this to avoid buffering the full response.
-        Box::pin(futures::stream::once(async move {
-            self.stream(model, context, tools, options).await
-        })
-        .flat_map(futures::stream::iter))
+        Box::pin(
+            futures::stream::once(async move { self.stream(model, context, tools, options).await })
+                .flat_map(futures::stream::iter),
+        )
     }
 
     /// Collect a completion response as a `Vec` of events (buffered).
@@ -148,7 +148,8 @@ impl ApiProviderRegistry {
 
     /// Look up or return a formatted error string.
     pub fn resolve(&self, api: &str) -> Result<Arc<dyn ApiProvider>, String> {
-        self.get(api).ok_or_else(|| format!("No provider registered for API: {api}"))
+        self.get(api)
+            .ok_or_else(|| format!("No provider registered for API: {api}"))
     }
 
     /// Number of providers currently registered (testing / observability).
@@ -297,6 +298,9 @@ mod tests {
         let b = ApiProviderRegistry::new();
         a.register(Arc::new(MockProvider));
         assert!(a.get("mock-api").is_some());
-        assert!(b.get("mock-api").is_none(), "registry B must not see A's provider");
+        assert!(
+            b.get("mock-api").is_none(),
+            "registry B must not see A's provider"
+        );
     }
 }

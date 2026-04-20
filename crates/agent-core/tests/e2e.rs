@@ -15,8 +15,8 @@ use agent_core::{
 use ai::{
     registry::{ApiProvider, StreamOptions},
     types::{
-        AssistantMessageEvent, InputType, LlmContext, LlmTool, Model, ModelCost,
-        StopReason as SR, Usage,
+        AssistantMessageEvent, InputType, LlmContext, LlmTool, Model, ModelCost, StopReason as SR,
+        Usage,
     },
 };
 use std::sync::Arc;
@@ -89,12 +89,18 @@ impl LlmProvider for SequenceProvider {
 fn text_response(text: &str) -> Vec<AssistantMessageEvent> {
     vec![
         AssistantMessageEvent::TextDelta(text.into()),
-        AssistantMessageEvent::Done { stop_reason: SR::Stop },
+        AssistantMessageEvent::Done {
+            stop_reason: SR::Stop,
+        },
     ]
 }
 
 fn opts_with_provider(provider: Arc<dyn LlmProvider>) -> AgentOptions {
-    AgentOptions::new(make_model("test-model"), "You are a helpful assistant.", provider)
+    AgentOptions::new(
+        make_model("test-model"),
+        "You are a helpful assistant.",
+        provider,
+    )
 }
 
 // =============================================================================
@@ -123,7 +129,9 @@ async fn agent_continue_throws_when_last_message_is_assistant() {
     let provider = Arc::new(SequenceProvider::new(vec![]));
     let mut agent = Agent::new(opts_with_provider(provider));
 
-    agent.replace_messages(vec![AgentMessage::Assistant(AssistantMessage::from_text("Hello"))]);
+    agent.replace_messages(vec![AgentMessage::Assistant(AssistantMessage::from_text(
+        "Hello",
+    ))]);
 
     let result = agent.continue_run().await;
     assert!(result.is_err(), "continue with assistant tail should fail");
@@ -146,7 +154,9 @@ async fn mock_basic_prompt_produces_two_messages() {
     let provider = Arc::new(SequenceProvider::new(vec![text_response("4")]));
     let mut agent = Agent::new(opts_with_provider(provider));
 
-    let result = agent.prompt_text("What is 2+2? Answer with just the number.").await;
+    let result = agent
+        .prompt_text("What is 2+2? Answer with just the number.")
+        .await;
     assert!(result.is_ok());
     assert!(!agent.is_streaming());
     assert_eq!(agent.messages().len(), 2);
@@ -169,7 +179,14 @@ async fn mock_state_updates_emitted_during_prompt() {
     let mut agent = Agent::new(opts_with_provider(provider));
 
     agent.subscribe(move |e| {
-        events_clone.lock().unwrap().push(format!("{:?}", e).split('{').next().unwrap_or("").trim().to_string());
+        events_clone.lock().unwrap().push(
+            format!("{:?}", e)
+                .split('{')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+        );
     });
 
     agent.prompt_text("Count from 1 to 5.").await.unwrap();
@@ -178,11 +195,13 @@ async fn mock_state_updates_emitted_during_prompt() {
     let type_strings: Vec<&str> = collected.iter().map(|s| s.as_str()).collect();
     assert!(
         type_strings.iter().any(|s| s.contains("AgentStart")),
-        "missing AgentStart; got: {:?}", type_strings
+        "missing AgentStart; got: {:?}",
+        type_strings
     );
     assert!(
         type_strings.iter().any(|s| s.contains("AgentEnd")),
-        "missing AgentEnd; got: {:?}", type_strings
+        "missing AgentEnd; got: {:?}",
+        type_strings
     );
     assert!(!agent.is_streaming());
     assert_eq!(agent.messages().len(), 2);
@@ -204,9 +223,17 @@ async fn mock_multi_turn_conversation() {
     assert_eq!(agent.messages().len(), 4);
 
     if let AgentMessage::Assistant(a) = &agent.messages()[3] {
-        let text = a.content.iter().filter_map(|c| {
-            if let Content::Text { text } = c { Some(text.as_str()) } else { None }
-        }).collect::<String>();
+        let text = a
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let Content::Text { text } = c {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<String>();
         assert!(
             text.to_lowercase().contains("alice"),
             "last response should mention Alice: {text}"
@@ -223,16 +250,28 @@ async fn mock_tool_execution_produces_tool_result() {
 
     #[async_trait::async_trait]
     impl AgentTool for CalcTool {
-        fn name(&self) -> &str { "calculate" }
-        fn label(&self) -> &str { "Calculate" }
-        fn description(&self) -> &str { "Evaluates a math expression" }
+        fn name(&self) -> &str {
+            "calculate"
+        }
+        fn label(&self) -> &str {
+            "Calculate"
+        }
+        fn description(&self) -> &str {
+            "Evaluates a math expression"
+        }
         fn parameters_schema(&self) -> serde_json::Value {
             serde_json::json!({
                 "type": "object",
                 "properties": { "expression": { "type": "string" } }
             })
         }
-        async fn execute(&self, _id: &str, args: serde_json::Value, _signal: Option<tokio_util::sync::CancellationToken>, _on_update: Option<&agent_core::types::OnUpdateFn>) -> AgentToolResult {
+        async fn execute(
+            &self,
+            _id: &str,
+            args: serde_json::Value,
+            _signal: Option<tokio_util::sync::CancellationToken>,
+            _on_update: Option<&agent_core::types::OnUpdateFn>,
+        ) -> AgentToolResult {
             let expr = args["expression"].as_str().unwrap_or("").to_string();
             // Very simple eval: only handles "X * Y"
             let result = if let Some((a, b)) = expr.split_once(" * ") {
@@ -243,42 +282,69 @@ async fn mock_tool_execution_produces_tool_result() {
                 "unknown".to_string()
             };
             AgentToolResult {
-                content: vec![Content::Text { text: format!("{expr} = {result}") }],
+                content: vec![Content::Text {
+                    text: format!("{expr} = {result}"),
+                }],
                 details: serde_json::Value::Null,
             }
         }
     }
 
     let tool_call_response = vec![
-        AssistantMessageEvent::ToolCallStart { id: "calc-1".into(), name: "calculate".into() },
+        AssistantMessageEvent::ToolCallStart {
+            id: "calc-1".into(),
+            name: "calculate".into(),
+        },
         AssistantMessageEvent::ToolCallDelta {
             id: "calc-1".into(),
             arguments_delta: r#"{"expression":"123 * 456"}"#.into(),
         },
-        AssistantMessageEvent::ToolCallEnd { id: "calc-1".into() },
-        AssistantMessageEvent::Done { stop_reason: SR::ToolUse },
+        AssistantMessageEvent::ToolCallEnd {
+            id: "calc-1".into(),
+        },
+        AssistantMessageEvent::Done {
+            stop_reason: SR::ToolUse,
+        },
     ];
     let final_response = text_response("123 * 456 = 56088");
 
-    let provider = Arc::new(SequenceProvider::new(vec![tool_call_response, final_response]));
+    let provider = Arc::new(SequenceProvider::new(vec![
+        tool_call_response,
+        final_response,
+    ]));
     let mut opts = opts_with_provider(provider);
     opts.tools = vec![Arc::new(CalcTool) as Arc<dyn AgentTool>];
-    opts.system_prompt = "You are a helpful assistant. Always use the calculator tool for math.".into();
+    opts.system_prompt =
+        "You are a helpful assistant. Always use the calculator tool for math.".into();
 
     let mut agent = Agent::new(opts);
-    agent.prompt_text("Calculate 123 * 456 using the calculator tool.").await.unwrap();
+    agent
+        .prompt_text("Calculate 123 * 456 using the calculator tool.")
+        .await
+        .unwrap();
 
     assert!(!agent.is_streaming());
     assert!(agent.messages().len() >= 3);
 
-    let tool_result = agent.messages().iter().find(|m| matches!(m, AgentMessage::ToolResult(_)));
+    let tool_result = agent
+        .messages()
+        .iter()
+        .find(|m| matches!(m, AgentMessage::ToolResult(_)));
     assert!(tool_result.is_some(), "expected a tool result message");
 
     let expected = 123i64 * 456;
     if let Some(AgentMessage::ToolResult(tr)) = tool_result {
-        let text: String = tr.content.iter().filter_map(|c| {
-            if let Content::Text { text } = c { Some(text.as_str()) } else { None }
-        }).collect();
+        let text: String = tr
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let Content::Text { text } = c {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
         assert!(
             text.contains(&expected.to_string()),
             "tool result should contain {expected}: {text}"
@@ -335,7 +401,9 @@ impl LlmProvider for DashScopeProvider {
         context: &LlmContext,
         tools: &[LlmTool],
     ) -> Vec<AssistantMessageEvent> {
-        self.0.stream(model, context, tools, &StreamOptions::default()).await
+        self.0
+            .stream(model, context, tools, &StreamOptions::default())
+            .await
     }
 }
 
@@ -344,9 +412,15 @@ struct CalcToolReal;
 
 #[async_trait::async_trait]
 impl AgentTool for CalcToolReal {
-    fn name(&self) -> &str { "calculate" }
-    fn label(&self) -> &str { "Calculator" }
-    fn description(&self) -> &str { "Evaluate mathematical expressions" }
+    fn name(&self) -> &str {
+        "calculate"
+    }
+    fn label(&self) -> &str {
+        "Calculator"
+    }
+    fn description(&self) -> &str {
+        "Evaluate mathematical expressions"
+    }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
@@ -370,7 +444,9 @@ impl AgentTool for CalcToolReal {
         // Simple expression evaluator covering basic arithmetic
         let result = eval_expr(&expr);
         AgentToolResult {
-            content: vec![Content::Text { text: format!("{expr} = {result}") }],
+            content: vec![Content::Text {
+                text: format!("{expr} = {result}"),
+            }],
             details: serde_json::Value::Null,
         }
     }
@@ -387,8 +463,14 @@ fn eval_expr(expr: &str) -> String {
     for &op in &operators {
         if let Some(pos) = expr.rfind(op) {
             if pos > 0 {
-                let lhs = expr[..pos].trim().trim_matches(|c| c == '(' || c == ')').trim();
-                let rhs = expr[pos + 1..].trim().trim_matches(|c| c == '(' || c == ')').trim();
+                let lhs = expr[..pos]
+                    .trim()
+                    .trim_matches(|c| c == '(' || c == ')')
+                    .trim();
+                let rhs = expr[pos + 1..]
+                    .trim()
+                    .trim_matches(|c| c == '(' || c == ')')
+                    .trim();
                 let a: f64 = lhs.parse().unwrap_or(f64::NAN);
                 let b: f64 = rhs.parse().unwrap_or(f64::NAN);
                 if !a.is_nan() && !b.is_nan() {
@@ -429,19 +511,37 @@ async fn e2e_qwen_basic_prompt() {
         provider,
     ));
 
-    agent.prompt_text("What is 2+2? Answer with just the number.").await.unwrap();
+    agent
+        .prompt_text("What is 2+2? Answer with just the number.")
+        .await
+        .unwrap();
 
     assert!(!agent.is_streaming());
-    assert_eq!(agent.messages().len(), 2, "should have user + assistant messages");
+    assert_eq!(
+        agent.messages().len(),
+        2,
+        "should have user + assistant messages"
+    );
     assert!(matches!(agent.messages()[0], AgentMessage::User(_)));
     assert!(matches!(agent.messages()[1], AgentMessage::Assistant(_)));
 
     if let AgentMessage::Assistant(a) = &agent.messages()[1] {
         assert!(!a.content.is_empty());
-        let text: String = a.content.iter().filter_map(|c| {
-            if let Content::Text { text } = c { Some(text.as_str()) } else { None }
-        }).collect();
-        assert!(text.contains('4'), "response should contain '4', got: {text}");
+        let text: String = a
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let Content::Text { text } = c {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            text.contains('4'),
+            "response should contain '4', got: {text}"
+        );
     } else {
         panic!("second message must be assistant");
     }
@@ -468,19 +568,36 @@ async fn e2e_qwen_tool_execution() {
         abort_handle.cancel();
     });
 
-    agent.prompt_text("Calculate 123 * 456 using the calculator tool.").await.ok();
+    agent
+        .prompt_text("Calculate 123 * 456 using the calculator tool.")
+        .await
+        .ok();
 
     assert!(!agent.is_streaming());
-    assert!(agent.messages().len() >= 3, "should have at least user + assistant + tool result");
+    assert!(
+        agent.messages().len() >= 3,
+        "should have at least user + assistant + tool result"
+    );
 
-    let tool_result = agent.messages().iter().find(|m| matches!(m, AgentMessage::ToolResult(_)));
+    let tool_result = agent
+        .messages()
+        .iter()
+        .find(|m| matches!(m, AgentMessage::ToolResult(_)));
     assert!(tool_result.is_some(), "should have a tool result message");
 
     let expected = 123i64 * 456;
     if let Some(AgentMessage::ToolResult(tr)) = tool_result {
-        let text: String = tr.content.iter().filter_map(|c| {
-            if let Content::Text { text } = c { Some(text.as_str()) } else { None }
-        }).collect();
+        let text: String = tr
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let Content::Text { text } = c {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
         assert!(
             text.contains(&expected.to_string())
                 || text.contains("56,088")
@@ -491,12 +608,26 @@ async fn e2e_qwen_tool_execution() {
 
     let final_msg = agent.messages().last().unwrap();
     // Final message is either assistant (normal completion) or tool result (aborted mid-run)
-    let is_terminal = matches!(final_msg, AgentMessage::Assistant(_) | AgentMessage::ToolResult(_));
-    assert!(is_terminal, "final message should be assistant or tool result");
+    let is_terminal = matches!(
+        final_msg,
+        AgentMessage::Assistant(_) | AgentMessage::ToolResult(_)
+    );
+    assert!(
+        is_terminal,
+        "final message should be assistant or tool result"
+    );
     if let AgentMessage::Assistant(a) = final_msg {
-        let text: String = a.content.iter().filter_map(|c| {
-            if let Content::Text { text } = c { Some(text.as_str()) } else { None }
-        }).collect();
+        let text: String = a
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let Content::Text { text } = c {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
         assert!(
             text.contains(&expected.to_string())
                 || text.contains("56,088")
@@ -514,11 +645,7 @@ async fn e2e_qwen_tool_execution() {
 #[ignore = "requires DASHSCOPE_API_KEY"]
 async fn e2e_qwen_abort_execution() {
     let provider = Arc::new(DashScopeProvider::new());
-    let mut opts = AgentOptions::new(
-        qwen_model(),
-        "You are a helpful assistant.",
-        provider,
-    );
+    let mut opts = AgentOptions::new(qwen_model(), "You are a helpful assistant.", provider);
     opts.tools = vec![Arc::new(CalcToolReal) as Arc<dyn AgentTool>];
 
     let mut agent = Agent::new(opts);
@@ -551,13 +678,22 @@ async fn e2e_qwen_abort_execution() {
     //   - ToolResult (abort fired between tool execution and the next LLM call)
     // Both are valid outcomes — the key invariant is that we're not streaming.
     let last = agent.messages().last().unwrap();
-    let is_terminal = matches!(last, AgentMessage::Assistant(_) | AgentMessage::ToolResult(_));
-    assert!(is_terminal, "last message should be assistant or tool result");
+    let is_terminal = matches!(
+        last,
+        AgentMessage::Assistant(_) | AgentMessage::ToolResult(_)
+    );
+    assert!(
+        is_terminal,
+        "last message should be assistant or tool result"
+    );
 
     // If the final message is an aborted assistant, check error linkage.
     if let AgentMessage::Assistant(a) = last {
         if a.stop_reason == StopReason::Aborted {
-            assert!(a.error_message.is_some(), "aborted assistant should have error_message set");
+            assert!(
+                a.error_message.is_some(),
+                "aborted assistant should have error_message set"
+            );
             assert_eq!(agent.error(), a.error_message.as_deref());
         }
     }
@@ -593,11 +729,23 @@ async fn e2e_qwen_state_updates() {
     let has_message_end = collected.iter().any(|s| s.contains("MessageEnd"));
     let has_message_update = collected.iter().any(|s| s.contains("MessageUpdate"));
 
-    assert!(has_agent_start, "should receive AgentStart; got: {collected:?}");
+    assert!(
+        has_agent_start,
+        "should receive AgentStart; got: {collected:?}"
+    );
     assert!(has_agent_end, "should receive AgentEnd; got: {collected:?}");
-    assert!(has_message_start, "should receive MessageStart; got: {collected:?}");
-    assert!(has_message_end, "should receive MessageEnd; got: {collected:?}");
-    assert!(has_message_update, "should receive MessageUpdate; got: {collected:?}");
+    assert!(
+        has_message_start,
+        "should receive MessageStart; got: {collected:?}"
+    );
+    assert!(
+        has_message_end,
+        "should receive MessageEnd; got: {collected:?}"
+    );
+    assert!(
+        has_message_update,
+        "should receive MessageUpdate; got: {collected:?}"
+    );
 
     assert!(!agent.is_streaming());
     assert_eq!(agent.messages().len(), 2, "should have user + assistant");
@@ -621,9 +769,17 @@ async fn e2e_qwen_multi_turn() {
     assert_eq!(agent.messages().len(), 4);
 
     if let AgentMessage::Assistant(a) = &agent.messages()[3] {
-        let text: String = a.content.iter().filter_map(|c| {
-            if let Content::Text { text } = c { Some(text.as_str()) } else { None }
-        }).collect();
+        let text: String = a
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let Content::Text { text } = c {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
         assert!(
             text.to_lowercase().contains("alice"),
             "last response should mention Alice: {text}"
@@ -643,14 +799,18 @@ async fn e2e_qwen_multi_turn() {
 #[ignore = "requires OPENAI_API_KEY"]
 async fn e2e_continue_from_user_message() {
     // This test requires a real OpenAI provider; skipped without API key.
-    unimplemented!("Implement when real OpenAI provider is wired into agent-core integration tests");
+    unimplemented!(
+        "Implement when real OpenAI provider is wired into agent-core integration tests"
+    );
 }
 
 /// Translated from: "should continue and process tool results"
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
 async fn e2e_continue_from_tool_result() {
-    unimplemented!("Implement when real OpenAI provider is wired into agent-core integration tests");
+    unimplemented!(
+        "Implement when real OpenAI provider is wired into agent-core integration tests"
+    );
 }
 
 // =============================================================================
@@ -929,7 +1089,9 @@ async fn agent_continue_from_tool_result_state_is_valid() {
     let user_msg = AgentMessage::User(UserMessage::from_text("What is 5 + 3?"));
     let assistant_msg = AgentMessage::Assistant(AssistantMessage {
         content: vec![
-            Content::Text { text: "Let me calculate that.".into() },
+            Content::Text {
+                text: "Let me calculate that.".into(),
+            },
             Content::ToolCall {
                 id: "calc-1".into(),
                 name: "calculate".into(),
@@ -946,7 +1108,9 @@ async fn agent_continue_from_tool_result_state_is_valid() {
     let tool_result = AgentMessage::ToolResult(ToolResultMessage {
         tool_call_id: "calc-1".into(),
         tool_name: "calculate".into(),
-        content: vec![Content::Text { text: "5 + 3 = 8".into() }],
+        content: vec![Content::Text {
+            text: "5 + 3 = 8".into(),
+        }],
         details: None,
         is_error: false,
         timestamp: ts(),

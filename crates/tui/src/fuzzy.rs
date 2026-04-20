@@ -1,7 +1,6 @@
 /// Fuzzy matching utilities.
 /// Matches if all query characters appear in order (not necessarily consecutive).
 /// Lower score = better match.
-
 use std::sync::OnceLock;
 
 fn alpha_num_regex() -> &'static regex::Regex {
@@ -26,13 +25,19 @@ pub fn fuzzy_match(query: &str, text: &str) -> FuzzyMatch {
 
     let match_query = |normalized_query: &str| -> FuzzyMatch {
         if normalized_query.is_empty() {
-            return FuzzyMatch { matches: true, score: 0.0 };
+            return FuzzyMatch {
+                matches: true,
+                score: 0.0,
+            };
         }
         let query_chars: Vec<char> = normalized_query.chars().collect();
         let text_chars: Vec<char> = text_lower.chars().collect();
 
         if query_chars.len() > text_chars.len() {
-            return FuzzyMatch { matches: false, score: 0.0 };
+            return FuzzyMatch {
+                matches: false,
+                score: 0.0,
+            };
         }
 
         let mut query_index = 0;
@@ -71,10 +76,16 @@ pub fn fuzzy_match(query: &str, text: &str) -> FuzzyMatch {
         }
 
         if query_index < query_chars.len() {
-            return FuzzyMatch { matches: false, score: 0.0 };
+            return FuzzyMatch {
+                matches: false,
+                score: 0.0,
+            };
         }
 
-        FuzzyMatch { matches: true, score }
+        FuzzyMatch {
+            matches: true,
+            score,
+        }
     };
 
     let primary = match_query(&query_lower);
@@ -100,7 +111,10 @@ pub fn fuzzy_match(query: &str, text: &str) -> FuzzyMatch {
         return primary;
     }
 
-    FuzzyMatch { matches: true, score: swapped.score + 5.0 }
+    FuzzyMatch {
+        matches: true,
+        score: swapped.score + 5.0,
+    }
 }
 
 /// Filter and sort items by fuzzy match quality (best matches first).
@@ -255,7 +269,11 @@ mod tests {
         let result = fuzzy_match("test", "test");
         assert!(result.matches);
         // Should be negative due to consecutive bonuses (lower = better)
-        assert!(result.score < 0.0, "exact match score should be negative (good), got {}", result.score);
+        assert!(
+            result.score < 0.0,
+            "exact match score should be negative (good), got {}",
+            result.score
+        );
     }
 
     #[test]
@@ -265,7 +283,10 @@ mod tests {
         assert!(match_in_order.matches, "abc in aXbXc should match in order");
 
         let match_out_of_order = fuzzy_match("abc", "cba");
-        assert!(!match_out_of_order.matches, "abc in cba should NOT match (out of order)");
+        assert!(
+            !match_out_of_order.matches,
+            "abc in cba should NOT match (out of order)"
+        );
     }
 
     #[test]
@@ -287,9 +308,12 @@ mod tests {
         assert!(consecutive.matches, "foo in foobar should match");
         assert!(scattered.matches, "foo in f_o_o_bar should match");
         // Lower score = better. Consecutive should have a lower (better) score.
-        assert!(consecutive.score < scattered.score,
+        assert!(
+            consecutive.score < scattered.score,
             "consecutive match ({}) should score better than scattered ({})",
-            consecutive.score, scattered.score);
+            consecutive.score,
+            scattered.score
+        );
     }
 
     #[test]
@@ -301,16 +325,22 @@ mod tests {
         assert!(at_boundary.matches, "fb in foo-bar should match");
         assert!(not_at_boundary.matches, "fb in afbx should match");
         // Word boundary match should score better (lower)
-        assert!(at_boundary.score < not_at_boundary.score,
+        assert!(
+            at_boundary.score < not_at_boundary.score,
             "word boundary match ({}) should score better than mid-word ({})",
-            at_boundary.score, not_at_boundary.score);
+            at_boundary.score,
+            not_at_boundary.score
+        );
     }
 
     #[test]
     fn test_matches_swapped_alpha_numeric_tokens() {
         // "matches swapped alpha numeric tokens"
         let result = fuzzy_match("codex52", "gpt-5.2-codex");
-        assert!(result.matches, "codex52 should match gpt-5.2-codex via alpha-num swap");
+        assert!(
+            result.matches,
+            "codex52 should match gpt-5.2-codex via alpha-num swap"
+        );
     }
 
     // ==========================================================================
@@ -322,7 +352,10 @@ mod tests {
         // "empty query returns all items unchanged"
         let items = vec!["apple", "banana", "cherry"];
         let result = fuzzy_filter(items.clone(), "", |x| x);
-        assert_eq!(result, items, "empty query should return all items unchanged");
+        assert_eq!(
+            result, items,
+            "empty query should return all items unchanged"
+        );
     }
 
     #[test]
@@ -355,9 +388,18 @@ mod tests {
         }
 
         let items = vec![
-            Item { name: "foo".to_string(), id: 1 },
-            Item { name: "bar".to_string(), id: 2 },
-            Item { name: "foobar".to_string(), id: 3 },
+            Item {
+                name: "foo".to_string(),
+                id: 1,
+            },
+            Item {
+                name: "bar".to_string(),
+                id: 2,
+            },
+            Item {
+                name: "foobar".to_string(),
+                id: 3,
+            },
         ];
 
         let result = fuzzy_filter(items, "foo", |item: &Item| item.name.as_str());

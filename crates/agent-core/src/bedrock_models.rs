@@ -146,15 +146,23 @@ mod tests {
     #[test]
     fn bedrock_known_unavailable_models_are_classified() {
         // REQUIRES_INFERENCE_PROFILE
-        assert!(is_model_unavailable("anthropic.claude-3-5-haiku-20241022-v1:0"));
-        assert!(is_model_unavailable("anthropic.claude-3-opus-20240229-v1:0"));
+        assert!(is_model_unavailable(
+            "anthropic.claude-3-5-haiku-20241022-v1:0"
+        ));
+        assert!(is_model_unavailable(
+            "anthropic.claude-3-opus-20240229-v1:0"
+        ));
 
         // INVALID_MODEL_ID
         assert!(is_model_unavailable("deepseek.v3-v1:0"));
-        assert!(is_model_unavailable("eu.anthropic.claude-haiku-4-5-20251001-v1:0"));
+        assert!(is_model_unavailable(
+            "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+        ));
 
         // MAX_TOKENS_EXCEEDED
-        assert!(is_model_unavailable("us.meta.llama4-maverick-17b-instruct-v1:0"));
+        assert!(is_model_unavailable(
+            "us.meta.llama4-maverick-17b-instruct-v1:0"
+        ));
     }
 
     /// Verifies that available models are NOT classified as unavailable.
@@ -194,8 +202,7 @@ mod tests {
     #[test]
     fn bedrock_non_signature_model_not_classified_as_failing_synthetic() {
         // Older haiku should not be in VALIDATES_SIGNATURE_FORMAT
-        assert!(!VALIDATES_SIGNATURE_FORMAT
-            .contains(&"anthropic.claude-3-haiku-20240307-v1:0"));
+        assert!(!VALIDATES_SIGNATURE_FORMAT.contains(&"anthropic.claude-3-haiku-20240307-v1:0"));
     }
 
     // ─── Live AWS Bedrock tests (require credentials + BEDROCK_EXTENSIVE_MODEL_TEST) ──

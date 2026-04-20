@@ -4,7 +4,7 @@
 
 use tui::tui::Component;
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor};
+use crate::modes::interactive::theme::{ThemeColor, get_theme};
 
 // ============================================================================
 // Helpers
@@ -140,17 +140,18 @@ impl Component for FooterComponent {
         }
 
         // Context percentage
-        let auto_indicator = if d.auto_compact_enabled { " (auto)" } else { "" };
+        let auto_indicator = if d.auto_compact_enabled {
+            " (auto)"
+        } else {
+            ""
+        };
         let context_window_str = format_tokens(d.context_usage.context_window);
         let (context_display, context_pct_val) = match d.context_usage.percent {
             Some(pct) => (
                 format!("{:.1}%/{context_window_str}{auto_indicator}", pct),
                 pct,
             ),
-            None => (
-                format!("?/{context_window_str}{auto_indicator}"),
-                0.0,
-            ),
+            None => (format!("?/{context_window_str}{auto_indicator}"), 0.0),
         };
 
         let context_colored = if context_pct_val > 90.0 {
@@ -201,7 +202,9 @@ impl Component for FooterComponent {
             let available = width.saturating_sub(stats_left_width + 2);
             if available > 0 {
                 let truncated: String = right_side.chars().take(available).collect();
-                let pad = " ".repeat(width.saturating_sub(stats_left_width + visible_width_approx(&truncated)));
+                let pad = " ".repeat(
+                    width.saturating_sub(stats_left_width + visible_width_approx(&truncated)),
+                );
                 format!("{stats_left}{pad}{truncated}")
             } else {
                 stats_left.clone()
@@ -230,7 +233,11 @@ impl Component for FooterComponent {
                 .map(|(_, text)| sanitize_status_text(text))
                 .collect::<Vec<_>>()
                 .join(" ");
-            lines.push(truncate_to_width(&status_line, width, &t.fg(ThemeColor::Dim, "...")));
+            lines.push(truncate_to_width(
+                &status_line,
+                width,
+                &t.fg(ThemeColor::Dim, "..."),
+            ));
         }
 
         lines
@@ -323,7 +330,11 @@ mod tests {
         };
         let comp = FooterComponent::new(data);
         let lines = comp.render(80);
-        assert!(lines.len() >= 2, "Expected at least 2 footer lines, got {}", lines.len());
+        assert!(
+            lines.len() >= 2,
+            "Expected at least 2 footer lines, got {}",
+            lines.len()
+        );
     }
 
     #[test]
@@ -336,7 +347,13 @@ mod tests {
         let comp = FooterComponent::new(data);
         let lines = comp.render(80);
         // Strip ANSI from first line to check content
-        let raw: String = lines[0].chars().filter(|&c| c.is_ascii_graphic() || c == ' ').collect();
-        assert!(raw.contains("main"), "Expected 'main' branch in footer: {raw}");
+        let raw: String = lines[0]
+            .chars()
+            .filter(|&c| c.is_ascii_graphic() || c == ' ')
+            .collect();
+        assert!(
+            raw.contains("main"),
+            "Expected 'main' branch in footer: {raw}"
+        );
     }
 }

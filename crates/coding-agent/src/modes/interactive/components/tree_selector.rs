@@ -142,8 +142,10 @@ impl TreeList {
 
         let target_id = initial_selected_id.or(current_leaf_id);
         list.selected_index = list.find_nearest_visible_index(target_id.as_deref());
-        list.last_selected_id =
-            list.filtered_nodes.get(list.selected_index).map(|n| n.node.entry.id().to_string());
+        list.last_selected_id = list
+            .filtered_nodes
+            .get(list.selected_index)
+            .map(|n| n.node.entry.id().to_string());
 
         list
     }
@@ -170,7 +172,15 @@ impl TreeList {
         let mut result = Vec::new();
 
         // Stack items: (node, indent, just_branched, show_connector, is_last, gutters, is_virtual_root_child)
-        type StackItem = (SessionTreeNode, usize, bool, bool, bool, Vec<GutterInfo>, bool);
+        type StackItem = (
+            SessionTreeNode,
+            usize,
+            bool,
+            bool,
+            bool,
+            Vec<GutterInfo>,
+            bool,
+        );
         let mut stack: Vec<StackItem> = Vec::new();
 
         let multiple_roots = roots.len() > 1;
@@ -190,18 +200,32 @@ impl TreeList {
             ));
         }
 
-        while let Some((node, indent, just_branched, show_connector, is_last, gutters, is_virtual_root_child)) =
-            stack.pop()
+        while let Some((
+            node,
+            indent,
+            just_branched,
+            show_connector,
+            is_last,
+            gutters,
+            is_virtual_root_child,
+        )) = stack.pop()
         {
             let children = node.children.clone();
             let multiple_children = children.len() > 1;
 
-            let current_display_indent = if multiple_roots { indent.saturating_sub(1) } else { indent };
+            let current_display_indent = if multiple_roots {
+                indent.saturating_sub(1)
+            } else {
+                indent
+            };
             let connector_position = current_display_indent.saturating_sub(1);
             let connector_displayed = show_connector && !is_virtual_root_child;
             let child_gutters: Vec<GutterInfo> = if connector_displayed {
                 let mut g = gutters.clone();
-                g.push(GutterInfo { position: connector_position, show: !is_last });
+                g.push(GutterInfo {
+                    position: connector_position,
+                    show: !is_last,
+                });
                 g
             } else {
                 gutters.clone()
@@ -247,8 +271,11 @@ impl TreeList {
             return 0;
         }
 
-        let entry_map: HashMap<&str, &FlatNode> =
-            self.flat_nodes.iter().map(|n| (n.node.entry.id(), n)).collect();
+        let entry_map: HashMap<&str, &FlatNode> = self
+            .flat_nodes
+            .iter()
+            .map(|n| (n.node.entry.id(), n))
+            .collect();
 
         let visible_id_to_index: HashMap<&str, usize> = self
             .filtered_nodes
@@ -262,9 +289,7 @@ impl TreeList {
             if let Some(&idx) = visible_id_to_index.get(id) {
                 return idx;
             }
-            current_id = entry_map
-                .get(id)
-                .and_then(|n| n.node.entry.parent_id());
+            current_id = entry_map.get(id).and_then(|n| n.node.entry.parent_id());
         }
 
         self.filtered_nodes.len() - 1
@@ -297,9 +322,14 @@ impl TreeList {
                 let is_current_leaf = Some(entry.id()) == leaf_id.as_deref();
 
                 // Skip assistant messages with only tool calls (no text), unless it's the current leaf
-                if entry.is_message() && entry.message_role() == Some("assistant") && !is_current_leaf {
+                if entry.is_message()
+                    && entry.message_role() == Some("assistant")
+                    && !is_current_leaf
+                {
                     let stop_reason = entry.message_stop_reason();
-                    let is_error_or_aborted = stop_reason.map(|r| r != "stop" && r != "toolUse").unwrap_or(false);
+                    let is_error_or_aborted = stop_reason
+                        .map(|r| r != "stop" && r != "toolUse")
+                        .unwrap_or(false);
                     if !entry.message_has_text_content() && !is_error_or_aborted {
                         return false;
                     }
@@ -349,7 +379,8 @@ impl TreeList {
                     }
                 }
             }
-            self.filtered_nodes.retain(|n| !skip_set.contains(n.node.entry.id()));
+            self.filtered_nodes
+                .retain(|n| !skip_set.contains(n.node.entry.id()));
         }
 
         self.recalculate_visual_structure();
@@ -362,8 +393,10 @@ impl TreeList {
         }
 
         if !self.filtered_nodes.is_empty() {
-            self.last_selected_id =
-                self.filtered_nodes.get(self.selected_index).map(|n| n.node.entry.id().to_string());
+            self.last_selected_id = self
+                .filtered_nodes
+                .get(self.selected_index)
+                .map(|n| n.node.entry.id().to_string());
         }
     }
 
@@ -372,11 +405,17 @@ impl TreeList {
             return;
         }
 
-        let visible_ids: HashSet<&str> =
-            self.filtered_nodes.iter().map(|n| n.node.entry.id()).collect();
+        let visible_ids: HashSet<&str> = self
+            .filtered_nodes
+            .iter()
+            .map(|n| n.node.entry.id())
+            .collect();
 
-        let entry_map: HashMap<&str, &FlatNode> =
-            self.flat_nodes.iter().map(|n| (n.node.entry.id(), n)).collect();
+        let entry_map: HashMap<&str, &FlatNode> = self
+            .flat_nodes
+            .iter()
+            .map(|n| (n.node.entry.id(), n))
+            .collect();
 
         let find_visible_ancestor = |node_id: &str| -> Option<String> {
             let mut current_id = entry_map.get(node_id)?.node.entry.parent_id();
@@ -432,8 +471,15 @@ impl TreeList {
             ));
         }
 
-        while let Some((node_id, indent, just_branched, show_connector, is_last, gutters, is_virtual_root_child)) =
-            stack.pop()
+        while let Some((
+            node_id,
+            indent,
+            just_branched,
+            show_connector,
+            is_last,
+            gutters,
+            is_virtual_root_child,
+        )) = stack.pop()
         {
             if let Some(&idx) = filtered_node_map.get(node_id.as_str()) {
                 let flat_node = &mut self.filtered_nodes[idx];
@@ -444,7 +490,10 @@ impl TreeList {
                 flat_node.is_virtual_root_child = is_virtual_root_child;
             }
 
-            let children = visible_children.get(&Some(node_id.clone())).cloned().unwrap_or_default();
+            let children = visible_children
+                .get(&Some(node_id.clone()))
+                .cloned()
+                .unwrap_or_default();
             let multiple_children = children.len() > 1;
 
             let child_indent = if multiple_children {
@@ -456,11 +505,18 @@ impl TreeList {
             };
 
             let connector_displayed = show_connector && !is_virtual_root_child;
-            let current_display_indent = if multiple_roots { indent.saturating_sub(1) } else { indent };
+            let current_display_indent = if multiple_roots {
+                indent.saturating_sub(1)
+            } else {
+                indent
+            };
             let connector_position = current_display_indent.saturating_sub(1);
             let child_gutters: Vec<GutterInfo> = if connector_displayed {
                 let mut g = gutters.clone();
-                g.push(GutterInfo { position: connector_position, show: !is_last });
+                g.push(GutterInfo {
+                    position: connector_position,
+                    show: !is_last,
+                });
                 g
             } else {
                 gutters
@@ -507,7 +563,9 @@ impl TreeList {
     }
 
     pub fn get_selected_node(&self) -> Option<&SessionTreeNode> {
-        self.filtered_nodes.get(self.selected_index).map(|n| &n.node)
+        self.filtered_nodes
+            .get(self.selected_index)
+            .map(|n| &n.node)
     }
 
     pub fn update_node_label(&mut self, entry_id: &str, label: Option<String>) {
@@ -552,12 +610,20 @@ impl TreeList {
         if direction == "down" {
             let mut current_id = selected_id.clone();
             loop {
-                let children = self.visible_children_map.get(&Some(current_id.clone())).cloned().unwrap_or_default();
+                let children = self
+                    .visible_children_map
+                    .get(&Some(current_id.clone()))
+                    .cloned()
+                    .unwrap_or_default();
                 if children.is_empty() {
-                    return *index_by_entry_id.get(current_id.as_str()).unwrap_or(&self.selected_index);
+                    return *index_by_entry_id
+                        .get(current_id.as_str())
+                        .unwrap_or(&self.selected_index);
                 }
                 if children.len() > 1 {
-                    return *index_by_entry_id.get(children[0].as_str()).unwrap_or(&self.selected_index);
+                    return *index_by_entry_id
+                        .get(children[0].as_str())
+                        .unwrap_or(&self.selected_index);
                 }
                 current_id = children[0].clone();
             }
@@ -565,13 +631,24 @@ impl TreeList {
             // direction == "up"
             let mut current_id = selected_id.clone();
             loop {
-                let parent_id = self.visible_parent_map.get(&current_id).and_then(|p| p.clone());
+                let parent_id = self
+                    .visible_parent_map
+                    .get(&current_id)
+                    .and_then(|p| p.clone());
                 let Some(pid) = parent_id else {
-                    return *index_by_entry_id.get(current_id.as_str()).unwrap_or(&self.selected_index);
+                    return *index_by_entry_id
+                        .get(current_id.as_str())
+                        .unwrap_or(&self.selected_index);
                 };
-                let siblings = self.visible_children_map.get(&Some(pid.clone())).cloned().unwrap_or_default();
+                let siblings = self
+                    .visible_children_map
+                    .get(&Some(pid.clone()))
+                    .cloned()
+                    .unwrap_or_default();
                 if siblings.len() > 1 {
-                    let seg_start = *index_by_entry_id.get(current_id.as_str()).unwrap_or(&self.selected_index);
+                    let seg_start = *index_by_entry_id
+                        .get(current_id.as_str())
+                        .unwrap_or(&self.selected_index);
                     if seg_start < self.selected_index {
                         return seg_start;
                     }
@@ -606,7 +683,10 @@ impl TreeList {
     }
 
     pub fn handle_fold_or_up(&mut self) {
-        let current_id = self.filtered_nodes.get(self.selected_index).map(|n| n.node.entry.id().to_string());
+        let current_id = self
+            .filtered_nodes
+            .get(self.selected_index)
+            .map(|n| n.node.entry.id().to_string());
         if let Some(id) = current_id {
             if self.is_foldable(&id) && !self.folded_nodes.contains(&id) {
                 self.folded_nodes.insert(id);
@@ -618,7 +698,10 @@ impl TreeList {
     }
 
     pub fn handle_unfold_or_down(&mut self) {
-        let current_id = self.filtered_nodes.get(self.selected_index).map(|n| n.node.entry.id().to_string());
+        let current_id = self
+            .filtered_nodes
+            .get(self.selected_index)
+            .map(|n| n.node.entry.id().to_string());
         if let Some(id) = current_id {
             if self.folded_nodes.contains(&id) {
                 self.folded_nodes.remove(&id);
@@ -661,7 +744,10 @@ impl TreeList {
     pub fn handle_label_edit(&self) {
         if let Some(selected) = self.filtered_nodes.get(self.selected_index) {
             if let Some(cb) = &self.on_label_edit {
-                cb(selected.node.entry.id().to_string(), selected.node.label.clone());
+                cb(
+                    selected.node.entry.id().to_string(),
+                    selected.node.label.clone(),
+                );
             }
         }
     }
@@ -831,9 +917,16 @@ impl TreeSelectorComponent {
             "\x7f" | "\x08" => self.tree_list.delete_search_char(),
             "L" => {
                 // Shift+L: label edit
-                let selected = self.tree_list.filtered_nodes.get(self.tree_list.selected_index).cloned();
+                let selected = self
+                    .tree_list
+                    .filtered_nodes
+                    .get(self.tree_list.selected_index)
+                    .cloned();
                 if let Some(node) = selected {
-                    self.show_label_input(node.node.entry.id().to_string(), node.node.label.clone());
+                    self.show_label_input(
+                        node.node.entry.id().to_string(),
+                        node.node.label.clone(),
+                    );
                 }
             }
             _ => {
@@ -874,7 +967,11 @@ mod tests {
         })
     }
 
-    fn make_node(id: &str, parent_id: Option<&str>, children: Vec<SessionTreeNode>) -> SessionTreeNode {
+    fn make_node(
+        id: &str,
+        parent_id: Option<&str>,
+        children: Vec<SessionTreeNode>,
+    ) -> SessionTreeNode {
         SessionTreeNode {
             entry: make_entry(id, parent_id),
             children,
@@ -969,7 +1066,11 @@ mod tests {
         let tree = vec![make_node("n1", None, vec![])];
         let mut list = TreeList::new(tree, None, 20, None, Some(FilterMode::All));
         list.update_node_label("n1", Some("my-label".into()));
-        let node = list.flat_nodes.iter().find(|n| n.node.entry.id() == "n1").unwrap();
+        let node = list
+            .flat_nodes
+            .iter()
+            .find(|n| n.node.entry.id() == "n1")
+            .unwrap();
         assert_eq!(node.node.label.as_deref(), Some("my-label"));
     }
 

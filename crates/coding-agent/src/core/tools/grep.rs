@@ -15,12 +15,14 @@ pub const DEFAULT_LIMIT: usize = 100;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tools::{all_tool_descriptors, ToolName};
+    use crate::core::tools::{ToolName, all_tool_descriptors};
 
     #[test]
     fn tool_name_constant_matches_enum() {
         let descs = all_tool_descriptors();
-        let desc = descs.get(&ToolName::Grep).expect("grep descriptor must exist");
+        let desc = descs
+            .get(&ToolName::Grep)
+            .expect("grep descriptor must exist");
         assert_eq!(desc.name.to_string(), TOOL_NAME);
     }
 

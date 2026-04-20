@@ -4,7 +4,7 @@
 //!
 //! Renders unified diff text with colored lines and intra-line change highlighting.
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor};
+use crate::modes::interactive::theme::{ThemeColor, get_theme};
 
 /// Options for diff rendering (kept for API compatibility).
 #[derive(Debug, Default)]
@@ -108,10 +108,13 @@ pub fn render_diff(diff_text: &str, _options: RenderDiffOptions) -> String {
                 if let Some(next_line) = lines.get(i + 1) {
                     if let Some(("+", next_num, next_content)) = parse_diff_line(next_line) {
                         let next_content_with_tabs = replace_tabs(next_content);
-                        let (rm, ad) = render_intra_line_diff(&content_with_tabs, &next_content_with_tabs);
+                        let (rm, ad) =
+                            render_intra_line_diff(&content_with_tabs, &next_content_with_tabs);
 
-                        let removed_prefix = t.fg(ThemeColor::ToolDiffRemoved, &format!("-{line_num} "));
-                        let added_prefix = t.fg(ThemeColor::ToolDiffAdded, &format!("+{next_num} "));
+                        let removed_prefix =
+                            t.fg(ThemeColor::ToolDiffRemoved, &format!("-{line_num} "));
+                        let added_prefix =
+                            t.fg(ThemeColor::ToolDiffAdded, &format!("+{next_num} "));
 
                         result_lines.push(format!(
                             "{}{}",

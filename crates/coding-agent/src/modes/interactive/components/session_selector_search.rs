@@ -54,7 +54,11 @@ impl SessionSearchInfo {
 
 /// Returns `true` if the session has a non-empty name.
 pub fn has_session_name(session: &SessionSearchInfo) -> bool {
-    session.name.as_ref().map(|n| !n.trim().is_empty()).unwrap_or(false)
+    session
+        .name
+        .as_ref()
+        .map(|n| !n.trim().is_empty())
+        .unwrap_or(false)
 }
 
 // ============================================================================
@@ -217,7 +221,10 @@ fn fuzzy_match(pattern: &str, text: &str) -> Option<f64> {
 }
 
 fn normalize_whitespace_lower(s: &str) -> String {
-    s.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ")
+    s.to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Apply a parsed query to a single session.
@@ -225,21 +232,36 @@ pub fn match_session(session: &SessionSearchInfo, parsed: &ParsedSearchQuery) ->
     let text = session.search_text();
 
     match parsed {
-        ParsedSearchQuery::Empty => MatchResult { matches: true, score: 0.0 },
+        ParsedSearchQuery::Empty => MatchResult {
+            matches: true,
+            score: 0.0,
+        },
 
-        ParsedSearchQuery::Error(_) => MatchResult { matches: false, score: 0.0 },
+        ParsedSearchQuery::Error(_) => MatchResult {
+            matches: false,
+            score: 0.0,
+        },
 
         ParsedSearchQuery::Regex(re) => {
             if let Some(m) = re.find(&text) {
-                MatchResult { matches: true, score: m.start() as f64 * 0.1 }
+                MatchResult {
+                    matches: true,
+                    score: m.start() as f64 * 0.1,
+                }
             } else {
-                MatchResult { matches: false, score: 0.0 }
+                MatchResult {
+                    matches: false,
+                    score: 0.0,
+                }
             }
         }
 
         ParsedSearchQuery::Tokens(tokens) => {
             if tokens.is_empty() {
-                return MatchResult { matches: true, score: 0.0 };
+                return MatchResult {
+                    matches: true,
+                    score: 0.0,
+                };
             }
 
             let mut total_score = 0.0;
@@ -255,17 +277,28 @@ pub fn match_session(session: &SessionSearchInfo, parsed: &ParsedSearchQuery) ->
                         if let Some(pos) = normalized_text.find(&norm_phrase) {
                             total_score += pos as f64 * 0.1;
                         } else {
-                            return MatchResult { matches: false, score: 0.0 };
+                            return MatchResult {
+                                matches: false,
+                                score: 0.0,
+                            };
                         }
                     }
                     Token::Fuzzy(value) => match fuzzy_match(value, &text) {
                         Some(score) => total_score += score,
-                        None => return MatchResult { matches: false, score: 0.0 },
+                        None => {
+                            return MatchResult {
+                                matches: false,
+                                score: 0.0,
+                            };
+                        }
                     },
                 }
             }
 
-            MatchResult { matches: true, score: total_score }
+            MatchResult {
+                matches: true,
+                score: total_score,
+            }
         }
     }
 }
@@ -323,8 +356,14 @@ pub fn filter_and_sort_sessions(
             .partial_cmp(score_b)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| {
-                let ta = sb.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
-                let tb = sa.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+                let ta = sb
+                    .modified
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default();
+                let tb = sa
+                    .modified
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default();
                 ta.cmp(&tb)
             })
     });
@@ -472,10 +511,7 @@ mod tests {
 
     #[test]
     fn empty_query_returns_all() {
-        let sessions = vec![
-            make_session("s1", None, "a"),
-            make_session("s2", None, "b"),
-        ];
+        let sessions = vec![make_session("s1", None, "a"), make_session("s2", None, "b")];
         let result = filter_and_sort_sessions(&sessions, "", SortMode::Recent, NameFilter::All);
         assert_eq!(result.len(), 2);
     }
@@ -486,8 +522,7 @@ mod tests {
             make_session("s1", Some("Named"), ""),
             make_session("s2", None, ""),
         ];
-        let result =
-            filter_and_sort_sessions(&sessions, "", SortMode::Recent, NameFilter::Named);
+        let result = filter_and_sort_sessions(&sessions, "", SortMode::Recent, NameFilter::Named);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "s1");
     }

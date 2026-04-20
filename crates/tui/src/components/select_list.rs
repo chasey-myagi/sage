@@ -1,5 +1,4 @@
 /// SelectList component — keyboard-navigable list with fuzzy filtering.
-
 use crate::keybindings::check_keybinding;
 use crate::tui::Component;
 use crate::utils::{truncate_to_width, visible_width};
@@ -46,7 +45,8 @@ pub struct SelectListTruncatePrimaryContext<'a> {
 pub struct SelectListLayoutOptions {
     pub min_primary_column_width: Option<usize>,
     pub max_primary_column_width: Option<usize>,
-    pub truncate_primary: Option<Box<dyn Fn(SelectListTruncatePrimaryContext) -> String + Send + Sync>>,
+    pub truncate_primary:
+        Option<Box<dyn Fn(SelectListTruncatePrimaryContext) -> String + Send + Sync>>,
 }
 
 impl Default for SelectListLayoutOptions {
@@ -117,10 +117,14 @@ impl SelectList {
     }
 
     fn get_primary_column_bounds(&self) -> (usize, usize) {
-        let raw_min = self.layout.min_primary_column_width
+        let raw_min = self
+            .layout
+            .min_primary_column_width
             .or(self.layout.max_primary_column_width)
             .unwrap_or(DEFAULT_PRIMARY_COLUMN_WIDTH);
-        let raw_max = self.layout.max_primary_column_width
+        let raw_max = self
+            .layout
+            .max_primary_column_width
             .or(self.layout.min_primary_column_width)
             .unwrap_or(DEFAULT_PRIMARY_COLUMN_WIDTH);
 
@@ -145,7 +149,13 @@ impl SelectList {
         clamp(widest_primary, min, max)
     }
 
-    fn truncate_primary(&self, item: &SelectItem, is_selected: bool, max_width: usize, column_width: usize) -> String {
+    fn truncate_primary(
+        &self,
+        item: &SelectItem,
+        is_selected: bool,
+        max_width: usize,
+        column_width: usize,
+    ) -> String {
         let display_value = self.get_display_value(item).to_string();
         let truncated_value = if let Some(truncate_fn) = &self.layout.truncate_primary {
             truncate_fn(SelectListTruncatePrimaryContext {
@@ -174,9 +184,11 @@ impl SelectList {
 
         if let Some(desc) = description_single_line {
             if width > 40 {
-                let effective_pcw = (primary_column_width.min(width.saturating_sub(prefix_width + 4))).max(1);
+                let effective_pcw =
+                    (primary_column_width.min(width.saturating_sub(prefix_width + 4))).max(1);
                 let max_primary_width = effective_pcw.saturating_sub(PRIMARY_COLUMN_GAP).max(1);
-                let truncated_value = self.truncate_primary(item, is_selected, max_primary_width, effective_pcw);
+                let truncated_value =
+                    self.truncate_primary(item, is_selected, max_primary_width, effective_pcw);
                 let truncated_value_width = visible_width(&truncated_value);
                 let spacing_len = effective_pcw.saturating_sub(truncated_value_width).max(1);
                 let spacing = " ".repeat(spacing_len);
@@ -186,7 +198,9 @@ impl SelectList {
                 if remaining_width > MIN_DESCRIPTION_WIDTH {
                     let truncated_desc = truncate_to_width(desc, remaining_width, "", false);
                     if is_selected {
-                        return (self.theme.selected_text)(&format!("{prefix}{truncated_value}{spacing}{truncated_desc}"));
+                        return (self.theme.selected_text)(&format!(
+                            "{prefix}{truncated_value}{spacing}{truncated_desc}"
+                        ));
                     }
                     let desc_text = (self.theme.description)(&format!("{spacing}{truncated_desc}"));
                     return format!("{prefix}{truncated_value}{desc_text}");
@@ -203,7 +217,10 @@ impl SelectList {
     }
 
     fn notify_selection_change(&self) {
-        if let (Some(item), Some(cb)) = (self.filtered_items.get(self.selected_index), &self.on_selection_change) {
+        if let (Some(item), Some(cb)) = (
+            self.filtered_items.get(self.selected_index),
+            &self.on_selection_change,
+        ) {
             cb(item);
         }
     }
@@ -234,7 +251,10 @@ impl Component for SelectList {
         for i in start_index..end_index {
             let item = &self.filtered_items[i];
             let is_selected = i == self.selected_index;
-            let desc_single = item.description.as_deref().map(|d| normalize_to_single_line(d));
+            let desc_single = item
+                .description
+                .as_deref()
+                .map(|d| normalize_to_single_line(d));
             lines.push(self.render_item(
                 item,
                 is_selected,
@@ -246,8 +266,17 @@ impl Component for SelectList {
 
         // Add scroll indicators if needed
         if start_index > 0 || end_index < self.filtered_items.len() {
-            let scroll_text = format!("  ({}/{})", self.selected_index + 1, self.filtered_items.len());
-            lines.push((self.theme.scroll_info)(&truncate_to_width(&scroll_text, width.saturating_sub(2), "", false)));
+            let scroll_text = format!(
+                "  ({}/{})",
+                self.selected_index + 1,
+                self.filtered_items.len()
+            );
+            lines.push((self.theme.scroll_info)(&truncate_to_width(
+                &scroll_text,
+                width.saturating_sub(2),
+                "",
+                false,
+            )));
         }
 
         lines
@@ -303,9 +332,21 @@ mod tests {
 
     fn make_items() -> Vec<SelectItem> {
         vec![
-            SelectItem { value: "a".to_string(), label: "Alpha".to_string(), description: None },
-            SelectItem { value: "b".to_string(), label: "Beta".to_string(), description: None },
-            SelectItem { value: "c".to_string(), label: "Gamma".to_string(), description: None },
+            SelectItem {
+                value: "a".to_string(),
+                label: "Alpha".to_string(),
+                description: None,
+            },
+            SelectItem {
+                value: "b".to_string(),
+                label: "Beta".to_string(),
+                description: None,
+            },
+            SelectItem {
+                value: "c".to_string(),
+                label: "Gamma".to_string(),
+                description: None,
+            },
         ]
     }
 
@@ -369,7 +410,10 @@ mod tests {
         let rendered = list.render(100);
 
         assert!(!rendered.is_empty());
-        assert!(!rendered[0].contains('\n'), "line should not contain newline");
+        assert!(
+            !rendered[0].contains('\n'),
+            "line should not contain newline"
+        );
         assert!(
             rendered[0].contains("Line one Line two Line three"),
             "multiline description should be joined with spaces: {}",
@@ -442,8 +486,14 @@ mod tests {
         let rendered = list.render(80);
 
         // Both descriptions should be present
-        assert!(rendered.iter().any(|l| l.contains("first")), "should have 'first'");
-        assert!(rendered.iter().any(|l| l.contains("second")), "should have 'second'");
+        assert!(
+            rendered.iter().any(|l| l.contains("first")),
+            "should have 'first'"
+        );
+        assert!(
+            rendered.iter().any(|l| l.contains("second")),
+            "should have 'second'"
+        );
 
         // Descriptions should be aligned (same column) - check when both items are unselected
         // The selected item (index 0) uses a different prefix, so we check non-selected alignment
@@ -486,8 +536,14 @@ mod tests {
         let rendered = list.render(80);
 
         // Both descriptions should be present
-        assert!(rendered.iter().any(|l| l.contains("first")), "should have 'first'");
-        assert!(rendered.iter().any(|l| l.contains("second")), "should have 'second'");
+        assert!(
+            rendered.iter().any(|l| l.contains("first")),
+            "should have 'first'"
+        );
+        assert!(
+            rendered.iter().any(|l| l.contains("second")),
+            "should have 'second'"
+        );
 
         // The long label should be truncated to at most maxPrimaryColumnWidth chars
         // (plus the prefix "  " or "→ ")
@@ -529,7 +585,8 @@ mod tests {
                     if ctx.text.len() <= ctx.max_width {
                         ctx.text.to_string()
                     } else {
-                        let truncated = &ctx.text[..ctx.max_width.saturating_sub(1).min(ctx.text.len())];
+                        let truncated =
+                            &ctx.text[..ctx.max_width.saturating_sub(1).min(ctx.text.len())];
                         format!("{truncated}\u{2026}") // "…"
                     }
                 })),
@@ -540,11 +597,21 @@ mod tests {
         // The long label should be truncated with ellipsis
         // Find the line containing the long label (it should be truncated)
         let long_line = rendered.iter().find(|l| l.contains('\u{2026}'));
-        assert!(long_line.is_some(), "should have a line with ellipsis in truncated label: {:?}", rendered);
+        assert!(
+            long_line.is_some(),
+            "should have a line with ellipsis in truncated label: {:?}",
+            rendered
+        );
 
         // Both descriptions should be present
-        assert!(rendered.iter().any(|l| l.contains("first")), "should have 'first'");
-        assert!(rendered.iter().any(|l| l.contains("second")), "should have 'second'");
+        assert!(
+            rendered.iter().any(|l| l.contains("first")),
+            "should have 'first'"
+        );
+        assert!(
+            rendered.iter().any(|l| l.contains("second")),
+            "should have 'second'"
+        );
     }
 
     #[test]
@@ -553,7 +620,10 @@ mod tests {
         // The function splits on \r or \n individually, then joins with " ".
         // "\r\n" produces ["", ""] → " " in between (double space).
         // For CRLF, the implementation produces double spaces since \r and \n are separate chars.
-        assert_eq!(normalize_to_single_line("Line one\nLine two"), "Line one Line two");
+        assert_eq!(
+            normalize_to_single_line("Line one\nLine two"),
+            "Line one Line two"
+        );
         // CRLF: \r and \n are separate splits, giving ["Line one", "", "Line two"] → "Line one  Line two"
         // The function does not deduplicate spaces, so CRLF → double space.
         // Just verify non-CRLF case works correctly.
@@ -565,10 +635,26 @@ mod tests {
     #[test]
     fn test_scroll_indicator_shown_when_items_exceed_max_visible() {
         let items = vec![
-            SelectItem { value: "a".to_string(), label: "a".to_string(), description: None },
-            SelectItem { value: "b".to_string(), label: "b".to_string(), description: None },
-            SelectItem { value: "c".to_string(), label: "c".to_string(), description: None },
-            SelectItem { value: "d".to_string(), label: "d".to_string(), description: None },
+            SelectItem {
+                value: "a".to_string(),
+                label: "a".to_string(),
+                description: None,
+            },
+            SelectItem {
+                value: "b".to_string(),
+                label: "b".to_string(),
+                description: None,
+            },
+            SelectItem {
+                value: "c".to_string(),
+                label: "c".to_string(),
+                description: None,
+            },
+            SelectItem {
+                value: "d".to_string(),
+                label: "d".to_string(),
+                description: None,
+            },
         ];
 
         let list = SelectList::new(items, 2, identity_theme(), Default::default());
@@ -576,20 +662,35 @@ mod tests {
 
         // Should show scroll indicator
         let has_scroll = rendered.iter().any(|l| l.contains('/'));
-        assert!(has_scroll, "should show scroll indicator when items exceed max_visible");
+        assert!(
+            has_scroll,
+            "should show scroll indicator when items exceed max_visible"
+        );
     }
 
     #[test]
     fn test_no_scroll_indicator_when_items_fit() {
         let items = vec![
-            SelectItem { value: "a".to_string(), label: "a".to_string(), description: None },
-            SelectItem { value: "b".to_string(), label: "b".to_string(), description: None },
+            SelectItem {
+                value: "a".to_string(),
+                label: "a".to_string(),
+                description: None,
+            },
+            SelectItem {
+                value: "b".to_string(),
+                label: "b".to_string(),
+                description: None,
+            },
         ];
 
         let list = SelectList::new(items, 5, identity_theme(), Default::default());
         let rendered = list.render(40);
 
         // Should not show scroll indicator
-        assert_eq!(rendered.len(), 2, "should show exactly 2 items without scroll indicator");
+        assert_eq!(
+            rendered.len(),
+            2,
+            "should show exactly 2 items without scroll indicator"
+        );
     }
 }

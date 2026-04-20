@@ -24,7 +24,11 @@ pub struct ToolWrapper {
 
 impl ToolWrapper {
     /// Create a new `ToolWrapper` from constituent parts.
-    pub fn new(name: impl Into<String>, description: impl Into<String>, parameters: serde_json::Value) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: serde_json::Value,
+    ) -> Self {
         Self {
             name: name.into(),
             description: description.into(),
@@ -125,9 +129,21 @@ mod tests {
     #[test]
     fn wrap_tool_definitions_preserves_order() {
         let tools = vec![
-            LlmTool { name: "a".to_string(), description: "A".to_string(), parameters: serde_json::json!({}) },
-            LlmTool { name: "b".to_string(), description: "B".to_string(), parameters: serde_json::json!({}) },
-            LlmTool { name: "c".to_string(), description: "C".to_string(), parameters: serde_json::json!({}) },
+            LlmTool {
+                name: "a".to_string(),
+                description: "A".to_string(),
+                parameters: serde_json::json!({}),
+            },
+            LlmTool {
+                name: "b".to_string(),
+                description: "B".to_string(),
+                parameters: serde_json::json!({}),
+            },
+            LlmTool {
+                name: "c".to_string(),
+                description: "C".to_string(),
+                parameters: serde_json::json!({}),
+            },
         ];
         let wrappers = wrap_tool_definitions(tools);
         assert_eq!(wrappers.len(), 3);

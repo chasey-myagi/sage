@@ -43,7 +43,12 @@ pub fn parse_changelog(changelog_path: &Path) -> Vec<ChangelogEntry> {
             // Save previous entry if any.
             if let Some((major, minor, patch)) = current_version.take() {
                 let content = current_lines.join("\n").trim().to_owned();
-                entries.push(ChangelogEntry { major, minor, patch, content });
+                entries.push(ChangelogEntry {
+                    major,
+                    minor,
+                    patch,
+                    content,
+                });
             }
 
             // Parse version from this line: ## [x.y.z] or ## x.y.z
@@ -66,7 +71,12 @@ pub fn parse_changelog(changelog_path: &Path) -> Vec<ChangelogEntry> {
     // Save last entry.
     if let Some((major, minor, patch)) = current_version {
         let content = current_lines.join("\n").trim().to_owned();
-        entries.push(ChangelogEntry { major, minor, patch, content });
+        entries.push(ChangelogEntry {
+            major,
+            minor,
+            patch,
+            content,
+        });
     }
 
     entries
@@ -83,7 +93,10 @@ pub fn compare_versions(a: &ChangelogEntry, b: &ChangelogEntry) -> std::cmp::Ord
 
 /// Return entries newer than `last_version` (e.g. `"1.2.3"`).
 pub fn get_new_entries(entries: &[ChangelogEntry], last_version: &str) -> Vec<ChangelogEntry> {
-    let parts: Vec<u32> = last_version.split('.').map(|p| p.parse().unwrap_or(0)).collect();
+    let parts: Vec<u32> = last_version
+        .split('.')
+        .map(|p| p.parse().unwrap_or(0))
+        .collect();
     let last = ChangelogEntry {
         major: parts.first().copied().unwrap_or(0),
         minor: parts.get(1).copied().unwrap_or(0),
@@ -125,10 +138,7 @@ mod tests {
     #[test]
     fn parse_single_entry() {
         let tmp = TempDir::new().unwrap();
-        let path = write_changelog(
-            &tmp,
-            "## [1.2.3] - 2024-01-01\n\n### Added\n- Feature X\n",
-        );
+        let path = write_changelog(&tmp, "## [1.2.3] - 2024-01-01\n\n### Added\n- Feature X\n");
         let entries = parse_changelog(&path);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].major, 1);
@@ -153,9 +163,24 @@ mod tests {
     #[test]
     fn get_new_entries_filters_correctly() {
         let entries = vec![
-            ChangelogEntry { major: 2, minor: 0, patch: 0, content: "v2".into() },
-            ChangelogEntry { major: 1, minor: 5, patch: 0, content: "v1.5".into() },
-            ChangelogEntry { major: 1, minor: 0, patch: 0, content: "v1".into() },
+            ChangelogEntry {
+                major: 2,
+                minor: 0,
+                patch: 0,
+                content: "v2".into(),
+            },
+            ChangelogEntry {
+                major: 1,
+                minor: 5,
+                patch: 0,
+                content: "v1.5".into(),
+            },
+            ChangelogEntry {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                content: "v1".into(),
+            },
         ];
         let new = get_new_entries(&entries, "1.5.0");
         assert_eq!(new.len(), 1);
@@ -164,8 +189,18 @@ mod tests {
 
     #[test]
     fn compare_versions_ordering() {
-        let v1 = ChangelogEntry { major: 1, minor: 0, patch: 0, content: "".into() };
-        let v2 = ChangelogEntry { major: 2, minor: 0, patch: 0, content: "".into() };
+        let v1 = ChangelogEntry {
+            major: 1,
+            minor: 0,
+            patch: 0,
+            content: "".into(),
+        };
+        let v2 = ChangelogEntry {
+            major: 2,
+            minor: 0,
+            patch: 0,
+            content: "".into(),
+        };
         assert_eq!(compare_versions(&v1, &v2), std::cmp::Ordering::Less);
         assert_eq!(compare_versions(&v2, &v1), std::cmp::Ordering::Greater);
         assert_eq!(compare_versions(&v1, &v1), std::cmp::Ordering::Equal);

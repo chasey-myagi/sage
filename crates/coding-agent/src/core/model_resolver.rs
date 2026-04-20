@@ -188,8 +188,16 @@ fn try_match_model<'a>(pattern: &str, available: &'a [ModelRef]) -> Option<&'a M
     }
 
     // Prefer aliases; within same type, sort descending by id
-    let mut aliases: Vec<&ModelRef> = matches.iter().copied().filter(|m| is_alias(&m.id)).collect();
-    let mut dated: Vec<&ModelRef> = matches.iter().copied().filter(|m| !is_alias(&m.id)).collect();
+    let mut aliases: Vec<&ModelRef> = matches
+        .iter()
+        .copied()
+        .filter(|m| is_alias(&m.id))
+        .collect();
+    let mut dated: Vec<&ModelRef> = matches
+        .iter()
+        .copied()
+        .filter(|m| !is_alias(&m.id))
+        .collect();
 
     if !aliases.is_empty() {
         aliases.sort_by(|a, b| b.id.cmp(&a.id));
@@ -366,9 +374,10 @@ pub fn resolve_cli_model<'a>(
     // Try exact match on full input without provider inference
     if provider.is_none() {
         let lower = cli_model.to_lowercase();
-        if let Some(exact) = available.iter().find(|m| {
-            m.id.to_lowercase() == lower || m.full_id().to_lowercase() == lower
-        }) {
+        if let Some(exact) = available
+            .iter()
+            .find(|m| m.id.to_lowercase() == lower || m.full_id().to_lowercase() == lower)
+        {
             return ResolveCliModelResult {
                 model: Some(exact),
                 thinking_level: None,
@@ -390,7 +399,11 @@ pub fn resolve_cli_model<'a>(
 
     // Collect owned clones so we can pass as &[ModelRef]
     let candidates: Vec<ModelRef> = if let Some(ref p) = provider {
-        available.iter().filter(|m| &m.provider == p).cloned().collect()
+        available
+            .iter()
+            .filter(|m| &m.provider == p)
+            .cloned()
+            .collect()
     } else {
         available.to_vec()
     };
@@ -400,7 +413,9 @@ pub fn resolve_cli_model<'a>(
     if let Some(matched) = result.model {
         // Re-find the same model in `available` so the returned reference
         // has the lifetime `'a` (tied to `available`) rather than `candidates`.
-        let model_in_available = available.iter().find(|m| m.id == matched.id && m.provider == matched.provider);
+        let model_in_available = available
+            .iter()
+            .find(|m| m.id == matched.id && m.provider == matched.provider);
         return ResolveCliModelResult {
             model: model_in_available,
             thinking_level: result.thinking_level,
@@ -412,9 +427,10 @@ pub fn resolve_cli_model<'a>(
     // If inferred provider but no match, try full input
     if inferred_provider {
         let lower = cli_model.to_lowercase();
-        if let Some(exact) = available.iter().find(|m| {
-            m.id.to_lowercase() == lower || m.full_id().to_lowercase() == lower
-        }) {
+        if let Some(exact) = available
+            .iter()
+            .find(|m| m.id.to_lowercase() == lower || m.full_id().to_lowercase() == lower)
+        {
             return ResolveCliModelResult {
                 model: Some(exact),
                 thinking_level: None,
@@ -501,7 +517,10 @@ mod tests {
     fn parse_exact_match_returns_model_with_no_thinking_level() {
         let models = mock_models();
         let result = parse_model_pattern("claude-sonnet-4-5", &models, true);
-        assert_eq!(result.model.map(|m| m.id.as_str()), Some("claude-sonnet-4-5"));
+        assert_eq!(
+            result.model.map(|m| m.id.as_str()),
+            Some("claude-sonnet-4-5")
+        );
         assert!(result.thinking_level.is_none());
         assert!(result.warning.is_none());
     }
@@ -510,7 +529,10 @@ mod tests {
     fn parse_partial_match_returns_best_model() {
         let models = mock_models();
         let result = parse_model_pattern("sonnet", &models, true);
-        assert_eq!(result.model.map(|m| m.id.as_str()), Some("claude-sonnet-4-5"));
+        assert_eq!(
+            result.model.map(|m| m.id.as_str()),
+            Some("claude-sonnet-4-5")
+        );
         assert!(result.thinking_level.is_none());
         assert!(result.warning.is_none());
     }
@@ -537,7 +559,10 @@ mod tests {
     fn parse_sonnet_high_returns_sonnet_with_high_thinking() {
         let models = mock_models();
         let result = parse_model_pattern("sonnet:high", &models, true);
-        assert_eq!(result.model.map(|m| m.id.as_str()), Some("claude-sonnet-4-5"));
+        assert_eq!(
+            result.model.map(|m| m.id.as_str()),
+            Some("claude-sonnet-4-5")
+        );
         assert_eq!(result.thinking_level.as_deref(), Some("high"));
         assert!(result.warning.is_none());
     }
@@ -556,7 +581,10 @@ mod tests {
         let models = mock_models();
         for level in &["off", "low", "medium", "high", "max"] {
             let result = parse_model_pattern(&format!("sonnet:{level}"), &models, true);
-            assert_eq!(result.model.map(|m| m.id.as_str()), Some("claude-sonnet-4-5"));
+            assert_eq!(
+                result.model.map(|m| m.id.as_str()),
+                Some("claude-sonnet-4-5")
+            );
             assert_eq!(result.thinking_level.as_deref(), Some(*level));
             assert!(result.warning.is_none(), "level={level}");
         }
@@ -568,10 +596,16 @@ mod tests {
     fn parse_invalid_thinking_level_returns_warning() {
         let models = mock_models();
         let result = parse_model_pattern("sonnet:random", &models, true);
-        assert_eq!(result.model.map(|m| m.id.as_str()), Some("claude-sonnet-4-5"));
+        assert_eq!(
+            result.model.map(|m| m.id.as_str()),
+            Some("claude-sonnet-4-5")
+        );
         assert!(result.thinking_level.is_none());
         let warning = result.warning.unwrap_or_default();
-        assert!(warning.contains("Invalid thinking level"), "warning={warning}");
+        assert!(
+            warning.contains("Invalid thinking level"),
+            "warning={warning}"
+        );
         assert!(warning.contains("random"), "warning={warning}");
     }
 
@@ -581,7 +615,13 @@ mod tests {
         let result = parse_model_pattern("gpt-4o:invalid", &models, true);
         assert_eq!(result.model.map(|m| m.id.as_str()), Some("gpt-4o"));
         assert!(result.thinking_level.is_none());
-        assert!(result.warning.as_deref().unwrap_or("").contains("Invalid thinking level"));
+        assert!(
+            result
+                .warning
+                .as_deref()
+                .unwrap_or("")
+                .contains("Invalid thinking level")
+        );
     }
 
     // ---- parseModelPattern: OpenRouter models with colons in IDs ----
@@ -590,7 +630,10 @@ mod tests {
     fn parse_openrouter_model_with_colon_in_id() {
         let models = mock_models();
         let result = parse_model_pattern("qwen/qwen3-coder:exacto", &models, true);
-        assert_eq!(result.model.map(|m| m.id.as_str()), Some("qwen/qwen3-coder:exacto"));
+        assert_eq!(
+            result.model.map(|m| m.id.as_str()),
+            Some("qwen/qwen3-coder:exacto")
+        );
         assert!(result.thinking_level.is_none());
         assert!(result.warning.is_none());
     }
@@ -600,8 +643,14 @@ mod tests {
         let models = mock_models();
         // Provider-prefixed form: "openrouter/qwen/qwen3-coder:exacto"
         let result = parse_model_pattern("openrouter/qwen/qwen3-coder:exacto", &models, true);
-        assert_eq!(result.model.map(|m| m.id.as_str()), Some("qwen/qwen3-coder:exacto"));
-        assert_eq!(result.model.map(|m| m.provider.as_str()), Some("openrouter"));
+        assert_eq!(
+            result.model.map(|m| m.id.as_str()),
+            Some("qwen/qwen3-coder:exacto")
+        );
+        assert_eq!(
+            result.model.map(|m| m.provider.as_str()),
+            Some("openrouter")
+        );
         assert!(result.thinking_level.is_none());
     }
 
@@ -609,7 +658,10 @@ mod tests {
     fn parse_openrouter_model_with_thinking_level() {
         let models = mock_models();
         let result = parse_model_pattern("qwen/qwen3-coder:exacto:high", &models, true);
-        assert_eq!(result.model.map(|m| m.id.as_str()), Some("qwen/qwen3-coder:exacto"));
+        assert_eq!(
+            result.model.map(|m| m.id.as_str()),
+            Some("qwen/qwen3-coder:exacto")
+        );
         assert_eq!(result.thinking_level.as_deref(), Some("high"));
         assert!(result.warning.is_none());
     }
@@ -639,7 +691,10 @@ mod tests {
         let models = mock_models();
         let result = resolve_cli_model(None, Some("sonnet:high"), &models);
         assert!(result.error.is_none());
-        assert_eq!(result.model.map(|m| m.id.as_str()), Some("claude-sonnet-4-5"));
+        assert_eq!(
+            result.model.map(|m| m.id.as_str()),
+            Some("claude-sonnet-4-5")
+        );
         assert_eq!(result.thinking_level.as_deref(), Some("high"));
     }
 

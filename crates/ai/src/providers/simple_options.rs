@@ -117,15 +117,13 @@ pub fn adjust_max_tokens_for_thinking(
         ReasoningLevel::Minimal => custom_budgets
             .and_then(|b| b.minimal)
             .unwrap_or(default_minimal),
-        ReasoningLevel::Low => custom_budgets
-            .and_then(|b| b.low)
-            .unwrap_or(default_low),
+        ReasoningLevel::Low => custom_budgets.and_then(|b| b.low).unwrap_or(default_low),
         ReasoningLevel::Medium => custom_budgets
             .and_then(|b| b.medium)
             .unwrap_or(default_medium),
-        ReasoningLevel::High | ReasoningLevel::XHigh => custom_budgets
-            .and_then(|b| b.high)
-            .unwrap_or(default_high),
+        ReasoningLevel::High | ReasoningLevel::XHigh => {
+            custom_budgets.and_then(|b| b.high).unwrap_or(default_high)
+        }
     };
 
     let min_output_tokens: u32 = 1024;

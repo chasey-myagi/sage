@@ -1,5 +1,4 @@
 /// Autocomplete provider interface and CombinedAutocompleteProvider implementation.
-
 use std::path::{Path, PathBuf};
 
 use crate::fuzzy::fuzzy_filter;
@@ -145,7 +144,12 @@ fn parse_path_prefix(prefix: &str) -> ParsedPathPrefix {
     }
 }
 
-fn build_completion_value(path: &str, is_directory: bool, is_at_prefix: bool, is_quoted_prefix: bool) -> String {
+fn build_completion_value(
+    path: &str,
+    is_directory: bool,
+    is_at_prefix: bool,
+    is_quoted_prefix: bool,
+) -> String {
     let needs_quotes = is_quoted_prefix || path.contains(' ');
     let prefix = if is_at_prefix { "@" } else { "" };
 
@@ -170,7 +174,8 @@ pub struct AutocompleteItem {
 pub struct SlashCommand {
     pub name: String,
     pub description: Option<String>,
-    pub argument_completions: Option<std::sync::Arc<dyn Fn(&str) -> Vec<AutocompleteItem> + Send + Sync + 'static>>,
+    pub argument_completions:
+        Option<std::sync::Arc<dyn Fn(&str) -> Vec<AutocompleteItem> + Send + Sync + 'static>>,
 }
 
 impl std::fmt::Debug for SlashCommand {
@@ -178,7 +183,10 @@ impl std::fmt::Debug for SlashCommand {
         f.debug_struct("SlashCommand")
             .field("name", &self.name)
             .field("description", &self.description)
-            .field("argument_completions", &self.argument_completions.as_ref().map(|_| "<fn>"))
+            .field(
+                "argument_completions",
+                &self.argument_completions.as_ref().map(|_| "<fn>"),
+            )
             .finish()
     }
 }
@@ -296,10 +304,7 @@ fn walk_directory_with_fd(
         args.push(build_fd_path_query(query));
     }
 
-    let output = match std::process::Command::new(fd_path)
-        .args(&args)
-        .output()
-    {
+    let output = match std::process::Command::new(fd_path).args(&args).output() {
         Ok(o) if o.status.success() => o,
         _ => return vec![],
     };
@@ -352,7 +357,11 @@ impl CombinedAutocompleteProvider {
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|_| ".".to_string())
         });
-        Self { commands, base_path, fd_path }
+        Self {
+            commands,
+            base_path,
+            fd_path,
+        }
     }
 
     // Expand home directory (~/) to actual home path
@@ -384,9 +393,7 @@ impl CombinedAutocompleteProvider {
             }
         }
 
-        let token_start = find_last_delimiter(text)
-            .map(|i| i + 1)
-            .unwrap_or(0);
+        let token_start = find_last_delimiter(text).map(|i| i + 1).unwrap_or(0);
 
         if text[token_start..].starts_with('@') {
             return Some(text[token_start..].to_string());
@@ -400,9 +407,7 @@ impl CombinedAutocompleteProvider {
             return Some(quoted);
         }
 
-        let token_start = find_last_delimiter(text)
-            .map(|i| i + 1)
-            .unwrap_or(0);
+        let token_start = find_last_delimiter(text).map(|i| i + 1).unwrap_or(0);
         let path_prefix = &text[token_start..];
 
         if force_extract {
@@ -423,10 +428,7 @@ impl CombinedAutocompleteProvider {
         None
     }
 
-    fn resolve_scoped_fuzzy_query(
-        &self,
-        raw_query: &str,
-    ) -> Option<(String, String, String)> {
+    fn resolve_scoped_fuzzy_query(&self, raw_query: &str) -> Option<(String, String, String)> {
         let normalized = to_display_path(raw_query);
         let slash_index = normalized.rfind('/')?;
 
@@ -540,7 +542,8 @@ impl CombinedAutocompleteProvider {
                 display_path.clone()
             };
 
-            let value = build_completion_value(&completion_path, is_directory, true, is_quoted_prefix);
+            let value =
+                build_completion_value(&completion_path, is_directory, true, is_quoted_prefix);
             let label = if is_directory {
                 format!("{entry_name}/")
             } else {
@@ -593,12 +596,22 @@ impl CombinedAutocompleteProvider {
             (dir, String::new())
         } else {
             let path = Path::new(&expanded_prefix);
-            let dir = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-            let file = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let dir = path
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let file = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let search_dir = if raw_prefix.starts_with('~') || expanded_prefix.starts_with('/') {
                 if dir.is_empty() { "/".to_string() } else { dir }
             } else {
-                format!("{}/{}", self.base_path, if dir.is_empty() { ".".to_string() } else { dir })
+                format!(
+                    "{}/{}",
+                    self.base_path,
+                    if dir.is_empty() { ".".to_string() } else { dir }
+                )
             };
             (search_dir, file)
         };
@@ -612,14 +625,15 @@ impl CombinedAutocompleteProvider {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
 
-            if !name.to_lowercase().starts_with(&search_prefix.to_lowercase()) {
+            if !name
+                .to_lowercase()
+                .starts_with(&search_prefix.to_lowercase())
+            {
                 continue;
             }
 
             let mut is_directory = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            if !is_directory
-                && entry.file_type().map(|t| t.is_symlink()).unwrap_or(false)
-            {
+            if !is_directory && entry.file_type().map(|t| t.is_symlink()).unwrap_or(false) {
                 if let Ok(meta) = std::fs::metadata(entry.path()) {
                     is_directory = meta.is_dir();
                 }
@@ -678,7 +692,8 @@ impl CombinedAutocompleteProvider {
             } else {
                 relative_path
             };
-            let value = build_completion_value(&path_value, is_directory, is_at_prefix, is_quoted_prefix);
+            let value =
+                build_completion_value(&path_value, is_directory, is_at_prefix, is_quoted_prefix);
 
             suggestions.push(AutocompleteItem {
                 value,
@@ -719,11 +734,15 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
         // Check for @ file reference
         if let Some(at_prefix) = self.extract_at_prefix(text_before_cursor) {
             let parsed = parse_path_prefix(&at_prefix);
-            let suggestions = self.get_fuzzy_file_suggestions(&parsed.raw_prefix, parsed.is_quoted_prefix);
+            let suggestions =
+                self.get_fuzzy_file_suggestions(&parsed.raw_prefix, parsed.is_quoted_prefix);
             if suggestions.is_empty() {
                 return None;
             }
-            return Some(AutocompleteSuggestions { items: suggestions, prefix: at_prefix });
+            return Some(AutocompleteSuggestions {
+                items: suggestions,
+                prefix: at_prefix,
+            });
         }
 
         // Check for slash commands
@@ -732,16 +751,27 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
             if space_idx.is_none() {
                 // Completing command name
                 let prefix = &text_before_cursor[1..]; // Remove "/"
-                let command_names: Vec<(String, String, Option<String>)> = self.commands.iter().map(|cmd| {
-                    (cmd.name().to_string(), cmd.label().to_string(), cmd.description().map(|s| s.to_string()))
-                }).collect();
+                let command_names: Vec<(String, String, Option<String>)> = self
+                    .commands
+                    .iter()
+                    .map(|cmd| {
+                        (
+                            cmd.name().to_string(),
+                            cmd.label().to_string(),
+                            cmd.description().map(|s| s.to_string()),
+                        )
+                    })
+                    .collect();
 
                 let filtered = fuzzy_filter(command_names, prefix, |(name, _, _)| name.as_str());
-                let items: Vec<AutocompleteItem> = filtered.into_iter().map(|(name, label, desc)| AutocompleteItem {
-                    value: name,
-                    label,
-                    description: desc,
-                }).collect();
+                let items: Vec<AutocompleteItem> = filtered
+                    .into_iter()
+                    .map(|(name, label, desc)| AutocompleteItem {
+                        value: name,
+                        label,
+                        description: desc,
+                    })
+                    .collect();
 
                 if items.is_empty() {
                     return None;
@@ -756,7 +786,11 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
                 let cmd_name = &text_before_cursor[1..space_pos]; // text between "/" and " "
                 let arg_prefix = &text_before_cursor[space_pos + 1..];
                 if let Some(cmd) = self.commands.iter().find_map(|c| {
-                    if let CommandItem::Slash(s) = c { if s.name == cmd_name { return Some(s); } }
+                    if let CommandItem::Slash(s) = c {
+                        if s.name == cmd_name {
+                            return Some(s);
+                        }
+                    }
                     None
                 }) {
                     if let Some(ref arg_fn) = cmd.argument_completions {
@@ -779,7 +813,10 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
             if suggestions.is_empty() {
                 return None;
             }
-            return Some(AutocompleteSuggestions { items: suggestions, prefix: path_match });
+            return Some(AutocompleteSuggestions {
+                items: suggestions,
+                prefix: path_match,
+            });
         }
 
         None
@@ -800,11 +837,12 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
         let is_quoted_prefix = prefix.starts_with('"') || prefix.starts_with("@\"");
         let has_leading_quote_after_cursor = after_cursor.starts_with('"');
         let has_trailing_quote_in_item = item.value.ends_with('"');
-        let adjusted_after_cursor = if is_quoted_prefix && has_trailing_quote_in_item && has_leading_quote_after_cursor {
-            &after_cursor[1..]
-        } else {
-            after_cursor
-        };
+        let adjusted_after_cursor =
+            if is_quoted_prefix && has_trailing_quote_in_item && has_leading_quote_after_cursor {
+                &after_cursor[1..]
+            } else {
+                after_cursor
+            };
 
         // Slash command name completion (no space yet in prefix)
         let is_slash_command = prefix.starts_with('/')
@@ -834,7 +872,10 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
         if prefix.starts_with('@') {
             let is_directory = item.label.ends_with('/');
             let suffix = if is_directory { "" } else { " " };
-            let new_line = format!("{}{}{suffix}{adjusted_after_cursor}", before_prefix, item.value);
+            let new_line = format!(
+                "{}{}{suffix}{adjusted_after_cursor}",
+                before_prefix, item.value
+            );
             let mut new_lines = lines.to_vec();
             new_lines[cursor_line] = new_line;
 
@@ -885,7 +926,10 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
         if suggestions.is_empty() {
             return None;
         }
-        Some(AutocompleteSuggestions { items: suggestions, prefix: path_match })
+        Some(AutocompleteSuggestions {
+            items: suggestions,
+            prefix: path_match,
+        })
     }
 
     fn should_trigger_file_completion(
@@ -923,8 +967,16 @@ mod tests {
     fn test_slash_command_matching() {
         let p = CombinedAutocompleteProvider::new(
             vec![
-                CommandItem::Slash(SlashCommand { name: "help".to_string(), description: None, argument_completions: None }),
-                CommandItem::Slash(SlashCommand { name: "hello".to_string(), description: None, argument_completions: None }),
+                CommandItem::Slash(SlashCommand {
+                    name: "help".to_string(),
+                    description: None,
+                    argument_completions: None,
+                }),
+                CommandItem::Slash(SlashCommand {
+                    name: "hello".to_string(),
+                    description: None,
+                    argument_completions: None,
+                }),
             ],
             None,
             None,
@@ -1073,7 +1125,11 @@ mod tests {
     #[test]
     fn test_slash_command_no_match() {
         let p = CombinedAutocompleteProvider::new(
-            vec![CommandItem::Slash(SlashCommand { name: "help".to_string(), description: None, argument_completions: None })],
+            vec![CommandItem::Slash(SlashCommand {
+                name: "help".to_string(),
+                description: None,
+                argument_completions: None,
+            })],
             None,
             None,
         );
@@ -1081,7 +1137,13 @@ mod tests {
         let result = p.get_suggestions(&lines, 0, 4);
         // "xyz" doesn't match "help"
         if let Some(sug) = result {
-            assert!(sug.items.is_empty() || sug.items.iter().all(|i| i.value.contains("xyz") || !i.value.starts_with("/help")));
+            assert!(
+                sug.items.is_empty()
+                    || sug
+                        .items
+                        .iter()
+                        .all(|i| i.value.contains("xyz") || !i.value.starts_with("/help"))
+            );
         }
     }
 }

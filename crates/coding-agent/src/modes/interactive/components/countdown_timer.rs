@@ -48,7 +48,8 @@ impl CountdownTimer {
         }
         let elapsed = self.started_at.elapsed();
         let remaining = self.timeout.saturating_sub(elapsed);
-        let remaining_secs = remaining.as_secs() + if remaining.subsec_millis() > 0 { 1 } else { 0 };
+        let remaining_secs =
+            remaining.as_secs() + if remaining.subsec_millis() > 0 { 1 } else { 0 };
 
         if remaining_secs != self.last_reported_seconds {
             self.last_reported_seconds = remaining_secs;
@@ -84,11 +85,8 @@ mod tests {
     fn initial_tick_fires_on_creation() {
         let ticks = Arc::new(Mutex::new(vec![]));
         let ticks2 = ticks.clone();
-        let _timer = CountdownTimer::new(
-            5000,
-            move |secs| ticks2.lock().unwrap().push(secs),
-            || {},
-        );
+        let _timer =
+            CountdownTimer::new(5000, move |secs| ticks2.lock().unwrap().push(secs), || {});
         let collected = ticks.lock().unwrap().clone();
         assert_eq!(collected, vec![5], "Expected initial tick with 5 seconds");
     }

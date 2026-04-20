@@ -176,8 +176,10 @@ pub fn serialize_conversation(messages: &[Value]) -> String {
                             }
                         }
                         "toolCall" => {
-                            let name =
-                                block.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+                            let name = block
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("unknown");
                             let args = block.get("arguments").cloned().unwrap_or(Value::Null);
                             let args_str = if let Some(obj) = args.as_object() {
                                 obj.iter()
@@ -203,10 +205,7 @@ pub fn serialize_conversation(messages: &[Value]) -> String {
                     parts.push(format!("[Assistant]: {}", text_parts.join("\n")));
                 }
                 if !tool_calls.is_empty() {
-                    parts.push(format!(
-                        "[Assistant tool calls]: {}",
-                        tool_calls.join("; ")
-                    ));
+                    parts.push(format!("[Assistant tool calls]: {}", tool_calls.join("; ")));
                 }
             }
             "toolResult" => {
@@ -243,8 +242,7 @@ pub fn serialize_conversation(messages: &[Value]) -> String {
 // Summarization System Prompt
 // ============================================================================
 
-pub const SUMMARIZATION_SYSTEM_PROMPT: &str =
-    "You are a context summarization assistant. Your task is to read a conversation \
+pub const SUMMARIZATION_SYSTEM_PROMPT: &str = "You are a context summarization assistant. Your task is to read a conversation \
 between a user and an AI coding assistant, then produce a structured summary following \
 the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any \
 questions in the conversation. ONLY output the structured summary.";
@@ -344,7 +342,10 @@ mod tests {
 
         let result = serialize_conversation(&messages);
 
-        assert!(result.contains("[Tool result]:"), "should start with [Tool result]:");
+        assert!(
+            result.contains("[Tool result]:"),
+            "should start with [Tool result]:"
+        );
         assert!(
             result.contains("more characters truncated"),
             "should contain truncation notice"
@@ -399,7 +400,10 @@ mod tests {
 
         let result = serialize_conversation(&messages);
 
-        assert!(!result.contains("truncated"), "should not truncate user/assistant messages");
+        assert!(
+            !result.contains("truncated"),
+            "should not truncate user/assistant messages"
+        );
         assert!(result.contains(&long_text), "full text should appear");
     }
 }

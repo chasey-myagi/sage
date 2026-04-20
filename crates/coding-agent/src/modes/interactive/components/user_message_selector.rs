@@ -137,7 +137,11 @@ impl UserMessageList {
 
         // Scroll indicator
         if start_index > 0 || end_index < self.messages.len() {
-            lines.push(format!("  ({}/{})", self.selected_index + 1, self.messages.len()));
+            lines.push(format!(
+                "  ({}/{})",
+                self.selected_index + 1,
+                self.messages.len()
+            ));
         }
 
         lines
@@ -265,8 +269,7 @@ mod tests {
         let comp_empty = UserMessageSelectorComponent::new(vec![], |_| {}, || {});
         assert!(comp_empty.is_empty());
 
-        let comp_nonempty =
-            UserMessageSelectorComponent::new(make_messages(1), |_| {}, || {});
+        let comp_nonempty = UserMessageSelectorComponent::new(make_messages(1), |_| {}, || {});
         assert!(!comp_nonempty.is_empty());
     }
 }

@@ -684,7 +684,10 @@ mod tests {
         );
         assert_eq!(events.len(), 2);
         match &events[1] {
-            AssistantMessageEvent::ToolCallDelta { id, arguments_delta } => {
+            AssistantMessageEvent::ToolCallDelta {
+                id,
+                arguments_delta,
+            } => {
                 assert_eq!(id, "call_123|fc_abc");
                 assert_eq!(arguments_delta, r#"{"command":"ls"}"#);
             }
@@ -826,7 +829,12 @@ mod tests {
     fn test_event_unknown_type_ignored() {
         let mut state = StreamState::default();
         let mut events = Vec::new();
-        process_responses_event("response.some_future_event", &json!({}), &mut state, &mut events);
+        process_responses_event(
+            "response.some_future_event",
+            &json!({}),
+            &mut state,
+            &mut events,
+        );
         assert!(events.is_empty());
     }
 

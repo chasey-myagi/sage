@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use crate::tools::{AgentTool, ToolOutput};
-use crate::types::{now_secs, Content};
+use crate::types::{Content, now_secs};
 use serde::{Deserialize, Serialize};
 
 pub struct CraftManageTool {
@@ -51,7 +51,10 @@ fn validate_name(name: &str) -> Result<(), String> {
         return Err("name must not be empty".to_string());
     }
     if name.contains('/') || name.contains('\\') {
-        return Err(format!("invalid name '{}': must not contain path separators", name));
+        return Err(format!(
+            "invalid name '{}': must not contain path separators",
+            name
+        ));
     }
     if name == "." || name == ".trash" {
         return Err(format!("invalid name '{}'", name));
@@ -177,7 +180,10 @@ impl CraftManageTool {
         }
 
         // Optional fields
-        let craft_type = args.get("type").and_then(|v| v.as_str()).unwrap_or("prompt");
+        let craft_type = args
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("prompt");
         let tags: Vec<String> = args
             .get("tags")
             .and_then(|v| v.as_array())
@@ -237,7 +243,11 @@ impl CraftManageTool {
                 // The main risk here is flush() failing after a successful write_all(), which could leave
                 // unflushed data in OS buffers.
                 let write_res = f.write_all(file_content.as_bytes()).await;
-                let flush_res = if write_res.is_ok() { f.flush().await } else { Ok(()) };
+                let flush_res = if write_res.is_ok() {
+                    f.flush().await
+                } else {
+                    Ok(())
+                };
                 if let Err(e) = write_res.or(flush_res) {
                     // Code-review I2: on write or flush failure, remove the file
                     // whose `AlreadyExists` on next `create` would mislead
@@ -401,7 +411,10 @@ mod tests {
         .await; // panics (todo!())
         // After implementation:
         let craft_path = dir.path().join("skills/deploy/SKILL.md");
-        assert!(craft_path.exists(), "SKILL.md should exist at expected path");
+        assert!(
+            craft_path.exists(),
+            "SKILL.md should exist at expected path"
+        );
     }
 
     #[tokio::test]
@@ -416,9 +429,18 @@ mod tests {
         .await;
         let craft_path = dir.path().join("skills/deploy/SKILL.md");
         let content = fs::read_to_string(&craft_path).unwrap();
-        assert!(content.contains("name: deploy"), "frontmatter must contain name");
-        assert!(content.contains("type: prompt"), "frontmatter must contain default type");
-        assert!(content.contains("version: 1"), "frontmatter must contain version: 1");
+        assert!(
+            content.contains("name: deploy"),
+            "frontmatter must contain name"
+        );
+        assert!(
+            content.contains("type: prompt"),
+            "frontmatter must contain default type"
+        );
+        assert!(
+            content.contains("version: 1"),
+            "frontmatter must contain version: 1"
+        );
         // created_at should be a number (Unix timestamp)
         assert!(
             content.contains("created_at:"),
@@ -426,7 +448,9 @@ mod tests {
         );
         let after_created_at = content.split("created_at:").nth(1).unwrap().trim();
         let ts_str = after_created_at.lines().next().unwrap().trim();
-        ts_str.parse::<u64>().expect("created_at must be a valid Unix timestamp");
+        ts_str
+            .parse::<u64>()
+            .expect("created_at must be a valid Unix timestamp");
     }
 
     #[tokio::test]
@@ -446,7 +470,9 @@ mod tests {
         let after_fence = content.splitn(3, "---").nth(2).unwrap();
         // after_fence starts with "\n\n" + body
         assert!(
-            after_fence.trim_start_matches('\n').starts_with(body.trim_start()),
+            after_fence
+                .trim_start_matches('\n')
+                .starts_with(body.trim_start()),
             "body should appear verbatim after frontmatter blank line, got: {}",
             after_fence
         );
@@ -766,7 +792,10 @@ mod tests {
         fs::create_dir_all(&empty).unwrap();
         // list should return only the good craft.
         let output = tool.execute(json!({"action": "list"})).await;
-        assert!(!output.is_error, "list should not error when SKILL.md is missing");
+        assert!(
+            !output.is_error,
+            "list should not error when SKILL.md is missing"
+        );
         let arr: Vec<serde_json::Value> = serde_json::from_str(text_of(&output)).unwrap();
         assert_eq!(arr.len(), 1, "craft without SKILL.md should be skipped");
         assert_eq!(arr[0]["name"], "good");
@@ -852,7 +881,11 @@ mod tests {
         let mut err = 0usize;
         for h in handles {
             let out = h.await.unwrap();
-            if out.is_error { err += 1; } else { ok += 1; }
+            if out.is_error {
+                err += 1;
+            } else {
+                ok += 1;
+            }
         }
         assert_eq!(ok, 1, "exactly one create must win");
         assert_eq!(err, 9, "the other nine must report AlreadyExists");
@@ -880,8 +913,8 @@ mod tests {
         let rest = &content[4..];
         let end = rest.find("\n---").expect("closing --- missing");
         let fm = &rest[..end];
-        let parsed: serde_yaml::Value = serde_yaml::from_str(fm)
-            .expect("frontmatter must be a valid YAML document");
+        let parsed: serde_yaml::Value =
+            serde_yaml::from_str(fm).expect("frontmatter must be a valid YAML document");
         assert_eq!(parsed["name"], serde_yaml::Value::String("deploy".into()));
         assert_eq!(parsed["type"], serde_yaml::Value::String("recipe".into()));
         assert_eq!(parsed["version"], serde_yaml::Value::Number(1.into()));

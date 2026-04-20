@@ -12,8 +12,7 @@ use serde_json::Value;
 // Compaction / branch summary prefixes
 // ============================================================================
 
-pub const COMPACTION_SUMMARY_PREFIX: &str =
-    "The conversation history before this point was compacted into the following summary:\n\n<summary>\n";
+pub const COMPACTION_SUMMARY_PREFIX: &str = "The conversation history before this point was compacted into the following summary:\n\n<summary>\n";
 pub const COMPACTION_SUMMARY_SUFFIX: &str = "\n</summary>";
 
 pub const BRANCH_SUMMARY_PREFIX: &str =

@@ -154,16 +154,22 @@ pub struct DefaultResourceLoader {
 
 impl DefaultResourceLoader {
     pub fn new(options: DefaultResourceLoaderOptions) -> Self {
-        let cwd = options.cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let cwd = options
+            .cwd
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
         let agent_dir = options.agent_dir.unwrap_or_else(|| {
             dirs::config_dir()
                 .unwrap_or_else(|| dirs::home_dir().unwrap_or_default())
                 .join("sage")
         });
-        let settings_manager = options.settings_manager.unwrap_or_else(|| {
-            SettingsManager::create(&cwd, &agent_dir)
-        });
-        let pm = DefaultPackageManager::new(cwd.clone(), agent_dir.clone(), SettingsManager::create(&cwd, &agent_dir));
+        let settings_manager = options
+            .settings_manager
+            .unwrap_or_else(|| SettingsManager::create(&cwd, &agent_dir));
+        let pm = DefaultPackageManager::new(
+            cwd.clone(),
+            agent_dir.clone(),
+            SettingsManager::create(&cwd, &agent_dir),
+        );
 
         Self {
             cwd,
@@ -211,7 +217,11 @@ impl DefaultResourceLoader {
                         .file_stem()
                         .map(|s| s.to_string_lossy().into_owned())
                         .unwrap_or_else(|| path_str.clone());
-                    skills.push(Skill { name, file_path: path_str.clone(), content });
+                    skills.push(Skill {
+                        name,
+                        file_path: path_str.clone(),
+                        content,
+                    });
                 }
                 Err(e) => {
                     diagnostics.push(ResourceDiagnostic {
@@ -225,7 +235,10 @@ impl DefaultResourceLoader {
         (skills, diagnostics)
     }
 
-    fn load_prompts_from_paths(&self, paths: &[String]) -> (Vec<PromptTemplate>, Vec<ResourceDiagnostic>) {
+    fn load_prompts_from_paths(
+        &self,
+        paths: &[String],
+    ) -> (Vec<PromptTemplate>, Vec<ResourceDiagnostic>) {
         let mut prompts = Vec::new();
         let mut diagnostics = Vec::new();
         let mut seen_names = std::collections::HashMap::new();
@@ -254,7 +267,11 @@ impl DefaultResourceLoader {
                         let _ = existing;
                     } else {
                         seen_names.insert(name.clone(), path_str.clone());
-                        prompts.push(PromptTemplate { name, file_path: path_str.clone(), content });
+                        prompts.push(PromptTemplate {
+                            name,
+                            file_path: path_str.clone(),
+                            content,
+                        });
                     }
                 }
                 Err(e) => {
@@ -287,7 +304,10 @@ impl DefaultResourceLoader {
                     let name = serde_json::from_str::<serde_json::Value>(&content)
                         .ok()
                         .and_then(|v| v.get("name")?.as_str().map(|s| s.to_owned()));
-                    themes.push(Theme { name, source_path: Some(path_str.clone()) });
+                    themes.push(Theme {
+                        name,
+                        source_path: Some(path_str.clone()),
+                    });
                 }
                 Err(e) => {
                     diagnostics.push(ResourceDiagnostic {
@@ -389,7 +409,11 @@ impl ResourceLoader for DefaultResourceLoader {
 
         if !new_skills.is_empty() {
             let merged = Self::merge_paths(
-                &self.skills.iter().map(|s| s.file_path.clone()).collect::<Vec<_>>(),
+                &self
+                    .skills
+                    .iter()
+                    .map(|s| s.file_path.clone())
+                    .collect::<Vec<_>>(),
                 &new_skills,
                 &self.cwd,
             );
@@ -400,7 +424,11 @@ impl ResourceLoader for DefaultResourceLoader {
 
         if !new_prompts.is_empty() {
             let merged = Self::merge_paths(
-                &self.prompts.iter().map(|p| p.file_path.clone()).collect::<Vec<_>>(),
+                &self
+                    .prompts
+                    .iter()
+                    .map(|p| p.file_path.clone())
+                    .collect::<Vec<_>>(),
                 &new_prompts,
                 &self.cwd,
             );
@@ -411,7 +439,11 @@ impl ResourceLoader for DefaultResourceLoader {
 
         if !new_themes.is_empty() {
             let merged = Self::merge_paths(
-                &self.themes.iter().filter_map(|t| t.source_path.clone()).collect::<Vec<_>>(),
+                &self
+                    .themes
+                    .iter()
+                    .filter_map(|t| t.source_path.clone())
+                    .collect::<Vec<_>>(),
                 &new_themes,
                 &self.cwd,
             );
@@ -479,12 +511,16 @@ impl ResourceLoader for DefaultResourceLoader {
         self.agents_files = self.load_agents_files();
 
         // System prompt
-        let sys_source = self.system_prompt_source.clone()
+        let sys_source = self
+            .system_prompt_source
+            .clone()
             .or_else(|| self.discover_system_prompt_file());
         self.system_prompt = Self::resolve_prompt_input(sys_source.as_deref());
 
         // Append system prompt
-        let append_source = self.append_system_prompt_source.clone()
+        let append_source = self
+            .append_system_prompt_source
+            .clone()
             .or_else(|| self.discover_append_system_prompt_file());
         self.append_system_prompt = match Self::resolve_prompt_input(append_source.as_deref()) {
             Some(text) => vec![text],
@@ -624,7 +660,11 @@ mod tests {
         let agent_dir = tmp.path().join("agent");
         std::fs::create_dir_all(cwd.join(CONFIG_DIR_NAME)).unwrap();
         std::fs::create_dir_all(&agent_dir).unwrap();
-        std::fs::write(cwd.join(CONFIG_DIR_NAME).join("SYSTEM.md"), "You are an expert.").unwrap();
+        std::fs::write(
+            cwd.join(CONFIG_DIR_NAME).join("SYSTEM.md"),
+            "You are an expert.",
+        )
+        .unwrap();
 
         let mut loader = DefaultResourceLoader::new(DefaultResourceLoaderOptions {
             cwd: Some(cwd),
@@ -655,10 +695,8 @@ mod tests {
         std::fs::write(&p1, "# Foo").unwrap();
         std::fs::write(&p2, "# Foo2").unwrap();
         // They have different names so no collision.
-        let (prompts, diags) = loader.load_prompts_from_paths(&[
-            p1.to_string_lossy().into(),
-            p2.to_string_lossy().into(),
-        ]);
+        let (prompts, diags) = loader
+            .load_prompts_from_paths(&[p1.to_string_lossy().into(), p2.to_string_lossy().into()]);
         assert_eq!(prompts.len(), 2);
         assert!(diags.is_empty());
     }

@@ -3,8 +3,8 @@
 
 use crate::agent_loop::LlmProvider;
 use ai::types::{
-    api, AssistantMessageEvent, InputType, LlmContext, LlmTool, Model, ModelCost, ProviderCompat,
-    StopReason,
+    AssistantMessageEvent, InputType, LlmContext, LlmTool, Model, ModelCost, ProviderCompat,
+    StopReason, api,
 };
 use std::collections::VecDeque;
 use std::sync::Mutex;

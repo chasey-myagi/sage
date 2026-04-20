@@ -21,13 +21,9 @@ pub enum AgentEvent {
     /// The agent loop has started.
     AgentStart,
     /// The agent loop has completed. `messages` is all new messages produced.
-    AgentEnd {
-        messages: Vec<AgentMessage>,
-    },
+    AgentEnd { messages: Vec<AgentMessage> },
     /// A fatal error occurred; the run will not continue normally.
-    RunError {
-        error: String,
-    },
+    RunError { error: String },
     // ── Turn lifecycle ───────────────────────────────────────────────
     /// A new turn (LLM call + tool round) has begun.
     TurnStart,
@@ -38,18 +34,14 @@ pub enum AgentEvent {
     },
     // ── Message lifecycle ────────────────────────────────────────────
     /// A new message object has been created (streaming started or fully received).
-    MessageStart {
-        message: AgentMessage,
-    },
+    MessageStart { message: AgentMessage },
     /// A streaming text delta was received during assistant message streaming.
     MessageUpdate {
         message: AgentMessage,
         delta: String,
     },
     /// A message has been fully received.
-    MessageEnd {
-        message: AgentMessage,
-    },
+    MessageEnd { message: AgentMessage },
     // ── Tool execution lifecycle ─────────────────────────────────────
     /// A tool call has started.
     ToolExecutionStart {

@@ -237,12 +237,7 @@ mod tests {
         // inside a section won't break the test, but dropping a whole
         // pillar will.
         assert!(!SAGE_CORE_PROMPT.is_empty());
-        for pillar in [
-            "第一步",
-            "执行任务",
-            "沉淀信息",
-            "根据用户历史优化",
-        ] {
+        for pillar in ["第一步", "执行任务", "沉淀信息", "根据用户历史优化"] {
             assert!(
                 SAGE_CORE_PROMPT.contains(pillar),
                 "core prompt must keep the '{pillar}' pillar"
@@ -279,9 +274,7 @@ mod tests {
 
     #[test]
     fn into_string_conversion() {
-        let sp = SystemPrompt::builder()
-            .section("base", "hello")
-            .build();
+        let sp = SystemPrompt::builder().section("base", "hello").build();
         let s: String = sp.into();
         assert_eq!(s, "hello");
     }

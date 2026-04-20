@@ -53,7 +53,9 @@ pub fn list_models(models: &[ModelRef], search_pattern: Option<&str>) {
             .filter(|m| {
                 m.provider.to_lowercase().contains(&lower)
                     || m.id.to_lowercase().contains(&lower)
-                    || m.name.as_ref().map_or(false, |n| n.to_lowercase().contains(&lower))
+                    || m.name
+                        .as_ref()
+                        .map_or(false, |n| n.to_lowercase().contains(&lower))
             })
             .collect()
     } else {
@@ -61,10 +63,7 @@ pub fn list_models(models: &[ModelRef], search_pattern: Option<&str>) {
     };
 
     if filtered.is_empty() {
-        println!(
-            "No models matching \"{}\"",
-            search_pattern.unwrap_or("")
-        );
+        println!("No models matching \"{}\"", search_pattern.unwrap_or(""));
         return;
     }
 
@@ -105,11 +104,36 @@ pub fn list_models(models: &[ModelRef], search_pattern: Option<&str>) {
     let h_max_out = "max-out";
     let h_thinking = "thinking";
 
-    let w_provider = rows.iter().map(|r| r.provider.len()).max().unwrap_or(0).max(h_provider.len());
-    let w_model = rows.iter().map(|r| r.model.len()).max().unwrap_or(0).max(h_model.len());
-    let w_context = rows.iter().map(|r| r.context.len()).max().unwrap_or(0).max(h_context.len());
-    let w_max_out = rows.iter().map(|r| r.max_out.len()).max().unwrap_or(0).max(h_max_out.len());
-    let w_thinking = rows.iter().map(|r| r.thinking.len()).max().unwrap_or(0).max(h_thinking.len());
+    let w_provider = rows
+        .iter()
+        .map(|r| r.provider.len())
+        .max()
+        .unwrap_or(0)
+        .max(h_provider.len());
+    let w_model = rows
+        .iter()
+        .map(|r| r.model.len())
+        .max()
+        .unwrap_or(0)
+        .max(h_model.len());
+    let w_context = rows
+        .iter()
+        .map(|r| r.context.len())
+        .max()
+        .unwrap_or(0)
+        .max(h_context.len());
+    let w_max_out = rows
+        .iter()
+        .map(|r| r.max_out.len())
+        .max()
+        .unwrap_or(0)
+        .max(h_max_out.len());
+    let w_thinking = rows
+        .iter()
+        .map(|r| r.thinking.len())
+        .max()
+        .unwrap_or(0)
+        .max(h_thinking.len());
 
     let header = format!(
         "{:<wp$}  {:<wm$}  {:<wc$}  {:<wo$}  {:<wt$}",

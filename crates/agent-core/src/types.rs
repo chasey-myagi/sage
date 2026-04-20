@@ -330,7 +330,9 @@ impl<T: ?Sized + AgentTool> AgentTool for std::sync::Arc<T> {
         signal: Option<tokio_util::sync::CancellationToken>,
         on_update: Option<&OnUpdateFn>,
     ) -> AgentToolResult {
-        (**self).execute(tool_call_id, args, signal, on_update).await
+        (**self)
+            .execute(tool_call_id, args, signal, on_update)
+            .await
     }
 }
 

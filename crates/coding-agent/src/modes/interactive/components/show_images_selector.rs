@@ -5,12 +5,12 @@
 //! Presents a two-item list ("Yes" / "No") that lets the user toggle whether
 //! images are shown inline in the terminal.
 
-use tui::tui::{Component, Container};
 use tui::components::text::Text;
+use tui::tui::{Component, Container};
 
 use crate::modes::interactive::components::dynamic_border::DynamicBorder;
 use crate::modes::interactive::components::keybinding_hints::key_hint;
-use crate::modes::interactive::theme::{get_theme, ThemeColor};
+use crate::modes::interactive::theme::{ThemeColor, get_theme};
 
 /// Items in the selector.
 const ITEMS: &[(&str, &str, &str)] = &[

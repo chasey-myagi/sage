@@ -102,7 +102,10 @@ pub struct ResourceGroup {
 #[derive(Debug, Clone)]
 pub enum FlatEntry {
     Group(ResourceGroup),
-    Subgroup { subgroup: ResourceSubgroup, group_label: String },
+    Subgroup {
+        subgroup: ResourceSubgroup,
+        group_label: String,
+    },
     Item(ResourceItem),
 }
 

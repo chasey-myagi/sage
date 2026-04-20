@@ -1,5 +1,4 @@
 /// Global keybinding registry and manager.
-
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
@@ -45,36 +44,141 @@ pub fn default_tui_keybindings() -> KeybindingDefinitions {
     };
 
     add(&mut m, "tui.editor.cursorUp", vec!["up"], "Move cursor up");
-    add(&mut m, "tui.editor.cursorDown", vec!["down"], "Move cursor down");
-    add(&mut m, "tui.editor.cursorLeft", vec!["left", "ctrl+b"], "Move cursor left");
-    add(&mut m, "tui.editor.cursorRight", vec!["right", "ctrl+f"], "Move cursor right");
-    add(&mut m, "tui.editor.cursorWordLeft", vec!["alt+left", "ctrl+left", "alt+b"], "Move cursor word left");
-    add(&mut m, "tui.editor.cursorWordRight", vec!["alt+right", "ctrl+right", "alt+f"], "Move cursor word right");
-    add(&mut m, "tui.editor.cursorLineStart", vec!["home", "ctrl+a"], "Move to line start");
-    add(&mut m, "tui.editor.cursorLineEnd", vec!["end", "ctrl+e"], "Move to line end");
-    add(&mut m, "tui.editor.jumpForward", vec!["ctrl+]"], "Jump forward to character");
-    add(&mut m, "tui.editor.jumpBackward", vec!["ctrl+alt+]"], "Jump backward to character");
+    add(
+        &mut m,
+        "tui.editor.cursorDown",
+        vec!["down"],
+        "Move cursor down",
+    );
+    add(
+        &mut m,
+        "tui.editor.cursorLeft",
+        vec!["left", "ctrl+b"],
+        "Move cursor left",
+    );
+    add(
+        &mut m,
+        "tui.editor.cursorRight",
+        vec!["right", "ctrl+f"],
+        "Move cursor right",
+    );
+    add(
+        &mut m,
+        "tui.editor.cursorWordLeft",
+        vec!["alt+left", "ctrl+left", "alt+b"],
+        "Move cursor word left",
+    );
+    add(
+        &mut m,
+        "tui.editor.cursorWordRight",
+        vec!["alt+right", "ctrl+right", "alt+f"],
+        "Move cursor word right",
+    );
+    add(
+        &mut m,
+        "tui.editor.cursorLineStart",
+        vec!["home", "ctrl+a"],
+        "Move to line start",
+    );
+    add(
+        &mut m,
+        "tui.editor.cursorLineEnd",
+        vec!["end", "ctrl+e"],
+        "Move to line end",
+    );
+    add(
+        &mut m,
+        "tui.editor.jumpForward",
+        vec!["ctrl+]"],
+        "Jump forward to character",
+    );
+    add(
+        &mut m,
+        "tui.editor.jumpBackward",
+        vec!["ctrl+alt+]"],
+        "Jump backward to character",
+    );
     add(&mut m, "tui.editor.pageUp", vec!["pageUp"], "Page up");
     add(&mut m, "tui.editor.pageDown", vec!["pageDown"], "Page down");
-    add(&mut m, "tui.editor.deleteCharBackward", vec!["backspace"], "Delete character backward");
-    add(&mut m, "tui.editor.deleteCharForward", vec!["delete", "ctrl+d"], "Delete character forward");
-    add(&mut m, "tui.editor.deleteWordBackward", vec!["ctrl+w", "alt+backspace"], "Delete word backward");
-    add(&mut m, "tui.editor.deleteWordForward", vec!["alt+d", "alt+delete"], "Delete word forward");
-    add(&mut m, "tui.editor.deleteToLineStart", vec!["ctrl+u"], "Delete to line start");
-    add(&mut m, "tui.editor.deleteToLineEnd", vec!["ctrl+k"], "Delete to line end");
+    add(
+        &mut m,
+        "tui.editor.deleteCharBackward",
+        vec!["backspace"],
+        "Delete character backward",
+    );
+    add(
+        &mut m,
+        "tui.editor.deleteCharForward",
+        vec!["delete", "ctrl+d"],
+        "Delete character forward",
+    );
+    add(
+        &mut m,
+        "tui.editor.deleteWordBackward",
+        vec!["ctrl+w", "alt+backspace"],
+        "Delete word backward",
+    );
+    add(
+        &mut m,
+        "tui.editor.deleteWordForward",
+        vec!["alt+d", "alt+delete"],
+        "Delete word forward",
+    );
+    add(
+        &mut m,
+        "tui.editor.deleteToLineStart",
+        vec!["ctrl+u"],
+        "Delete to line start",
+    );
+    add(
+        &mut m,
+        "tui.editor.deleteToLineEnd",
+        vec!["ctrl+k"],
+        "Delete to line end",
+    );
     add(&mut m, "tui.editor.yank", vec!["ctrl+y"], "Yank");
     add(&mut m, "tui.editor.yankPop", vec!["alt+y"], "Yank pop");
     add(&mut m, "tui.editor.undo", vec!["ctrl+-"], "Undo");
-    add(&mut m, "tui.input.newLine", vec!["shift+enter"], "Insert newline");
+    add(
+        &mut m,
+        "tui.input.newLine",
+        vec!["shift+enter"],
+        "Insert newline",
+    );
     add(&mut m, "tui.input.submit", vec!["enter"], "Submit input");
     add(&mut m, "tui.input.tab", vec!["tab"], "Tab / autocomplete");
     add(&mut m, "tui.input.copy", vec!["ctrl+c"], "Copy selection");
     add(&mut m, "tui.select.up", vec!["up"], "Move selection up");
-    add(&mut m, "tui.select.down", vec!["down"], "Move selection down");
-    add(&mut m, "tui.select.pageUp", vec!["pageUp"], "Selection page up");
-    add(&mut m, "tui.select.pageDown", vec!["pageDown"], "Selection page down");
-    add(&mut m, "tui.select.confirm", vec!["enter"], "Confirm selection");
-    add(&mut m, "tui.select.cancel", vec!["escape", "ctrl+c"], "Cancel selection");
+    add(
+        &mut m,
+        "tui.select.down",
+        vec!["down"],
+        "Move selection down",
+    );
+    add(
+        &mut m,
+        "tui.select.pageUp",
+        vec!["pageUp"],
+        "Selection page up",
+    );
+    add(
+        &mut m,
+        "tui.select.pageDown",
+        vec!["pageDown"],
+        "Selection page down",
+    );
+    add(
+        &mut m,
+        "tui.select.confirm",
+        vec!["enter"],
+        "Confirm selection",
+    );
+    add(
+        &mut m,
+        "tui.select.cancel",
+        vec!["escape", "ctrl+c"],
+        "Cancel selection",
+    );
 
     m
 }
@@ -141,7 +245,11 @@ impl KeybindingsManager {
 
     /// Check if input data matches a keybinding.
     pub fn matches(&self, data: &str, keybinding: &str) -> bool {
-        let keys = self.keys_by_id.get(keybinding).map(|v| v.as_slice()).unwrap_or(&[]);
+        let keys = self
+            .keys_by_id
+            .get(keybinding)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         for key in keys {
             if matches_key(data, key.as_str()) {
                 return true;
@@ -189,7 +297,9 @@ impl KeybindingsManager {
 
 fn deduplicate(keys: Vec<KeyId>) -> Vec<KeyId> {
     let mut seen = HashSet::new();
-    keys.into_iter().filter(|k| seen.insert(k.clone())).collect()
+    keys.into_iter()
+        .filter(|k| seen.insert(k.clone()))
+        .collect()
 }
 
 // =============================================================================
@@ -213,7 +323,10 @@ pub fn get_keybindings() -> GlobalKeybindingsGuard {
     // Ensure global manager exists, then return a guard that proxies calls.
     let mut lock = global_keybindings_cell().lock().unwrap();
     if lock.is_none() {
-        *lock = Some(KeybindingsManager::new(default_tui_keybindings(), HashMap::new()));
+        *lock = Some(KeybindingsManager::new(
+            default_tui_keybindings(),
+            HashMap::new(),
+        ));
     }
     drop(lock);
     GlobalKeybindingsGuard
@@ -223,7 +336,10 @@ pub fn get_keybindings() -> GlobalKeybindingsGuard {
 pub fn check_keybinding(data: &str, keybinding: &str) -> bool {
     let mut lock = global_keybindings_cell().lock().unwrap();
     if lock.is_none() {
-        *lock = Some(KeybindingsManager::new(default_tui_keybindings(), HashMap::new()));
+        *lock = Some(KeybindingsManager::new(
+            default_tui_keybindings(),
+            HashMap::new(),
+        ));
     }
     lock.as_ref().unwrap().matches(data, keybinding)
 }
@@ -240,7 +356,9 @@ impl GlobalKeybindingsGuard {
 
     pub fn get_keys(&self, keybinding: &str) -> Vec<KeyId> {
         let lock = global_keybindings_cell().lock().unwrap();
-        lock.as_ref().map(|m| m.get_keys(keybinding)).unwrap_or_default()
+        lock.as_ref()
+            .map(|m| m.get_keys(keybinding))
+            .unwrap_or_default()
     }
 }
 
@@ -321,8 +439,14 @@ mod tests {
     #[test]
     fn test_user_conflict_detection() {
         let mut user = HashMap::new();
-        user.insert("tui.editor.cursorUp".to_string(), vec![KeyId::from("ctrl+x")]);
-        user.insert("tui.editor.cursorDown".to_string(), vec![KeyId::from("ctrl+x")]);
+        user.insert(
+            "tui.editor.cursorUp".to_string(),
+            vec![KeyId::from("ctrl+x")],
+        );
+        user.insert(
+            "tui.editor.cursorDown".to_string(),
+            vec![KeyId::from("ctrl+x")],
+        );
         let mgr = KeybindingsManager::new(default_tui_keybindings(), user);
         let conflicts = mgr.get_conflicts();
         assert!(!conflicts.is_empty());
@@ -338,15 +462,27 @@ mod tests {
         // When user rebinds tui.input.submit to ["enter", "ctrl+enter"],
         // tui.select.confirm should still keep its default ["enter"] key.
         let mut user = HashMap::new();
-        user.insert("tui.input.submit".to_string(), vec![KeyId::from("enter"), KeyId::from("ctrl+enter")]);
+        user.insert(
+            "tui.input.submit".to_string(),
+            vec![KeyId::from("enter"), KeyId::from("ctrl+enter")],
+        );
         let mgr = KeybindingsManager::new(default_tui_keybindings(), user);
 
         let submit_keys = mgr.get_keys("tui.input.submit");
-        assert!(submit_keys.iter().any(|k| k == "enter"), "submit should have 'enter'");
-        assert!(submit_keys.iter().any(|k| k == "ctrl+enter"), "submit should have 'ctrl+enter'");
+        assert!(
+            submit_keys.iter().any(|k| k == "enter"),
+            "submit should have 'enter'"
+        );
+        assert!(
+            submit_keys.iter().any(|k| k == "ctrl+enter"),
+            "submit should have 'ctrl+enter'"
+        );
 
         let confirm_keys = mgr.get_keys("tui.select.confirm");
-        assert!(confirm_keys.iter().any(|k| k == "enter"), "select.confirm should still have 'enter'");
+        assert!(
+            confirm_keys.iter().any(|k| k == "enter"),
+            "select.confirm should still have 'enter'"
+        );
     }
 
     #[test]
@@ -355,15 +491,27 @@ mod tests {
         // When user rebinds tui.select.up to ["up", "ctrl+p"],
         // tui.editor.cursorUp should still keep its default ["up"] key.
         let mut user = HashMap::new();
-        user.insert("tui.select.up".to_string(), vec![KeyId::from("up"), KeyId::from("ctrl+p")]);
+        user.insert(
+            "tui.select.up".to_string(),
+            vec![KeyId::from("up"), KeyId::from("ctrl+p")],
+        );
         let mgr = KeybindingsManager::new(default_tui_keybindings(), user);
 
         let select_up_keys = mgr.get_keys("tui.select.up");
-        assert!(select_up_keys.iter().any(|k| k == "up"), "select.up should have 'up'");
-        assert!(select_up_keys.iter().any(|k| k == "ctrl+p"), "select.up should have 'ctrl+p'");
+        assert!(
+            select_up_keys.iter().any(|k| k == "up"),
+            "select.up should have 'up'"
+        );
+        assert!(
+            select_up_keys.iter().any(|k| k == "ctrl+p"),
+            "select.up should have 'ctrl+p'"
+        );
 
         let cursor_up_keys = mgr.get_keys("tui.editor.cursorUp");
-        assert!(cursor_up_keys.iter().any(|k| k == "up"), "editor.cursorUp should still have 'up'");
+        assert!(
+            cursor_up_keys.iter().any(|k| k == "up"),
+            "editor.cursorUp should still have 'up'"
+        );
     }
 
     #[test]
@@ -374,7 +522,10 @@ mod tests {
         // should remain unaffected.
         let mut user = HashMap::new();
         user.insert("tui.input.submit".to_string(), vec![KeyId::from("ctrl+x")]);
-        user.insert("tui.select.confirm".to_string(), vec![KeyId::from("ctrl+x")]);
+        user.insert(
+            "tui.select.confirm".to_string(),
+            vec![KeyId::from("ctrl+x")],
+        );
         let mgr = KeybindingsManager::new(default_tui_keybindings(), user);
 
         let conflicts = mgr.get_conflicts();
@@ -384,18 +535,28 @@ mod tests {
         assert!(ctrl_x_conflict.is_some(), "should have ctrl+x conflict");
         let conflict = ctrl_x_conflict.unwrap();
         assert!(
-            conflict.keybindings.contains(&"tui.input.submit".to_string()),
+            conflict
+                .keybindings
+                .contains(&"tui.input.submit".to_string()),
             "conflict should include tui.input.submit"
         );
         assert!(
-            conflict.keybindings.contains(&"tui.select.confirm".to_string()),
+            conflict
+                .keybindings
+                .contains(&"tui.select.confirm".to_string()),
             "conflict should include tui.select.confirm"
         );
 
         // tui.editor.cursorLeft should still have its defaults (["left", "ctrl+b"])
         let cursor_left_keys = mgr.get_keys("tui.editor.cursorLeft");
-        assert!(cursor_left_keys.iter().any(|k| k == "left"), "cursorLeft should still have 'left'");
-        assert!(cursor_left_keys.iter().any(|k| k == "ctrl+b"), "cursorLeft should still have 'ctrl+b'");
+        assert!(
+            cursor_left_keys.iter().any(|k| k == "left"),
+            "cursorLeft should still have 'left'"
+        );
+        assert!(
+            cursor_left_keys.iter().any(|k| k == "ctrl+b"),
+            "cursorLeft should still have 'ctrl+b'"
+        );
     }
 
     #[test]
@@ -403,27 +564,48 @@ mod tests {
         let mgr = make_mgr();
         // Test several default keybindings from TUI_KEYBINDINGS
         let delete_word = mgr.get_keys("tui.editor.deleteWordBackward");
-        assert!(delete_word.iter().any(|k| k == "ctrl+w"), "deleteWordBackward should have ctrl+w");
-        assert!(delete_word.iter().any(|k| k == "alt+backspace"), "deleteWordBackward should have alt+backspace");
+        assert!(
+            delete_word.iter().any(|k| k == "ctrl+w"),
+            "deleteWordBackward should have ctrl+w"
+        );
+        assert!(
+            delete_word.iter().any(|k| k == "alt+backspace"),
+            "deleteWordBackward should have alt+backspace"
+        );
 
         let delete_to_end = mgr.get_keys("tui.editor.deleteToLineEnd");
-        assert!(delete_to_end.iter().any(|k| k == "ctrl+k"), "deleteToLineEnd should have ctrl+k");
+        assert!(
+            delete_to_end.iter().any(|k| k == "ctrl+k"),
+            "deleteToLineEnd should have ctrl+k"
+        );
 
         let yank = mgr.get_keys("tui.editor.yank");
-        assert!(yank.iter().any(|k| k == "ctrl+y"), "yank should have ctrl+y");
+        assert!(
+            yank.iter().any(|k| k == "ctrl+y"),
+            "yank should have ctrl+y"
+        );
 
         let yank_pop = mgr.get_keys("tui.editor.yankPop");
-        assert!(yank_pop.iter().any(|k| k == "alt+y"), "yankPop should have alt+y");
+        assert!(
+            yank_pop.iter().any(|k| k == "alt+y"),
+            "yankPop should have alt+y"
+        );
 
         let undo = mgr.get_keys("tui.editor.undo");
-        assert!(undo.iter().any(|k| k == "ctrl+-"), "undo should have ctrl+-");
+        assert!(
+            undo.iter().any(|k| k == "ctrl+-"),
+            "undo should have ctrl+-"
+        );
     }
 
     #[test]
     fn test_keybindings_manager_unknown_keybinding_returns_empty() {
         let mgr = make_mgr();
         let keys = mgr.get_keys("tui.unknown.action");
-        assert!(keys.is_empty(), "unknown keybinding should return empty vec");
+        assert!(
+            keys.is_empty(),
+            "unknown keybinding should return empty vec"
+        );
     }
 
     #[test]
@@ -437,14 +619,23 @@ mod tests {
         mgr.set_user_bindings(user);
 
         let keys_after = mgr.get_keys("tui.input.submit");
-        assert!(keys_after.iter().any(|k| k == "ctrl+s"), "should use new user binding");
-        assert!(!keys_after.iter().any(|k| k == "enter"), "should not have old default");
+        assert!(
+            keys_after.iter().any(|k| k == "ctrl+s"),
+            "should use new user binding"
+        );
+        assert!(
+            !keys_after.iter().any(|k| k == "enter"),
+            "should not have old default"
+        );
     }
 
     #[test]
     fn test_keybindings_manager_deduplicates_keys() {
         let mut user = HashMap::new();
-        user.insert("tui.input.submit".to_string(), vec![KeyId::from("enter"), KeyId::from("enter")]);
+        user.insert(
+            "tui.input.submit".to_string(),
+            vec![KeyId::from("enter"), KeyId::from("enter")],
+        );
         let mgr = KeybindingsManager::new(default_tui_keybindings(), user);
         let keys = mgr.get_keys("tui.input.submit");
         // Should be deduplicated

@@ -7,7 +7,9 @@ use std::process::Command;
 
 fn is_offline_mode_enabled() -> bool {
     match std::env::var("SAGE_OFFLINE").or_else(|_| std::env::var("PI_OFFLINE")) {
-        Ok(val) => val == "1" || val.eq_ignore_ascii_case("true") || val.eq_ignore_ascii_case("yes"),
+        Ok(val) => {
+            val == "1" || val.eq_ignore_ascii_case("true") || val.eq_ignore_ascii_case("yes")
+        }
         Err(_) => false,
     }
 }
@@ -106,7 +108,11 @@ fn platform_triple() -> (&'static str, &'static str) {
     } else {
         "unknown"
     };
-    let arch = if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        "x86_64"
+    };
     (os, arch)
 }
 
@@ -154,7 +160,11 @@ async fn get_latest_version(repo: &str) -> anyhow::Result<String> {
         return Err(anyhow::anyhow!("GitHub API error: {}", resp.status()));
     }
     let data: serde_json::Value = resp.json().await?;
-    let tag = data["tag_name"].as_str().unwrap_or("").trim_start_matches('v').to_owned();
+    let tag = data["tag_name"]
+        .as_str()
+        .unwrap_or("")
+        .trim_start_matches('v')
+        .to_owned();
     Ok(tag)
 }
 
@@ -165,7 +175,10 @@ async fn download_file(url: &str, dest: &Path) -> anyhow::Result<()> {
         .build()?;
     let resp = client.get(url).send().await?;
     if !resp.status().is_success() {
-        return Err(anyhow::anyhow!("Failed to download {url}: {}", resp.status()));
+        return Err(anyhow::anyhow!(
+            "Failed to download {url}: {}",
+            resp.status()
+        ));
     }
     let bytes = resp.bytes().await?;
     std::fs::write(dest, &bytes)?;
@@ -175,7 +188,9 @@ async fn download_file(url: &str, dest: &Path) -> anyhow::Result<()> {
 fn find_binary_recursively(root: &Path, binary: &str) -> Option<PathBuf> {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
@@ -208,7 +223,11 @@ async fn download_tool(tool: Tool) -> anyhow::Result<String> {
     let archive_path = dir.join(&asset_name);
     download_file(&download_url, &archive_path).await?;
 
-    let bin_ext = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    let bin_ext = if cfg!(target_os = "windows") {
+        ".exe"
+    } else {
+        ""
+    };
     let binary_name = format!("{}{}", tool.binary_name(), bin_ext);
     let binary_path = dir.join(&binary_name);
 
@@ -219,7 +238,12 @@ async fn download_tool(tool: Tool) -> anyhow::Result<String> {
     let result = (|| -> anyhow::Result<()> {
         if asset_name.ends_with(".tar.gz") {
             let status = Command::new("tar")
-                .args(["xzf", &archive_path.to_string_lossy(), "-C", &extract_dir.to_string_lossy()])
+                .args([
+                    "xzf",
+                    &archive_path.to_string_lossy(),
+                    "-C",
+                    &extract_dir.to_string_lossy(),
+                ])
                 .status()?;
             if !status.success() {
                 return Err(anyhow::anyhow!("tar extraction failed"));
@@ -227,13 +251,21 @@ async fn download_tool(tool: Tool) -> anyhow::Result<String> {
         } else if asset_name.ends_with(".zip") {
             // Use unzip as a fallback (zip feature optional)
             let status = Command::new("unzip")
-                .args(["-q", &archive_path.to_string_lossy(), "-d", &extract_dir.to_string_lossy()])
+                .args([
+                    "-q",
+                    &archive_path.to_string_lossy(),
+                    "-d",
+                    &extract_dir.to_string_lossy(),
+                ])
                 .status()?;
             if !status.success() {
                 return Err(anyhow::anyhow!("unzip extraction failed"));
             }
         } else {
-            return Err(anyhow::anyhow!("Unsupported archive format: {}", asset_name));
+            return Err(anyhow::anyhow!(
+                "Unsupported archive format: {}",
+                asset_name
+            ));
         }
 
         // Find the binary in the extracted files.
@@ -267,7 +299,10 @@ pub async fn ensure_tool(tool: Tool, silent: bool) -> Option<String> {
 
     if is_offline_mode_enabled() {
         if !silent {
-            eprintln!("{} not found. Offline mode enabled, skipping download.", tool.display_name());
+            eprintln!(
+                "{} not found. Offline mode enabled, skipping download.",
+                tool.display_name()
+            );
         }
         return None;
     }
@@ -301,7 +336,11 @@ mod tests {
         // Only verify format, not the OS-specific value.
         let name = Tool::Fd.asset_name("10.0.0");
         // On any platform the name should be Some if platform is supported.
-        if cfg!(any(target_os = "macos", target_os = "linux", target_os = "windows")) {
+        if cfg!(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "windows"
+        )) {
             assert!(name.is_some());
             let n = name.unwrap();
             assert!(n.contains("fd"));
@@ -312,7 +351,11 @@ mod tests {
     #[test]
     fn rg_asset_name_contains_version() {
         let name = Tool::Rg.asset_name("14.1.0");
-        if cfg!(any(target_os = "macos", target_os = "linux", target_os = "windows")) {
+        if cfg!(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "windows"
+        )) {
             assert!(name.is_some());
             let n = name.unwrap();
             assert!(n.contains("14.1.0"));

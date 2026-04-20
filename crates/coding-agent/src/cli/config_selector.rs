@@ -20,10 +20,7 @@ pub struct ConfigSelectorOptions {
 /// Mirrors `selectConfig()` from TypeScript.
 pub fn select_config(options: ConfigSelectorOptions) {
     println!("Configuration locations:");
-    println!(
-        "  Project config: {}",
-        options.cwd.join(".pi").display()
-    );
+    println!("  Project config: {}", options.cwd.join(".pi").display());
     println!("  Global config:  {}", options.agent_dir.display());
     println!();
     println!("Edit these directories to configure extensions, themes, skills, and prompts.");

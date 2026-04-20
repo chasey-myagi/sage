@@ -206,8 +206,13 @@ mod tests {
     #[tokio::test]
     async fn test_stream_error_propagated() {
         let byte_stream = futures::stream::iter(vec![
-            Ok::<Bytes, std::io::Error>(Bytes::from("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"index\":0}]}\n")),
-            Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe broken")),
+            Ok::<Bytes, std::io::Error>(Bytes::from(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"index\":0}]}\n",
+            )),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "pipe broken",
+            )),
         ]);
         let mut s = event_stream(byte_stream);
         let ev1 = s.next().await.unwrap();

@@ -10,7 +10,10 @@ const SUPPORTED_IMAGE_TYPES: &[(&[u8], &str)] = &[
     // JPEG: FF D8 FF
     (&[0xFF, 0xD8, 0xFF], "image/jpeg"),
     // PNG: 89 50 4E 47 0D 0A 1A 0A
-    (&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], "image/png"),
+    (
+        &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+        "image/png",
+    ),
     // GIF87a / GIF89a
     (&[0x47, 0x49, 0x46, 0x38, 0x37, 0x61], "image/gif"),
     (&[0x47, 0x49, 0x46, 0x38, 0x39, 0x61], "image/gif"),
@@ -20,10 +23,7 @@ const SUPPORTED_IMAGE_TYPES: &[(&[u8], &str)] = &[
 
 fn detect_mime(buf: &[u8]) -> Option<&'static str> {
     // WebP: starts with RIFF and has WEBP at offset 8
-    if buf.len() >= 12
-        && &buf[0..4] == b"RIFF"
-        && &buf[8..12] == b"WEBP"
-    {
+    if buf.len() >= 12 && &buf[0..4] == b"RIFF" && &buf[8..12] == b"WEBP" {
         return Some("image/webp");
     }
 
@@ -39,7 +39,9 @@ fn detect_mime(buf: &[u8]) -> Option<&'static str> {
 ///
 /// Returns the MIME type string, or `None` if the file is not a supported
 /// image or cannot be read.
-pub fn detect_supported_image_mime_type_from_file(file_path: &Path) -> anyhow::Result<Option<&'static str>> {
+pub fn detect_supported_image_mime_type_from_file(
+    file_path: &Path,
+) -> anyhow::Result<Option<&'static str>> {
     let mut file = std::fs::File::open(file_path)?;
     let mut buf = vec![0u8; FILE_TYPE_SNIFF_BYTES];
     use std::io::Read;

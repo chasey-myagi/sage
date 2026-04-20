@@ -1,5 +1,4 @@
 /// SettingsList component — scrollable key-value settings list with optional search.
-
 use std::collections::VecDeque;
 
 use crate::components::input::Input;
@@ -29,7 +28,9 @@ pub struct SettingItem {
     /// If provided, Enter/Space cycles through these values.
     pub values: Option<Vec<String>>,
     /// If provided, Enter opens this submenu. Receives current value and done callback.
-    pub submenu: Option<Box<dyn Fn(String, Box<dyn Fn(Option<String>) + Send>) -> Box<dyn Component + Send> + Send>>,
+    pub submenu: Option<
+        Box<dyn Fn(String, Box<dyn Fn(Option<String>) + Send>) -> Box<dyn Component + Send> + Send>,
+    >,
 }
 
 pub struct SettingsListTheme {
@@ -46,7 +47,9 @@ pub struct SettingsListOptions {
 
 impl Default for SettingsListOptions {
     fn default() -> Self {
-        Self { enable_search: false }
+        Self {
+            enable_search: false,
+        }
     }
 }
 
@@ -79,7 +82,11 @@ impl SettingsList {
         options: SettingsListOptions,
     ) -> Self {
         let filtered_items_indices: Vec<usize> = (0..items.len()).collect();
-        let search_input = if options.enable_search { Some(Input::new()) } else { None };
+        let search_input = if options.enable_search {
+            Some(Input::new())
+        } else {
+            None
+        };
         Self {
             items,
             filtered_items_indices,
@@ -148,7 +155,12 @@ impl SettingsList {
 
         let display_count = self.display_items_len();
         if display_count == 0 {
-            lines.push(truncate_to_width(&(self.theme.hint)("  No matching settings"), width, "", false));
+            lines.push(truncate_to_width(
+                &(self.theme.hint)("  No matching settings"),
+                width,
+                "",
+                false,
+            ));
             self.add_hint_line(&mut lines, width);
             return lines;
         }
@@ -164,7 +176,9 @@ impl SettingsList {
         let end_index = (start_index + self.max_visible).min(display_count);
 
         // Calculate max label width for alignment
-        let max_label_width = self.items.iter()
+        let max_label_width = self
+            .items
+            .iter()
             .map(|item| visible_width(&item.label))
             .max()
             .unwrap_or(0)
@@ -176,27 +190,48 @@ impl SettingsList {
                 None => continue,
             };
             let is_selected = i == self.selected_index;
-            let prefix = if is_selected { &self.theme.cursor } else { "  " };
+            let prefix = if is_selected {
+                &self.theme.cursor
+            } else {
+                "  "
+            };
             let prefix_width = visible_width(prefix);
 
             // Pad label to align values
             let label_vis = visible_width(&item.label);
-            let label_padded = format!("{}{}", item.label, " ".repeat(max_label_width.saturating_sub(label_vis)));
+            let label_padded = format!(
+                "{}{}",
+                item.label,
+                " ".repeat(max_label_width.saturating_sub(label_vis))
+            );
             let label_text = (self.theme.label)(&label_padded, is_selected);
 
             let separator = "  ";
             let used_width = prefix_width + max_label_width + visible_width(separator);
             let value_max_width = width.saturating_sub(used_width + 2);
 
-            let value_text = (self.theme.value)(&truncate_to_width(&item.current_value, value_max_width, "", false), is_selected);
+            let value_text = (self.theme.value)(
+                &truncate_to_width(&item.current_value, value_max_width, "", false),
+                is_selected,
+            );
 
-            lines.push(truncate_to_width(&format!("{prefix}{label_text}{separator}{value_text}"), width, "", false));
+            lines.push(truncate_to_width(
+                &format!("{prefix}{label_text}{separator}{value_text}"),
+                width,
+                "",
+                false,
+            ));
         }
 
         // Scroll indicator
         if start_index > 0 || end_index < display_count {
             let scroll_text = format!("  ({}/{})", self.selected_index + 1, display_count);
-            lines.push((self.theme.hint)(&truncate_to_width(&scroll_text, width.saturating_sub(2), "", false)));
+            lines.push((self.theme.hint)(&truncate_to_width(
+                &scroll_text,
+                width.saturating_sub(2),
+                "",
+                false,
+            )));
         }
 
         // Description for selected item
@@ -221,14 +256,25 @@ impl SettingsList {
         } else {
             "  Enter/Space to change · Esc to cancel"
         };
-        lines.push(truncate_to_width(&(self.theme.hint)(hint_text), width, "", false));
+        lines.push(truncate_to_width(
+            &(self.theme.hint)(hint_text),
+            width,
+            "",
+            false,
+        ));
     }
 
     fn activate_item(&mut self) {
         let item_index = if self.search_enabled {
-            self.filtered_items_indices.get(self.selected_index).copied()
+            self.filtered_items_indices
+                .get(self.selected_index)
+                .copied()
         } else {
-            if self.selected_index < self.items.len() { Some(self.selected_index) } else { None }
+            if self.selected_index < self.items.len() {
+                Some(self.selected_index)
+            } else {
+                None
+            }
         };
 
         let item_index = match item_index {
@@ -242,19 +288,24 @@ impl SettingsList {
             // Push an event instead of trying to call the closure while `self` is
             // borrowed — the caller drains this via `poll_event()` and handles
             // the submenu lifecycle externally.
-            self.pending_events.push_back(SettingsListEvent::OpenSubmenu { item_id });
+            self.pending_events
+                .push_back(SettingsListEvent::OpenSubmenu { item_id });
         } else if let Some(values) = &self.items[item_index].values {
             if !values.is_empty() {
-                let current_index = values.iter().position(|v| *v == self.items[item_index].current_value).unwrap_or(0);
+                let current_index = values
+                    .iter()
+                    .position(|v| *v == self.items[item_index].current_value)
+                    .unwrap_or(0);
                 let next_index = (current_index + 1) % values.len();
                 let new_value = values[next_index].clone();
                 let item_id = self.items[item_index].id.clone();
                 self.items[item_index].current_value = new_value.clone();
                 (self.on_change)(&item_id, &new_value);
-                self.pending_events.push_back(SettingsListEvent::ValueChanged {
-                    id: item_id,
-                    value: new_value,
-                });
+                self.pending_events
+                    .push_back(SettingsListEvent::ValueChanged {
+                        id: item_id,
+                        value: new_value,
+                    });
             }
         }
     }
@@ -267,7 +318,10 @@ impl SettingsList {
     }
 
     fn apply_filter(&mut self, query: &str) {
-        let labels: Vec<(usize, String)> = self.items.iter().enumerate()
+        let labels: Vec<(usize, String)> = self
+            .items
+            .iter()
+            .enumerate()
             .map(|(i, item)| (i, item.label.clone()))
             .collect();
 
@@ -302,14 +356,18 @@ impl Component for SettingsList {
         let display_count = self.display_items_len();
 
         if check_keybinding(data, "tui.select.up") {
-            if display_count == 0 { return; }
+            if display_count == 0 {
+                return;
+            }
             self.selected_index = if self.selected_index == 0 {
                 display_count - 1
             } else {
                 self.selected_index - 1
             };
         } else if check_keybinding(data, "tui.select.down") {
-            if display_count == 0 { return; }
+            if display_count == 0 {
+                return;
+            }
             self.selected_index = if self.selected_index == display_count - 1 {
                 0
             } else {
@@ -321,7 +379,9 @@ impl Component for SettingsList {
             (self.on_cancel)();
         } else if self.search_enabled {
             let sanitized = data.replace(' ', "");
-            if sanitized.is_empty() { return; }
+            if sanitized.is_empty() {
+                return;
+            }
             if let Some(search) = &mut self.search_input {
                 search.handle_input(&sanitized);
                 let query = search.get_value().to_string();
@@ -352,16 +412,14 @@ mod tests {
     }
 
     fn make_items() -> Vec<SettingItem> {
-        vec![
-            SettingItem {
-                id: "theme".to_string(),
-                label: "Theme".to_string(),
-                description: None,
-                current_value: "dark".to_string(),
-                values: Some(vec!["dark".to_string(), "light".to_string()]),
-                submenu: None,
-            },
-        ]
+        vec![SettingItem {
+            id: "theme".to_string(),
+            label: "Theme".to_string(),
+            description: None,
+            current_value: "dark".to_string(),
+            values: Some(vec!["dark".to_string(), "light".to_string()]),
+            submenu: None,
+        }]
     }
 
     #[test]

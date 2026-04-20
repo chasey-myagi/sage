@@ -157,10 +157,7 @@ mod tests {
 
     #[test]
     fn test_complete_json_array() {
-        assert_eq!(
-            parse_streaming_json(r#"[1, 2, 3]"#),
-            json!([1, 2, 3])
-        );
+        assert_eq!(parse_streaming_json(r#"[1, 2, 3]"#), json!([1, 2, 3]));
     }
 
     #[test]

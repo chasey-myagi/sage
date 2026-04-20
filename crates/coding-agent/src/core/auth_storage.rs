@@ -107,10 +107,8 @@ impl AuthStorageBackend for FileAuthStorageBackend {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(
-                &self.auth_path,
-                std::fs::Permissions::from_mode(0o600),
-            );
+            let _ =
+                std::fs::set_permissions(&self.auth_path, std::fs::Permissions::from_mode(0o600));
         }
     }
 }
@@ -126,11 +124,15 @@ pub struct InMemoryAuthStorageBackend {
 
 impl InMemoryAuthStorageBackend {
     pub fn new() -> Self {
-        Self { value: std::sync::Mutex::new(None) }
+        Self {
+            value: std::sync::Mutex::new(None),
+        }
     }
 
     pub fn new_with(content: String) -> Self {
-        Self { value: std::sync::Mutex::new(Some(content)) }
+        Self {
+            value: std::sync::Mutex::new(Some(content)),
+        }
     }
 }
 
@@ -142,7 +144,10 @@ impl Default for InMemoryAuthStorageBackend {
 
 impl AuthStorageBackend for InMemoryAuthStorageBackend {
     fn read(&self) -> Option<String> {
-        self.value.lock().expect("InMemoryAuthStorageBackend lock").clone()
+        self.value
+            .lock()
+            .expect("InMemoryAuthStorageBackend lock")
+            .clone()
     }
 
     fn write(&self, content: &str) {
@@ -204,7 +209,9 @@ impl AuthStorage {
     }
 
     fn parse_storage_data(content: Option<&str>) -> AuthStorageData {
-        let Some(s) = content else { return HashMap::new() };
+        let Some(s) = content else {
+            return HashMap::new();
+        };
         serde_json::from_str(s).unwrap_or_default()
     }
 
@@ -448,9 +455,7 @@ mod tests {
 
         storage.set(
             "openai",
-            AuthCredential::ApiKey(ApiKeyCredential {
-                key: "key".into(),
-            }),
+            AuthCredential::ApiKey(ApiKeyCredential { key: "key".into() }),
         );
         assert!(storage.has("openai"));
 

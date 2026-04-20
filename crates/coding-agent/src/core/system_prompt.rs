@@ -56,9 +56,11 @@ pub struct Skill {
 ///
 /// Mirrors `buildSystemPrompt()` from TypeScript.
 pub fn build_system_prompt(options: BuildSystemPromptOptions) -> String {
-    let cwd_raw = options
-        .cwd
-        .unwrap_or_else(|| std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default());
+    let cwd_raw = options.cwd.unwrap_or_else(|| {
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default()
+    });
     let prompt_cwd = cwd_raw.replace('\\', "/");
     let date = Utc::now().format("%Y-%m-%d").to_string();
     let append_section = options
@@ -67,9 +69,14 @@ pub fn build_system_prompt(options: BuildSystemPromptOptions) -> String {
         .map(|s| format!("\n\n{s}"))
         .unwrap_or_default();
 
-    let tools = options
-        .selected_tools
-        .unwrap_or_else(|| vec!["read".to_string(), "bash".to_string(), "edit".to_string(), "write".to_string()]);
+    let tools = options.selected_tools.unwrap_or_else(|| {
+        vec![
+            "read".to_string(),
+            "bash".to_string(),
+            "edit".to_string(),
+            "write".to_string(),
+        ]
+    });
 
     // Skills formatting
     let skills_text = if !options.skills.is_empty() && tools.contains(&"read".to_string()) {
@@ -80,7 +87,8 @@ pub fn build_system_prompt(options: BuildSystemPromptOptions) -> String {
 
     // Context files
     let context_section = if !options.context_files.is_empty() {
-        let mut s = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n".to_string();
+        let mut s = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n"
+            .to_string();
         for cf in &options.context_files {
             s.push_str(&format!("## {}\n\n{}\n\n", cf.path, cf.content));
         }

@@ -6,4 +6,4 @@
 
 pub mod register_bedrock;
 
-pub use register_bedrock::{discover_aws_credentials, AwsCredentials, CredentialError};
+pub use register_bedrock::{AwsCredentials, CredentialError, discover_aws_credentials};

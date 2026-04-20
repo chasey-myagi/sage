@@ -6,13 +6,13 @@
 
 use std::time::{Duration, SystemTime};
 
-use tui::tui::{Component, Container};
 use tui::components::spacer::Spacer;
 use tui::components::text::Text;
+use tui::tui::{Component, Container};
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor};
 use crate::modes::interactive::components::dynamic_border::DynamicBorder;
 use crate::modes::interactive::components::keybinding_hints::key_hint;
+use crate::modes::interactive::theme::{ThemeColor, get_theme};
 
 /// A session entry displayed in the selector.
 #[derive(Debug, Clone)]
@@ -185,7 +185,11 @@ impl Component for SessionSelectorComponent {
             self.selected_index - visible_count + 1
         };
 
-        for (rel_idx, &abs_idx) in self.filtered[start..].iter().take(visible_count).enumerate() {
+        for (rel_idx, &abs_idx) in self.filtered[start..]
+            .iter()
+            .take(visible_count)
+            .enumerate()
+        {
             let session = &self.sessions[abs_idx];
             let is_selected = start + rel_idx == self.selected_index;
 

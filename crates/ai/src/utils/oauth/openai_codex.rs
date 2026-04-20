@@ -13,7 +13,9 @@ use tracing::error;
 
 use super::oauth_page::{oauth_error_html, oauth_success_html};
 use super::pkce::generate_pkce;
-use super::types::{OAuthAuthInfo, OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface};
+use super::types::{
+    OAuthAuthInfo, OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface,
+};
 
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
@@ -46,8 +48,14 @@ fn parse_authorization_input(input: &str) -> (Option<String>, Option<String>) {
 
     // Try full URL
     if let Ok(url) = url::Url::parse(value) {
-        let code = url.query_pairs().find(|(k, _)| k == "code").map(|(_, v)| v.into_owned());
-        let state = url.query_pairs().find(|(k, _)| k == "state").map(|(_, v)| v.into_owned());
+        let code = url
+            .query_pairs()
+            .find(|(k, _)| k == "code")
+            .map(|(_, v)| v.into_owned());
+        let state = url
+            .query_pairs()
+            .find(|(k, _)| k == "state")
+            .map(|(_, v)| v.into_owned());
         return (code, state);
     }
 
@@ -61,7 +69,8 @@ fn parse_authorization_input(input: &str) -> (Option<String>, Option<String>) {
 
     // Query-string style `code=…&state=…`
     if value.contains("code=") {
-        let params: std::collections::HashMap<_, _> = url::form_urlencoded::parse(value.as_bytes()).collect();
+        let params: std::collections::HashMap<_, _> =
+            url::form_urlencoded::parse(value.as_bytes()).collect();
         let code = params.get("code").map(|v| v.to_string());
         let state = params.get("state").map(|v| v.to_string());
         return (code, state);
@@ -87,7 +96,11 @@ fn get_account_id(access_token: &str) -> Option<String> {
     let payload = decode_jwt_payload(access_token)?;
     let auth = payload.get(JWT_CLAIM_PATH)?;
     let id = auth.get("chatgpt_account_id")?.as_str()?;
-    if id.is_empty() { None } else { Some(id.to_owned()) }
+    if id.is_empty() {
+        None
+    } else {
+        Some(id.to_owned())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +109,11 @@ fn get_account_id(access_token: &str) -> Option<String> {
 
 #[derive(Debug)]
 enum TokenResult {
-    Success { access: String, refresh: String, expires: u64 },
+    Success {
+        access: String,
+        refresh: String,
+        expires: u64,
+    },
     Failed,
 }
 
@@ -136,7 +153,11 @@ async fn exchange_authorization_code(
     match (json.access_token, json.refresh_token, json.expires_in) {
         (Some(access), Some(refresh), Some(expires_in)) => {
             let expires = now_ms() + expires_in * 1000;
-            Ok(TokenResult::Success { access, refresh, expires })
+            Ok(TokenResult::Success {
+                access,
+                refresh,
+                expires,
+            })
         }
         _ => {
             error!("[openai-codex] token response missing fields");
@@ -145,7 +166,10 @@ async fn exchange_authorization_code(
     }
 }
 
-async fn refresh_access_token(client: &reqwest::Client, refresh_token: &str) -> anyhow::Result<TokenResult> {
+async fn refresh_access_token(
+    client: &reqwest::Client,
+    refresh_token: &str,
+) -> anyhow::Result<TokenResult> {
     let response = client
         .post(TOKEN_URL)
         .header("Content-Type", "application/x-www-form-urlencoded")
@@ -174,7 +198,11 @@ async fn refresh_access_token(client: &reqwest::Client, refresh_token: &str) -> 
     match (json.access_token, json.refresh_token, json.expires_in) {
         (Some(access), Some(refresh), Some(expires_in)) => {
             let expires = now_ms() + expires_in * 1000;
-            Ok(TokenResult::Success { access, refresh, expires })
+            Ok(TokenResult::Success {
+                access,
+                refresh,
+                expires,
+            })
         }
         _ => {
             error!("[openai-codex] Token refresh response missing fields");
@@ -244,7 +272,9 @@ async fn start_local_oauth_server(state: String) -> OAuthServer {
 
     let code_tx = Arc::new(tokio::sync::Mutex::new(Some(code_tx)));
     let code_tx_clone = code_tx.clone();
-    let cancel_tx = Arc::new(tokio::sync::Mutex::new(Option::<oneshot::Sender<CodeResult>>::None));
+    let cancel_tx = Arc::new(tokio::sync::Mutex::new(
+        Option::<oneshot::Sender<CodeResult>>::None,
+    ));
 
     // Build a minimal HTTP server using raw Tokio TCP
     let addr: SocketAddr = "127.0.0.1:1455".parse().unwrap();
@@ -253,7 +283,9 @@ async fn start_local_oauth_server(state: String) -> OAuthServer {
         let listener = match tokio::net::TcpListener::bind(addr).await {
             Ok(l) => l,
             Err(err) => {
-                error!("[openai-codex] Failed to bind http://127.0.0.1:1455 ({err}). Falling back to manual paste.");
+                error!(
+                    "[openai-codex] Failed to bind http://127.0.0.1:1455 ({err}). Falling back to manual paste."
+                );
                 // Signal no code available
                 if let Ok(mut guard) = code_tx_clone.try_lock() {
                     if let Some(tx) = guard.take() {
@@ -347,11 +379,19 @@ async fn process_callback(
     let fake_url = format!("http://localhost{path_and_query}");
     let url = match url::Url::parse(&fake_url) {
         Ok(u) => u,
-        Err(_) => return ("404 Not Found", oauth_error_html("Callback route not found.", None)),
+        Err(_) => {
+            return (
+                "404 Not Found",
+                oauth_error_html("Callback route not found.", None),
+            );
+        }
     };
 
     if url.path() != "/auth/callback" {
-        return ("404 Not Found", oauth_error_html("Callback route not found.", None));
+        return (
+            "404 Not Found",
+            oauth_error_html("Callback route not found.", None),
+        );
     }
 
     let params: std::collections::HashMap<_, _> = url.query_pairs().collect();
@@ -362,7 +402,12 @@ async fn process_callback(
 
     let code = match params.get("code") {
         Some(c) => c.to_string(),
-        None => return ("400 Bad Request", oauth_error_html("Missing authorization code.", None)),
+        None => {
+            return (
+                "400 Bad Request",
+                oauth_error_html("Missing authorization code.", None),
+            );
+        }
     };
 
     // Send code to waiter
@@ -371,7 +416,10 @@ async fn process_callback(
         let _ = tx.send(Some(code));
     }
 
-    ("200 OK", oauth_success_html("OpenAI authentication completed. You can close this window."))
+    (
+        "200 OK",
+        oauth_success_html("OpenAI authentication completed. You can close this window."),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -383,9 +431,13 @@ async fn process_callback(
 /// Mirrors `loginOpenAICodex()` from `openai-codex.ts`.
 pub async fn login_openai_codex(
     on_auth: impl Fn(OAuthAuthInfo),
-    on_prompt: impl Fn(OAuthPrompt) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>,
+    on_prompt: impl Fn(
+        OAuthPrompt,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>,
     on_progress: Option<impl Fn(String)>,
-    on_manual_code_input: Option<impl Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>>,
+    on_manual_code_input: Option<
+        impl Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>,
+    >,
     originator: Option<&str>,
 ) -> anyhow::Result<OAuthCredentials> {
     let pkce = generate_pkce();
@@ -394,7 +446,8 @@ pub async fn login_openai_codex(
 
     // Build authorization URL
     let mut auth_url = url::Url::parse(AUTHORIZE_URL)?;
-    auth_url.query_pairs_mut()
+    auth_url
+        .query_pairs_mut()
         .append_pair("response_type", "code")
         .append_pair("client_id", CLIENT_ID)
         .append_pair("redirect_uri", REDIRECT_URI)
@@ -418,10 +471,8 @@ pub async fn login_openai_codex(
     if let Some(ref manual_fn) = on_manual_code_input {
         // Race between browser callback and manual input
         let manual_future = manual_fn();
-        let (manual_code_res, server_code_res) = tokio::join!(
-            async { Some(manual_future.await) },
-            server.wait_for_code(),
-        );
+        let (manual_code_res, server_code_res) =
+            tokio::join!(async { Some(manual_future.await) }, server.wait_for_code(),);
 
         if let Some(browser_code) = server_code_res {
             code = Some(browser_code);
@@ -463,16 +514,21 @@ pub async fn login_openai_codex(
         c.ok_or_else(|| anyhow::anyhow!("Missing authorization code"))?
     };
 
-    let token_result = exchange_authorization_code(&client, &final_code, &pkce.verifier, REDIRECT_URI).await?;
-    let TokenResult::Success { access, refresh, expires } = token_result else {
+    let token_result =
+        exchange_authorization_code(&client, &final_code, &pkce.verifier, REDIRECT_URI).await?;
+    let TokenResult::Success {
+        access,
+        refresh,
+        expires,
+    } = token_result
+    else {
         anyhow::bail!("Token exchange failed");
     };
 
     let account_id = get_account_id(&access)
         .ok_or_else(|| anyhow::anyhow!("Failed to extract accountId from token"))?;
 
-    Ok(OAuthCredentials::new(refresh, access, expires)
-        .with_extra("accountId", account_id))
+    Ok(OAuthCredentials::new(refresh, access, expires).with_extra("accountId", account_id))
 }
 
 /// Refresh an OpenAI Codex OAuth token.
@@ -481,15 +537,19 @@ pub async fn login_openai_codex(
 pub async fn refresh_openai_codex_token(refresh_token: &str) -> anyhow::Result<OAuthCredentials> {
     let client = reqwest::Client::new();
     let result = refresh_access_token(&client, refresh_token).await?;
-    let TokenResult::Success { access, refresh, expires } = result else {
+    let TokenResult::Success {
+        access,
+        refresh,
+        expires,
+    } = result
+    else {
         anyhow::bail!("Failed to refresh OpenAI Codex token");
     };
 
     let account_id = get_account_id(&access)
         .ok_or_else(|| anyhow::anyhow!("Failed to extract accountId from token"))?;
 
-    Ok(OAuthCredentials::new(refresh, access, expires)
-        .with_extra("accountId", account_id))
+    Ok(OAuthCredentials::new(refresh, access, expires).with_extra("accountId", account_id))
 }
 
 // ---------------------------------------------------------------------------
@@ -516,14 +576,20 @@ impl OAuthProviderInterface for OpenAICodexOAuthProvider {
         login_openai_codex(
             |info| (callbacks.on_auth)(info),
             |prompt| (callbacks.on_prompt)(prompt),
-            callbacks.on_progress.as_ref().map(|f| move |msg: String| f(msg)),
+            callbacks
+                .on_progress
+                .as_ref()
+                .map(|f| move |msg: String| f(msg)),
             callbacks.on_manual_code_input.as_ref().map(|f| move || f()),
             None,
         )
         .await
     }
 
-    async fn refresh_token(&self, credentials: &OAuthCredentials) -> anyhow::Result<OAuthCredentials> {
+    async fn refresh_token(
+        &self,
+        credentials: &OAuthCredentials,
+    ) -> anyhow::Result<OAuthCredentials> {
         refresh_openai_codex_token(&credentials.refresh).await
     }
 

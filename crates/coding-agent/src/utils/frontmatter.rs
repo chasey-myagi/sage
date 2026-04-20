@@ -62,9 +62,7 @@ pub fn parse_frontmatter(content: &str) -> ParsedFrontmatter {
     let frontmatter = match yaml_str {
         None => serde_json::Value::Object(Default::default()),
         Some(y) => match serde_yaml::from_str::<serde_yaml::Value>(&y) {
-            Ok(serde_yaml::Value::Null) | Err(_) => {
-                serde_json::Value::Object(Default::default())
-            }
+            Ok(serde_yaml::Value::Null) | Err(_) => serde_json::Value::Object(Default::default()),
             Ok(v) => yaml_to_json(v),
         },
     };

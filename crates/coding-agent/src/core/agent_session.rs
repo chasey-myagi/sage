@@ -17,11 +17,13 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 use tokio_util::sync::CancellationToken;
 
 use agent_core::event::AgentEvent;
-use agent_core::types::{AgentMessage, AgentTool, AgentToolResult, AssistantMessage, Content, ThinkingLevel, UserMessage};
+use agent_core::types::{
+    AgentMessage, AgentTool, AgentToolResult, AssistantMessage, Content, ThinkingLevel, UserMessage,
+};
 
 use crate::core::settings_manager::SettingsManager;
 
@@ -55,7 +57,10 @@ pub fn parse_skill_block(text: &str) -> Option<ParsedSkillBlock> {
         name: caps.get(1)?.as_str().to_string(),
         location: caps.get(2)?.as_str().to_string(),
         content: caps.get(3)?.as_str().to_string(),
-        user_message: caps.get(4).map(|m| m.as_str().trim().to_string()).filter(|s| !s.is_empty()),
+        user_message: caps
+            .get(4)
+            .map(|m| m.as_str().trim().to_string())
+            .filter(|s| !s.is_empty()),
     })
 }
 
@@ -380,7 +385,9 @@ impl AgentSession {
                     // Check steering queue first, then follow-up queue.
                     if let Some(pos) = self.steering_messages.iter().position(|m| m == &text) {
                         self.steering_messages.remove(pos);
-                    } else if let Some(pos) = self.follow_up_messages.iter().position(|m| m == &text) {
+                    } else if let Some(pos) =
+                        self.follow_up_messages.iter().position(|m| m == &text)
+                    {
                         self.follow_up_messages.remove(pos);
                     }
                 }
@@ -401,7 +408,9 @@ impl AgentSession {
                 }
 
                 // Reset retry counter on successful response.
-                if assistant.stop_reason != agent_core::types::StopReason::Error && self.retry_attempt > 0 {
+                if assistant.stop_reason != agent_core::types::StopReason::Error
+                    && self.retry_attempt > 0
+                {
                     self.emit(AgentSessionEvent::AutoRetryEnd {
                         success: true,
                         attempt: self.retry_attempt,
@@ -541,8 +550,21 @@ impl AgentSession {
     // =========================================================================
 
     /// Register a tool in the session tool registry.
-    pub fn register_tool(&mut self, name: String, description: String, prompt_snippet: Option<String>, prompt_guidelines: Vec<String>) {
-        self.tool_registry.insert(name, ToolRegistryEntry { description, prompt_snippet, prompt_guidelines });
+    pub fn register_tool(
+        &mut self,
+        name: String,
+        description: String,
+        prompt_snippet: Option<String>,
+        prompt_guidelines: Vec<String>,
+    ) {
+        self.tool_registry.insert(
+            name,
+            ToolRegistryEntry {
+                description,
+                prompt_snippet,
+                prompt_guidelines,
+            },
+        );
     }
 
     /// Get the names of currently active tools.
@@ -587,7 +609,10 @@ impl AgentSession {
         }
 
         let levels = self.get_available_thinking_levels();
-        let current_index = levels.iter().position(|&l| l == self.thinking_level).unwrap_or(0);
+        let current_index = levels
+            .iter()
+            .position(|&l| l == self.thinking_level)
+            .unwrap_or(0);
         let next_index = (current_index + 1) % levels.len();
         let next = levels[next_index];
         self.set_thinking_level(next);
@@ -627,7 +652,11 @@ impl AgentSession {
     /// Clamp a thinking level to the closest available level.
     ///
     /// Mirrors pi-mono's `_clampThinkingLevel`.
-    fn clamp_thinking_level(&self, level: ThinkingLevel, available: &[ThinkingLevel]) -> ThinkingLevel {
+    fn clamp_thinking_level(
+        &self,
+        level: ThinkingLevel,
+        available: &[ThinkingLevel],
+    ) -> ThinkingLevel {
         let ordered = THINKING_LEVELS_WITH_XHIGH;
         let requested_index = ordered.iter().position(|&l| l == level);
 
@@ -652,7 +681,10 @@ impl AgentSession {
     /// Get the thinking level to use when switching models.
     ///
     /// Mirrors pi-mono's `_getThinkingLevelForModelSwitch`.
-    fn get_thinking_level_for_model_switch(&self, explicit: Option<ThinkingLevel>) -> ThinkingLevel {
+    fn get_thinking_level_for_model_switch(
+        &self,
+        explicit: Option<ThinkingLevel>,
+    ) -> ThinkingLevel {
         if let Some(level) = explicit {
             return level;
         }
@@ -661,7 +693,10 @@ impl AgentSession {
             return self
                 .settings_manager
                 .get_default_thinking_level()
-                .and_then(|s| serde_json::from_value::<ThinkingLevel>(serde_json::Value::String(s.to_owned())).ok())
+                .and_then(|s| {
+                    serde_json::from_value::<ThinkingLevel>(serde_json::Value::String(s.to_owned()))
+                        .ok()
+                })
                 .unwrap_or(ThinkingLevel::Off);
         }
         self.thinking_level
@@ -692,7 +727,11 @@ impl AgentSession {
     /// Send a prompt to the agent.
     ///
     /// Mirrors pi-mono's `prompt(text, options)`.
-    pub async fn prompt(&mut self, text: &str, options: Option<PromptOptions>) -> Result<(), String> {
+    pub async fn prompt(
+        &mut self,
+        text: &str,
+        options: Option<PromptOptions>,
+    ) -> Result<(), String> {
         let _options = options.unwrap_or_default();
 
         if self.is_streaming {
@@ -708,7 +747,9 @@ impl AgentSession {
 
         // Build user message.
         let user_msg = UserMessage {
-            content: vec![Content::Text { text: text.to_string() }],
+            content: vec![Content::Text {
+                text: text.to_string(),
+            }],
             timestamp: {
                 use std::time::{SystemTime, UNIX_EPOCH};
                 SystemTime::now()
@@ -891,7 +932,10 @@ impl AgentSession {
     /// Manually compact the session context.
     ///
     /// Mirrors pi-mono's `compact(customInstructions?)`.
-    pub async fn compact(&mut self, _custom_instructions: Option<&str>) -> Result<CompactionResult, String> {
+    pub async fn compact(
+        &mut self,
+        _custom_instructions: Option<&str>,
+    ) -> Result<CompactionResult, String> {
         if self.model_provider.is_none() {
             return Err("No model selected".to_string());
         }
@@ -966,7 +1010,8 @@ impl AgentSession {
             if let Some(AgentMessage::Assistant(_)) = self.messages.last() {
                 self.messages.pop();
             }
-            self.run_auto_compaction(CompactionReason::Overflow, true).await;
+            self.run_auto_compaction(CompactionReason::Overflow, true)
+                .await;
             return;
         }
 
@@ -1084,7 +1129,10 @@ impl AgentSession {
             attempt: self.retry_attempt,
             max_attempts: max_retries,
             delay_ms,
-            error_message: msg.error_message.clone().unwrap_or_else(|| "Unknown error".to_string()),
+            error_message: msg
+                .error_message
+                .clone()
+                .unwrap_or_else(|| "Unknown error".to_string()),
         });
 
         // Remove error message from agent state.
@@ -1233,7 +1281,11 @@ impl AgentSession {
             .collect();
 
         let trimmed = text.trim().to_string();
-        if trimmed.is_empty() { None } else { Some(trimmed) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
     }
 
     /// Dispose the session, removing all listeners.
@@ -1308,7 +1360,8 @@ mod tests {
 
     #[test]
     fn test_parse_skill_block_valid() {
-        let text = "<skill name=\"my-skill\" location=\"/path/to/skill.md\">\ncontent here\n</skill>";
+        let text =
+            "<skill name=\"my-skill\" location=\"/path/to/skill.md\">\ncontent here\n</skill>";
         let result = parse_skill_block(text);
         assert!(result.is_some());
         let block = result.unwrap();
@@ -1320,8 +1373,7 @@ mod tests {
 
     #[test]
     fn test_parse_skill_block_with_user_message() {
-        let text =
-            "<skill name=\"my-skill\" location=\"/path/to/skill.md\">\ncontent here\n</skill>\n\nUser message here";
+        let text = "<skill name=\"my-skill\" location=\"/path/to/skill.md\">\ncontent here\n</skill>\n\nUser message here";
         let result = parse_skill_block(text);
         assert!(result.is_some());
         let block = result.unwrap();
@@ -1366,7 +1418,9 @@ mod tests {
         let event = rx.try_recv().expect("should have received event");
         assert!(matches!(
             event,
-            AgentSessionEvent::AutoCompactionStart { reason: CompactionReason::Threshold }
+            AgentSessionEvent::AutoCompactionStart {
+                reason: CompactionReason::Threshold
+            }
         ));
     }
 
@@ -1378,7 +1432,10 @@ mod tests {
         session.steer("do this first".to_string());
         session.steer("do this second".to_string());
         assert_eq!(session.pending_message_count(), 2);
-        assert_eq!(session.steering_messages(), &["do this first", "do this second"]);
+        assert_eq!(
+            session.steering_messages(),
+            &["do this first", "do this second"]
+        );
         assert_eq!(session.follow_up_messages().len(), 0);
     }
 
@@ -1421,9 +1478,7 @@ mod tests {
 
         let result = session.prompt("hello", None).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Agent is already processing"));
+        assert!(result.unwrap_err().contains("Agent is already processing"));
     }
 
     // ── thinking level management ────────────────────────────────────────────
@@ -1483,25 +1538,31 @@ mod tests {
     fn test_session_stats_counts_messages() {
         let mut session = make_session();
         session.messages.push(AgentMessage::User(UserMessage {
-            content: vec![Content::Text { text: "hi".to_string() }],
+            content: vec![Content::Text {
+                text: "hi".to_string(),
+            }],
             timestamp: 0,
         }));
-        session.messages.push(AgentMessage::Assistant(AssistantMessage {
-            content: vec![
-                Content::Text { text: "hello".to_string() },
-                Content::ToolCall {
-                    id: "tc1".to_string(),
-                    name: "read".to_string(),
-                    arguments: Value::Null,
-                },
-            ],
-            provider: "anthropic".to_string(),
-            model: "claude-opus-4-5".to_string(),
-            usage: agent_core::types::Usage::default(),
-            stop_reason: agent_core::types::StopReason::ToolUse,
-            error_message: None,
-            timestamp: 0,
-        }));
+        session
+            .messages
+            .push(AgentMessage::Assistant(AssistantMessage {
+                content: vec![
+                    Content::Text {
+                        text: "hello".to_string(),
+                    },
+                    Content::ToolCall {
+                        id: "tc1".to_string(),
+                        name: "read".to_string(),
+                        arguments: Value::Null,
+                    },
+                ],
+                provider: "anthropic".to_string(),
+                model: "claude-opus-4-5".to_string(),
+                usage: agent_core::types::Usage::default(),
+                stop_reason: agent_core::types::StopReason::ToolUse,
+                error_message: None,
+                timestamp: 0,
+            }));
         let stats = session.get_session_stats();
         assert_eq!(stats.user_messages, 1);
         assert_eq!(stats.assistant_messages, 1);
@@ -1520,15 +1581,19 @@ mod tests {
     #[test]
     fn test_get_last_assistant_text_returns_text() {
         let mut session = make_session();
-        session.messages.push(AgentMessage::Assistant(AssistantMessage {
-            content: vec![Content::Text { text: "  Hello world  ".to_string() }],
-            provider: "anthropic".to_string(),
-            model: "claude-opus-4-5".to_string(),
-            usage: agent_core::types::Usage::default(),
-            stop_reason: agent_core::types::StopReason::Stop,
-            error_message: None,
-            timestamp: 0,
-        }));
+        session
+            .messages
+            .push(AgentMessage::Assistant(AssistantMessage {
+                content: vec![Content::Text {
+                    text: "  Hello world  ".to_string(),
+                }],
+                provider: "anthropic".to_string(),
+                model: "claude-opus-4-5".to_string(),
+                usage: agent_core::types::Usage::default(),
+                stop_reason: agent_core::types::StopReason::Stop,
+                error_message: None,
+                timestamp: 0,
+            }));
         assert_eq!(
             session.get_last_assistant_text(),
             Some("Hello world".to_string())
@@ -1539,15 +1604,17 @@ mod tests {
     fn test_get_last_assistant_text_skips_aborted() {
         let mut session = make_session();
         // Add aborted message with no content.
-        session.messages.push(AgentMessage::Assistant(AssistantMessage {
-            content: vec![],
-            provider: "anthropic".to_string(),
-            model: "claude-opus-4-5".to_string(),
-            usage: agent_core::types::Usage::default(),
-            stop_reason: agent_core::types::StopReason::Aborted,
-            error_message: None,
-            timestamp: 0,
-        }));
+        session
+            .messages
+            .push(AgentMessage::Assistant(AssistantMessage {
+                content: vec![],
+                provider: "anthropic".to_string(),
+                model: "claude-opus-4-5".to_string(),
+                usage: agent_core::types::Usage::default(),
+                stop_reason: agent_core::types::StopReason::Aborted,
+                error_message: None,
+                timestamp: 0,
+            }));
         assert!(session.get_last_assistant_text().is_none());
     }
 
@@ -1605,7 +1672,9 @@ mod tests {
     async fn test_new_session_clears_messages() {
         let mut session = make_session();
         session.messages.push(AgentMessage::User(UserMessage {
-            content: vec![Content::Text { text: "test".to_string() }],
+            content: vec![Content::Text {
+                text: "test".to_string(),
+            }],
             timestamp: 0,
         }));
         session.steer("pending".to_string());
@@ -1622,20 +1691,28 @@ mod tests {
     fn test_get_user_messages_for_forking_returns_user_messages() {
         let mut session = make_session();
         session.messages.push(AgentMessage::User(UserMessage {
-            content: vec![Content::Text { text: "First message".to_string() }],
+            content: vec![Content::Text {
+                text: "First message".to_string(),
+            }],
             timestamp: 0,
         }));
-        session.messages.push(AgentMessage::Assistant(AssistantMessage {
-            content: vec![Content::Text { text: "response".to_string() }],
-            provider: "anthropic".to_string(),
-            model: "claude-opus-4-5".to_string(),
-            usage: agent_core::types::Usage::default(),
-            stop_reason: agent_core::types::StopReason::Stop,
-            error_message: None,
-            timestamp: 0,
-        }));
+        session
+            .messages
+            .push(AgentMessage::Assistant(AssistantMessage {
+                content: vec![Content::Text {
+                    text: "response".to_string(),
+                }],
+                provider: "anthropic".to_string(),
+                model: "claude-opus-4-5".to_string(),
+                usage: agent_core::types::Usage::default(),
+                stop_reason: agent_core::types::StopReason::Stop,
+                error_message: None,
+                timestamp: 0,
+            }));
         session.messages.push(AgentMessage::User(UserMessage {
-            content: vec![Content::Text { text: "Second message".to_string() }],
+            content: vec![Content::Text {
+                text: "Second message".to_string(),
+            }],
             timestamp: 0,
         }));
 
@@ -1675,7 +1752,11 @@ mod tests {
         // Drain events.
         let mut got_failure = false;
         while let Ok(event) = rx.try_recv() {
-            if let AgentSessionEvent::AutoCompactionEnd { error_message: Some(ref msg), .. } = event {
+            if let AgentSessionEvent::AutoCompactionEnd {
+                error_message: Some(ref msg),
+                ..
+            } = event
+            {
                 if msg.contains("Context overflow recovery failed") {
                     got_failure = true;
                 }
@@ -1739,28 +1820,32 @@ mod tests {
         let mut session = make_session();
 
         // Inject an assistant message with known token counts.
-        session.messages.push(AgentMessage::Assistant(AssistantMessage {
-            content: vec![Content::Text { text: "response".to_string() }],
-            provider: "anthropic".to_string(),
-            model: "claude-opus-4-5".to_string(),
-            usage: agent_core::types::Usage {
-                input: 200,
-                output: 50,
-                cache_read: 10,
-                cache_write: 5,
-                total_tokens: 265,
-                cost: agent_core::types::Cost {
-                    input: 0.0,
-                    output: 0.0,
-                    cache_read: 0.0,
-                    cache_write: 0.0,
-                    total: 0.0,
+        session
+            .messages
+            .push(AgentMessage::Assistant(AssistantMessage {
+                content: vec![Content::Text {
+                    text: "response".to_string(),
+                }],
+                provider: "anthropic".to_string(),
+                model: "claude-opus-4-5".to_string(),
+                usage: agent_core::types::Usage {
+                    input: 200,
+                    output: 50,
+                    cache_read: 10,
+                    cache_write: 5,
+                    total_tokens: 265,
+                    cost: agent_core::types::Cost {
+                        input: 0.0,
+                        output: 0.0,
+                        cache_read: 0.0,
+                        cache_write: 0.0,
+                        total: 0.0,
+                    },
                 },
-            },
-            stop_reason: agent_core::types::StopReason::Stop,
-            error_message: None,
-            timestamp: 0,
-        }));
+                stop_reason: agent_core::types::StopReason::Stop,
+                error_message: None,
+                timestamp: 0,
+            }));
 
         let stats = session.get_session_stats();
         assert_eq!(stats.tokens_input, 200);
@@ -1810,16 +1895,12 @@ mod tests {
 
         // Since supports_thinking() returns false, thinking_level is clamped to Off.
         // (In a full implementation this would check model capabilities.)
-        assert!(matches!(
-            session.thinking_level(),
-            ThinkingLevel::Off
-        ));
+        assert!(matches!(session.thinking_level(), ThinkingLevel::Off));
     }
 
     #[tokio::test]
     async fn test_cycle_model_with_scoped_models() {
-        let tmp =
-            std::env::temp_dir().join(format!("sage-test-cycle-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("sage-test-cycle-{}", std::process::id()));
         let settings_manager = Arc::new(SettingsManager::create(&tmp, &tmp));
 
         let mut session = AgentSession::new(AgentSessionConfig {

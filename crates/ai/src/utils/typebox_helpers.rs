@@ -7,7 +7,7 @@
 //!
 //! All `*_schema` constructors produce standard JSON Schema draft-07 objects.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::utils::validation::validate_against_schema;
 
@@ -105,7 +105,11 @@ pub fn validate(schema: &Value, value: &Value) -> Result<(), Vec<String>> {
     let msgs = raw
         .into_iter()
         .map(|(path, msg)| {
-            let p = if path.is_empty() { "root".to_string() } else { path };
+            let p = if path.is_empty() {
+                "root".to_string()
+            } else {
+                path
+            };
             format!("{p}: {msg}")
         })
         .collect();
@@ -148,7 +152,10 @@ mod tests {
     fn string_enum_schema_with_options_no_extras() {
         let s = string_enum_schema_with_options(
             &["a", "b"],
-            &StringEnumOptions { description: None, default: None },
+            &StringEnumOptions {
+                description: None,
+                default: None,
+            },
         );
         assert_eq!(s["type"], "string");
         assert!(s["description"].is_null());
@@ -159,7 +166,10 @@ mod tests {
     fn string_enum_schema_with_options_description() {
         let s = string_enum_schema_with_options(
             &["x", "y"],
-            &StringEnumOptions { description: Some("pick one"), default: None },
+            &StringEnumOptions {
+                description: Some("pick one"),
+                default: None,
+            },
         );
         assert_eq!(s["description"], "pick one");
         assert!(s["default"].is_null());
@@ -169,7 +179,10 @@ mod tests {
     fn string_enum_schema_with_options_default() {
         let s = string_enum_schema_with_options(
             &["x", "y"],
-            &StringEnumOptions { description: None, default: Some("x") },
+            &StringEnumOptions {
+                description: None,
+                default: Some("x"),
+            },
         );
         assert!(s["description"].is_null());
         assert_eq!(s["default"], "x");
@@ -179,7 +192,10 @@ mod tests {
     fn string_enum_schema_with_options_both() {
         let s = string_enum_schema_with_options(
             &["read", "write"],
-            &StringEnumOptions { description: Some("access level"), default: Some("read") },
+            &StringEnumOptions {
+                description: Some("access level"),
+                default: Some("read"),
+            },
         );
         assert_eq!(s["description"], "access level");
         assert_eq!(s["default"], "read");
@@ -230,7 +246,10 @@ mod tests {
         let val = json!({});
         let errs = validate(&schema, &val).unwrap_err();
         assert!(!errs.is_empty());
-        assert!(errs[0].contains("name"), "error should mention field name: {errs:?}");
+        assert!(
+            errs[0].contains("name"),
+            "error should mention field name: {errs:?}"
+        );
     }
 
     #[test]
@@ -238,15 +257,15 @@ mod tests {
         let schema = object_schema(&[("count", number_schema())], &["count"]);
         let val = json!({"count": "oops"});
         let errs = validate(&schema, &val).unwrap_err();
-        assert!(errs.iter().any(|e| e.contains("number")), "errors: {errs:?}");
+        assert!(
+            errs.iter().any(|e| e.contains("number")),
+            "errors: {errs:?}"
+        );
     }
 
     #[test]
     fn validate_err_on_enum_violation() {
-        let schema = object_schema(
-            &[("op", string_enum_schema(&["read", "write"]))],
-            &["op"],
-        );
+        let schema = object_schema(&[("op", string_enum_schema(&["read", "write"]))], &["op"]);
         let bad = json!({"op": "delete"});
         assert!(validate(&schema, &bad).is_err());
 

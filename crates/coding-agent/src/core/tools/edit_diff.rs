@@ -73,16 +73,16 @@ pub fn normalize_for_fuzzy_match(text: &str) -> String {
         .replace(['\u{201C}', '\u{201D}', '\u{201E}', '\u{201F}'], "\"")
         // Various dashes → -
         .replace(
-            ['\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}', '\u{2014}', '\u{2015}', '\u{2212}'],
+            [
+                '\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}', '\u{2014}', '\u{2015}', '\u{2212}',
+            ],
             "-",
         )
         // Special spaces → regular space
         .replace(
             [
-                '\u{00A0}',
-                '\u{2002}', '\u{2003}', '\u{2004}', '\u{2005}', '\u{2006}',
-                '\u{2007}', '\u{2008}', '\u{2009}', '\u{200A}',
-                '\u{202F}', '\u{205F}', '\u{3000}',
+                '\u{00A0}', '\u{2002}', '\u{2003}', '\u{2004}', '\u{2005}', '\u{2006}', '\u{2007}',
+                '\u{2008}', '\u{2009}', '\u{200A}', '\u{202F}', '\u{205F}', '\u{3000}',
             ],
             " ",
         )
@@ -234,10 +234,7 @@ pub fn generate_diff_string(
                     };
 
                     if skip_start > 0 {
-                        output.push(format!(
-                            " {pad} ...",
-                            pad = " ".repeat(line_num_width)
-                        ));
+                        output.push(format!(" {pad} ...", pad = " ".repeat(line_num_width)));
                         old_line += skip_start;
                         new_line += skip_start;
                     }
@@ -254,10 +251,7 @@ pub fn generate_diff_string(
                     }
 
                     if skip_end > 0 {
-                        output.push(format!(
-                            " {pad} ...",
-                            pad = " ".repeat(line_num_width)
-                        ));
+                        output.push(format!(" {pad} ...", pad = " ".repeat(line_num_width)));
                         old_line += skip_end;
                         new_line += skip_end;
                     }
@@ -271,7 +265,11 @@ pub fn generate_diff_string(
                     first_changed_line = Some(new_line);
                 }
                 for line in lines {
-                    output.push(format!("+{ln:>width$} {line}", ln = new_line, width = line_num_width));
+                    output.push(format!(
+                        "+{ln:>width$} {line}",
+                        ln = new_line,
+                        width = line_num_width
+                    ));
                     new_line += 1;
                 }
             }
@@ -280,7 +278,11 @@ pub fn generate_diff_string(
                     first_changed_line = Some(new_line);
                 }
                 for line in lines {
-                    output.push(format!("-{ln:>width$} {line}", ln = old_line, width = line_num_width));
+                    output.push(format!(
+                        "-{ln:>width$} {line}",
+                        ln = old_line,
+                        width = line_num_width
+                    ));
                     old_line += 1;
                 }
             }
@@ -378,7 +380,9 @@ pub fn compute_edit_diff(
 
     // Check if file exists and is readable.
     if !Path::new(&absolute_path).exists() {
-        return Err(EditDiffError { error: format!("File not found: {path}") });
+        return Err(EditDiffError {
+            error: format!("File not found: {path}"),
+        });
     }
 
     let raw_content = fs::read_to_string(&absolute_path).map_err(|e| EditDiffError {
@@ -425,7 +429,9 @@ pub fn compute_edit_diff(
 
     if *base == new_content {
         return Err(EditDiffError {
-            error: format!("No changes would be made to {path}. The replacement produces identical content."),
+            error: format!(
+                "No changes would be made to {path}. The replacement produces identical content."
+            ),
         });
     }
 
@@ -485,13 +491,19 @@ mod tests {
 
     #[test]
     fn fuzzy_strips_trailing_whitespace() {
-        assert_eq!(normalize_for_fuzzy_match("line1   \nline2\t"), "line1\nline2");
+        assert_eq!(
+            normalize_for_fuzzy_match("line1   \nline2\t"),
+            "line1\nline2"
+        );
     }
 
     #[test]
     fn fuzzy_normalizes_smart_quotes() {
         // LEFT SINGLE QUOTATION MARK → '
-        assert_eq!(normalize_for_fuzzy_match("\u{2018}hello\u{2019}"), "'hello'");
+        assert_eq!(
+            normalize_for_fuzzy_match("\u{2018}hello\u{2019}"),
+            "'hello'"
+        );
     }
 
     #[test]
@@ -594,8 +606,8 @@ mod tests {
 
     #[test]
     fn compute_diff_text_not_found() {
-        use tempfile::NamedTempFile;
         use std::io::Write;
+        use tempfile::NamedTempFile;
 
         let mut file = NamedTempFile::new().unwrap();
         writeln!(file, "hello world").unwrap();
@@ -609,8 +621,8 @@ mod tests {
 
     #[test]
     fn compute_diff_success() {
-        use tempfile::NamedTempFile;
         use std::io::Write;
+        use tempfile::NamedTempFile;
 
         let mut file = NamedTempFile::new().unwrap();
         writeln!(file, "foo\nbar\nbaz").unwrap();

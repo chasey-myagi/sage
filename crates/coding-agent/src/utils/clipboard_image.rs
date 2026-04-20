@@ -41,7 +41,9 @@ const DEFAULT_MAX_BUFFER_BYTES: usize = 50 * 1024 * 1024;
 /// `true` when running in a Wayland session.
 pub fn is_wayland_session() -> bool {
     std::env::var("WAYLAND_DISPLAY").is_ok()
-        || std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false)
+        || std::env::var("XDG_SESSION_TYPE")
+            .map(|v| v == "wayland")
+            .unwrap_or(false)
 }
 
 /// `true` when running inside WSL.
@@ -89,7 +91,10 @@ fn select_preferred_mime_type(types: &[String]) -> Option<String> {
         .collect();
 
     for preferred in SUPPORTED_MIME_TYPES {
-        if let Some((raw, _)) = normalized.iter().find(|(_, base)| base.as_str() == *preferred) {
+        if let Some((raw, _)) = normalized
+            .iter()
+            .find(|(_, base)| base.as_str() == *preferred)
+        {
             return Some(raw.clone());
         }
     }
@@ -110,12 +115,7 @@ struct RunResult {
     ok: bool,
 }
 
-fn run_command(
-    command: &str,
-    args: &[&str],
-    timeout_ms: u64,
-    max_buffer: usize,
-) -> RunResult {
+fn run_command(command: &str, args: &[&str], timeout_ms: u64, max_buffer: usize) -> RunResult {
     let result = Command::new(command)
         .args(args)
         .stdout(Stdio::piped())
@@ -124,13 +124,21 @@ fn run_command(
 
     let mut child = match result {
         Ok(c) => c,
-        Err(_) => return RunResult { stdout: vec![], ok: false },
+        Err(_) => {
+            return RunResult {
+                stdout: vec![],
+                ok: false,
+            };
+        }
     };
 
     // Read stdout with a size cap.
     let mut stdout = Vec::new();
     if let Some(mut out) = child.stdout.take() {
-        let _ = out.by_ref().take(max_buffer as u64).read_to_end(&mut stdout);
+        let _ = out
+            .by_ref()
+            .take(max_buffer as u64)
+            .read_to_end(&mut stdout);
     }
 
     // Wait with timeout via thread::sleep + try_wait — acceptable for a CLI tool.
@@ -139,17 +147,28 @@ fn run_command(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                return RunResult { stdout, ok: status.success() };
+                return RunResult {
+                    stdout,
+                    ok: status.success(),
+                };
             }
             Ok(None) => {
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return RunResult { stdout: vec![], ok: false };
+                    return RunResult {
+                        stdout: vec![],
+                        ok: false,
+                    };
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            Err(_) => return RunResult { stdout: vec![], ok: false },
+            Err(_) => {
+                return RunResult {
+                    stdout: vec![],
+                    ok: false,
+                };
+            }
         }
     }
 }
@@ -265,7 +284,9 @@ fn read_via_powershell() -> Option<ClipboardImage> {
     if !win_path_result.ok {
         return None;
     }
-    let win_path = String::from_utf8_lossy(&win_path_result.stdout).trim().to_owned();
+    let win_path = String::from_utf8_lossy(&win_path_result.stdout)
+        .trim()
+        .to_owned();
     if win_path.is_empty() {
         return None;
     }
@@ -320,7 +341,10 @@ fn read_via_powershell() -> Option<ClipboardImage> {
     if bytes.is_empty() {
         return None;
     }
-    Some(ClipboardImage { bytes, mime_type: "image/png".to_owned() })
+    Some(ClipboardImage {
+        bytes,
+        mime_type: "image/png".to_owned(),
+    })
 }
 
 fn read_via_native_clipboard() -> Option<ClipboardImage> {
@@ -332,7 +356,10 @@ fn read_via_native_clipboard() -> Option<ClipboardImage> {
     if bytes.is_empty() {
         return None;
     }
-    Some(ClipboardImage { bytes, mime_type: "image/png".to_owned() })
+    Some(ClipboardImage {
+        bytes,
+        mime_type: "image/png".to_owned(),
+    })
 }
 
 // ============================================================================
@@ -393,7 +420,10 @@ pub fn read_clipboard_image() -> Option<ClipboardImage> {
     // Convert unsupported formats (e.g. BMP) to PNG.
     if !is_supported_image_mime_type(&img.mime_type) {
         let png_bytes = convert_to_png(&img.bytes)?;
-        return Some(ClipboardImage { bytes: png_bytes, mime_type: "image/png".to_owned() });
+        return Some(ClipboardImage {
+            bytes: png_bytes,
+            mime_type: "image/png".to_owned(),
+        });
     }
 
     Some(img)
@@ -434,10 +464,7 @@ mod tests {
     #[test]
     fn select_preferred_falls_back_to_any_image() {
         let types = vec!["image/tiff".to_owned(), "text/html".to_owned()];
-        assert_eq!(
-            select_preferred_mime_type(&types).unwrap(),
-            "image/tiff"
-        );
+        assert_eq!(select_preferred_mime_type(&types).unwrap(), "image/tiff");
     }
 
     #[test]

@@ -43,26 +43,86 @@ pub struct BuiltinSlashCommand {
 
 /// All built-in slash commands, mirroring `BUILTIN_SLASH_COMMANDS` in slash-commands.ts.
 pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
-    BuiltinSlashCommand { name: "settings",       description: "Open settings menu" },
-    BuiltinSlashCommand { name: "model",           description: "Select model (opens selector UI)" },
-    BuiltinSlashCommand { name: "scoped-models",   description: "Enable/disable models for Ctrl+P cycling" },
-    BuiltinSlashCommand { name: "export",          description: "Export session (HTML default, or specify path: .html/.jsonl)" },
-    BuiltinSlashCommand { name: "import",          description: "Import and resume a session from a JSONL file" },
-    BuiltinSlashCommand { name: "share",           description: "Share session as a secret GitHub gist" },
-    BuiltinSlashCommand { name: "copy",            description: "Copy last agent message to clipboard" },
-    BuiltinSlashCommand { name: "name",            description: "Set session display name" },
-    BuiltinSlashCommand { name: "session",         description: "Show session info and stats" },
-    BuiltinSlashCommand { name: "changelog",       description: "Show changelog entries" },
-    BuiltinSlashCommand { name: "hotkeys",         description: "Show all keyboard shortcuts" },
-    BuiltinSlashCommand { name: "fork",            description: "Create a new fork from a previous message" },
-    BuiltinSlashCommand { name: "tree",            description: "Navigate session tree (switch branches)" },
-    BuiltinSlashCommand { name: "login",           description: "Login with OAuth provider" },
-    BuiltinSlashCommand { name: "logout",          description: "Logout from OAuth provider" },
-    BuiltinSlashCommand { name: "new",             description: "Start a new session" },
-    BuiltinSlashCommand { name: "compact",         description: "Manually compact the session context" },
-    BuiltinSlashCommand { name: "resume",          description: "Resume a different session" },
-    BuiltinSlashCommand { name: "reload",          description: "Reload keybindings, extensions, skills, prompts, and themes" },
-    BuiltinSlashCommand { name: "quit",            description: "Quit sage" },
+    BuiltinSlashCommand {
+        name: "settings",
+        description: "Open settings menu",
+    },
+    BuiltinSlashCommand {
+        name: "model",
+        description: "Select model (opens selector UI)",
+    },
+    BuiltinSlashCommand {
+        name: "scoped-models",
+        description: "Enable/disable models for Ctrl+P cycling",
+    },
+    BuiltinSlashCommand {
+        name: "export",
+        description: "Export session (HTML default, or specify path: .html/.jsonl)",
+    },
+    BuiltinSlashCommand {
+        name: "import",
+        description: "Import and resume a session from a JSONL file",
+    },
+    BuiltinSlashCommand {
+        name: "share",
+        description: "Share session as a secret GitHub gist",
+    },
+    BuiltinSlashCommand {
+        name: "copy",
+        description: "Copy last agent message to clipboard",
+    },
+    BuiltinSlashCommand {
+        name: "name",
+        description: "Set session display name",
+    },
+    BuiltinSlashCommand {
+        name: "session",
+        description: "Show session info and stats",
+    },
+    BuiltinSlashCommand {
+        name: "changelog",
+        description: "Show changelog entries",
+    },
+    BuiltinSlashCommand {
+        name: "hotkeys",
+        description: "Show all keyboard shortcuts",
+    },
+    BuiltinSlashCommand {
+        name: "fork",
+        description: "Create a new fork from a previous message",
+    },
+    BuiltinSlashCommand {
+        name: "tree",
+        description: "Navigate session tree (switch branches)",
+    },
+    BuiltinSlashCommand {
+        name: "login",
+        description: "Login with OAuth provider",
+    },
+    BuiltinSlashCommand {
+        name: "logout",
+        description: "Logout from OAuth provider",
+    },
+    BuiltinSlashCommand {
+        name: "new",
+        description: "Start a new session",
+    },
+    BuiltinSlashCommand {
+        name: "compact",
+        description: "Manually compact the session context",
+    },
+    BuiltinSlashCommand {
+        name: "resume",
+        description: "Resume a different session",
+    },
+    BuiltinSlashCommand {
+        name: "reload",
+        description: "Reload keybindings, extensions, skills, prompts, and themes",
+    },
+    BuiltinSlashCommand {
+        name: "quit",
+        description: "Quit sage",
+    },
 ];
 
 /// Find a built-in slash command by name.
@@ -95,7 +155,11 @@ mod tests {
     fn all_builtins_have_nonempty_name_and_description() {
         for cmd in BUILTIN_SLASH_COMMANDS {
             assert!(!cmd.name.is_empty(), "Command has empty name");
-            assert!(!cmd.description.is_empty(), "Command '{}' has empty description", cmd.name);
+            assert!(
+                !cmd.description.is_empty(),
+                "Command '{}' has empty description",
+                cmd.name
+            );
         }
     }
 
@@ -122,7 +186,11 @@ mod tests {
     fn builtin_names_are_unique() {
         let mut seen = std::collections::HashSet::new();
         for cmd in BUILTIN_SLASH_COMMANDS {
-            assert!(seen.insert(cmd.name), "Duplicate builtin command: {}", cmd.name);
+            assert!(
+                seen.insert(cmd.name),
+                "Duplicate builtin command: {}",
+                cmd.name
+            );
         }
     }
 }

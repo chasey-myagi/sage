@@ -10,18 +10,18 @@
 
 // Sub-modules (one per tool source file, mirroring pi-mono tool files)
 pub mod bash;
-pub mod read;
-pub mod write;
 pub mod edit;
 pub mod edit_diff;
+pub mod file_mutation_queue;
 pub mod find;
 pub mod grep;
 pub mod ls;
 pub mod path_utils;
+pub mod read;
 pub mod render_utils;
-pub mod truncate;
-pub mod file_mutation_queue;
 pub mod tool_definition_wrapper;
+pub mod truncate;
+pub mod write;
 
 use std::collections::HashMap;
 
@@ -370,17 +370,17 @@ pub fn coding_llm_tools() -> Vec<LlmTool> {
 ///
 /// Mirrors pi-mono's `createReadOnlyToolDefinitions`.
 pub fn read_only_llm_tools() -> Vec<LlmTool> {
-    llm_tools_for(&[
-        ToolName::Read,
-        ToolName::Grep,
-        ToolName::Find,
-        ToolName::Ls,
-    ])
+    llm_tools_for(&[ToolName::Read, ToolName::Grep, ToolName::Find, ToolName::Ls])
 }
 
 /// The default set of coding tools (read, bash, edit, write).
 pub fn default_coding_tools() -> Vec<ToolName> {
-    vec![ToolName::Read, ToolName::Bash, ToolName::Edit, ToolName::Write]
+    vec![
+        ToolName::Read,
+        ToolName::Bash,
+        ToolName::Edit,
+        ToolName::Write,
+    ]
 }
 
 /// Read-only tool set (read, grep, find, ls).
@@ -443,7 +443,10 @@ mod tests {
         let tools = super::read_only_tools();
         let descs = all_tool_descriptors();
         for t in &tools {
-            assert!(!descs[t].mutating, "{t} should not be mutating in read-only set");
+            assert!(
+                !descs[t].mutating,
+                "{t} should not be mutating in read-only set"
+            );
         }
     }
 
@@ -484,69 +487,150 @@ mod tests {
     fn bash_description_matches_pi_mono() {
         let descs = all_tool_descriptors();
         let desc = descs[&ToolName::Bash].description;
-        assert!(desc.contains("Execute a bash command"), "bash description should start with 'Execute a bash command'");
-        assert!(desc.contains("2000 lines"), "bash description should mention 2000 lines");
-        assert!(desc.contains("50KB"), "bash description should mention 50KB");
-        assert!(desc.contains("timeout"), "bash description should mention timeout");
+        assert!(
+            desc.contains("Execute a bash command"),
+            "bash description should start with 'Execute a bash command'"
+        );
+        assert!(
+            desc.contains("2000 lines"),
+            "bash description should mention 2000 lines"
+        );
+        assert!(
+            desc.contains("50KB"),
+            "bash description should mention 50KB"
+        );
+        assert!(
+            desc.contains("timeout"),
+            "bash description should mention timeout"
+        );
     }
 
     #[test]
     fn read_description_matches_pi_mono() {
         let descs = all_tool_descriptors();
         let desc = descs[&ToolName::Read].description;
-        assert!(desc.contains("Read the contents of a file"), "read description mismatch");
-        assert!(desc.contains("jpg, png, gif, webp"), "read description should list image formats");
-        assert!(desc.contains("2000 lines"), "read description should mention 2000 lines");
-        assert!(desc.contains("50KB"), "read description should mention 50KB");
-        assert!(desc.contains("offset"), "read description should mention offset");
+        assert!(
+            desc.contains("Read the contents of a file"),
+            "read description mismatch"
+        );
+        assert!(
+            desc.contains("jpg, png, gif, webp"),
+            "read description should list image formats"
+        );
+        assert!(
+            desc.contains("2000 lines"),
+            "read description should mention 2000 lines"
+        );
+        assert!(
+            desc.contains("50KB"),
+            "read description should mention 50KB"
+        );
+        assert!(
+            desc.contains("offset"),
+            "read description should mention offset"
+        );
     }
 
     #[test]
     fn write_description_matches_pi_mono() {
         let descs = all_tool_descriptors();
         let desc = descs[&ToolName::Write].description;
-        assert!(desc.contains("Write content to a file"), "write description mismatch");
-        assert!(desc.contains("parent directories"), "write description should mention parent directories");
+        assert!(
+            desc.contains("Write content to a file"),
+            "write description mismatch"
+        );
+        assert!(
+            desc.contains("parent directories"),
+            "write description should mention parent directories"
+        );
     }
 
     #[test]
     fn edit_description_matches_pi_mono() {
         let descs = all_tool_descriptors();
         let desc = descs[&ToolName::Edit].description;
-        assert!(desc.contains("Edit a file by replacing exact text"), "edit description mismatch");
-        assert!(desc.contains("whitespace"), "edit description should mention whitespace");
-        assert!(desc.contains("surgical"), "edit description should mention surgical");
+        assert!(
+            desc.contains("Edit a file by replacing exact text"),
+            "edit description mismatch"
+        );
+        assert!(
+            desc.contains("whitespace"),
+            "edit description should mention whitespace"
+        );
+        assert!(
+            desc.contains("surgical"),
+            "edit description should mention surgical"
+        );
     }
 
     #[test]
     fn grep_description_matches_pi_mono() {
         let descs = all_tool_descriptors();
         let desc = descs[&ToolName::Grep].description;
-        assert!(desc.contains("Search file contents for a pattern"), "grep description mismatch");
-        assert!(desc.contains(".gitignore"), "grep description should mention .gitignore");
-        assert!(desc.contains("100 matches"), "grep description should mention 100 matches limit");
-        assert!(desc.contains("50KB"), "grep description should mention 50KB");
-        assert!(desc.contains("500 chars"), "grep description should mention 500 chars line truncation");
+        assert!(
+            desc.contains("Search file contents for a pattern"),
+            "grep description mismatch"
+        );
+        assert!(
+            desc.contains(".gitignore"),
+            "grep description should mention .gitignore"
+        );
+        assert!(
+            desc.contains("100 matches"),
+            "grep description should mention 100 matches limit"
+        );
+        assert!(
+            desc.contains("50KB"),
+            "grep description should mention 50KB"
+        );
+        assert!(
+            desc.contains("500 chars"),
+            "grep description should mention 500 chars line truncation"
+        );
     }
 
     #[test]
     fn find_description_matches_pi_mono() {
         let descs = all_tool_descriptors();
         let desc = descs[&ToolName::Find].description;
-        assert!(desc.contains("Search for files by glob pattern"), "find description mismatch");
-        assert!(desc.contains(".gitignore"), "find description should mention .gitignore");
-        assert!(desc.contains("1000 results"), "find description should mention 1000 results");
-        assert!(desc.contains("50KB"), "find description should mention 50KB");
+        assert!(
+            desc.contains("Search for files by glob pattern"),
+            "find description mismatch"
+        );
+        assert!(
+            desc.contains(".gitignore"),
+            "find description should mention .gitignore"
+        );
+        assert!(
+            desc.contains("1000 results"),
+            "find description should mention 1000 results"
+        );
+        assert!(
+            desc.contains("50KB"),
+            "find description should mention 50KB"
+        );
     }
 
     #[test]
     fn ls_description_matches_pi_mono() {
         let descs = all_tool_descriptors();
         let desc = descs[&ToolName::Ls].description;
-        assert!(desc.contains("List directory contents"), "ls description mismatch");
-        assert!(desc.contains("alphabetically"), "ls description should mention alphabetically");
-        assert!(desc.contains("dotfiles"), "ls description should mention dotfiles");
-        assert!(desc.contains("500 entries"), "ls description should mention 500 entries");
+        assert!(
+            desc.contains("List directory contents"),
+            "ls description mismatch"
+        );
+        assert!(
+            desc.contains("alphabetically"),
+            "ls description should mention alphabetically"
+        );
+        assert!(
+            desc.contains("dotfiles"),
+            "ls description should mention dotfiles"
+        );
+        assert!(
+            desc.contains("500 entries"),
+            "ls description should mention 500 entries"
+        );
         assert!(desc.contains("50KB"), "ls description should mention 50KB");
     }
 
@@ -661,7 +745,10 @@ mod tests {
     fn read_schema_offset_is_number() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Read].parameters;
-        assert_eq!(schema["properties"]["offset"]["type"].as_str(), Some("number"));
+        assert_eq!(
+            schema["properties"]["offset"]["type"].as_str(),
+            Some("number")
+        );
     }
 
     /// read has limit
@@ -669,7 +756,10 @@ mod tests {
     fn read_schema_limit_is_number() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Read].parameters;
-        assert_eq!(schema["properties"]["limit"]["type"].as_str(), Some("number"));
+        assert_eq!(
+            schema["properties"]["limit"]["type"].as_str(),
+            Some("number")
+        );
     }
 
     /// read schema path is string
@@ -677,7 +767,10 @@ mod tests {
     fn read_schema_path_is_string() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Read].parameters;
-        assert_eq!(schema["properties"]["path"]["type"].as_str(), Some("string"));
+        assert_eq!(
+            schema["properties"]["path"]["type"].as_str(),
+            Some("string")
+        );
     }
 
     /// write schema path is string
@@ -685,7 +778,10 @@ mod tests {
     fn write_schema_path_is_string() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Write].parameters;
-        assert_eq!(schema["properties"]["path"]["type"].as_str(), Some("string"));
+        assert_eq!(
+            schema["properties"]["path"]["type"].as_str(),
+            Some("string")
+        );
     }
 
     /// write schema content is string
@@ -693,7 +789,10 @@ mod tests {
     fn write_schema_content_is_string() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Write].parameters;
-        assert_eq!(schema["properties"]["content"]["type"].as_str(), Some("string"));
+        assert_eq!(
+            schema["properties"]["content"]["type"].as_str(),
+            Some("string")
+        );
     }
 
     /// edit schema path is string
@@ -701,7 +800,10 @@ mod tests {
     fn edit_schema_path_is_string() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Edit].parameters;
-        assert_eq!(schema["properties"]["path"]["type"].as_str(), Some("string"));
+        assert_eq!(
+            schema["properties"]["path"]["type"].as_str(),
+            Some("string")
+        );
     }
 
     /// edit schema oldText is string
@@ -709,7 +811,10 @@ mod tests {
     fn edit_schema_old_text_is_string() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Edit].parameters;
-        assert_eq!(schema["properties"]["oldText"]["type"].as_str(), Some("string"));
+        assert_eq!(
+            schema["properties"]["oldText"]["type"].as_str(),
+            Some("string")
+        );
     }
 
     /// edit schema newText is string
@@ -717,7 +822,10 @@ mod tests {
     fn edit_schema_new_text_is_string() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Edit].parameters;
-        assert_eq!(schema["properties"]["newText"]["type"].as_str(), Some("string"));
+        assert_eq!(
+            schema["properties"]["newText"]["type"].as_str(),
+            Some("string")
+        );
     }
 
     /// bash schema command is string
@@ -725,7 +833,10 @@ mod tests {
     fn bash_schema_command_is_string() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Bash].parameters;
-        assert_eq!(schema["properties"]["command"]["type"].as_str(), Some("string"));
+        assert_eq!(
+            schema["properties"]["command"]["type"].as_str(),
+            Some("string")
+        );
     }
 
     /// bash schema timeout is number
@@ -733,7 +844,10 @@ mod tests {
     fn bash_schema_timeout_is_number() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Bash].parameters;
-        assert_eq!(schema["properties"]["timeout"]["type"].as_str(), Some("number"));
+        assert_eq!(
+            schema["properties"]["timeout"]["type"].as_str(),
+            Some("number")
+        );
     }
 
     /// grep schema pattern is string
@@ -741,7 +855,10 @@ mod tests {
     fn grep_schema_pattern_is_string() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Grep].parameters;
-        assert_eq!(schema["properties"]["pattern"]["type"].as_str(), Some("string"));
+        assert_eq!(
+            schema["properties"]["pattern"]["type"].as_str(),
+            Some("string")
+        );
     }
 
     /// grep schema ignoreCase is boolean
@@ -749,7 +866,10 @@ mod tests {
     fn grep_schema_ignore_case_is_boolean() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Grep].parameters;
-        assert_eq!(schema["properties"]["ignoreCase"]["type"].as_str(), Some("boolean"));
+        assert_eq!(
+            schema["properties"]["ignoreCase"]["type"].as_str(),
+            Some("boolean")
+        );
     }
 
     /// grep schema literal is boolean
@@ -757,7 +877,10 @@ mod tests {
     fn grep_schema_literal_is_boolean() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Grep].parameters;
-        assert_eq!(schema["properties"]["literal"]["type"].as_str(), Some("boolean"));
+        assert_eq!(
+            schema["properties"]["literal"]["type"].as_str(),
+            Some("boolean")
+        );
     }
 
     /// grep schema context is number
@@ -765,7 +888,10 @@ mod tests {
     fn grep_schema_context_is_number() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Grep].parameters;
-        assert_eq!(schema["properties"]["context"]["type"].as_str(), Some("number"));
+        assert_eq!(
+            schema["properties"]["context"]["type"].as_str(),
+            Some("number")
+        );
     }
 
     /// grep schema limit is number
@@ -773,7 +899,10 @@ mod tests {
     fn grep_schema_limit_is_number() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Grep].parameters;
-        assert_eq!(schema["properties"]["limit"]["type"].as_str(), Some("number"));
+        assert_eq!(
+            schema["properties"]["limit"]["type"].as_str(),
+            Some("number")
+        );
     }
 
     /// grep schema glob is string
@@ -781,7 +910,10 @@ mod tests {
     fn grep_schema_glob_is_string() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Grep].parameters;
-        assert_eq!(schema["properties"]["glob"]["type"].as_str(), Some("string"));
+        assert_eq!(
+            schema["properties"]["glob"]["type"].as_str(),
+            Some("string")
+        );
     }
 
     /// find schema pattern is string
@@ -789,7 +921,10 @@ mod tests {
     fn find_schema_pattern_is_string() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Find].parameters;
-        assert_eq!(schema["properties"]["pattern"]["type"].as_str(), Some("string"));
+        assert_eq!(
+            schema["properties"]["pattern"]["type"].as_str(),
+            Some("string")
+        );
     }
 
     /// find schema limit is number
@@ -797,7 +932,10 @@ mod tests {
     fn find_schema_limit_is_number() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Find].parameters;
-        assert_eq!(schema["properties"]["limit"]["type"].as_str(), Some("number"));
+        assert_eq!(
+            schema["properties"]["limit"]["type"].as_str(),
+            Some("number")
+        );
     }
 
     /// find schema path is string
@@ -805,7 +943,10 @@ mod tests {
     fn find_schema_path_is_string() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Find].parameters;
-        assert_eq!(schema["properties"]["path"]["type"].as_str(), Some("string"));
+        assert_eq!(
+            schema["properties"]["path"]["type"].as_str(),
+            Some("string")
+        );
     }
 
     /// ls schema limit is number
@@ -813,7 +954,10 @@ mod tests {
     fn ls_schema_limit_is_number() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Ls].parameters;
-        assert_eq!(schema["properties"]["limit"]["type"].as_str(), Some("number"));
+        assert_eq!(
+            schema["properties"]["limit"]["type"].as_str(),
+            Some("number")
+        );
     }
 
     /// ls schema path is string
@@ -821,7 +965,10 @@ mod tests {
     fn ls_schema_path_is_string() {
         let descs = all_tool_descriptors();
         let schema = &descs[&ToolName::Ls].parameters;
-        assert_eq!(schema["properties"]["path"]["type"].as_str(), Some("string"));
+        assert_eq!(
+            schema["properties"]["path"]["type"].as_str(),
+            Some("string")
+        );
     }
 
     /// all_tool_descriptors maps ToolName → ToolDescriptor correctly
@@ -851,11 +998,7 @@ mod tests {
     /// resolve_tools deduplicates names
     #[test]
     fn resolve_tools_deduplicates() {
-        let names = vec![
-            "read".to_string(),
-            "read".to_string(),
-            "bash".to_string(),
-        ];
+        let names = vec!["read".to_string(), "read".to_string(), "bash".to_string()];
         let (tools, warnings) = resolve_tools(&names);
         // Both are valid → no warnings, but duplicates are included as-is
         assert!(warnings.is_empty());

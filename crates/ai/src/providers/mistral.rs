@@ -108,7 +108,7 @@ impl ApiProvider for MistralProvider {
             Err(e) => {
                 return vec![AssistantMessageEvent::Error(format!(
                     "HTTP request failed: {e}"
-                ))]
+                ))];
             }
         };
 
@@ -128,7 +128,9 @@ impl ApiProvider for MistralProvider {
             let chunk = match chunk_result {
                 Ok(b) => b,
                 Err(e) => {
-                    events.push(AssistantMessageEvent::Error(format!("Stream read error: {e}")));
+                    events.push(AssistantMessageEvent::Error(format!(
+                        "Stream read error: {e}"
+                    )));
                     break;
                 }
             };
@@ -211,7 +213,11 @@ fn derive_mistral_tool_call_id(id: &str, attempt: u32) -> String {
     if attempt == 0 && normalized.len() == MISTRAL_TOOL_CALL_ID_LENGTH {
         return normalized;
     }
-    let seed_base = if normalized.is_empty() { id } else { &normalized };
+    let seed_base = if normalized.is_empty() {
+        id
+    } else {
+        &normalized
+    };
     let seed = if attempt == 0 {
         seed_base.to_string()
     } else {
@@ -267,7 +273,9 @@ fn build_messages(
 
             LlmMessage::User { content } => {
                 // Check for images
-                let had_images = content.iter().any(|c| matches!(c, LlmContent::Image { .. }));
+                let had_images = content
+                    .iter()
+                    .any(|c| matches!(c, LlmContent::Image { .. }));
 
                 // Build content chunks
                 let chunks: Vec<Value> = content
@@ -327,8 +335,8 @@ fn build_messages(
                 // Tool calls
                 for tc in tool_calls {
                     let normalized_id = normalizer.normalize(&tc.id);
-                    let args: Value = serde_json::from_str(&tc.function.arguments)
-                        .unwrap_or_else(|_| json!({}));
+                    let args: Value =
+                        serde_json::from_str(&tc.function.arguments).unwrap_or_else(|_| json!({}));
                     tcs.push(json!({
                         "id": normalized_id,
                         "type": "function",
@@ -380,7 +388,12 @@ fn build_messages(
 }
 
 /// Build tool result text (pi-mono: buildToolResultText).
-fn build_tool_result_text(text: &str, has_images: bool, supports_images: bool, is_error: bool) -> String {
+fn build_tool_result_text(
+    text: &str,
+    has_images: bool,
+    supports_images: bool,
+    is_error: bool,
+) -> String {
     let trimmed = text.trim();
     let error_prefix = if is_error { "[tool error] " } else { "" };
 
@@ -537,14 +550,27 @@ fn process_sse_line(
         return;
     }
 
-    let choice = match json.get("choices").and_then(|c| c.as_array()).and_then(|a| a.first()) {
+    let choice = match json
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+    {
         Some(c) => c,
         None => {
             // Usage-only chunk (at end of stream)
             if let Some(usage) = json.get("usage") {
-                let input = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                let output = usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                let total = usage.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(input + output);
+                let input = usage
+                    .get("prompt_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let output = usage
+                    .get("completion_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let total = usage
+                    .get("total_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(input + output);
                 events.push(AssistantMessageEvent::Usage(Usage {
                     input,
                     output,
@@ -567,9 +593,18 @@ fn process_sse_line(
 
     // Usage in the chunk (Mistral sometimes sends it here)
     if let Some(usage) = json.get("usage") {
-        let input = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-        let output = usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-        let total = usage.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(input + output);
+        let input = usage
+            .get("prompt_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let output = usage
+            .get("completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let total = usage
+            .get("total_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(input + output);
         if input > 0 || output > 0 {
             events.push(AssistantMessageEvent::Usage(Usage {
                 input,
@@ -600,25 +635,34 @@ fn process_sse_line(
                             Some("text") => {
                                 if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
                                     if !text.is_empty() {
-                                        events.push(AssistantMessageEvent::TextDelta(text.to_string()));
+                                        events.push(AssistantMessageEvent::TextDelta(
+                                            text.to_string(),
+                                        ));
                                     }
                                 }
                             }
                             Some("thinking") => {
                                 // pi-mono: thinking chunks are arrays of {type:"text", text:...}
-                                if let Some(parts) = item.get("thinking").and_then(|t| t.as_array()) {
+                                if let Some(parts) = item.get("thinking").and_then(|t| t.as_array())
+                                {
                                     let thinking_text: String = parts
                                         .iter()
                                         .filter_map(|p| {
-                                            if p.get("type").and_then(|t| t.as_str()) == Some("text") {
-                                                p.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                                            if p.get("type").and_then(|t| t.as_str())
+                                                == Some("text")
+                                            {
+                                                p.get("text")
+                                                    .and_then(|t| t.as_str())
+                                                    .map(|s| s.to_string())
                                             } else {
                                                 None
                                             }
                                         })
                                         .collect();
                                     if !thinking_text.is_empty() {
-                                        events.push(AssistantMessageEvent::ThinkingDelta(thinking_text));
+                                        events.push(AssistantMessageEvent::ThinkingDelta(
+                                            thinking_text,
+                                        ));
                                     }
                                 }
                             }
@@ -765,7 +809,10 @@ mod tests {
 
     #[test]
     fn test_build_tool_result_text_plain() {
-        assert_eq!(build_tool_result_text("hello", false, false, false), "hello");
+        assert_eq!(
+            build_tool_result_text("hello", false, false, false),
+            "hello"
+        );
     }
 
     #[test]
@@ -778,7 +825,10 @@ mod tests {
 
     #[test]
     fn test_build_tool_result_text_empty() {
-        assert_eq!(build_tool_result_text("", false, false, false), "(no tool output)");
+        assert_eq!(
+            build_tool_result_text("", false, false, false),
+            "(no tool output)"
+        );
     }
 
     #[test]

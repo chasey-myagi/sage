@@ -1,5 +1,4 @@
 /// Terminal image support: Kitty and iTerm2 image protocols.
-
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -40,7 +39,10 @@ pub struct ImageRenderOptions {
 }
 
 static CACHED_CAPABILITIES: Mutex<Option<TerminalCapabilities>> = Mutex::new(None);
-static CELL_DIMENSIONS: Mutex<CellDimensions> = Mutex::new(CellDimensions { width_px: 9, height_px: 18 });
+static CELL_DIMENSIONS: Mutex<CellDimensions> = Mutex::new(CellDimensions {
+    width_px: 9,
+    height_px: 18,
+});
 
 pub fn get_cell_dimensions() -> CellDimensions {
     *CELL_DIMENSIONS.lock().unwrap()
@@ -56,7 +58,9 @@ pub fn detect_capabilities() -> TerminalCapabilities {
         .unwrap_or_default()
         .to_lowercase();
     let term = std::env::var("TERM").unwrap_or_default().to_lowercase();
-    let color_term = std::env::var("COLORTERM").unwrap_or_default().to_lowercase();
+    let color_term = std::env::var("COLORTERM")
+        .unwrap_or_default()
+        .to_lowercase();
 
     if std::env::var("KITTY_WINDOW_ID").is_ok() || term_program == "kitty" {
         return TerminalCapabilities {
@@ -66,7 +70,10 @@ pub fn detect_capabilities() -> TerminalCapabilities {
         };
     }
 
-    if term_program == "ghostty" || term.contains("ghostty") || std::env::var("GHOSTTY_RESOURCES_DIR").is_ok() {
+    if term_program == "ghostty"
+        || term.contains("ghostty")
+        || std::env::var("GHOSTTY_RESOURCES_DIR").is_ok()
+    {
         return TerminalCapabilities {
             images: Some(ImageProtocol::Kitty),
             true_color: true,
@@ -233,8 +240,16 @@ fn base64_encode(data: &[u8]) -> String {
         let n = (b0 << 16) | (b1 << 8) | b2;
         result.push(CHARS[((n >> 18) & 63) as usize] as char);
         result.push(CHARS[((n >> 12) & 63) as usize] as char);
-        result.push(if chunk.len() > 1 { CHARS[((n >> 6) & 63) as usize] as char } else { '=' });
-        result.push(if chunk.len() > 2 { CHARS[(n & 63) as usize] as char } else { '=' });
+        result.push(if chunk.len() > 1 {
+            CHARS[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        result.push(if chunk.len() > 2 {
+            CHARS[(n & 63) as usize] as char
+        } else {
+            '='
+        });
     }
     result
 }
@@ -263,7 +278,10 @@ pub fn get_png_dimensions(base64_data: &str) -> Option<ImageDimensions> {
     }
     let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
     let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
-    Some(ImageDimensions { width_px: width, height_px: height })
+    Some(ImageDimensions {
+        width_px: width,
+        height_px: height,
+    })
 }
 
 /// Parse JPEG dimensions from base64-encoded data.
@@ -285,7 +303,10 @@ pub fn get_jpeg_dimensions(base64_data: &str) -> Option<ImageDimensions> {
             }
             let height = u16::from_be_bytes([bytes[offset + 5], bytes[offset + 6]]) as u32;
             let width = u16::from_be_bytes([bytes[offset + 7], bytes[offset + 8]]) as u32;
-            return Some(ImageDimensions { width_px: width, height_px: height });
+            return Some(ImageDimensions {
+                width_px: width,
+                height_px: height,
+            });
         }
         if offset + 3 >= bytes.len() {
             return None;
@@ -311,7 +332,10 @@ pub fn get_gif_dimensions(base64_data: &str) -> Option<ImageDimensions> {
     }
     let width = u16::from_le_bytes([bytes[6], bytes[7]]) as u32;
     let height = u16::from_le_bytes([bytes[8], bytes[9]]) as u32;
-    Some(ImageDimensions { width_px: width, height_px: height })
+    Some(ImageDimensions {
+        width_px: width,
+        height_px: height,
+    })
 }
 
 /// Parse WebP dimensions from base64-encoded data.
@@ -333,7 +357,10 @@ pub fn get_webp_dimensions(base64_data: &str) -> Option<ImageDimensions> {
             }
             let width = (u16::from_le_bytes([bytes[26], bytes[27]]) & 0x3fff) as u32;
             let height = (u16::from_le_bytes([bytes[28], bytes[29]]) & 0x3fff) as u32;
-            Some(ImageDimensions { width_px: width, height_px: height })
+            Some(ImageDimensions {
+                width_px: width,
+                height_px: height,
+            })
         }
         "VP8L" => {
             if bytes.len() < 25 {
@@ -342,15 +369,23 @@ pub fn get_webp_dimensions(base64_data: &str) -> Option<ImageDimensions> {
             let bits = u32::from_le_bytes([bytes[21], bytes[22], bytes[23], bytes[24]]);
             let width = (bits & 0x3fff) + 1;
             let height = ((bits >> 14) & 0x3fff) + 1;
-            Some(ImageDimensions { width_px: width, height_px: height })
+            Some(ImageDimensions {
+                width_px: width,
+                height_px: height,
+            })
         }
         "VP8X" => {
             if bytes.len() < 30 {
                 return None;
             }
-            let width = (bytes[24] as u32 | ((bytes[25] as u32) << 8) | ((bytes[26] as u32) << 16)) + 1;
-            let height = (bytes[27] as u32 | ((bytes[28] as u32) << 8) | ((bytes[29] as u32) << 16)) + 1;
-            Some(ImageDimensions { width_px: width, height_px: height })
+            let width =
+                (bytes[24] as u32 | ((bytes[25] as u32) << 8) | ((bytes[26] as u32) << 16)) + 1;
+            let height =
+                (bytes[27] as u32 | ((bytes[28] as u32) << 8) | ((bytes[29] as u32) << 16)) + 1;
+            Some(ImageDimensions {
+                width_px: width,
+                height_px: height,
+            })
         }
         _ => None,
     }
@@ -437,8 +472,14 @@ mod tests {
 
     #[test]
     fn test_calculate_image_rows() {
-        let img = ImageDimensions { width_px: 100, height_px: 100 };
-        let cell = CellDimensions { width_px: 10, height_px: 20 };
+        let img = ImageDimensions {
+            width_px: 100,
+            height_px: 100,
+        };
+        let cell = CellDimensions {
+            width_px: 10,
+            height_px: 20,
+        };
         // target_width_cells=10, target_width_px=100, scale=1.0, scaled_height=100, rows=ceil(100/20)=5
         assert_eq!(calculate_image_rows(img, 10, cell), 5);
     }
@@ -458,7 +499,10 @@ mod tests {
 
     #[test]
     fn test_image_fallback_with_dims() {
-        let dims = ImageDimensions { width_px: 800, height_px: 600 };
+        let dims = ImageDimensions {
+            width_px: 800,
+            height_px: 600,
+        };
         let s = image_fallback("image/jpeg", Some(dims), Some("photo.jpg"));
         assert!(s.contains("photo.jpg"));
         assert!(s.contains("800x600"));
@@ -472,13 +516,19 @@ mod tests {
 
     #[test]
     fn test_cell_dimensions() {
-        let dims = CellDimensions { width_px: 12, height_px: 24 };
+        let dims = CellDimensions {
+            width_px: 12,
+            height_px: 24,
+        };
         set_cell_dimensions(dims);
         let got = get_cell_dimensions();
         assert_eq!(got.width_px, 12);
         assert_eq!(got.height_px, 24);
         // Reset to default
-        set_cell_dimensions(CellDimensions { width_px: 9, height_px: 18 });
+        set_cell_dimensions(CellDimensions {
+            width_px: 9,
+            height_px: 18,
+        });
     }
 
     // =========================================================================
@@ -545,7 +595,8 @@ mod tests {
     fn test_is_image_line_terminal_without_image_support() {
         // Bug fix test: even when "terminal doesn't support images",
         // is_image_line should still return true for lines containing sequences.
-        let line = "Read image file [image/jpeg]\x1b]1337;File=size=800,600;inline=1:base64data...\x07";
+        let line =
+            "Read image file [image/jpeg]\x1b]1337;File=size=800,600;inline=1:base64data...\x07";
         assert!(is_image_line(line));
     }
 
@@ -634,7 +685,11 @@ mod tests {
             format!("Text before \x1b_Ga=T,f=100{} text after", "A".repeat(3000)),
         ];
         for line in &scenarios {
-            assert!(is_image_line(line), "Should detect Kitty sequence: {:.50}", line);
+            assert!(
+                is_image_line(line),
+                "Should detect Kitty sequence: {:.50}",
+                line
+            );
         }
     }
 
@@ -645,16 +700,24 @@ mod tests {
             "Prefix \x1b]1337;File=inline=1:data==\x07".to_string(),
             "Suffix text \x1b]1337;File=inline=1:data==\x07 suffix".to_string(),
             "Middle \x1b]1337;File=inline=1:data==\x07 more text".to_string(),
-            format!("Text before \x1b]1337;File=size=800,600;inline=1:{} text after", "B".repeat(3000)),
+            format!(
+                "Text before \x1b]1337;File=size=800,600;inline=1:{} text after",
+                "B".repeat(3000)
+            ),
         ];
         for line in &scenarios {
-            assert!(is_image_line(line), "Should detect iTerm2 sequence: {:.50}", line);
+            assert!(
+                is_image_line(line),
+                "Should detect iTerm2 sequence: {:.50}",
+                line
+            );
         }
     }
 
     #[test]
     fn test_is_image_line_tool_output() {
-        let line = "Read image file [image/jpeg]\x1b]1337;File=size=800,600;inline=1:base64image...\x07";
+        let line =
+            "Read image file [image/jpeg]\x1b]1337;File=size=800,600;inline=1:base64image...\x07";
         assert!(is_image_line(line));
     }
 
@@ -666,7 +729,11 @@ mod tests {
         // iterm2_seq is ~36 chars, prefix "Output: " is 8, suffix " end of output" is 15
         // So we need 300000 - 8 - 36 - 15 = 299941 "A"s
         let crash_line = format!("Output: {}{} end of output", iterm2_seq, "A".repeat(300000));
-        assert!(crash_line.len() > 300000, "line should be > 300000 chars, got {}", crash_line.len());
+        assert!(
+            crash_line.len() > 300000,
+            "line should be > 300000 chars, got {}",
+            crash_line.len()
+        );
         assert!(is_image_line(&crash_line));
     }
 
@@ -685,7 +752,11 @@ mod tests {
             "./_G_test_file.txt",
         ];
         for path in &paths {
-            assert!(!is_image_line(path), "Should not falsely detect image in path: {}", path);
+            assert!(
+                !is_image_line(path),
+                "Should not falsely detect image in path: {}",
+                path
+            );
         }
     }
 }

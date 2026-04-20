@@ -69,7 +69,11 @@ impl EnabledIds {
                 if let Some(targets) = target_ids {
                     let target_set: HashSet<&str> = targets.iter().map(|s| s.as_str()).collect();
                     EnabledIds::List(
-                        all_ids.iter().filter(|id| !target_set.contains(id.as_str())).cloned().collect(),
+                        all_ids
+                            .iter()
+                            .filter(|id| !target_set.contains(id.as_str()))
+                            .cloned()
+                            .collect(),
                     )
                 } else {
                     EnabledIds::List(vec![])
@@ -224,7 +228,12 @@ impl ScopedModelsSelectorComponent {
                 .filter(|item| {
                     item.id.to_lowercase().contains(&query)
                         || item.provider.to_lowercase().contains(&query)
-                        || item.name.as_deref().unwrap_or("").to_lowercase().contains(&query)
+                        || item
+                            .name
+                            .as_deref()
+                            .unwrap_or("")
+                            .to_lowercase()
+                            .contains(&query)
                 })
                 .collect()
         };
@@ -252,12 +261,20 @@ impl ScopedModelsSelectorComponent {
     /// Enable all (filtered or all).
     pub fn enable_all(&mut self) {
         let target_ids: Option<Vec<String>> = if !self.search_query.is_empty() {
-            Some(self.filtered_items.iter().map(|i| i.full_id.clone()).collect())
+            Some(
+                self.filtered_items
+                    .iter()
+                    .map(|i| i.full_id.clone())
+                    .collect(),
+            )
         } else {
             None
         };
         let all_ids = self.all_ids.clone();
-        self.enabled_ids = self.enabled_ids.clone().enable_all(&all_ids, target_ids.as_deref());
+        self.enabled_ids = self
+            .enabled_ids
+            .clone()
+            .enable_all(&all_ids, target_ids.as_deref());
         self.is_dirty = true;
         let target = target_ids.unwrap_or_else(|| self.all_ids.clone());
         (self.callbacks.on_enable_all)(target);
@@ -267,12 +284,20 @@ impl ScopedModelsSelectorComponent {
     /// Clear all (filtered or all).
     pub fn clear_all(&mut self) {
         let target_ids: Option<Vec<String>> = if !self.search_query.is_empty() {
-            Some(self.filtered_items.iter().map(|i| i.full_id.clone()).collect())
+            Some(
+                self.filtered_items
+                    .iter()
+                    .map(|i| i.full_id.clone())
+                    .collect(),
+            )
         } else {
             None
         };
         let all_ids = self.all_ids.clone();
-        self.enabled_ids = self.enabled_ids.clone().clear_all(&all_ids, target_ids.as_deref());
+        self.enabled_ids = self
+            .enabled_ids
+            .clone()
+            .clear_all(&all_ids, target_ids.as_deref());
         self.is_dirty = true;
         (self.callbacks.on_clear_all)();
         self.refresh();
@@ -285,15 +310,26 @@ impl ScopedModelsSelectorComponent {
             let provider_ids: Vec<String> = self
                 .all_ids
                 .iter()
-                .filter(|id| self.models_by_id.get(*id).map(|m| m.provider == provider).unwrap_or(false))
+                .filter(|id| {
+                    self.models_by_id
+                        .get(*id)
+                        .map(|m| m.provider == provider)
+                        .unwrap_or(false)
+                })
                 .cloned()
                 .collect();
-            let all_enabled = provider_ids.iter().all(|id| self.enabled_ids.is_enabled(id));
+            let all_enabled = provider_ids
+                .iter()
+                .all(|id| self.enabled_ids.is_enabled(id));
             let all_ids = self.all_ids.clone();
             self.enabled_ids = if all_enabled {
-                self.enabled_ids.clone().clear_all(&all_ids, Some(&provider_ids))
+                self.enabled_ids
+                    .clone()
+                    .clear_all(&all_ids, Some(&provider_ids))
             } else {
-                self.enabled_ids.clone().enable_all(&all_ids, Some(&provider_ids))
+                self.enabled_ids
+                    .clone()
+                    .enable_all(&all_ids, Some(&provider_ids))
             };
             self.is_dirty = true;
             (self.callbacks.on_toggle_provider)(&provider, provider_ids, !all_enabled);
@@ -341,7 +377,10 @@ impl ScopedModelsSelectorComponent {
         if let Some(item) = self.filtered_items.get(self.selected_index).cloned() {
             if self.enabled_ids.is_enabled(&item.full_id) {
                 let all_ids = self.all_ids.clone();
-                self.enabled_ids = self.enabled_ids.clone().move_id(&all_ids, &item.full_id, delta);
+                self.enabled_ids = self
+                    .enabled_ids
+                    .clone()
+                    .move_id(&all_ids, &item.full_id, delta);
                 self.is_dirty = true;
                 // Move selection by delta to track the moved item
                 let new_sel = self.selected_index as i64 + delta;
@@ -419,7 +458,10 @@ mod tests {
 
     #[test]
     fn initial_all_enabled() {
-        let models = vec![make_model("anthropic", "claude"), make_model("openai", "gpt-4o")];
+        let models = vec![
+            make_model("anthropic", "claude"),
+            make_model("openai", "gpt-4o"),
+        ];
         let comp = ScopedModelsSelectorComponent::new(models, None, make_noop_callbacks());
         assert!(matches!(comp.enabled_ids, EnabledIds::All));
         assert_eq!(comp.filtered_items.len(), 2);
@@ -428,7 +470,10 @@ mod tests {
 
     #[test]
     fn toggle_moves_from_all_to_list() {
-        let models = vec![make_model("anthropic", "claude"), make_model("openai", "gpt-4o")];
+        let models = vec![
+            make_model("anthropic", "claude"),
+            make_model("openai", "gpt-4o"),
+        ];
         let mut comp = ScopedModelsSelectorComponent::new(models, None, make_noop_callbacks());
         comp.toggle_selected();
         assert!(matches!(comp.enabled_ids, EnabledIds::List(_)));
@@ -437,7 +482,10 @@ mod tests {
 
     #[test]
     fn search_filters() {
-        let models = vec![make_model("anthropic", "claude"), make_model("openai", "gpt-4o")];
+        let models = vec![
+            make_model("anthropic", "claude"),
+            make_model("openai", "gpt-4o"),
+        ];
         let mut comp = ScopedModelsSelectorComponent::new(models, None, make_noop_callbacks());
         comp.set_search("claude");
         assert_eq!(comp.filtered_items.len(), 1);

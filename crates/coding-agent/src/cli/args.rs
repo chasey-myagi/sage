@@ -225,10 +225,7 @@ pub fn parse_args(args: &[String], extension_flags: Option<&HashMap<String, Flag
             result.session_dir = Some(args[i].clone());
         } else if arg == "--models" && i + 1 < len {
             i += 1;
-            let patterns = args[i]
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect();
+            let patterns = args[i].split(',').map(|s| s.trim().to_string()).collect();
             result.models = Some(patterns);
         } else if arg == "--no-tools" {
             result.no_tools = true;
@@ -258,7 +255,10 @@ pub fn parse_args(args: &[String], extension_flags: Option<&HashMap<String, Flag
             result.export = Some(args[i].clone());
         } else if (arg == "--extension" || arg == "-e") && i + 1 < len {
             i += 1;
-            result.extensions.get_or_insert_default().push(args[i].clone());
+            result
+                .extensions
+                .get_or_insert_default()
+                .push(args[i].clone());
         } else if arg == "--no-extensions" || arg == "-ne" {
             result.no_extensions = true;
         } else if arg == "--skill" && i + 1 < len {
@@ -266,7 +266,10 @@ pub fn parse_args(args: &[String], extension_flags: Option<&HashMap<String, Flag
             result.skills.get_or_insert_default().push(args[i].clone());
         } else if arg == "--prompt-template" && i + 1 < len {
             i += 1;
-            result.prompt_templates.get_or_insert_default().push(args[i].clone());
+            result
+                .prompt_templates
+                .get_or_insert_default()
+                .push(args[i].clone());
         } else if arg == "--theme" && i + 1 < len {
             i += 1;
             result.themes.get_or_insert_default().push(args[i].clone());
@@ -296,14 +299,15 @@ pub fn parse_args(args: &[String], extension_flags: Option<&HashMap<String, Flag
                 if let Some(flag_type) = flags.get(flag_name) {
                     match flag_type {
                         FlagType::Boolean => {
-                            result.unknown_flags.insert(flag_name.to_string(), FlagValue::Bool(true));
+                            result
+                                .unknown_flags
+                                .insert(flag_name.to_string(), FlagValue::Bool(true));
                         }
                         FlagType::String if i + 1 < len => {
                             i += 1;
-                            result.unknown_flags.insert(
-                                flag_name.to_string(),
-                                FlagValue::Str(args[i].clone()),
-                            );
+                            result
+                                .unknown_flags
+                                .insert(flag_name.to_string(), FlagValue::Str(args[i].clone()));
                         }
                         _ => {}
                     }
@@ -447,7 +451,10 @@ mod tests {
 
     #[test]
     fn parse_model_and_provider() {
-        let args = parse_args(&sv(&["--provider", "anthropic", "--model", "claude-sonnet"]), None);
+        let args = parse_args(
+            &sv(&["--provider", "anthropic", "--model", "claude-sonnet"]),
+            None,
+        );
         assert_eq!(args.provider.as_deref(), Some("anthropic"));
         assert_eq!(args.model.as_deref(), Some("claude-sonnet"));
     }

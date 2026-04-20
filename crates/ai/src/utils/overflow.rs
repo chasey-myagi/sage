@@ -15,23 +15,23 @@ use crate::types::{StopReason, Usage};
 static OVERFLOW_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     // NB: all patterns are case-insensitive (`(?i)`) to match pi-mono's `/i` flag.
     [
-        r"(?i)prompt is too long",                                // Anthropic
-        r"(?i)input is too long for requested model",             // Amazon Bedrock
-        r"(?i)exceeds the context window",                        // OpenAI
-        r"(?i)input token count.*exceeds the maximum",            // Google Gemini
-        r"(?i)maximum prompt length is \d+",                      // xAI (Grok)
-        r"(?i)reduce the length of the messages",                 // Groq
-        r"(?i)maximum context length is \d+ tokens",              // OpenRouter
-        r"(?i)exceeds the limit of \d+",                          // GitHub Copilot
-        r"(?i)exceeds the available context size",                // llama.cpp
-        r"(?i)greater than the context length",                   // LM Studio
-        r"(?i)context window exceeds limit",                      // MiniMax
-        r"(?i)exceeded model token limit",                        // Kimi For Coding
+        r"(?i)prompt is too long",                                  // Anthropic
+        r"(?i)input is too long for requested model",               // Amazon Bedrock
+        r"(?i)exceeds the context window",                          // OpenAI
+        r"(?i)input token count.*exceeds the maximum",              // Google Gemini
+        r"(?i)maximum prompt length is \d+",                        // xAI (Grok)
+        r"(?i)reduce the length of the messages",                   // Groq
+        r"(?i)maximum context length is \d+ tokens",                // OpenRouter
+        r"(?i)exceeds the limit of \d+",                            // GitHub Copilot
+        r"(?i)exceeds the available context size",                  // llama.cpp
+        r"(?i)greater than the context length",                     // LM Studio
+        r"(?i)context window exceeds limit",                        // MiniMax
+        r"(?i)exceeded model token limit",                          // Kimi For Coding
         r"(?i)too large for model with \d+ maximum context length", // Mistral
-        r"(?i)model_context_window_exceeded",                     // z.ai
-        r"(?i)context[_ ]length[_ ]exceeded",                     // generic fallback
-        r"(?i)too many tokens",                                   // generic fallback
-        r"(?i)token limit exceeded",                              // generic fallback
+        r"(?i)model_context_window_exceeded",                       // z.ai
+        r"(?i)context[_ ]length[_ ]exceeded",                       // generic fallback
+        r"(?i)too many tokens",                                     // generic fallback
+        r"(?i)token limit exceeded",                                // generic fallback
     ]
     .iter()
     .map(|p| Regex::new(p).expect("overflow pattern must compile"))
@@ -114,11 +114,7 @@ mod tests {
         }
     }
 
-    fn check<'a>(
-        stop: StopReason,
-        err: Option<&'a str>,
-        u: &'a Usage,
-    ) -> OverflowCheck<'a> {
+    fn check<'a>(stop: StopReason, err: Option<&'a str>, u: &'a Usage) -> OverflowCheck<'a> {
         OverflowCheck {
             stop_reason: stop,
             error_message: err,
@@ -155,7 +151,9 @@ mod tests {
         let u = usage(0, 0);
         let msg = check(
             StopReason::Error,
-            Some("The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)"),
+            Some(
+                "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)",
+            ),
             &u,
         );
         assert!(is_context_overflow(&msg, None));
@@ -166,7 +164,9 @@ mod tests {
         let u = usage(0, 0);
         let msg = check(
             StopReason::Error,
-            Some("This model's maximum prompt length is 131072 but the request contains 537812 tokens"),
+            Some(
+                "This model's maximum prompt length is 131072 but the request contains 537812 tokens",
+            ),
             &u,
         );
         assert!(is_context_overflow(&msg, None));
@@ -188,7 +188,9 @@ mod tests {
         let u = usage(0, 0);
         let msg = check(
             StopReason::Error,
-            Some("This endpoint's maximum context length is 8192 tokens. However, you requested about 10000 tokens"),
+            Some(
+                "This endpoint's maximum context length is 8192 tokens. However, you requested about 10000 tokens",
+            ),
             &u,
         );
         assert!(is_context_overflow(&msg, None));
@@ -197,18 +199,10 @@ mod tests {
     #[test]
     fn matches_cerebras_no_body() {
         let u = usage(0, 0);
-        let msg = check(
-            StopReason::Error,
-            Some("400 status code (no body)"),
-            &u,
-        );
+        let msg = check(StopReason::Error, Some("400 status code (no body)"), &u);
         assert!(is_context_overflow(&msg, None));
 
-        let msg2 = check(
-            StopReason::Error,
-            Some("413 (no body)"),
-            &u,
-        );
+        let msg2 = check(StopReason::Error, Some("413 (no body)"), &u);
         assert!(is_context_overflow(&msg2, None));
     }
 
@@ -228,7 +222,9 @@ mod tests {
         let u = usage(0, 0);
         let msg = check(
             StopReason::Error,
-            Some("Prompt contains 40000 tokens ... too large for model with 32768 maximum context length"),
+            Some(
+                "Prompt contains 40000 tokens ... too large for model with 32768 maximum context length",
+            ),
             &u,
         );
         assert!(is_context_overflow(&msg, None));
@@ -274,11 +270,7 @@ mod tests {
     fn error_429_rate_limit_not_overflow() {
         // Explicitly: 429 != 400/413
         let u = usage(0, 0);
-        let msg = check(
-            StopReason::Error,
-            Some("429 (no body)"),
-            &u,
-        );
+        let msg = check(StopReason::Error, Some("429 (no body)"), &u);
         assert!(!is_context_overflow(&msg, None));
     }
 
@@ -296,10 +288,18 @@ mod tests {
     fn patterns_are_case_insensitive() {
         let u = usage(0, 0);
         // Anthropic uppercase
-        let msg = check(StopReason::Error, Some("PROMPT IS TOO LONG: 1000 > 200000"), &u);
+        let msg = check(
+            StopReason::Error,
+            Some("PROMPT IS TOO LONG: 1000 > 200000"),
+            &u,
+        );
         assert!(is_context_overflow(&msg, None));
         // OpenAI mixed case
-        let msg2 = check(StopReason::Error, Some("Your Input Exceeds The Context Window"), &u);
+        let msg2 = check(
+            StopReason::Error,
+            Some("Your Input Exceeds The Context Window"),
+            &u,
+        );
         assert!(is_context_overflow(&msg2, None));
     }
 

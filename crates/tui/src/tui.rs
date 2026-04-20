@@ -1,5 +1,4 @@
 /// Minimal TUI implementation with differential rendering.
-
 use std::sync::Arc;
 
 use crate::keys::is_key_release;
@@ -125,7 +124,9 @@ pub struct Container {
 
 impl Container {
     pub fn new() -> Self {
-        Self { children: Vec::new() }
+        Self {
+            children: Vec::new(),
+        }
     }
 
     pub fn add_child(&mut self, component: Box<dyn Component>) {
@@ -375,7 +376,8 @@ impl TUI {
             let mut current = data.to_string();
             let ids: Vec<u64> = self.input_listeners.iter().map(|(id, _)| *id).collect();
             for id in ids {
-                if let Some((_, listener)) = self.input_listeners.iter().find(|(lid, _)| *lid == id) {
+                if let Some((_, listener)) = self.input_listeners.iter().find(|(lid, _)| *lid == id)
+                {
                     match listener(&current) {
                         Some((true, _)) => return, // consumed
                         Some((false, Some(new_data))) => current = new_data,
@@ -483,12 +485,17 @@ impl TUI {
             let height_px: u32 = caps[1].parse().unwrap_or(0);
             let width_px: u32 = caps[2].parse().unwrap_or(0);
             if height_px > 0 && width_px > 0 {
-                use crate::terminal_image::{set_cell_dimensions, CellDimensions};
-                set_cell_dimensions(CellDimensions { width_px, height_px });
+                use crate::terminal_image::{CellDimensions, set_cell_dimensions};
+                set_cell_dimensions(CellDimensions {
+                    width_px,
+                    height_px,
+                });
                 self.invalidate();
                 self.request_render(false);
             }
-            self.input_buffer = response_re.replace(&self.input_buffer.clone(), "").to_string();
+            self.input_buffer = response_re
+                .replace(&self.input_buffer.clone(), "")
+                .to_string();
             self.cell_size_query_pending = false;
         }
 
@@ -524,7 +531,9 @@ impl TUI {
         let margin_left = margin.left;
 
         let avail_width = term_width.saturating_sub(margin_left + margin_right).max(1);
-        let avail_height = term_height.saturating_sub(margin_top + margin_bottom).max(1);
+        let avail_height = term_height
+            .saturating_sub(margin_top + margin_bottom)
+            .max(1);
 
         let mut width = opt
             .and_then(|o| o.width.as_ref())
@@ -539,7 +548,9 @@ impl TUI {
             .and_then(|o| o.max_height.as_ref())
             .map(|sv| sv.resolve(term_height).min(avail_height).max(1));
 
-        let effective_height = max_height.map(|mh| overlay_height.min(mh)).unwrap_or(overlay_height);
+        let effective_height = max_height
+            .map(|mh| overlay_height.min(mh))
+            .unwrap_or(overlay_height);
 
         let anchor = opt.and_then(|o| o.anchor).unwrap_or(OverlayAnchor::Center);
 
@@ -570,12 +581,14 @@ impl TUI {
         let offset_y = opt.and_then(|o| o.offset_y).unwrap_or(0);
         let offset_x = opt.and_then(|o| o.offset_x).unwrap_or(0);
 
-        let row = (row as i32 + offset_y as i32)
-            .clamp(margin_top as i32, (term_height.saturating_sub(margin_bottom + effective_height)) as i32)
-            as u16;
-        let col = (col as i32 + offset_x as i32)
-            .clamp(margin_left as i32, (term_width.saturating_sub(margin_right + width)) as i32)
-            as u16;
+        let row = (row as i32 + offset_y as i32).clamp(
+            margin_top as i32,
+            (term_height.saturating_sub(margin_bottom + effective_height)) as i32,
+        ) as u16;
+        let col = (col as i32 + offset_x as i32).clamp(
+            margin_left as i32,
+            (term_width.saturating_sub(margin_right + width)) as i32,
+        ) as u16;
 
         (width, row, col, max_height)
     }
@@ -583,9 +596,9 @@ impl TUI {
     fn resolve_anchor_row(anchor: OverlayAnchor, height: u16, avail_height: u16) -> u16 {
         match anchor {
             OverlayAnchor::TopLeft | OverlayAnchor::TopCenter | OverlayAnchor::TopRight => 0,
-            OverlayAnchor::BottomLeft | OverlayAnchor::BottomCenter | OverlayAnchor::BottomRight => {
-                avail_height.saturating_sub(height)
-            }
+            OverlayAnchor::BottomLeft
+            | OverlayAnchor::BottomCenter
+            | OverlayAnchor::BottomRight => avail_height.saturating_sub(height),
             OverlayAnchor::LeftCenter | OverlayAnchor::Center | OverlayAnchor::RightCenter => {
                 (avail_height.saturating_sub(height)) / 2
             }
@@ -701,8 +714,13 @@ impl TUI {
         }
 
         let after_start = start_col + overlay_width;
-        let (before, before_w, after, after_w) =
-            extract_segments(base_line, start_col, after_start, total_width.saturating_sub(after_start), true);
+        let (before, before_w, after, after_w) = extract_segments(
+            base_line,
+            start_col,
+            after_start,
+            total_width.saturating_sub(after_start),
+            true,
+        );
 
         let (overlay_text, overlay_w) = slice_with_width(overlay_line, 0, overlay_width, true);
 
@@ -918,8 +936,9 @@ impl TUI {
         // If first changed line is above viewport, full redraw.
         // Also trigger full redraw if shrinkage moves the viewport top upward
         // (i.e., new content is shorter than prev_viewport_top + height).
-        let new_viewport_top =
-            (height as usize).max(new_lines.len()).saturating_sub(height as usize);
+        let new_viewport_top = (height as usize)
+            .max(new_lines.len())
+            .saturating_sub(height as usize);
         if first_changed < prev_viewport_top as i32 || new_viewport_top < prev_viewport_top {
             full_render(
                 self.terminal.as_ref(),
@@ -995,11 +1014,7 @@ impl TUI {
         self.render_requested = false;
     }
 
-    fn position_hardware_cursor(
-        &mut self,
-        cursor_pos: Option<(usize, usize)>,
-        total_lines: usize,
-    ) {
+    fn position_hardware_cursor(&mut self, cursor_pos: Option<(usize, usize)>, total_lines: usize) {
         if cursor_pos.is_none() || total_lines == 0 {
             self.terminal.hide_cursor();
             return;
@@ -1041,7 +1056,9 @@ impl TUI {
 
     /// Check if there are any visible overlays.
     pub fn has_overlay(&self) -> bool {
-        self.overlay_stack.iter().any(|e| self.is_overlay_visible(e))
+        self.overlay_stack
+            .iter()
+            .any(|e| self.is_overlay_visible(e))
     }
 
     // =========================================================================
@@ -1135,11 +1152,16 @@ impl TUI {
             if self.overlay_focused_id == Some(id) {
                 self.overlay_focused_id = None;
                 // Find the topmost visible non-removed overlay, or fall back to pre_focus_idx.
-                let topmost = self.overlay_stack.iter().rev().find(|e| self.is_overlay_visible(e));
+                let topmost = self
+                    .overlay_stack
+                    .iter()
+                    .rev()
+                    .find(|e| self.is_overlay_visible(e));
                 if let Some(top) = topmost {
                     let top_id = top.id;
                     self.overlay_focused_id = Some(top_id);
-                    if let Some(top_entry) = self.overlay_stack.iter_mut().find(|e| e.id == top_id) {
+                    if let Some(top_entry) = self.overlay_stack.iter_mut().find(|e| e.id == top_id)
+                    {
                         top_entry.overlay_had_focus = true;
                     }
                 } else {
@@ -1181,7 +1203,12 @@ mod tests {
     impl DynLinesComponent {
         fn new(lines: Vec<String>) -> (Self, Arc<Mutex<Vec<String>>>) {
             let shared = Arc::new(Mutex::new(lines));
-            (Self { lines: Arc::clone(&shared) }, shared)
+            (
+                Self {
+                    lines: Arc::clone(&shared),
+                },
+                shared,
+            )
         }
     }
 
@@ -1339,8 +1366,14 @@ mod tests {
         assert_eq!(TUI::resolve_anchor_col(OverlayAnchor::TopLeft, 40, 80), 0);
 
         // Bottom-right anchor
-        assert_eq!(TUI::resolve_anchor_row(OverlayAnchor::BottomRight, 10, 24), 14);
-        assert_eq!(TUI::resolve_anchor_col(OverlayAnchor::BottomRight, 40, 80), 40);
+        assert_eq!(
+            TUI::resolve_anchor_row(OverlayAnchor::BottomRight, 10, 24),
+            14
+        );
+        assert_eq!(
+            TUI::resolve_anchor_col(OverlayAnchor::BottomRight, 40, 80),
+            40
+        );
     }
 
     #[test]
@@ -1400,7 +1433,10 @@ mod tests {
 
         // Content should still be present
         let vp = viewport(&tui);
-        assert!(vp.iter().any(|l| l.contains("Line 0")), "Content preserved after height change");
+        assert!(
+            vp.iter().any(|l| l.contains("Line 0")),
+            "Content preserved after height change"
+        );
     }
 
     #[test]
@@ -1490,7 +1526,10 @@ mod tests {
         tui.do_render();
 
         let vp = viewport(&tui);
-        assert!(vp.iter().any(|l| l.contains("Only line")), "Single line rendered");
+        assert!(
+            vp.iter().any(|l| l.contains("Only line")),
+            "Single line rendered"
+        );
         // The rendered buffer should only have 1 line now
         assert_eq!(tui.previous_lines.len(), 1);
     }
@@ -1549,7 +1588,11 @@ mod tests {
 
             let vp = viewport(&tui);
             assert!(vp[0].contains("Header"), "Header preserved: {:?}", vp[0]);
-            assert!(vp[1].contains(&format!("Working {frame}")), "Spinner updated: {:?}", vp[1]);
+            assert!(
+                vp[1].contains(&format!("Working {frame}")),
+                "Spinner updated: {:?}",
+                vp[1]
+            );
             assert!(vp[2].contains("Footer"), "Footer preserved: {:?}", vp[2]);
         }
     }
@@ -1671,7 +1714,10 @@ mod tests {
 
         // Verify initial
         let vp = viewport(&tui);
-        assert!(vp.iter().any(|l| l.contains("Line 0")), "Initial content rendered");
+        assert!(
+            vp.iter().any(|l| l.contains("Line 0")),
+            "Initial content rendered"
+        );
 
         // Clear to empty
         *lines_ref.lock().unwrap() = vec![];
@@ -1684,8 +1730,16 @@ mod tests {
         tui.do_render();
 
         let vp = viewport(&tui);
-        assert!(vp.iter().any(|l| l.contains("New Line 0")), "New content rendered: {:?}", vp);
-        assert!(vp.iter().any(|l| l.contains("New Line 1")), "New content line 1: {:?}", vp);
+        assert!(
+            vp.iter().any(|l| l.contains("New Line 0")),
+            "New content rendered: {:?}",
+            vp
+        );
+        assert!(
+            vp.iter().any(|l| l.contains("New Line 1")),
+            "New content line 1: {:?}",
+            vp
+        );
     }
 
     #[test]
@@ -1696,9 +1750,8 @@ mod tests {
         let (mock, _cols, _rows) = ResizableMock::new(20, 5);
         let mut tui = TUI::new(Box::new(mock));
 
-        let (comp, lines_ref) = DynLinesComponent::new(
-            (0..12).map(|i| format!("Line {i}")).collect(),
-        );
+        let (comp, lines_ref) =
+            DynLinesComponent::new((0..12).map(|i| format!("Line {i}")).collect());
         tui.add_child(Box::new(comp));
 
         tui.start();

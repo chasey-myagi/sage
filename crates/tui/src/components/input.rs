@@ -1,9 +1,8 @@
 /// Input component — single-line text input with horizontal scrolling.
-
 use crate::keybindings::check_keybinding;
 use crate::keys::decode_kitty_printable;
 use crate::kill_ring::KillRing;
-use crate::tui::{Component, Focusable, CURSOR_MARKER};
+use crate::tui::{CURSOR_MARKER, Component, Focusable};
 use crate::undo_stack::UndoStack;
 use crate::utils::{is_punctuation_char, is_whitespace_char, slice_by_column, visible_width};
 
@@ -72,11 +71,17 @@ impl Input {
 
     // Helper: grapheme-aware segment of string
     fn graphemes_before_cursor(&self) -> Vec<String> {
-        self.value[..self.cursor].chars().map(|c| c.to_string()).collect()
+        self.value[..self.cursor]
+            .chars()
+            .map(|c| c.to_string())
+            .collect()
     }
 
     fn graphemes_after_cursor(&self) -> Vec<String> {
-        self.value[self.cursor..].chars().map(|c| c.to_string()).collect()
+        self.value[self.cursor..]
+            .chars()
+            .map(|c| c.to_string())
+            .collect()
     }
 
     fn push_undo(&mut self) {
@@ -101,7 +106,11 @@ impl Input {
         }
         self.last_action = Some(LastAction::TypeWord);
 
-        self.value = format!("{}{ch}{}", &self.value[..self.cursor], &self.value[self.cursor..]);
+        self.value = format!(
+            "{}{ch}{}",
+            &self.value[..self.cursor],
+            &self.value[self.cursor..]
+        );
         self.cursor += ch.len();
     }
 
@@ -112,7 +121,11 @@ impl Input {
             let before = &self.value[..self.cursor];
             let grapheme_len = before.chars().last().map(|c| c.len_utf8()).unwrap_or(1);
             let new_cursor = self.cursor - grapheme_len;
-            self.value = format!("{}{}", &self.value[..new_cursor], &self.value[self.cursor..]);
+            self.value = format!(
+                "{}{}",
+                &self.value[..new_cursor],
+                &self.value[self.cursor..]
+            );
             self.cursor = new_cursor;
         }
     }
@@ -123,7 +136,11 @@ impl Input {
             self.push_undo();
             let after = &self.value[self.cursor..];
             let grapheme_len = after.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-            self.value = format!("{}{}", &self.value[..self.cursor], &self.value[self.cursor + grapheme_len..]);
+            self.value = format!(
+                "{}{}",
+                &self.value[..self.cursor],
+                &self.value[self.cursor + grapheme_len..]
+            );
         }
     }
 
@@ -133,7 +150,11 @@ impl Input {
         }
         self.push_undo();
         let deleted_text = self.value[..self.cursor].to_string();
-        self.kill_ring.push(&deleted_text, true, self.last_action == Some(LastAction::Kill));
+        self.kill_ring.push(
+            &deleted_text,
+            true,
+            self.last_action == Some(LastAction::Kill),
+        );
         self.last_action = Some(LastAction::Kill);
         self.value = self.value[self.cursor..].to_string();
         self.cursor = 0;
@@ -145,7 +166,11 @@ impl Input {
         }
         self.push_undo();
         let deleted_text = self.value[self.cursor..].to_string();
-        self.kill_ring.push(&deleted_text, false, self.last_action == Some(LastAction::Kill));
+        self.kill_ring.push(
+            &deleted_text,
+            false,
+            self.last_action == Some(LastAction::Kill),
+        );
         self.last_action = Some(LastAction::Kill);
         self.value = self.value[..self.cursor].to_string();
     }
@@ -166,7 +191,11 @@ impl Input {
         self.kill_ring.push(&deleted_text, true, was_kill);
         self.last_action = Some(LastAction::Kill);
 
-        self.value = format!("{}{}", &self.value[..delete_from], &self.value[self.cursor..]);
+        self.value = format!(
+            "{}{}",
+            &self.value[..delete_from],
+            &self.value[self.cursor..]
+        );
         self.cursor = delete_from;
     }
 
@@ -195,7 +224,11 @@ impl Input {
             None => return,
         };
         self.push_undo();
-        self.value = format!("{}{text}{}", &self.value[..self.cursor], &self.value[self.cursor..]);
+        self.value = format!(
+            "{}{text}{}",
+            &self.value[..self.cursor],
+            &self.value[self.cursor..]
+        );
         self.cursor += text.len();
         self.last_action = Some(LastAction::Yank);
     }
@@ -206,15 +239,31 @@ impl Input {
         }
         self.push_undo();
 
-        let prev_text = self.kill_ring.peek().map(|t| t.to_string()).unwrap_or_default();
+        let prev_text = self
+            .kill_ring
+            .peek()
+            .map(|t| t.to_string())
+            .unwrap_or_default();
         let prev_len = prev_text.len();
         let new_cursor = self.cursor.saturating_sub(prev_len);
-        self.value = format!("{}{}", &self.value[..new_cursor], &self.value[self.cursor..]);
+        self.value = format!(
+            "{}{}",
+            &self.value[..new_cursor],
+            &self.value[self.cursor..]
+        );
         self.cursor = new_cursor;
 
         self.kill_ring.rotate();
-        let text = self.kill_ring.peek().map(|t| t.to_string()).unwrap_or_default();
-        self.value = format!("{}{text}{}", &self.value[..self.cursor], &self.value[self.cursor..]);
+        let text = self
+            .kill_ring
+            .peek()
+            .map(|t| t.to_string())
+            .unwrap_or_default();
+        self.value = format!(
+            "{}{text}{}",
+            &self.value[..self.cursor],
+            &self.value[self.cursor..]
+        );
         self.cursor += text.len();
         self.last_action = Some(LastAction::Yank);
     }
@@ -295,7 +344,11 @@ impl Input {
             .replace('\n', "")
             .replace('\t', "    ");
 
-        self.value = format!("{}{clean_text}{}", &self.value[..self.cursor], &self.value[self.cursor..]);
+        self.value = format!(
+            "{}{clean_text}{}",
+            &self.value[..self.cursor],
+            &self.value[self.cursor..]
+        );
         self.cursor += clean_text.len();
     }
 }
@@ -508,14 +561,22 @@ impl Component for Input {
             } else {
                 String::new()
             };
-            let before_cursor_slice = slice_by_column(&self.value, start_col, cursor_col.saturating_sub(start_col), true);
+            let before_cursor_slice = slice_by_column(
+                &self.value,
+                start_col,
+                cursor_col.saturating_sub(start_col),
+                true,
+            );
             let cd = before_cursor_slice.len();
             (vt, cd)
         };
 
         // Build line with fake cursor
         let after_cursor_chars: Vec<char> = visible_text[cursor_display..].chars().collect();
-        let at_cursor_char = after_cursor_chars.first().map(|c| c.to_string()).unwrap_or(" ".to_string());
+        let at_cursor_char = after_cursor_chars
+            .first()
+            .map(|c| c.to_string())
+            .unwrap_or(" ".to_string());
         let at_cursor_len = at_cursor_char.len();
 
         let before_cursor = &visible_text[..cursor_display];

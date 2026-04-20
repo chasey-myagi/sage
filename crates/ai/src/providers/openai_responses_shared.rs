@@ -329,7 +329,9 @@ mod tests {
         let messages = vec![LlmMessage::User {
             content: vec![
                 LlmContent::Text("Describe".into()),
-                LlmContent::Image { url: "data:image/png;base64,abc".into() },
+                LlmContent::Image {
+                    url: "data:image/png;base64,abc".into(),
+                },
             ],
         }];
         let input = convert_messages(&messages);
@@ -342,8 +344,12 @@ mod tests {
     #[test]
     fn test_convert_system_skipped() {
         let messages = vec![
-            LlmMessage::System { content: "You are a helper.".into() },
-            LlmMessage::User { content: vec![LlmContent::Text("Hi".into())] },
+            LlmMessage::System {
+                content: "You are a helper.".into(),
+            },
+            LlmMessage::User {
+                content: vec![LlmContent::Text("Hi".into())],
+            },
         ];
         let input = convert_messages(&messages);
         assert_eq!(input.len(), 1);
@@ -430,7 +436,9 @@ mod tests {
             &mut state,
             &mut events,
         );
-        assert!(matches!(&events[0], AssistantMessageEvent::ThinkingDelta(s) if s == "thinking..."));
+        assert!(
+            matches!(&events[0], AssistantMessageEvent::ThinkingDelta(s) if s == "thinking...")
+        );
     }
 
     #[test]
@@ -458,7 +466,9 @@ mod tests {
             &mut state,
             &mut events,
         );
-        assert!(matches!(&events[1], AssistantMessageEvent::ToolCallDelta { id, .. } if id == "call_123|fc_abc"));
+        assert!(
+            matches!(&events[1], AssistantMessageEvent::ToolCallDelta { id, .. } if id == "call_123|fc_abc")
+        );
 
         process_responses_event(
             "response.output_item.done",
@@ -466,7 +476,9 @@ mod tests {
             &mut state,
             &mut events,
         );
-        assert!(matches!(&events[2], AssistantMessageEvent::ToolCallEnd { id } if id == "call_123|fc_abc"));
+        assert!(
+            matches!(&events[2], AssistantMessageEvent::ToolCallEnd { id } if id == "call_123|fc_abc")
+        );
     }
 
     #[test]
@@ -486,7 +498,9 @@ mod tests {
             }
             other => panic!("expected Usage, got {other:?}"),
         }
-        assert!(matches!(&events[1], AssistantMessageEvent::Done { stop_reason } if *stop_reason == StopReason::Stop));
+        assert!(
+            matches!(&events[1], AssistantMessageEvent::Done { stop_reason } if *stop_reason == StopReason::Stop)
+        );
     }
 
     #[test]
@@ -500,7 +514,9 @@ mod tests {
             &mut state,
             &mut events,
         );
-        assert!(matches!(&events[1], AssistantMessageEvent::Done { stop_reason } if *stop_reason == StopReason::ToolUse));
+        assert!(
+            matches!(&events[1], AssistantMessageEvent::Done { stop_reason } if *stop_reason == StopReason::ToolUse)
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -491,9 +491,8 @@ pub struct ToolInfo {
 // ============================================================================
 
 /// Type alias for handler function: takes event JSON and context, returns result JSON.
-pub type HandlerFn = Box<
-    dyn Fn(Value, &ExtensionContextSnapshot) -> Result<Option<Value>, String> + Send + Sync,
->;
+pub type HandlerFn =
+    Box<dyn Fn(Value, &ExtensionContextSnapshot) -> Result<Option<Value>, String> + Send + Sync>;
 
 /// A snapshot of extension context passed to handlers.
 #[derive(Debug, Clone)]

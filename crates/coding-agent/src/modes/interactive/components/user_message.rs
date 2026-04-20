@@ -5,11 +5,11 @@
 //! Renders a user turn in the conversation with distinctive background styling
 //! and OSC 133 shell integration markers.
 
-use tui::tui::{Component, Container};
+use tui::components::markdown::{DefaultTextStyle, Markdown, MarkdownTheme};
 use tui::components::spacer::Spacer;
-use tui::components::markdown::{Markdown, DefaultTextStyle, MarkdownTheme};
+use tui::tui::{Component, Container};
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor, ThemeBg};
+use crate::modes::interactive::theme::{ThemeBg, ThemeColor, get_theme};
 
 // OSC 133 semantic shell integration markers.
 const OSC133_ZONE_START: &str = "\x1b]133;A\x07";
@@ -44,7 +44,13 @@ impl UserMessageComponent {
 
         let mut container = Container::new();
         container.add_child(Box::new(Spacer::new(1)));
-        container.add_child(Box::new(Markdown::new(text, 1, 1, md_theme, Some(default_style))));
+        container.add_child(Box::new(Markdown::new(
+            text,
+            1,
+            1,
+            md_theme,
+            Some(default_style),
+        )));
 
         Self { container }
     }
@@ -131,7 +137,10 @@ mod tests {
         assert!(!lines.is_empty());
         // First non-empty line should have OSC 133 start marker
         let has_start = lines.iter().any(|l| l.contains(OSC133_ZONE_START));
-        assert!(has_start, "Expected OSC 133 start marker in rendered output");
+        assert!(
+            has_start,
+            "Expected OSC 133 start marker in rendered output"
+        );
         let has_end = lines.iter().any(|l| l.contains(OSC133_ZONE_END));
         assert!(has_end, "Expected OSC 133 end marker in rendered output");
     }

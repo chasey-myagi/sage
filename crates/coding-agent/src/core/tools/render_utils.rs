@@ -158,9 +158,7 @@ mod tests {
 
     #[test]
     fn get_text_output_single_text_block() {
-        let content = vec![
-            serde_json::json!({"type": "text", "text": "hello"}),
-        ];
+        let content = vec![serde_json::json!({"type": "text", "text": "hello"})];
         assert_eq!(get_text_output(&content), "hello");
     }
 
@@ -189,9 +187,8 @@ mod tests {
 
     #[test]
     fn get_text_output_only_images() {
-        let content = vec![
-            serde_json::json!({"type": "image", "data": "x", "mimeType": "image/png"}),
-        ];
+        let content =
+            vec![serde_json::json!({"type": "image", "data": "x", "mimeType": "image/png"})];
         assert_eq!(get_text_output(&content), "");
     }
 }

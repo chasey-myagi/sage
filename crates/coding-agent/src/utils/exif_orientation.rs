@@ -5,7 +5,7 @@
 //! Reads the EXIF `Orientation` tag from JPEG and WebP images, then applies the
 //! corresponding transform (flip/rotate) to a `PhotonImage`.
 
-use crate::utils::photon::{fliph, flipv, PhotonImage};
+use crate::utils::photon::{PhotonImage, fliph, flipv};
 
 // ============================================================================
 // TIFF / EXIF parsing helpers
@@ -139,10 +139,7 @@ fn get_exif_orientation(bytes: &[u8]) -> u16 {
         tiff_offset = find_jpeg_tiff_offset(bytes);
     }
     // WebP: starts with RIFF....WEBP
-    else if bytes.len() >= 12
-        && &bytes[0..4] == b"RIFF"
-        && &bytes[8..12] == b"WEBP"
-    {
+    else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         tiff_offset = find_webp_tiff_offset(bytes);
     } else {
         return 1;

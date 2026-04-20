@@ -13,23 +13,22 @@ pub mod types;
 
 // Re-export the most commonly used items.
 pub use github_copilot::{
-    GITHUB_COPILOT_OAUTH_PROVIDER, GitHubCopilotOAuthProvider,
-    get_github_copilot_base_url, login_github_copilot, normalize_domain,
-    refresh_github_copilot_token,
+    GITHUB_COPILOT_OAUTH_PROVIDER, GitHubCopilotOAuthProvider, get_github_copilot_base_url,
+    login_github_copilot, normalize_domain, refresh_github_copilot_token,
 };
 pub use google_antigravity::{
-    ANTIGRAVITY_OAUTH_PROVIDER, AntigravityOAuthProvider,
-    login_antigravity, refresh_antigravity_token,
+    ANTIGRAVITY_OAUTH_PROVIDER, AntigravityOAuthProvider, login_antigravity,
+    refresh_antigravity_token,
 };
 pub use oauth_page::{oauth_error_html, oauth_success_html};
 pub use openai_codex::{
-    OPENAI_CODEX_OAUTH_PROVIDER, OpenAICodexOAuthProvider,
-    login_openai_codex, refresh_openai_codex_token,
+    OPENAI_CODEX_OAUTH_PROVIDER, OpenAICodexOAuthProvider, login_openai_codex,
+    refresh_openai_codex_token,
 };
 pub use pkce::{Pkce, generate_pkce};
 pub use types::{
-    OAuthAuthInfo, OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt,
-    OAuthProviderId, OAuthProviderInterface,
+    OAuthAuthInfo, OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderId,
+    OAuthProviderInterface,
 };
 
 // ============================================================================
@@ -63,11 +62,7 @@ static OAUTH_PROVIDER_REGISTRY: LazyLock<RwLock<HashMap<String, Arc<dyn OAuthPro
 ///
 /// Mirrors `getOAuthProvider()` from `index.ts`.
 pub fn get_oauth_provider(id: &str) -> Option<Arc<dyn OAuthProviderInterface>> {
-    OAUTH_PROVIDER_REGISTRY
-        .read()
-        .ok()?
-        .get(id)
-        .cloned()
+    OAUTH_PROVIDER_REGISTRY.read().ok()?.get(id).cloned()
 }
 
 /// Register a custom OAuth provider (or override an existing one).
@@ -92,8 +87,12 @@ pub fn unregister_oauth_provider(id: &str) {
             _ => None,
         };
         match builtin {
-            Some(p) => { map.insert(id.to_owned(), p); }
-            None => { map.remove(id); }
+            Some(p) => {
+                map.insert(id.to_owned(), p);
+            }
+            None => {
+                map.remove(id);
+            }
         }
     }
 }
@@ -104,9 +103,18 @@ pub fn unregister_oauth_provider(id: &str) {
 pub fn reset_oauth_providers() {
     if let Ok(mut map) = OAUTH_PROVIDER_REGISTRY.write() {
         map.clear();
-        map.insert("github-copilot".to_owned(), Arc::new(GitHubCopilotOAuthProvider));
-        map.insert("openai-codex".to_owned(), Arc::new(OpenAICodexOAuthProvider));
-        map.insert("google-antigravity".to_owned(), Arc::new(AntigravityOAuthProvider));
+        map.insert(
+            "github-copilot".to_owned(),
+            Arc::new(GitHubCopilotOAuthProvider),
+        );
+        map.insert(
+            "openai-codex".to_owned(),
+            Arc::new(OpenAICodexOAuthProvider),
+        );
+        map.insert(
+            "google-antigravity".to_owned(),
+            Arc::new(AntigravityOAuthProvider),
+        );
     }
 }
 

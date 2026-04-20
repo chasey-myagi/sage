@@ -32,10 +32,7 @@ pub type ValidateResult<'a> = Result<&'a Value, String>;
 ///
 /// Returns the (unchanged) arguments on success. `Err(msg)` is formatted in the
 /// same style as pi-mono's thrown message so upstream logs look identical.
-pub fn validate_tool_call<'a>(
-    tools: &[LlmTool],
-    call: &'a ToolCallView<'a>,
-) -> ValidateResult<'a> {
+pub fn validate_tool_call<'a>(tools: &[LlmTool], call: &'a ToolCallView<'a>) -> ValidateResult<'a> {
     let tool = tools
         .iter()
         .find(|t| t.name == call.name)
@@ -59,7 +56,11 @@ pub fn validate_tool_arguments<'a>(
     let bullets = errors
         .iter()
         .map(|(path, msg)| {
-            let p = if path.is_empty() { "root" } else { path.as_str() };
+            let p = if path.is_empty() {
+                "root"
+            } else {
+                path.as_str()
+            };
             format!("  - {p}: {msg}")
         })
         .collect::<Vec<_>>()
@@ -96,7 +97,14 @@ pub(crate) fn validate_against_schema(
         if !variants.iter().any(|v| v == value) {
             errors.push((
                 path.to_string(),
-                format!("must be one of {}", variants.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")),
+                format!(
+                    "must be one of {}",
+                    variants
+                        .iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
             ));
         }
     }
@@ -108,10 +116,7 @@ pub(crate) fn validate_against_schema(
             for req in required {
                 if let Some(name) = req.as_str() {
                     if !obj.contains_key(name) {
-                        errors.push((
-                            name.to_string(),
-                            "must have required property".into(),
-                        ));
+                        errors.push((name.to_string(), "must have required property".into()));
                     }
                 }
             }
@@ -330,7 +335,10 @@ mod tests {
             "properties": {"x": {}}
         }));
         let args = json!({"x": 42});
-        let call = ToolCallView { name: "bash", arguments: &args };
+        let call = ToolCallView {
+            name: "bash",
+            arguments: &args,
+        };
         assert!(validate_tool_call(&[tool], &call).is_ok());
     }
 
@@ -342,7 +350,10 @@ mod tests {
             "required": ["v"]
         }));
         let args = json!({"v": null});
-        let call = ToolCallView { name: "bash", arguments: &args };
+        let call = ToolCallView {
+            name: "bash",
+            arguments: &args,
+        };
         assert!(validate_tool_call(&[tool], &call).is_ok());
     }
 
@@ -354,11 +365,17 @@ mod tests {
             "required": ["flag"]
         }));
         let good = json!({"flag": true});
-        let call = ToolCallView { name: "bash", arguments: &good };
+        let call = ToolCallView {
+            name: "bash",
+            arguments: &good,
+        };
         assert!(validate_tool_call(&[tool.clone()], &call).is_ok());
 
         let bad = json!({"flag": "yes"});
-        let call = ToolCallView { name: "bash", arguments: &bad };
+        let call = ToolCallView {
+            name: "bash",
+            arguments: &bad,
+        };
         assert!(validate_tool_call(&[tool], &call).is_err());
     }
 
@@ -371,7 +388,10 @@ mod tests {
             "required": ["n"]
         }));
         let args = json!({"n": 3.14});
-        let call = ToolCallView { name: "bash", arguments: &args };
+        let call = ToolCallView {
+            name: "bash",
+            arguments: &args,
+        };
         let result = validate_tool_arguments(&tool, &call).unwrap();
         assert_eq!(result, &args, "must return the same arg value on success");
     }
@@ -388,7 +408,10 @@ mod tests {
             "required": ["a", "b", "c"]
         }));
         let args = json!({});
-        let call = ToolCallView { name: "bash", arguments: &args };
+        let call = ToolCallView {
+            name: "bash",
+            arguments: &args,
+        };
         let err = validate_tool_call(&[tool], &call).unwrap_err();
         // All three missing properties should appear in the error.
         assert!(err.contains("a"), "error should mention 'a': {err}");
@@ -404,11 +427,17 @@ mod tests {
             "required": ["tags"]
         }));
         let good = json!({"tags": ["a", "b"]});
-        let call = ToolCallView { name: "bash", arguments: &good };
+        let call = ToolCallView {
+            name: "bash",
+            arguments: &good,
+        };
         assert!(validate_tool_call(&[tool.clone()], &call).is_ok());
 
         let bad = json!({"tags": "not-an-array"});
-        let call = ToolCallView { name: "bash", arguments: &bad };
+        let call = ToolCallView {
+            name: "bash",
+            arguments: &bad,
+        };
         assert!(validate_tool_call(&[tool], &call).is_err());
     }
 
@@ -421,7 +450,10 @@ mod tests {
             "required": ["x"]
         }));
         let args = json!({"x": "wrong"});
-        let call = ToolCallView { name: "bash", arguments: &args };
+        let call = ToolCallView {
+            name: "bash",
+            arguments: &args,
+        };
         let err = validate_tool_call(&[tool], &call).unwrap_err();
         assert!(err.contains("bash"), "error must contain tool name");
         assert!(err.contains("Received arguments"), "error must echo args");

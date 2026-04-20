@@ -97,8 +97,14 @@ fn validate_name(name: &str, parent_dir_name: &str) -> Vec<String> {
             name.len()
         ));
     }
-    if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
-        errors.push("name contains invalid characters (must be lowercase a-z, 0-9, hyphens only)".to_string());
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        errors.push(
+            "name contains invalid characters (must be lowercase a-z, 0-9, hyphens only)"
+                .to_string(),
+        );
     }
     if name.starts_with('-') || name.ends_with('-') {
         errors.push("name must not start or end with a hyphen".to_string());
@@ -191,7 +197,10 @@ pub fn format_skills_for_prompt(skills: &[Skill]) -> String {
 // ============================================================================
 
 /// Try to read a `SKILL.md` or plain `.md` file and produce a Skill.
-pub fn load_skill_from_file(file_path: &Path, source: &str) -> (Option<Skill>, Vec<SkillDiagnostic>) {
+pub fn load_skill_from_file(
+    file_path: &Path,
+    source: &str,
+) -> (Option<Skill>, Vec<SkillDiagnostic>) {
     let mut diagnostics = Vec::new();
 
     let content = match std::fs::read_to_string(file_path) {
@@ -254,10 +263,7 @@ pub fn load_skill_from_file(file_path: &Path, source: &str) -> (Option<Skill>, V
     }
 
     let description = fm.description.clone().unwrap_or_default();
-    let base_dir = file_path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .to_path_buf();
+    let base_dir = file_path.parent().unwrap_or(Path::new(".")).to_path_buf();
 
     let skill = Skill {
         name: effective_name,
@@ -313,7 +319,11 @@ fn collect_ignore_patterns(dir: &Path) -> Vec<String> {
     patterns
 }
 
-fn load_skills_from_dir_internal(dir: &Path, source: &str, include_root_files: bool) -> LoadSkillsResult {
+fn load_skills_from_dir_internal(
+    dir: &Path,
+    source: &str,
+    include_root_files: bool,
+) -> LoadSkillsResult {
     let mut result = LoadSkillsResult::default();
 
     if !dir.exists() {
@@ -339,7 +349,9 @@ fn load_skills_from_dir_internal(dir: &Path, source: &str, include_root_files: b
         let full_path = entry.path();
         let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false)
             || entry.file_type().map(|t| t.is_symlink()).unwrap_or(false)
-                && std::fs::metadata(&full_path).map(|m| m.is_file()).unwrap_or(false);
+                && std::fs::metadata(&full_path)
+                    .map(|m| m.is_file())
+                    .unwrap_or(false);
         if !is_file {
             continue;
         }
@@ -576,7 +588,10 @@ mod tests {
             name: name.to_string(),
             description: description.to_string(),
             file_path: PathBuf::from(file_path),
-            base_dir: PathBuf::from(file_path).parent().unwrap_or(Path::new(".")).to_path_buf(),
+            base_dir: PathBuf::from(file_path)
+                .parent()
+                .unwrap_or(Path::new("."))
+                .to_path_buf(),
             source: "test".to_string(),
             disable_model_invocation: disable,
             content: String::new(),
@@ -650,8 +665,18 @@ mod tests {
     #[test]
     fn format_skills_for_prompt_excludes_disabled_skills() {
         let skills = vec![
-            make_skill("visible-skill", "A visible skill.", "/path/visible/SKILL.md", false),
-            make_skill("hidden-skill", "A hidden skill.", "/path/hidden/SKILL.md", true),
+            make_skill(
+                "visible-skill",
+                "A visible skill.",
+                "/path/visible/SKILL.md",
+                false,
+            ),
+            make_skill(
+                "hidden-skill",
+                "A hidden skill.",
+                "/path/hidden/SKILL.md",
+                true,
+            ),
         ];
         let result = format_skills_for_prompt(&skills);
         assert!(result.contains("<name>visible-skill</name>"));

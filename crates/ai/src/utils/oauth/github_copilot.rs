@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tracing::warn;
 
-use super::types::{OAuthAuthInfo, OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface};
+use super::types::{
+    OAuthAuthInfo, OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface,
+};
 
 // CLIENT_ID is the base64-decoded value of "SXYxLmI1MDdhMDhjODdlY2ZlOTg="
 // i.e. "Iv1.b507a08c87ecfe98"
@@ -20,7 +22,10 @@ fn copilot_headers() -> reqwest::header::HeaderMap {
     let mut map = reqwest::header::HeaderMap::new();
     map.insert("User-Agent", "GitHubCopilotChat/0.35.0".parse().unwrap());
     map.insert("Editor-Version", "vscode/1.107.0".parse().unwrap());
-    map.insert("Editor-Plugin-Version", "copilot-chat/0.35.0".parse().unwrap());
+    map.insert(
+        "Editor-Plugin-Version",
+        "copilot-chat/0.35.0".parse().unwrap(),
+    );
     map.insert("Copilot-Integration-Id", "vscode-chat".parse().unwrap());
     map
 }
@@ -103,7 +108,9 @@ struct DeviceCodeResponse {
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum DeviceTokenResponse {
-    Success { access_token: String },
+    Success {
+        access_token: String,
+    },
     Error {
         error: String,
         #[serde(default)]
@@ -117,7 +124,10 @@ enum DeviceTokenResponse {
 // Device flow helpers
 // ---------------------------------------------------------------------------
 
-async fn start_device_flow(client: &reqwest::Client, domain: &str) -> anyhow::Result<DeviceCodeResponse> {
+async fn start_device_flow(
+    client: &reqwest::Client,
+    domain: &str,
+) -> anyhow::Result<DeviceCodeResponse> {
     let urls = get_urls(domain);
     let response = client
         .post(&urls.device_code_url)
@@ -180,7 +190,11 @@ async fn poll_for_github_access_token(
         let result = response.json::<DeviceTokenResponse>().await?;
         match result {
             DeviceTokenResponse::Success { access_token } => return Ok(access_token),
-            DeviceTokenResponse::Error { error, error_description, interval } => {
+            DeviceTokenResponse::Error {
+                error,
+                error_description,
+                interval,
+            } => {
                 if error == "authorization_pending" {
                     continue;
                 }
@@ -293,7 +307,9 @@ async fn enable_github_copilot_model(
 /// Mirrors `loginGitHubCopilot()` from `github-copilot.ts`.
 pub async fn login_github_copilot(
     on_auth: impl Fn(OAuthAuthInfo),
-    on_prompt: impl Fn(OAuthPrompt) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>,
+    on_prompt: impl Fn(
+        OAuthPrompt,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>,
     on_progress: Option<impl Fn(String)>,
 ) -> anyhow::Result<OAuthCredentials> {
     // Ask for optional Enterprise domain
@@ -308,7 +324,10 @@ pub async fn login_github_copilot(
     let enterprise_domain = if trimmed.is_empty() {
         None
     } else {
-        Some(normalize_domain(&trimmed).ok_or_else(|| anyhow::anyhow!("Invalid GitHub Enterprise URL/domain"))?)
+        Some(
+            normalize_domain(&trimmed)
+                .ok_or_else(|| anyhow::anyhow!("Invalid GitHub Enterprise URL/domain"))?,
+        )
     };
 
     let domain = enterprise_domain.as_deref().unwrap_or("github.com");
@@ -329,7 +348,8 @@ pub async fn login_github_copilot(
     )
     .await?;
 
-    let credentials = refresh_github_copilot_token(&github_access_token, enterprise_domain.as_deref()).await?;
+    let credentials =
+        refresh_github_copilot_token(&github_access_token, enterprise_domain.as_deref()).await?;
 
     // Enable all known models (best-effort, fire-and-forget errors)
     if let Some(ref progress) = on_progress {
@@ -342,7 +362,12 @@ pub async fn login_github_copilot(
     let futs: Vec<_> = models
         .iter()
         .map(|m| {
-            enable_github_copilot_model(&client, &credentials.access, &m.id, enterprise_domain.as_deref())
+            enable_github_copilot_model(
+                &client,
+                &credentials.access,
+                &m.id,
+                enterprise_domain.as_deref(),
+            )
         })
         .collect();
     futures::future::join_all(futs).await;
@@ -371,12 +396,18 @@ impl OAuthProviderInterface for GitHubCopilotOAuthProvider {
         login_github_copilot(
             |info| (callbacks.on_auth)(info),
             |prompt| (callbacks.on_prompt)(prompt),
-            callbacks.on_progress.as_ref().map(|f| move |msg: String| f(msg)),
+            callbacks
+                .on_progress
+                .as_ref()
+                .map(|f| move |msg: String| f(msg)),
         )
         .await
     }
 
-    async fn refresh_token(&self, credentials: &OAuthCredentials) -> anyhow::Result<OAuthCredentials> {
+    async fn refresh_token(
+        &self,
+        credentials: &OAuthCredentials,
+    ) -> anyhow::Result<OAuthCredentials> {
         let enterprise_domain = credentials.extra_str("enterpriseUrl").map(str::to_owned);
         refresh_github_copilot_token(&credentials.refresh, enterprise_domain.as_deref()).await
     }
@@ -385,15 +416,25 @@ impl OAuthProviderInterface for GitHubCopilotOAuthProvider {
         credentials.access.clone()
     }
 
-    fn modify_models(&self, models: Vec<crate::types::Model>, credentials: &OAuthCredentials) -> Vec<crate::types::Model> {
-        let enterprise_domain = credentials.extra_str("enterpriseUrl").and_then(normalize_domain);
-        let base_url = get_github_copilot_base_url(Some(&credentials.access), enterprise_domain.as_deref());
-        models.into_iter().map(|mut m| {
-            if m.provider == "github-copilot" {
-                m.base_url = base_url.clone();
-            }
-            m
-        }).collect()
+    fn modify_models(
+        &self,
+        models: Vec<crate::types::Model>,
+        credentials: &OAuthCredentials,
+    ) -> Vec<crate::types::Model> {
+        let enterprise_domain = credentials
+            .extra_str("enterpriseUrl")
+            .and_then(normalize_domain);
+        let base_url =
+            get_github_copilot_base_url(Some(&credentials.access), enterprise_domain.as_deref());
+        models
+            .into_iter()
+            .map(|mut m| {
+                if m.provider == "github-copilot" {
+                    m.base_url = base_url.clone();
+                }
+                m
+            })
+            .collect()
     }
 }
 

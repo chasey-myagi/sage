@@ -1,11 +1,10 @@
 /// Loader component — animated spinner with message.
-
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use crate::tui::Component;
 use crate::components::text::Text;
+use crate::tui::Component;
 
 const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -51,11 +50,7 @@ impl Loader {
         let message_fn: MessageColorFn = Box::new(message_color_fn);
 
         // Initial display text
-        let initial_text = format!(
-            "{} {}",
-            spinner_fn(FRAMES[0]),
-            message_fn(&msg)
-        );
+        let initial_text = format!("{} {}", spinner_fn(FRAMES[0]), message_fn(&msg));
 
         let mut loader = Self {
             text: Text::new(initial_text, 1, 0),

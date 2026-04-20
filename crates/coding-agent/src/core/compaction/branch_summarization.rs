@@ -6,8 +6,8 @@ use serde_json::Value;
 
 use crate::core::compaction::compaction::estimate_tokens;
 use crate::core::compaction::utils::{
-    compute_file_lists, create_file_ops, extract_file_ops_from_message, format_file_operations,
-    serialize_conversation, FileOperations, SUMMARIZATION_SYSTEM_PROMPT,
+    FileOperations, SUMMARIZATION_SYSTEM_PROMPT, compute_file_lists, create_file_ops,
+    extract_file_ops_from_message, format_file_operations, serialize_conversation,
 };
 use crate::core::session_manager::SessionEntry;
 
@@ -63,7 +63,12 @@ where
 {
     let old_leaf_id = match old_leaf_id {
         Some(id) => id,
-        None => return CollectEntriesResult { entries: Vec::new(), common_ancestor_id: None },
+        None => {
+            return CollectEntriesResult {
+                entries: Vec::new(),
+                common_ancestor_id: None,
+            };
+        }
     };
 
     let old_branch = get_branch(old_leaf_id);
@@ -194,7 +199,10 @@ pub fn prepare_branch_entries(entries: &[SessionEntry], token_budget: u64) -> Br
 
         if token_budget > 0 && total_tokens + tokens > token_budget {
             // If this is a summary entry, try to fit it if under 90% budget
-            if matches!(entry, SessionEntry::Compaction(_) | SessionEntry::BranchSummary(_)) {
+            if matches!(
+                entry,
+                SessionEntry::Compaction(_) | SessionEntry::BranchSummary(_)
+            ) {
                 if total_tokens < (token_budget as f64 * 0.9) as u64 {
                     messages.insert(0, message);
                     total_tokens += tokens;
@@ -218,8 +226,7 @@ pub fn prepare_branch_entries(entries: &[SessionEntry], token_budget: u64) -> Br
 // Summary Generation
 // ============================================================================
 
-const BRANCH_SUMMARY_PREAMBLE: &str =
-    "The user explored a different conversation branch before returning here.\n\
+const BRANCH_SUMMARY_PREAMBLE: &str = "The user explored a different conversation branch before returning here.\n\
 Summary of that exploration:\n\n";
 
 const BRANCH_SUMMARY_PROMPT: &str = "Create a structured summary of this conversation branch \
@@ -258,8 +265,9 @@ where
     Fut: std::future::Future<Output = Result<(String, bool, bool), String>>,
 {
     let token_budget = model_context_window.saturating_sub(reserve_tokens);
-    let BranchPreparation { messages, file_ops, .. } =
-        prepare_branch_entries(entries, token_budget);
+    let BranchPreparation {
+        messages, file_ops, ..
+    } = prepare_branch_entries(entries, token_budget);
 
     if messages.is_empty() {
         return BranchSummaryResult {
@@ -322,8 +330,11 @@ where
 
             let summary = format!("{}{}", BRANCH_SUMMARY_PREAMBLE, text);
             let (read_files, modified_files) = compute_file_lists(&file_ops);
-            let full_summary =
-                format!("{}{}", summary, format_file_operations(&read_files, &modified_files));
+            let full_summary = format!(
+                "{}{}",
+                summary,
+                format_file_operations(&read_files, &modified_files)
+            );
 
             BranchSummaryResult {
                 summary: Some(if full_summary.is_empty() {
@@ -381,12 +392,7 @@ mod tests {
 
     #[test]
     fn test_collect_entries_no_old_leaf() {
-        let result = collect_entries_for_branch_summary(
-            None,
-            "target",
-            |_| vec![],
-            |_| None,
-        );
+        let result = collect_entries_for_branch_summary(None, "target", |_| vec![], |_| None);
         assert!(result.entries.is_empty());
         assert!(result.common_ancestor_id.is_none());
     }
@@ -399,7 +405,12 @@ mod tests {
         let entry3 = make_user_entry("3", Some("2"), "branch A");
         let entry4 = make_user_entry("4", Some("2"), "branch B");
 
-        let all = vec![entry1.clone(), entry2.clone(), entry3.clone(), entry4.clone()];
+        let all = vec![
+            entry1.clone(),
+            entry2.clone(),
+            entry3.clone(),
+            entry4.clone(),
+        ];
 
         let get_branch = |id: &str| -> Vec<SessionEntry> {
             // Walk from id to root
@@ -417,16 +428,10 @@ mod tests {
             path
         };
 
-        let get_entry = |id: &str| -> Option<SessionEntry> {
-            all.iter().find(|e| e.id() == id).cloned()
-        };
+        let get_entry =
+            |id: &str| -> Option<SessionEntry> { all.iter().find(|e| e.id() == id).cloned() };
 
-        let result = collect_entries_for_branch_summary(
-            Some("3"),
-            "4",
-            get_branch,
-            get_entry,
-        );
+        let result = collect_entries_for_branch_summary(Some("3"), "4", get_branch, get_entry);
 
         // Common ancestor should be "2"
         assert_eq!(result.common_ancestor_id, Some("2".to_string()));
@@ -456,14 +461,20 @@ mod tests {
     fn test_prepare_branch_entries_respects_budget() {
         // Create many entries so budget forces truncation
         let ids: Vec<String> = (0..20).map(|i| format!("{}", i)).collect();
-        let parent_ids: Vec<String> = (0usize..20).map(|i| format!("{}", i.saturating_sub(1))).collect();
+        let parent_ids: Vec<String> = (0usize..20)
+            .map(|i| format!("{}", i.saturating_sub(1)))
+            .collect();
         let contents: Vec<String> = (0..20).map(|_| "a".repeat(400)).collect();
 
         let entries: Vec<SessionEntry> = (0..20)
             .map(|i| {
                 make_user_entry(
                     &ids[i],
-                    if i == 0 { None } else { Some(&parent_ids[i - 1]) },
+                    if i == 0 {
+                        None
+                    } else {
+                        Some(&parent_ids[i - 1])
+                    },
                     &contents[i],
                 )
             })

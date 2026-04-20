@@ -153,7 +153,9 @@ mod tests {
                 messages_received: Vec::new(),
                 response: Some(AgentMessage {
                     role: "assistant".to_string(),
-                    content: vec![MessageContent::Text { text: text.to_string() }],
+                    content: vec![MessageContent::Text {
+                        text: text.to_string(),
+                    }],
                     stop_reason: Some("stop".to_string()),
                     error_message: None,
                 }),

@@ -27,11 +27,7 @@ pub struct ExtensionSelectorComponent {
 
 impl ExtensionSelectorComponent {
     /// Create a new extension selector.
-    pub fn new(
-        title: impl Into<String>,
-        options: Vec<String>,
-        timeout_secs: Option<u64>,
-    ) -> Self {
+    pub fn new(title: impl Into<String>, options: Vec<String>, timeout_secs: Option<u64>) -> Self {
         Self {
             options,
             selected_index: 0,
@@ -67,8 +63,7 @@ impl ExtensionSelectorComponent {
         if self.options.is_empty() {
             return;
         }
-        self.selected_index =
-            (self.selected_index + 1).min(self.options.len().saturating_sub(1));
+        self.selected_index = (self.selected_index + 1).min(self.options.len().saturating_sub(1));
     }
 
     /// Confirm the current selection.

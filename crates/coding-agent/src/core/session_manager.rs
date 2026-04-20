@@ -392,7 +392,9 @@ fn migrate_v1_to_v2(entries: &mut Vec<Value>) {
 
         // Generate unique ID
         let id = loop {
-            let candidate = Ulid::new().to_string().to_lowercase()[..8].to_string().to_string();
+            let candidate = Ulid::new().to_string().to_lowercase()[..8]
+                .to_string()
+                .to_string();
             if !ids.contains(&candidate) {
                 break candidate;
             }
@@ -436,10 +438,7 @@ fn migrate_v2_to_v3(entries: &mut Vec<Value>) {
                 .and_then(|r| r.as_str())
             {
                 if role == "hookMessage" {
-                    if let Some(msg) = entry
-                        .get_mut("message")
-                        .and_then(|m| m.as_object_mut())
-                    {
+                    if let Some(msg) = entry.get_mut("message").and_then(|m| m.as_object_mut()) {
                         msg.insert("role".to_string(), Value::String("custom".to_string()));
                     }
                 }
@@ -510,15 +509,13 @@ fn parse_single_entry(v: &Value) -> Result<SessionEntry, serde_json::Error> {
     let t = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
     match t {
         "message" => Ok(SessionEntry::Message(serde_json::from_value(v.clone())?)),
-        "thinking_level_change" => Ok(SessionEntry::ThinkingLevelChange(
-            serde_json::from_value(v.clone())?,
-        )),
+        "thinking_level_change" => Ok(SessionEntry::ThinkingLevelChange(serde_json::from_value(
+            v.clone(),
+        )?)),
         "model_change" => Ok(SessionEntry::ModelChange(serde_json::from_value(
             v.clone(),
         )?)),
-        "compaction" => Ok(SessionEntry::Compaction(serde_json::from_value(
-            v.clone(),
-        )?)),
+        "compaction" => Ok(SessionEntry::Compaction(serde_json::from_value(v.clone())?)),
         "branch_summary" => Ok(SessionEntry::BranchSummary(serde_json::from_value(
             v.clone(),
         )?)),
@@ -664,7 +661,7 @@ pub fn build_session_context(
                 messages: Vec::new(),
                 thinking_level: "off".to_string(),
                 model: None,
-            }
+            };
         }
     };
 
@@ -736,14 +733,12 @@ pub fn build_session_context(
                     "timestamp": e.timestamp
                 }))
             }
-            SessionEntry::BranchSummary(e) if !e.summary.is_empty() => {
-                Some(serde_json::json!({
-                    "role": "branchSummary",
-                    "summary": e.summary,
-                    "fromId": e.from_id,
-                    "timestamp": e.timestamp
-                }))
-            }
+            SessionEntry::BranchSummary(e) if !e.summary.is_empty() => Some(serde_json::json!({
+                "role": "branchSummary",
+                "summary": e.summary,
+                "fromId": e.from_id,
+                "timestamp": e.timestamp
+            })),
             _ => None,
         }
     };
@@ -959,8 +954,7 @@ impl SessionManager {
             if let SessionEntry::Label(ref l) = entry {
                 if let Some(ref label) = l.label {
                     if !label.is_empty() {
-                        self.labels_by_id
-                            .insert(l.target_id.clone(), label.clone());
+                        self.labels_by_id.insert(l.target_id.clone(), label.clone());
                     } else {
                         self.labels_by_id.remove(&l.target_id);
                     }
@@ -1112,7 +1106,10 @@ impl SessionManager {
         });
 
         if let Some(d) = details {
-            value.as_object_mut().unwrap().insert("details".to_string(), d);
+            value
+                .as_object_mut()
+                .unwrap()
+                .insert("details".to_string(), d);
         }
         if let Some(fh) = from_hook {
             value
@@ -1236,7 +1233,11 @@ impl SessionManager {
     }
 
     /// Append a label change. Returns entry id.
-    pub fn append_label_change(&mut self, target_id: &str, label: Option<&str>) -> anyhow::Result<String> {
+    pub fn append_label_change(
+        &mut self,
+        target_id: &str,
+        label: Option<&str>,
+    ) -> anyhow::Result<String> {
         if !self.by_id.contains_key(target_id) {
             anyhow::bail!("Entry {} not found", target_id);
         }
@@ -1451,7 +1452,10 @@ impl SessionManager {
         });
 
         if let Some(d) = details {
-            value.as_object_mut().unwrap().insert("details".to_string(), d);
+            value
+                .as_object_mut()
+                .unwrap()
+                .insert("details".to_string(), d);
         }
         if let Some(fh) = from_hook {
             value
@@ -1513,8 +1517,10 @@ impl SessionManager {
         }
 
         // Collect labels for entries in the path
-        let path_entry_ids: std::collections::HashSet<String> =
-            path_without_labels.iter().map(|e| e.id().to_string()).collect();
+        let path_entry_ids: std::collections::HashSet<String> = path_without_labels
+            .iter()
+            .map(|e| e.id().to_string())
+            .collect();
 
         let labels_to_write: Vec<(String, String)> = self
             .labels_by_id
@@ -1540,7 +1546,9 @@ impl SessionManager {
         for (target_id, label) in &labels_to_write {
             // Generate a unique id not in the set
             let label_id = loop {
-                let candidate = Ulid::new().to_string().to_lowercase()[..8].to_string().to_string();
+                let candidate = Ulid::new().to_string().to_lowercase()[..8]
+                    .to_string()
+                    .to_string();
                 if !all_entry_ids.contains(&candidate) {
                     break candidate;
                 }
@@ -1598,9 +1606,9 @@ impl SessionManager {
 
     /// Create a new session in the given directory.
     pub fn create(cwd: &str, session_dir: Option<&Path>) -> Self {
-        let dir = session_dir.map(|p| p.to_path_buf()).unwrap_or_else(|| {
-            get_default_session_dir(cwd, None)
-        });
+        let dir = session_dir
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| get_default_session_dir(cwd, None));
         Self::new(cwd.to_string(), dir, None, true)
     }
 
@@ -1623,9 +1631,9 @@ impl SessionManager {
 
     /// Continue the most recent session, or create a new one.
     pub fn continue_recent(cwd: &str, session_dir: Option<&Path>) -> Self {
-        let dir = session_dir.map(|p| p.to_path_buf()).unwrap_or_else(|| {
-            get_default_session_dir(cwd, None)
-        });
+        let dir = session_dir
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| get_default_session_dir(cwd, None));
         if let Some(recent) = find_most_recent_session(&dir) {
             Self::new(cwd.to_string(), dir, Some(recent), true)
         } else {
@@ -1663,9 +1671,9 @@ impl SessionManager {
             );
         }
 
-        let dir = session_dir.map(|p| p.to_path_buf()).unwrap_or_else(|| {
-            get_default_session_dir(target_cwd, None)
-        });
+        let dir = session_dir
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| get_default_session_dir(target_cwd, None));
         std::fs::create_dir_all(&dir).ok();
 
         let new_session_id = Ulid::new().to_string().to_lowercase();
@@ -1701,9 +1709,9 @@ impl SessionManager {
 
     /// List sessions in a directory.
     pub async fn list(cwd: &str, session_dir: Option<&Path>) -> Vec<SessionInfo> {
-        let dir = session_dir.map(|p| p.to_path_buf()).unwrap_or_else(|| {
-            get_default_session_dir(cwd, None)
-        });
+        let dir = session_dir
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| get_default_session_dir(cwd, None));
         let mut sessions = list_sessions_from_dir(&dir).await;
         sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
         sessions
@@ -2099,7 +2107,8 @@ mod tests {
 
         let id1 = sm.append_message(serde_json::json!({"role":"user","content":"1","timestamp":1}));
         let id2 = sm.append_message(serde_json::json!({"role":"assistant","content":[{"type":"text","text":"2"}],"timestamp":1}));
-        let _id3 = sm.append_message(serde_json::json!({"role":"user","content":"3","timestamp":1}));
+        let _id3 =
+            sm.append_message(serde_json::json!({"role":"user","content":"3","timestamp":1}));
 
         let path = sm.get_branch(Some(&id2));
         assert_eq!(path.len(), 2);
@@ -2113,13 +2122,18 @@ mod tests {
 
         let id1 = sm.append_message(serde_json::json!({"role":"user","content":"1","timestamp":1}));
         let _id2 = sm.append_message(serde_json::json!({"role":"assistant","content":[{"type":"text","text":"2"}],"timestamp":1}));
-        let _id3 = sm.append_message(serde_json::json!({"role":"user","content":"3","timestamp":1}));
+        let _id3 =
+            sm.append_message(serde_json::json!({"role":"user","content":"3","timestamp":1}));
 
-        let summary_id = sm.branch_with_summary(Some(&id1), "Summary of abandoned work", None, None).unwrap();
+        let summary_id = sm
+            .branch_with_summary(Some(&id1), "Summary of abandoned work", None, None)
+            .unwrap();
         assert_eq!(sm.get_leaf_id(), Some(summary_id.as_str()));
 
         let entries = sm.get_entries_ordered();
-        let summary_entry = entries.iter().find(|e| matches!(e, SessionEntry::BranchSummary(_)));
+        let summary_entry = entries
+            .iter()
+            .find(|e| matches!(e, SessionEntry::BranchSummary(_)));
         assert!(summary_entry.is_some());
         assert_eq!(summary_entry.unwrap().parent_id(), Some(id1.as_str()));
     }
@@ -2148,7 +2162,8 @@ mod tests {
 
         let id1 = sm.append_message(serde_json::json!({"role":"user","content":"1","timestamp":1}));
         let id2 = sm.append_message(serde_json::json!({"role":"assistant","content":[{"type":"text","text":"2"}],"timestamp":1}));
-        let _id3 = sm.append_message(serde_json::json!({"role":"user","content":"3","timestamp":1}));
+        let _id3 =
+            sm.append_message(serde_json::json!({"role":"user","content":"3","timestamp":1}));
         sm.append_message(serde_json::json!({"role":"assistant","content":[{"type":"text","text":"4"}],"timestamp":1}));
 
         // Branch from id2 (should only have id1, id2)
@@ -2268,11 +2283,13 @@ mod tests {
             ctx.messages[0].get("role").and_then(|r| r.as_str()),
             Some("compactionSummary")
         );
-        assert!(ctx.messages[0]
-            .get("summary")
-            .and_then(|s| s.as_str())
-            .unwrap_or("")
-            .contains("Summary of first two turns"));
+        assert!(
+            ctx.messages[0]
+                .get("summary")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .contains("Summary of first two turns")
+        );
     }
 
     #[test]
@@ -2355,11 +2372,13 @@ mod tests {
         let ctx = build_session_context(&entries, None, None);
         // second compaction: summary + kept(4,5) + after(7) = 4
         assert_eq!(ctx.messages.len(), 4);
-        assert!(ctx.messages[0]
-            .get("summary")
-            .and_then(|s| s.as_str())
-            .unwrap_or("")
-            .contains("Second summary"));
+        assert!(
+            ctx.messages[0]
+                .get("summary")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .contains("Second summary")
+        );
     }
 
     #[test]
@@ -2402,9 +2421,13 @@ mod tests {
         let entries = sm.get_entries();
         assert_eq!(entries.len(), 3);
 
-        let custom_entry = entries.iter().find(|e| matches!(e, SessionEntry::Custom(_)));
+        let custom_entry = entries
+            .iter()
+            .find(|e| matches!(e, SessionEntry::Custom(_)));
         assert!(custom_entry.is_some());
-        let SessionEntry::Custom(c) = custom_entry.unwrap() else { panic!() };
+        let SessionEntry::Custom(c) = custom_entry.unwrap() else {
+            panic!()
+        };
         assert_eq!(c.custom_type, "my_data");
         assert_eq!(c.data, Some(serde_json::json!({"foo": "bar"})));
         assert_eq!(c.id, custom_id);
@@ -2440,11 +2463,11 @@ mod tests {
 
         // Label entry should be in entries
         let entries = sm.get_entries();
-        let label_entry = entries
-            .iter()
-            .find(|e| matches!(e, SessionEntry::Label(_)));
+        let label_entry = entries.iter().find(|e| matches!(e, SessionEntry::Label(_)));
         assert!(label_entry.is_some());
-        let SessionEntry::Label(l) = label_entry.unwrap() else { panic!() };
+        let SessionEntry::Label(l) = label_entry.unwrap() else {
+            panic!()
+        };
         assert_eq!(l.id, label_id);
         assert_eq!(l.target_id, msg_id);
         assert_eq!(l.label.as_deref(), Some("checkpoint"));
@@ -2562,7 +2585,8 @@ mod tests {
         }));
 
         sm.append_label_change(&msg1_id, Some("important")).unwrap();
-        sm.append_label_change(&msg2_id, Some("also-important")).unwrap();
+        sm.append_label_change(&msg2_id, Some("also-important"))
+            .unwrap();
 
         // Branch from msg2 (in-memory returns None but updates state)
         sm.create_branched_session(&msg2_id).unwrap();
@@ -2573,7 +2597,10 @@ mod tests {
 
         // Two label entries should exist
         let entries = sm.get_entries();
-        let label_count = entries.iter().filter(|e| matches!(e, SessionEntry::Label(_))).count();
+        let label_count = entries
+            .iter()
+            .filter(|e| matches!(e, SessionEntry::Label(_)))
+            .count();
         assert_eq!(label_count, 2);
     }
 

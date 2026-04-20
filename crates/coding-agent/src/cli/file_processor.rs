@@ -92,9 +92,8 @@ pub fn process_file_arguments(
             });
         } else {
             // Text file
-            let content = std::fs::read_to_string(&path).map_err(|e| {
-                format!("Could not read file {}: {}", path.display(), e)
-            })?;
+            let content = std::fs::read_to_string(&path)
+                .map_err(|e| format!("Could not read file {}: {}", path.display(), e))?;
             result.text.push_str(&format!(
                 "<file name=\"{}\">\n{}\n</file>\n",
                 path.display(),
@@ -122,8 +121,16 @@ fn base64_encode(data: &[u8]) -> String {
     let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as usize;
-        let b1 = if chunk.len() > 1 { chunk[1] as usize } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as usize } else { 0 };
+        let b1 = if chunk.len() > 1 {
+            chunk[1] as usize
+        } else {
+            0
+        };
+        let b2 = if chunk.len() > 2 {
+            chunk[2] as usize
+        } else {
+            0
+        };
 
         out.push(CHARS[(b0 >> 2)] as char);
         out.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);

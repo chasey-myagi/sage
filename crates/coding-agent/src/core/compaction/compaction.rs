@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::core::compaction::utils::{
-    compute_file_lists, create_file_ops, extract_file_ops_from_message, format_file_operations,
-    serialize_conversation, FileOperations, SUMMARIZATION_SYSTEM_PROMPT,
+    FileOperations, SUMMARIZATION_SYSTEM_PROMPT, compute_file_lists, create_file_ops,
+    extract_file_ops_from_message, format_file_operations, serialize_conversation,
 };
 use crate::core::session_manager::{CompactionEntry, SessionEntry};
 
@@ -66,10 +66,7 @@ pub fn calculate_context_tokens(usage: &Value) -> u64 {
     }
     let input = usage.get("input").and_then(|v| v.as_u64()).unwrap_or(0);
     let output = usage.get("output").and_then(|v| v.as_u64()).unwrap_or(0);
-    let cache_read = usage
-        .get("cacheRead")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let cache_read = usage.get("cacheRead").and_then(|v| v.as_u64()).unwrap_or(0);
     let cache_write = usage
         .get("cacheWrite")
         .and_then(|v| v.as_u64())
@@ -125,10 +122,7 @@ pub fn estimate_context_tokens(messages: &[Value]) -> ContextUsageEstimate {
 
     if let Some((usage, idx)) = usage_info {
         let usage_tokens = calculate_context_tokens(&usage);
-        let trailing_tokens: u64 = messages[idx + 1..]
-            .iter()
-            .map(|m| estimate_tokens(m))
-            .sum();
+        let trailing_tokens: u64 = messages[idx + 1..].iter().map(|m| estimate_tokens(m)).sum();
         ContextUsageEstimate {
             tokens: usage_tokens + trailing_tokens,
             usage_tokens,
@@ -147,7 +141,11 @@ pub fn estimate_context_tokens(messages: &[Value]) -> ContextUsageEstimate {
 }
 
 /// Check if compaction should trigger.
-pub fn should_compact(context_tokens: u64, context_window: u64, settings: &CompactionSettings) -> bool {
+pub fn should_compact(
+    context_tokens: u64,
+    context_window: u64,
+    settings: &CompactionSettings,
+) -> bool {
     if !settings.enabled {
         return false;
     }
@@ -189,13 +187,25 @@ pub fn estimate_tokens(message: &Value) -> u64 {
                 let t = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
                 match t {
                     "text" => {
-                        chars += block.get("text").and_then(|t| t.as_str()).map(|s| s.len()).unwrap_or(0);
+                        chars += block
+                            .get("text")
+                            .and_then(|t| t.as_str())
+                            .map(|s| s.len())
+                            .unwrap_or(0);
                     }
                     "thinking" => {
-                        chars += block.get("thinking").and_then(|t| t.as_str()).map(|s| s.len()).unwrap_or(0);
+                        chars += block
+                            .get("thinking")
+                            .and_then(|t| t.as_str())
+                            .map(|s| s.len())
+                            .unwrap_or(0);
                     }
                     "toolCall" => {
-                        chars += block.get("name").and_then(|n| n.as_str()).map(|s| s.len()).unwrap_or(0);
+                        chars += block
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .map(|s| s.len())
+                            .unwrap_or(0);
                         if let Some(args) = block.get("arguments") {
                             chars += args.to_string().len();
                         }
@@ -214,7 +224,11 @@ pub fn estimate_tokens(message: &Value) -> u64 {
                     for block in arr {
                         let t = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
                         if t == "text" {
-                            chars += block.get("text").and_then(|t| t.as_str()).map(|s| s.len()).unwrap_or(0);
+                            chars += block
+                                .get("text")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.len())
+                                .unwrap_or(0);
                         }
                         if t == "image" {
                             chars += 4800; // ~1200 tokens
@@ -226,13 +240,23 @@ pub fn estimate_tokens(message: &Value) -> u64 {
             }
         }
         "bashExecution" => {
-            let cmd = message.get("command").and_then(|c| c.as_str()).map(|s| s.len()).unwrap_or(0);
-            let out = message.get("output").and_then(|o| o.as_str()).map(|s| s.len()).unwrap_or(0);
+            let cmd = message
+                .get("command")
+                .and_then(|c| c.as_str())
+                .map(|s| s.len())
+                .unwrap_or(0);
+            let out = message
+                .get("output")
+                .and_then(|o| o.as_str())
+                .map(|s| s.len())
+                .unwrap_or(0);
             cmd + out
         }
-        "branchSummary" | "compactionSummary" => {
-            message.get("summary").and_then(|s| s.as_str()).map(|s| s.len()).unwrap_or(0)
-        }
+        "branchSummary" | "compactionSummary" => message
+            .get("summary")
+            .and_then(|s| s.as_str())
+            .map(|s| s.len())
+            .unwrap_or(0),
         _ => 0,
     };
     (chars as u64 + 3) / 4
@@ -242,7 +266,11 @@ pub fn estimate_tokens(message: &Value) -> u64 {
 // Cut point detection
 // ============================================================================
 
-fn find_valid_cut_points(entries: &[SessionEntry], start_index: usize, end_index: usize) -> Vec<usize> {
+fn find_valid_cut_points(
+    entries: &[SessionEntry],
+    start_index: usize,
+    end_index: usize,
+) -> Vec<usize> {
     let mut cut_points = Vec::new();
     for i in start_index..end_index {
         let entry = &entries[i];
@@ -250,8 +278,8 @@ fn find_valid_cut_points(entries: &[SessionEntry], start_index: usize, end_index
             SessionEntry::Message(e) => {
                 let role = e.message.get("role").and_then(|r| r.as_str()).unwrap_or("");
                 match role {
-                    "bashExecution" | "custom" | "branchSummary" | "compactionSummary"
-                    | "user" | "assistant" => {
+                    "bashExecution" | "custom" | "branchSummary" | "compactionSummary" | "user"
+                    | "assistant" => {
                         cut_points.push(i);
                     }
                     "toolResult" => {}
@@ -355,9 +383,7 @@ pub fn find_cut_point(
 
     // Determine if this is a split turn
     let is_user_message = match &entries[cut_index] {
-        SessionEntry::Message(e) => {
-            e.message.get("role").and_then(|r| r.as_str()) == Some("user")
-        }
+        SessionEntry::Message(e) => e.message.get("role").and_then(|r| r.as_str()) == Some("user"),
         _ => false,
     };
 
@@ -465,7 +491,9 @@ pub fn prepare_compaction(
     }
 
     let history_end = if cut_point.is_split_turn {
-        cut_point.turn_start_index.unwrap_or(cut_point.first_kept_entry_index)
+        cut_point
+            .turn_start_index
+            .unwrap_or(cut_point.first_kept_entry_index)
     } else {
         cut_point.first_kept_entry_index
     };
@@ -477,7 +505,9 @@ pub fn prepare_compaction(
 
     // Turn prefix messages (if splitting)
     let turn_prefix_messages: Vec<Value> = if cut_point.is_split_turn {
-        let turn_start = cut_point.turn_start_index.unwrap_or(cut_point.first_kept_entry_index);
+        let turn_start = cut_point
+            .turn_start_index
+            .unwrap_or(cut_point.first_kept_entry_index);
         (turn_start..cut_point.first_kept_entry_index)
             .filter_map(|i| get_message_from_entry(&path_entries[i]))
             .collect()
@@ -495,11 +525,8 @@ pub fn prepare_compaction(
     });
 
     // Extract file operations
-    let mut file_ops = extract_file_operations(
-        &messages_to_summarize,
-        path_entries,
-        prev_compaction_index,
-    );
+    let mut file_ops =
+        extract_file_operations(&messages_to_summarize, path_entries, prev_compaction_index);
 
     if cut_point.is_split_turn {
         for msg in &turn_prefix_messages {
@@ -718,15 +745,14 @@ where
             let cloned_call_llm = call_llm.clone();
             let msgs = preparation.turn_prefix_messages.clone();
             let reserve = preparation.settings.reserve_tokens;
-            async move {
-                generate_turn_prefix_summary(&msgs, reserve, cloned_call_llm).await
-            }
+            async move { generate_turn_prefix_summary(&msgs, reserve, cloned_call_llm).await }
         };
 
         if let Some(history_fut) = history_future {
             let (history_result, turn_prefix_result) =
                 tokio::join!(history_fut, turn_prefix_future);
-            let history_summary = history_result.unwrap_or_else(|_| "No prior history.".to_string());
+            let history_summary =
+                history_result.unwrap_or_else(|_| "No prior history.".to_string());
             let turn_prefix_summary = turn_prefix_result?;
             format!(
                 "{}\n\n---\n\n**Turn Context (split turn):**\n\n{}",
@@ -751,7 +777,11 @@ where
     };
 
     let (read_files, modified_files) = compute_file_lists(&preparation.file_ops);
-    let full_summary = format!("{}{}", summary, format_file_operations(&read_files, &modified_files));
+    let full_summary = format!(
+        "{}{}",
+        summary,
+        format_file_operations(&read_files, &modified_files)
+    );
 
     if preparation.first_kept_entry_id.is_empty() {
         anyhow::bail!("First kept entry has no ID - session may need migration");
@@ -806,8 +836,8 @@ where
 mod tests {
     use super::*;
     use crate::core::session_manager::{
-        CompactionEntry, SessionEntry, SessionMessageEntry, ThinkingLevelChangeEntry,
-        ModelChangeEntry,
+        CompactionEntry, ModelChangeEntry, SessionEntry, SessionMessageEntry,
+        ThinkingLevelChangeEntry,
     };
 
     fn make_usage(input: u64, output: u64, cache_read: u64, cache_write: u64) -> Value {
@@ -891,9 +921,17 @@ mod tests {
     fn test_get_last_assistant_usage() {
         let entries = vec![
             make_msg_entry("0", None, make_user_msg("Hello")),
-            make_msg_entry("1", Some("0"), make_assistant_msg("Hi", make_usage(100, 50, 0, 0))),
+            make_msg_entry(
+                "1",
+                Some("0"),
+                make_assistant_msg("Hi", make_usage(100, 50, 0, 0)),
+            ),
             make_msg_entry("2", Some("1"), make_user_msg("How are you?")),
-            make_msg_entry("3", Some("2"), make_assistant_msg("Good", make_usage(200, 100, 0, 0))),
+            make_msg_entry(
+                "3",
+                Some("2"),
+                make_assistant_msg("Good", make_usage(200, 100, 0, 0)),
+            ),
         ];
 
         let usage = get_last_assistant_usage(&entries).unwrap();
@@ -903,11 +941,18 @@ mod tests {
     #[test]
     fn test_get_last_assistant_usage_skips_aborted() {
         let mut aborted = make_assistant_msg("Aborted", make_usage(300, 150, 0, 0));
-        aborted.as_object_mut().unwrap().insert("stopReason".to_string(), Value::String("aborted".to_string()));
+        aborted.as_object_mut().unwrap().insert(
+            "stopReason".to_string(),
+            Value::String("aborted".to_string()),
+        );
 
         let entries = vec![
             make_msg_entry("0", None, make_user_msg("Hello")),
-            make_msg_entry("1", Some("0"), make_assistant_msg("Hi", make_usage(100, 50, 0, 0))),
+            make_msg_entry(
+                "1",
+                Some("0"),
+                make_assistant_msg("Hi", make_usage(100, 50, 0, 0)),
+            ),
             make_msg_entry("2", Some("1"), make_user_msg("How are you?")),
             make_msg_entry("3", Some("2"), aborted),
         ];
@@ -962,9 +1007,17 @@ mod tests {
     fn test_find_cut_point_keeps_everything_when_within_budget() {
         let entries = vec![
             make_msg_entry("0", None, make_user_msg("1")),
-            make_msg_entry("1", Some("0"), make_assistant_msg("a", make_usage(0, 50, 500, 0))),
+            make_msg_entry(
+                "1",
+                Some("0"),
+                make_assistant_msg("a", make_usage(0, 50, 500, 0)),
+            ),
             make_msg_entry("2", Some("1"), make_user_msg("2")),
-            make_msg_entry("3", Some("2"), make_assistant_msg("b", make_usage(0, 50, 1000, 0))),
+            make_msg_entry(
+                "3",
+                Some("2"),
+                make_assistant_msg("b", make_usage(0, 50, 1000, 0)),
+            ),
         ];
         let result = find_cut_point(&entries, 0, entries.len(), 50000);
         assert_eq!(result.first_kept_entry_index, 0);

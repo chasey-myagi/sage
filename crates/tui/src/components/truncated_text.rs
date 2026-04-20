@@ -1,5 +1,4 @@
 /// TruncatedText component — single-line text truncated to fit viewport width.
-
 use crate::tui::Component;
 use crate::utils::{truncate_to_width, visible_width};
 
@@ -97,9 +96,17 @@ mod tests {
         // "pads output lines to exactly match width"
         let t = TruncatedText::new("Hello world", 1, 0);
         let lines = t.render(50);
-        assert_eq!(lines.len(), 1, "should have exactly one content line (no vertical padding)");
+        assert_eq!(
+            lines.len(),
+            1,
+            "should have exactly one content line (no vertical padding)"
+        );
         // Line should be exactly 50 visible characters
-        assert_eq!(visible_width(&lines[0]), 50, "line should be exactly 50 visible chars");
+        assert_eq!(
+            visible_width(&lines[0]),
+            50,
+            "line should be exactly 50 visible chars"
+        );
     }
 
     #[test]
@@ -110,21 +117,33 @@ mod tests {
         // 2 padding lines + 1 content line + 2 padding lines = 5 total
         assert_eq!(lines.len(), 5, "should have 2+1+2=5 total lines");
         for line in &lines {
-            assert_eq!(visible_width(line), 40, "all lines should be exactly 40 chars");
+            assert_eq!(
+                visible_width(line),
+                40,
+                "all lines should be exactly 40 chars"
+            );
         }
     }
 
     #[test]
     fn test_truncates_long_text_and_pads_to_width() {
         // "truncates long text and pads to width"
-        let long_text = "This is a very long piece of text that will definitely exceed the available width";
+        let long_text =
+            "This is a very long piece of text that will definitely exceed the available width";
         let t = TruncatedText::new(long_text, 1, 0);
         let lines = t.render(30);
         assert_eq!(lines.len(), 1);
         // Should be exactly 30 characters
-        assert_eq!(visible_width(&lines[0]), 30, "should be exactly 30 visible chars");
+        assert_eq!(
+            visible_width(&lines[0]),
+            30,
+            "should be exactly 30 visible chars"
+        );
         // Text should be truncated (not contain the full string)
-        assert!(!lines[0].contains("definitely exceed"), "long text should be truncated");
+        assert!(
+            !lines[0].contains("definitely exceed"),
+            "long text should be truncated"
+        );
     }
 
     #[test]
@@ -137,7 +156,10 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert_eq!(visible_width(&lines[0]), 30);
         // Should contain the text
-        assert!(lines[0].contains("Hello world"), "should contain the original text");
+        assert!(
+            lines[0].contains("Hello world"),
+            "should contain the original text"
+        );
     }
 
     #[test]
@@ -160,9 +182,18 @@ mod tests {
         // Should only contain "First line"
         let stripped: String = lines[0].chars().collect();
         let trimmed = stripped.trim();
-        assert!(trimmed.contains("First line"), "should contain 'First line'");
-        assert!(!trimmed.contains("Second line"), "should not contain 'Second line'");
-        assert!(!trimmed.contains("Third line"), "should not contain 'Third line'");
+        assert!(
+            trimmed.contains("First line"),
+            "should contain 'First line'"
+        );
+        assert!(
+            !trimmed.contains("Second line"),
+            "should not contain 'Second line'"
+        );
+        assert!(
+            !trimmed.contains("Third line"),
+            "should not contain 'Third line'"
+        );
     }
 
     #[test]
@@ -174,7 +205,10 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert_eq!(visible_width(&lines[0]), 25);
         // Should not show second line
-        assert!(!lines[0].contains("Second line"), "should not contain 'Second line'");
+        assert!(
+            !lines[0].contains("Second line"),
+            "should not contain 'Second line'"
+        );
     }
 
     #[test]

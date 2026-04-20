@@ -38,7 +38,9 @@ fn home_dir() -> PathBuf {
     #[cfg(windows)]
     {
         std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOMEDRIVE").and_then(|d| std::env::var("HOMEPATH").map(|p| d + &p)))
+            .or_else(|_| {
+                std::env::var("HOMEDRIVE").and_then(|d| std::env::var("HOMEPATH").map(|p| d + &p))
+            })
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("C:\\Users\\Default"))
     }

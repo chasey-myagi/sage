@@ -1,5 +1,4 @@
 /// Box component — container that applies padding and background to children.
-
 use std::cell::RefCell;
 
 use crate::tui::Component;
@@ -79,12 +78,21 @@ impl BoxComponent {
         }
     }
 
-    fn match_cache(&self, width: usize, child_lines: &[String], bg_sample: &Option<String>) -> bool {
+    fn match_cache(
+        &self,
+        width: usize,
+        child_lines: &[String],
+        bg_sample: &Option<String>,
+    ) -> bool {
         if let Some(cache) = self.cache.borrow().as_ref() {
             cache.width == width
                 && &cache.bg_sample == bg_sample
                 && cache.child_lines.len() == child_lines.len()
-                && cache.child_lines.iter().zip(child_lines.iter()).all(|(a, b)| a == b)
+                && cache
+                    .child_lines
+                    .iter()
+                    .zip(child_lines.iter())
+                    .all(|(a, b)| a == b)
         } else {
             false
         }

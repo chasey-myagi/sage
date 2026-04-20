@@ -1,5 +1,4 @@
 /// Text component — multi-line text with word wrapping.
-
 use crate::tui::Component;
 use crate::utils::{apply_background_to_line, visible_width, wrap_text_with_ansi};
 
@@ -90,7 +89,11 @@ impl Component for Text {
         for line in &wrapped_lines {
             let line_with_margins = format!("{left_margin}{line}{right_margin}");
             if let Some(bg_fn) = &self.custom_bg_fn {
-                content_lines.push(apply_background_to_line(&line_with_margins, width, bg_fn.as_ref()));
+                content_lines.push(apply_background_to_line(
+                    &line_with_margins,
+                    width,
+                    bg_fn.as_ref(),
+                ));
             } else {
                 let visible_len = visible_width(&line_with_margins);
                 let padding_needed = width.saturating_sub(visible_len);

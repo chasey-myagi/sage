@@ -65,8 +65,8 @@ fn has_bedrock_credentials() -> bool {
 #[test]
 #[ignore = "requires AWS credentials and BEDROCK_EXTENSIVE_MODEL_TEST=1"]
 fn bedrock_skipped_without_credentials_env() {
-    let should_run = has_bedrock_credentials()
-        && std::env::var("BEDROCK_EXTENSIVE_MODEL_TEST").is_ok();
+    let should_run =
+        has_bedrock_credentials() && std::env::var("BEDROCK_EXTENSIVE_MODEL_TEST").is_ok();
     if !should_run {
         // This is the expected path — skipped in TS via it.skip()
         return;
@@ -125,11 +125,17 @@ async fn bedrock_synthetic_thinking_signature_in_history() {
 #[test]
 fn bedrock_model_unavailable_classification() {
     // REQUIRES_INFERENCE_PROFILE
-    assert!(is_model_unavailable("anthropic.claude-3-5-haiku-20241022-v1:0"));
+    assert!(is_model_unavailable(
+        "anthropic.claude-3-5-haiku-20241022-v1:0"
+    ));
     // INVALID_MODEL_ID
     assert!(is_model_unavailable("deepseek.v3-v1:0"));
     // MAX_TOKENS_EXCEEDED
-    assert!(is_model_unavailable("us.meta.llama4-maverick-17b-instruct-v1:0"));
+    assert!(is_model_unavailable(
+        "us.meta.llama4-maverick-17b-instruct-v1:0"
+    ));
     // Available model
-    assert!(!is_model_unavailable("us.anthropic.claude-3-7-sonnet-20250219-v1:0"));
+    assert!(!is_model_unavailable(
+        "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+    ));
 }

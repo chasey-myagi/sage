@@ -156,7 +156,8 @@ pub fn run_rpc_mode<S: RpcSession>(session: &mut S) -> anyhow::Result<()> {
         let parsed: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(e) => {
-                let resp = RpcResponse::err(None, "parse", &format!("Failed to parse command: {e}"));
+                let resp =
+                    RpcResponse::err(None, "parse", &format!("Failed to parse command: {e}"));
                 output_json(&serde_json::to_value(resp).unwrap_or(Value::Null));
                 continue;
             }
@@ -169,8 +170,15 @@ pub fn run_rpc_mode<S: RpcSession>(session: &mut S) -> anyhow::Result<()> {
             continue;
         }
 
-        let id = parsed.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let command_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+        let id = parsed
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let command_type = parsed
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
 
         let response = handle_command(session, &command_type, &parsed, id);
         output_json(&response);
@@ -232,12 +240,10 @@ fn handle_command<S: RpcSession>(
             }
         }
 
-        "abort" => {
-            match session.abort() {
-                Ok(()) => ok!(),
-                Err(e) => err!(e.to_string().as_str()),
-            }
-        }
+        "abort" => match session.abort() {
+            Ok(()) => ok!(),
+            Err(e) => err!(e.to_string().as_str()),
+        },
 
         "new_session" => {
             let parent = cmd.get("parentSession").and_then(|v| v.as_str());
@@ -266,7 +272,10 @@ fn handle_command<S: RpcSession>(
         "get_available_models" => ok!(session.get_available_models()),
 
         "set_thinking_level" => {
-            let level = cmd.get("level").and_then(|v| v.as_str()).unwrap_or("medium");
+            let level = cmd
+                .get("level")
+                .and_then(|v| v.as_str())
+                .unwrap_or("medium");
             session.set_thinking_level(level);
             ok!()
         }
@@ -300,13 +309,19 @@ fn handle_command<S: RpcSession>(
         }
 
         "set_auto_compaction" => {
-            let enabled = cmd.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+            let enabled = cmd
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             session.set_auto_compaction_enabled(enabled);
             ok!()
         }
 
         "set_auto_retry" => {
-            let enabled = cmd.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+            let enabled = cmd
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             session.set_auto_retry_enabled(enabled);
             ok!()
         }
@@ -340,7 +355,10 @@ fn handle_command<S: RpcSession>(
         }
 
         "switch_session" => {
-            let session_path = cmd.get("sessionPath").and_then(|v| v.as_str()).unwrap_or("");
+            let session_path = cmd
+                .get("sessionPath")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             match session.switch_session(session_path) {
                 Ok(success) => ok!(serde_json::json!({ "cancelled": !success })),
                 Err(e) => err!(e.to_string().as_str()),
@@ -363,7 +381,12 @@ fn handle_command<S: RpcSession>(
         }
 
         "set_session_name" => {
-            let name = cmd.get("name").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let name = cmd
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
             if name.is_empty() {
                 err!("Session name cannot be empty")
             } else {
@@ -378,14 +401,12 @@ fn handle_command<S: RpcSession>(
 
         "get_commands" => ok!(session.get_commands()),
 
-        unknown => {
-            serde_json::to_value(RpcResponse::err(
-                id,
-                unknown,
-                &format!("Unknown command: {unknown}"),
-            ))
-            .unwrap()
-        }
+        unknown => serde_json::to_value(RpcResponse::err(
+            id,
+            unknown,
+            &format!("Unknown command: {unknown}"),
+        ))
+        .unwrap(),
     }
 }
 

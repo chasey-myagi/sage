@@ -77,7 +77,11 @@ fn run_shell_command(command: &str) -> Option<String> {
             return None;
         }
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if stdout.is_empty() { None } else { Some(stdout) }
+        if stdout.is_empty() {
+            None
+        } else {
+            Some(stdout)
+        }
     }
 
     #[cfg(not(windows))]
@@ -93,7 +97,11 @@ fn run_shell_command(command: &str) -> Option<String> {
             return None;
         }
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if stdout.is_empty() { None } else { Some(stdout) }
+        if stdout.is_empty() {
+            None
+        } else {
+            Some(stdout)
+        }
     }
 }
 
@@ -114,7 +122,11 @@ pub async fn resolve_headers(
         }
     }
 
-    if resolved.is_empty() { None } else { Some(resolved) }
+    if resolved.is_empty() {
+        None
+    } else {
+        Some(resolved)
+    }
 }
 
 // ============================================================================
@@ -146,8 +158,7 @@ mod tests {
     fn env_var_name_resolved_from_env() {
         // SAFETY: test-only, single-threaded context
         unsafe { std::env::set_var("RESOLVE_TEST_VAR_UNIQUE", "my-api-key") };
-        let result =
-            futures::executor::block_on(resolve_config_value("RESOLVE_TEST_VAR_UNIQUE"));
+        let result = futures::executor::block_on(resolve_config_value("RESOLVE_TEST_VAR_UNIQUE"));
         assert_eq!(result, Some("my-api-key".to_string()));
         // SAFETY: test-only
         unsafe { std::env::remove_var("RESOLVE_TEST_VAR_UNIQUE") };
@@ -158,8 +169,7 @@ mod tests {
         // Ensure not set
         // SAFETY: test-only
         unsafe { std::env::remove_var("TOTALLY_UNKNOWN_VAR_XYZ") };
-        let result =
-            futures::executor::block_on(resolve_config_value("TOTALLY_UNKNOWN_VAR_XYZ"));
+        let result = futures::executor::block_on(resolve_config_value("TOTALLY_UNKNOWN_VAR_XYZ"));
         assert_eq!(result, Some("TOTALLY_UNKNOWN_VAR_XYZ".to_string()));
     }
 
@@ -176,8 +186,7 @@ mod tests {
     #[test]
     fn bang_prefix_failing_command_returns_none() {
         clear_config_value_cache();
-        let result =
-            futures::executor::block_on(resolve_config_value("!exit 1"));
+        let result = futures::executor::block_on(resolve_config_value("!exit 1"));
         assert_eq!(result, None);
         clear_config_value_cache();
     }

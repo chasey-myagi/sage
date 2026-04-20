@@ -7,8 +7,8 @@
 
 use std::path::Path;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
@@ -153,9 +153,7 @@ mod tests {
 
     #[tokio::test]
     async fn exec_failure_exit_code() {
-        let result = exec_command("false", &[], &tmp_dir(), None)
-            .await
-            .unwrap();
+        let result = exec_command("false", &[], &tmp_dir(), None).await.unwrap();
         assert!(result.code.unwrap_or(0) != 0);
         assert!(!result.killed);
     }
@@ -181,7 +179,10 @@ mod tests {
         // When the timeout fires the process is killed; killed must be true
         // and code must be None.
         assert!(result.killed, "process should have been killed by timeout");
-        assert!(result.code.is_none(), "exit code should be None when killed");
+        assert!(
+            result.code.is_none(),
+            "exit code should be None when killed"
+        );
     }
 
     #[tokio::test]

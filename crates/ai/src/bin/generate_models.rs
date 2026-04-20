@@ -320,15 +320,9 @@ async fn fetch_models_dev() -> Result<Vec<ModelEntry>> {
             }
             let npm = m.provider.as_ref().and_then(|p| p.npm.as_deref());
             let (api, base_url) = match npm {
-                Some("@ai-sdk/openai") => (
-                    "openai-responses",
-                    format!("{}/v1", base_path),
-                ),
+                Some("@ai-sdk/openai") => ("openai-responses", format!("{}/v1", base_path)),
                 Some("@ai-sdk/anthropic") => ("anthropic-messages", base_path.to_string()),
-                Some("@ai-sdk/google") => (
-                    "google-generative-ai",
-                    format!("{}/v1", base_path),
-                ),
+                Some("@ai-sdk/google") => ("google-generative-ai", format!("{}/v1", base_path)),
                 _ => ("openai-completions", format!("{}/v1", base_path)),
             };
             let supports_image = m
@@ -433,7 +427,11 @@ async fn fetch_models_dev() -> Result<Vec<ModelEntry>> {
     // MiniMax variants
     for (key, provider, base_url) in &[
         ("minimax", "minimax", "https://api.minimax.io/anthropic"),
-        ("minimax-cn", "minimax-cn", "https://api.minimaxi.com/anthropic"),
+        (
+            "minimax-cn",
+            "minimax-cn",
+            "https://api.minimaxi.com/anthropic",
+        ),
     ] {
         models.extend(parse_provider_models(
             &data,
@@ -455,7 +453,10 @@ async fn fetch_models_dev() -> Result<Vec<ModelEntry>> {
         None,
     ));
 
-    eprintln!("Loaded {} tool-capable models from models.dev", models.len());
+    eprintln!(
+        "Loaded {} tool-capable models from models.dev",
+        models.len()
+    );
     Ok(models)
 }
 
@@ -780,15 +781,96 @@ fn add_hardcoded_models(models: &mut Vec<ModelEntry>) {
     let codex_ctx = 272000u64;
     let codex_max = 128000u64;
     let codex_models: &[(&str, &str, f64, f64, f64, f64, &[&str], u64)] = &[
-        ("gpt-5.1", "GPT-5.1", 1.25, 10.0, 0.125, 0.0, &["text", "image"], codex_ctx),
-        ("gpt-5.1-codex-max", "GPT-5.1 Codex Max", 1.25, 10.0, 0.125, 0.0, &["text", "image"], codex_ctx),
-        ("gpt-5.1-codex-mini", "GPT-5.1 Codex Mini", 0.25, 2.0, 0.025, 0.0, &["text", "image"], codex_ctx),
-        ("gpt-5.2", "GPT-5.2", 1.75, 14.0, 0.175, 0.0, &["text", "image"], codex_ctx),
-        ("gpt-5.2-codex", "GPT-5.2 Codex", 1.75, 14.0, 0.175, 0.0, &["text", "image"], codex_ctx),
-        ("gpt-5.3-codex", "GPT-5.3 Codex", 1.75, 14.0, 0.175, 0.0, &["text", "image"], codex_ctx),
-        ("gpt-5.4", "GPT-5.4", 2.5, 15.0, 0.25, 0.0, &["text", "image"], codex_ctx),
-        ("gpt-5.4-mini", "GPT-5.4 Mini", 0.75, 4.5, 0.075, 0.0, &["text", "image"], codex_ctx),
-        ("gpt-5.3-codex-spark", "GPT-5.3 Codex Spark", 0.0, 0.0, 0.0, 0.0, &["text"], 128000),
+        (
+            "gpt-5.1",
+            "GPT-5.1",
+            1.25,
+            10.0,
+            0.125,
+            0.0,
+            &["text", "image"],
+            codex_ctx,
+        ),
+        (
+            "gpt-5.1-codex-max",
+            "GPT-5.1 Codex Max",
+            1.25,
+            10.0,
+            0.125,
+            0.0,
+            &["text", "image"],
+            codex_ctx,
+        ),
+        (
+            "gpt-5.1-codex-mini",
+            "GPT-5.1 Codex Mini",
+            0.25,
+            2.0,
+            0.025,
+            0.0,
+            &["text", "image"],
+            codex_ctx,
+        ),
+        (
+            "gpt-5.2",
+            "GPT-5.2",
+            1.75,
+            14.0,
+            0.175,
+            0.0,
+            &["text", "image"],
+            codex_ctx,
+        ),
+        (
+            "gpt-5.2-codex",
+            "GPT-5.2 Codex",
+            1.75,
+            14.0,
+            0.175,
+            0.0,
+            &["text", "image"],
+            codex_ctx,
+        ),
+        (
+            "gpt-5.3-codex",
+            "GPT-5.3 Codex",
+            1.75,
+            14.0,
+            0.175,
+            0.0,
+            &["text", "image"],
+            codex_ctx,
+        ),
+        (
+            "gpt-5.4",
+            "GPT-5.4",
+            2.5,
+            15.0,
+            0.25,
+            0.0,
+            &["text", "image"],
+            codex_ctx,
+        ),
+        (
+            "gpt-5.4-mini",
+            "GPT-5.4 Mini",
+            0.75,
+            4.5,
+            0.075,
+            0.0,
+            &["text", "image"],
+            codex_ctx,
+        ),
+        (
+            "gpt-5.3-codex-spark",
+            "GPT-5.3 Codex Spark",
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            &["text"],
+            128000,
+        ),
     ];
     for &(id, name, ci, co, cr, cw, input, ctx) in codex_models {
         if !has_model(models, "openai-codex", id) {
@@ -815,12 +897,42 @@ fn add_hardcoded_models(models: &mut Vec<ModelEntry>) {
     // ── Google Cloud Code Assist ────────────────────────────────────────────
     let cloud_code_endpoint = "https://cloudcode-pa.googleapis.com";
     let cloud_code_models: &[(&str, &str, bool, u64)] = &[
-        ("gemini-2.5-pro", "Gemini 2.5 Pro (Cloud Code Assist)", true, 65535),
-        ("gemini-2.5-flash", "Gemini 2.5 Flash (Cloud Code Assist)", true, 65535),
-        ("gemini-2.0-flash", "Gemini 2.0 Flash (Cloud Code Assist)", false, 8192),
-        ("gemini-3-pro-preview", "Gemini 3 Pro Preview (Cloud Code Assist)", true, 65535),
-        ("gemini-3-flash-preview", "Gemini 3 Flash Preview (Cloud Code Assist)", true, 65535),
-        ("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview (Cloud Code Assist)", true, 65535),
+        (
+            "gemini-2.5-pro",
+            "Gemini 2.5 Pro (Cloud Code Assist)",
+            true,
+            65535,
+        ),
+        (
+            "gemini-2.5-flash",
+            "Gemini 2.5 Flash (Cloud Code Assist)",
+            true,
+            65535,
+        ),
+        (
+            "gemini-2.0-flash",
+            "Gemini 2.0 Flash (Cloud Code Assist)",
+            false,
+            8192,
+        ),
+        (
+            "gemini-3-pro-preview",
+            "Gemini 3 Pro Preview (Cloud Code Assist)",
+            true,
+            65535,
+        ),
+        (
+            "gemini-3-flash-preview",
+            "Gemini 3 Flash Preview (Cloud Code Assist)",
+            true,
+            65535,
+        ),
+        (
+            "gemini-3.1-pro-preview",
+            "Gemini 3.1 Pro Preview (Cloud Code Assist)",
+            true,
+            65535,
+        ),
     ];
     for &(id, name, reasoning, max_tok) in cloud_code_models {
         if !has_model(models, "google-gemini-cli", id) {
@@ -847,15 +959,114 @@ fn add_hardcoded_models(models: &mut Vec<ModelEntry>) {
     // ── Antigravity models ──────────────────────────────────────────────────
     let antigravity_endpoint = "https://daily-cloudcode-pa.sandbox.googleapis.com";
     let antigravity_models: &[(&str, &str, bool, &[&str], u64, u64, f64, f64, f64, f64)] = &[
-        ("gemini-3.1-pro-high", "Gemini 3.1 Pro High (Antigravity)", true, &["text", "image"], 1048576, 65535, 2.0, 12.0, 0.2, 2.375),
-        ("gemini-3.1-pro-low", "Gemini 3.1 Pro Low (Antigravity)", true, &["text", "image"], 1048576, 65535, 2.0, 12.0, 0.2, 2.375),
-        ("gemini-3-flash", "Gemini 3 Flash (Antigravity)", true, &["text", "image"], 1048576, 65535, 0.5, 3.0, 0.5, 0.0),
-        ("claude-sonnet-4-5", "Claude Sonnet 4.5 (Antigravity)", false, &["text", "image"], 200000, 64000, 3.0, 15.0, 0.3, 3.75),
-        ("claude-sonnet-4-5-thinking", "Claude Sonnet 4.5 Thinking (Antigravity)", true, &["text", "image"], 200000, 64000, 3.0, 15.0, 0.3, 3.75),
-        ("claude-opus-4-5-thinking", "Claude Opus 4.5 Thinking (Antigravity)", true, &["text", "image"], 200000, 64000, 5.0, 25.0, 0.5, 6.25),
-        ("claude-opus-4-6-thinking", "Claude Opus 4.6 Thinking (Antigravity)", true, &["text", "image"], 200000, 128000, 5.0, 25.0, 0.5, 6.25),
-        ("claude-sonnet-4-6", "Claude Sonnet 4.6 (Antigravity)", true, &["text", "image"], 200000, 64000, 3.0, 15.0, 0.3, 3.75),
-        ("gpt-oss-120b-medium", "GPT-OSS 120B Medium (Antigravity)", false, &["text"], 131072, 32768, 0.09, 0.36, 0.0, 0.0),
+        (
+            "gemini-3.1-pro-high",
+            "Gemini 3.1 Pro High (Antigravity)",
+            true,
+            &["text", "image"],
+            1048576,
+            65535,
+            2.0,
+            12.0,
+            0.2,
+            2.375,
+        ),
+        (
+            "gemini-3.1-pro-low",
+            "Gemini 3.1 Pro Low (Antigravity)",
+            true,
+            &["text", "image"],
+            1048576,
+            65535,
+            2.0,
+            12.0,
+            0.2,
+            2.375,
+        ),
+        (
+            "gemini-3-flash",
+            "Gemini 3 Flash (Antigravity)",
+            true,
+            &["text", "image"],
+            1048576,
+            65535,
+            0.5,
+            3.0,
+            0.5,
+            0.0,
+        ),
+        (
+            "claude-sonnet-4-5",
+            "Claude Sonnet 4.5 (Antigravity)",
+            false,
+            &["text", "image"],
+            200000,
+            64000,
+            3.0,
+            15.0,
+            0.3,
+            3.75,
+        ),
+        (
+            "claude-sonnet-4-5-thinking",
+            "Claude Sonnet 4.5 Thinking (Antigravity)",
+            true,
+            &["text", "image"],
+            200000,
+            64000,
+            3.0,
+            15.0,
+            0.3,
+            3.75,
+        ),
+        (
+            "claude-opus-4-5-thinking",
+            "Claude Opus 4.5 Thinking (Antigravity)",
+            true,
+            &["text", "image"],
+            200000,
+            64000,
+            5.0,
+            25.0,
+            0.5,
+            6.25,
+        ),
+        (
+            "claude-opus-4-6-thinking",
+            "Claude Opus 4.6 Thinking (Antigravity)",
+            true,
+            &["text", "image"],
+            200000,
+            128000,
+            5.0,
+            25.0,
+            0.5,
+            6.25,
+        ),
+        (
+            "claude-sonnet-4-6",
+            "Claude Sonnet 4.6 (Antigravity)",
+            true,
+            &["text", "image"],
+            200000,
+            64000,
+            3.0,
+            15.0,
+            0.3,
+            3.75,
+        ),
+        (
+            "gpt-oss-120b-medium",
+            "GPT-OSS 120B Medium (Antigravity)",
+            false,
+            &["text"],
+            131072,
+            32768,
+            0.09,
+            0.36,
+            0.0,
+            0.0,
+        ),
     ];
     for &(id, name, reasoning, input, ctx, max_tok, ci, co, cr, cw) in antigravity_models {
         models.push(ModelEntry {
@@ -891,18 +1102,138 @@ fn add_hardcoded_models(models: &mut Vec<ModelEntry>) {
     // ── Vertex AI models ────────────────────────────────────────────────────
     let vertex_base_url = "https://{location}-aiplatform.googleapis.com";
     let vertex_models: &[(&str, &str, bool, u64, u64, f64, f64, f64, f64)] = &[
-        ("gemini-3-pro-preview", "Gemini 3 Pro Preview (Vertex)", true, 1000000, 64000, 2.0, 12.0, 0.2, 0.0),
-        ("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview (Vertex)", true, 1048576, 65536, 2.0, 12.0, 0.2, 0.0),
-        ("gemini-3-flash-preview", "Gemini 3 Flash Preview (Vertex)", true, 1048576, 65536, 0.5, 3.0, 0.05, 0.0),
-        ("gemini-2.0-flash", "Gemini 2.0 Flash (Vertex)", false, 1048576, 8192, 0.15, 0.6, 0.0375, 0.0),
-        ("gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite (Vertex)", true, 1048576, 65536, 0.075, 0.3, 0.01875, 0.0),
-        ("gemini-2.5-pro", "Gemini 2.5 Pro (Vertex)", true, 1048576, 65536, 1.25, 10.0, 0.125, 0.0),
-        ("gemini-2.5-flash", "Gemini 2.5 Flash (Vertex)", true, 1048576, 65536, 0.3, 2.5, 0.03, 0.0),
-        ("gemini-2.5-flash-lite-preview-09-2025", "Gemini 2.5 Flash Lite Preview 09-25 (Vertex)", true, 1048576, 65536, 0.1, 0.4, 0.01, 0.0),
-        ("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite (Vertex)", true, 1048576, 65536, 0.1, 0.4, 0.01, 0.0),
-        ("gemini-1.5-pro", "Gemini 1.5 Pro (Vertex)", false, 1000000, 8192, 1.25, 5.0, 0.3125, 0.0),
-        ("gemini-1.5-flash", "Gemini 1.5 Flash (Vertex)", false, 1000000, 8192, 0.075, 0.3, 0.01875, 0.0),
-        ("gemini-1.5-flash-8b", "Gemini 1.5 Flash-8B (Vertex)", false, 1000000, 8192, 0.0375, 0.15, 0.01, 0.0),
+        (
+            "gemini-3-pro-preview",
+            "Gemini 3 Pro Preview (Vertex)",
+            true,
+            1000000,
+            64000,
+            2.0,
+            12.0,
+            0.2,
+            0.0,
+        ),
+        (
+            "gemini-3.1-pro-preview",
+            "Gemini 3.1 Pro Preview (Vertex)",
+            true,
+            1048576,
+            65536,
+            2.0,
+            12.0,
+            0.2,
+            0.0,
+        ),
+        (
+            "gemini-3-flash-preview",
+            "Gemini 3 Flash Preview (Vertex)",
+            true,
+            1048576,
+            65536,
+            0.5,
+            3.0,
+            0.05,
+            0.0,
+        ),
+        (
+            "gemini-2.0-flash",
+            "Gemini 2.0 Flash (Vertex)",
+            false,
+            1048576,
+            8192,
+            0.15,
+            0.6,
+            0.0375,
+            0.0,
+        ),
+        (
+            "gemini-2.0-flash-lite",
+            "Gemini 2.0 Flash Lite (Vertex)",
+            true,
+            1048576,
+            65536,
+            0.075,
+            0.3,
+            0.01875,
+            0.0,
+        ),
+        (
+            "gemini-2.5-pro",
+            "Gemini 2.5 Pro (Vertex)",
+            true,
+            1048576,
+            65536,
+            1.25,
+            10.0,
+            0.125,
+            0.0,
+        ),
+        (
+            "gemini-2.5-flash",
+            "Gemini 2.5 Flash (Vertex)",
+            true,
+            1048576,
+            65536,
+            0.3,
+            2.5,
+            0.03,
+            0.0,
+        ),
+        (
+            "gemini-2.5-flash-lite-preview-09-2025",
+            "Gemini 2.5 Flash Lite Preview 09-25 (Vertex)",
+            true,
+            1048576,
+            65536,
+            0.1,
+            0.4,
+            0.01,
+            0.0,
+        ),
+        (
+            "gemini-2.5-flash-lite",
+            "Gemini 2.5 Flash Lite (Vertex)",
+            true,
+            1048576,
+            65536,
+            0.1,
+            0.4,
+            0.01,
+            0.0,
+        ),
+        (
+            "gemini-1.5-pro",
+            "Gemini 1.5 Pro (Vertex)",
+            false,
+            1000000,
+            8192,
+            1.25,
+            5.0,
+            0.3125,
+            0.0,
+        ),
+        (
+            "gemini-1.5-flash",
+            "Gemini 1.5 Flash (Vertex)",
+            false,
+            1000000,
+            8192,
+            0.075,
+            0.3,
+            0.01875,
+            0.0,
+        ),
+        (
+            "gemini-1.5-flash-8b",
+            "Gemini 1.5 Flash-8B (Vertex)",
+            false,
+            1000000,
+            8192,
+            0.0375,
+            0.15,
+            0.01,
+            0.0,
+        ),
     ];
     for &(id, name, reasoning, ctx, max_tok, ci, co, cr, cw) in vertex_models {
         models.push(ModelEntry {
@@ -1018,9 +1349,27 @@ fn generate_model_code(m: &ModelEntry, indent: &str) -> String {
     writeln!(s, "{}context_window: {},", i1, m.context_window).unwrap();
     writeln!(s, "{}cost: ModelCost {{", i1).unwrap();
     writeln!(s, "{}input_per_million: {},", i2, format_f64(m.cost_input)).unwrap();
-    writeln!(s, "{}output_per_million: {},", i2, format_f64(m.cost_output)).unwrap();
-    writeln!(s, "{}cache_read_per_million: {},", i2, format_f64(m.cost_cache_read)).unwrap();
-    writeln!(s, "{}cache_write_per_million: {},", i2, format_f64(m.cost_cache_write)).unwrap();
+    writeln!(
+        s,
+        "{}output_per_million: {},",
+        i2,
+        format_f64(m.cost_output)
+    )
+    .unwrap();
+    writeln!(
+        s,
+        "{}cache_read_per_million: {},",
+        i2,
+        format_f64(m.cost_cache_read)
+    )
+    .unwrap();
+    writeln!(
+        s,
+        "{}cache_write_per_million: {},",
+        i2,
+        format_f64(m.cost_cache_write)
+    )
+    .unwrap();
     writeln!(s, "{}}},", i1).unwrap();
 
     if m.headers.is_empty() {
@@ -1063,14 +1412,22 @@ fn generate_output(models: &[ModelEntry]) -> String {
     provider_ids.sort();
 
     let mut out = String::new();
-    writeln!(out, "// This file is auto-generated by `cargo run -p ai --bin generate-models`").unwrap();
+    writeln!(
+        out,
+        "// This file is auto-generated by `cargo run -p ai --bin generate-models`"
+    )
+    .unwrap();
     writeln!(out, "// Do not edit manually.").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "use std::sync::LazyLock;").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "use super::types::*;").unwrap();
     writeln!(out).unwrap();
-    writeln!(out, "static MODEL_CATALOG: LazyLock<Vec<Model>> = LazyLock::new(|| {{").unwrap();
+    writeln!(
+        out,
+        "static MODEL_CATALOG: LazyLock<Vec<Model>> = LazyLock::new(|| {{"
+    )
+    .unwrap();
     writeln!(out, "    vec![").unwrap();
 
     for provider_id in &provider_ids {

@@ -29,7 +29,10 @@ pub fn generate_pkce() -> Pkce {
     let hash = hasher.finalize();
     let challenge = URL_SAFE_NO_PAD.encode(hash);
 
-    Pkce { verifier, challenge }
+    Pkce {
+        verifier,
+        challenge,
+    }
 }
 
 #[cfg(test)]

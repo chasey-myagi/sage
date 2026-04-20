@@ -4,14 +4,14 @@
 //!
 //! Renders a bash command execution with streaming output.
 
-use tui::tui::{Component, Container};
 use tui::components::spacer::Spacer;
 use tui::components::text::Text;
+use tui::tui::{Component, Container};
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor};
 use crate::modes::interactive::components::dynamic_border::DynamicBorder;
 use crate::modes::interactive::components::keybinding_hints::{key_hint, key_text};
 use crate::modes::interactive::components::visual_truncate::truncate_to_visual_lines;
+use crate::modes::interactive::theme::{ThemeColor, get_theme};
 
 const PREVIEW_LINES: usize = 20;
 
@@ -54,7 +54,11 @@ impl BashExecutionComponent {
 
     pub fn set_complete(&mut self, exit_code: i32) {
         self.exit_code = Some(exit_code);
-        self.status = if exit_code == 0 { BashStatus::Complete } else { BashStatus::Error };
+        self.status = if exit_code == 0 {
+            BashStatus::Complete
+        } else {
+            BashStatus::Error
+        };
     }
 
     pub fn set_cancelled(&mut self) {
@@ -111,7 +115,10 @@ impl Component for BashExecutionComponent {
                 let result = truncate_to_visual_lines(&all_output, PREVIEW_LINES, width, 1);
                 if result.skipped_count > 0 {
                     container.add_child(Box::new(Text::new(
-                        t.fg(ThemeColor::Dim, &format!("… {} lines hidden", result.skipped_count)),
+                        t.fg(
+                            ThemeColor::Dim,
+                            &format!("… {} lines hidden", result.skipped_count),
+                        ),
                         1,
                         0,
                     )));

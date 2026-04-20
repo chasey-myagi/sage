@@ -3,7 +3,6 @@
 /// Tracks killed (deleted) text entries. Consecutive kills can accumulate
 /// into a single entry. Supports yank (paste most recent) and yank-pop
 /// (cycle through older entries).
-
 use std::collections::VecDeque;
 
 #[derive(Default)]
@@ -13,7 +12,9 @@ pub struct KillRing {
 
 impl KillRing {
     pub fn new() -> Self {
-        Self { ring: VecDeque::new() }
+        Self {
+            ring: VecDeque::new(),
+        }
     }
 
     /// Add text to the kill ring.

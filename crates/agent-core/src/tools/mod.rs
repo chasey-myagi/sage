@@ -873,9 +873,7 @@ mod tests {
         assert_eq!(tool.name(), "craft_manage");
         // Proves end-to-end: factory produces a tool that accepts the
         // standard AgentTool.execute() calling convention.
-        let out = tool
-            .execute(serde_json::json!({ "action": "list" }))
-            .await;
+        let out = tool.execute(serde_json::json!({ "action": "list" })).await;
         assert!(!out.is_error, "list on empty workspace must succeed");
 
         // And the factory-built tool registers into a ToolRegistry cleanly.

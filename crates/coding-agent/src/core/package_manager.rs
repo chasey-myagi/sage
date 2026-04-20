@@ -15,7 +15,9 @@ const NETWORK_TIMEOUT_MS: u64 = 10_000;
 
 fn is_offline_mode_enabled() -> bool {
     match std::env::var("SAGE_OFFLINE").or_else(|_| std::env::var("PI_OFFLINE")) {
-        Ok(val) => val == "1" || val.eq_ignore_ascii_case("true") || val.eq_ignore_ascii_case("yes"),
+        Ok(val) => {
+            val == "1" || val.eq_ignore_ascii_case("true") || val.eq_ignore_ascii_case("yes")
+        }
         Err(_) => false,
     }
 }
@@ -167,7 +169,9 @@ fn collect_files(dir: &Path, pattern: fn(&str) -> bool) -> Vec<PathBuf> {
         if name_str.starts_with('.') || name_str == "node_modules" {
             continue;
         }
-        let ft = entry.file_type().unwrap_or_else(|_| return entry.file_type().unwrap());
+        let ft = entry
+            .file_type()
+            .unwrap_or_else(|_| return entry.file_type().unwrap());
         if ft.is_dir() {
             files.extend(collect_files(&path, pattern));
         } else if ft.is_file() && pattern(&name_str) {
@@ -272,7 +276,11 @@ fn resolve_extension_entries(dir: &Path) -> Option<Vec<PathBuf>> {
     if pkg_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&pkg_path) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(exts) = val.get("pi").and_then(|p| p.get("extensions")).and_then(|e| e.as_array()) {
+                if let Some(exts) = val
+                    .get("pi")
+                    .and_then(|p| p.get("extensions"))
+                    .and_then(|e| e.as_array())
+                {
                     let mut entries = Vec::new();
                     for ext in exts {
                         if let Some(ext_str) = ext.as_str() {
@@ -309,7 +317,10 @@ fn parse_npm_spec(spec: &str) -> (String, Option<String>) {
     // "@scope/name@version" or "name@version" or "name"
     let re = regex::Regex::new(r"^(@?[^@]+(?:/[^@]+)?)(?:@(.+))?$").unwrap();
     if let Some(caps) = re.captures(spec) {
-        let name = caps.get(1).map(|m| m.as_str().to_owned()).unwrap_or_else(|| spec.to_owned());
+        let name = caps
+            .get(1)
+            .map(|m| m.as_str().to_owned())
+            .unwrap_or_else(|| spec.to_owned());
         let version = caps.get(2).map(|m| m.as_str().to_owned());
         (name, version)
     } else {
@@ -346,7 +357,11 @@ fn parse_git_url(source: &str) -> Option<GitSource> {
     if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
         if let Ok(url) = url::Url::parse(trimmed) {
             let host = url.host_str().unwrap_or("").to_owned();
-            let path = url.path().trim_start_matches('/').trim_end_matches(".git").to_owned();
+            let path = url
+                .path()
+                .trim_start_matches('/')
+                .trim_end_matches(".git")
+                .to_owned();
             let (path_no_ref, ref_) = split_ref(&path);
             let pinned = ref_.is_some();
             return Some(GitSource {
@@ -408,14 +423,18 @@ fn parse_source(source: &str) -> ParsedSource {
         || trimmed.starts_with("~/");
 
     if is_local {
-        return ParsedSource::Local(LocalSource { path: source.to_owned() });
+        return ParsedSource::Local(LocalSource {
+            path: source.to_owned(),
+        });
     }
 
     if let Some(git) = parse_git_url(source) {
         return ParsedSource::Git(git);
     }
 
-    ParsedSource::Local(LocalSource { path: source.to_owned() })
+    ParsedSource::Local(LocalSource {
+        path: source.to_owned(),
+    })
 }
 
 // ============================================================================
@@ -431,7 +450,11 @@ pub struct DefaultPackageManager {
 }
 
 impl DefaultPackageManager {
-    pub fn new(cwd: impl Into<PathBuf>, agent_dir: impl Into<PathBuf>, settings_manager: SettingsManager) -> Self {
+    pub fn new(
+        cwd: impl Into<PathBuf>,
+        agent_dir: impl Into<PathBuf>,
+        settings_manager: SettingsManager,
+    ) -> Self {
         Self {
             cwd: cwd.into(),
             agent_dir: agent_dir.into(),
@@ -462,7 +485,11 @@ impl DefaultPackageManager {
     // ─── Settings helpers ─────────────────────────────────────────────────────
 
     pub fn add_source_to_settings(&mut self, source: &str, local: bool) -> bool {
-        let scope = if local { SourceScope::Project } else { SourceScope::User };
+        let scope = if local {
+            SourceScope::Project
+        } else {
+            SourceScope::User
+        };
         let current = if local {
             self.settings_manager.get_project_settings()
         } else {
@@ -487,7 +514,11 @@ impl DefaultPackageManager {
     }
 
     pub fn remove_source_from_settings(&mut self, source: &str, local: bool) -> bool {
-        let scope = if local { SourceScope::Project } else { SourceScope::User };
+        let scope = if local {
+            SourceScope::Project
+        } else {
+            SourceScope::User
+        };
         let current = if local {
             self.settings_manager.get_project_settings()
         } else {
@@ -550,7 +581,12 @@ impl DefaultPackageManager {
         let global_base = self.agent_dir.clone();
         let project_base = self.cwd.join(CONFIG_DIR_NAME);
 
-        for resource_type in [ResourceType::Extensions, ResourceType::Skills, ResourceType::Prompts, ResourceType::Themes] {
+        for resource_type in [
+            ResourceType::Extensions,
+            ResourceType::Skills,
+            ResourceType::Prompts,
+            ResourceType::Themes,
+        ] {
             let target = Self::get_target_map_mut(&mut acc, resource_type);
             let global_entries: Vec<String> = match resource_type {
                 ResourceType::Extensions => global.extensions.clone().unwrap_or_default(),
@@ -591,7 +627,13 @@ impl DefaultPackageManager {
         }
 
         // Auto-discover resources from conventional directories.
-        self.add_auto_discovered_resources(&mut acc, &global, &project, &global_base, &project_base);
+        self.add_auto_discovered_resources(
+            &mut acc,
+            &global,
+            &project,
+            &global_base,
+            &project_base,
+        );
 
         Ok(self.to_resolved_paths(acc))
     }
@@ -604,9 +646,18 @@ impl DefaultPackageManager {
         for (pkg, scope) in sources {
             let source_str = pkg.source().to_owned();
             let filter = match pkg {
-                PackageSource::Filtered { extensions, skills, prompts, themes, .. } => {
-                    Some((extensions.clone(), skills.clone(), prompts.clone(), themes.clone()))
-                }
+                PackageSource::Filtered {
+                    extensions,
+                    skills,
+                    prompts,
+                    themes,
+                    ..
+                } => Some((
+                    extensions.clone(),
+                    skills.clone(),
+                    prompts.clone(),
+                    themes.clone(),
+                )),
                 _ => None,
             };
             let parsed = parse_source(&source_str);
@@ -620,7 +671,13 @@ impl DefaultPackageManager {
             match &parsed {
                 ParsedSource::Local(local) => {
                     let base = self.base_dir_for_scope(scope);
-                    self.resolve_local_extension_source(local, acc, filter.as_ref(), &metadata, &base);
+                    self.resolve_local_extension_source(
+                        local,
+                        acc,
+                        filter.as_ref(),
+                        &metadata,
+                        &base,
+                    );
                 }
                 ParsedSource::Npm(npm) => {
                     let install_path = self.npm_install_path(npm, scope);
@@ -647,7 +704,11 @@ impl DefaultPackageManager {
 
     pub fn install(&mut self, source: &str, local: bool) -> anyhow::Result<()> {
         let parsed = parse_source(source);
-        let scope = if local { SourceScope::Project } else { SourceScope::User };
+        let scope = if local {
+            SourceScope::Project
+        } else {
+            SourceScope::User
+        };
         self.emit_progress(ProgressEvent {
             kind: "start".into(),
             action: "install".into(),
@@ -660,7 +721,10 @@ impl DefaultPackageManager {
             ParsedSource::Local(local_src) => {
                 let resolved = self.resolve_path(&local_src.path);
                 if !resolved.exists() {
-                    Err(anyhow::anyhow!("Path does not exist: {}", resolved.display()))
+                    Err(anyhow::anyhow!(
+                        "Path does not exist: {}",
+                        resolved.display()
+                    ))
                 } else {
                     Ok(())
                 }
@@ -690,7 +754,11 @@ impl DefaultPackageManager {
 
     pub fn remove(&mut self, source: &str, local: bool) -> anyhow::Result<()> {
         let parsed = parse_source(source);
-        let scope = if local { SourceScope::Project } else { SourceScope::User };
+        let scope = if local {
+            SourceScope::Project
+        } else {
+            SourceScope::User
+        };
         self.emit_progress(ProgressEvent {
             kind: "start".into(),
             action: "remove".into(),
@@ -736,22 +804,39 @@ impl DefaultPackageManager {
 
     fn run_npm_command(&self, args: &[&str], cwd: Option<&Path>) -> anyhow::Result<()> {
         let (cmd, prefix_args) = self.npm_command();
-        let all_args: Vec<&str> = prefix_args.iter().map(|s| s.as_str()).chain(args.iter().copied()).collect();
+        let all_args: Vec<&str> = prefix_args
+            .iter()
+            .map(|s| s.as_str())
+            .chain(args.iter().copied())
+            .collect();
         let mut command = Command::new(&cmd);
-        command.args(&all_args).stdin(Stdio::null()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        command
+            .args(&all_args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
         if let Some(cwd) = cwd {
             command.current_dir(cwd);
         }
         let status = command.status()?;
         if !status.success() {
-            return Err(anyhow::anyhow!("{} {} failed: {:?}", cmd, args.join(" "), status));
+            return Err(anyhow::anyhow!(
+                "{} {} failed: {:?}",
+                cmd,
+                args.join(" "),
+                status
+            ));
         }
         Ok(())
     }
 
     fn run_npm_command_capture(&self, args: &[&str]) -> anyhow::Result<String> {
         let (cmd, prefix_args) = self.npm_command();
-        let all_args: Vec<&str> = prefix_args.iter().map(|s| s.as_str()).chain(args.iter().copied()).collect();
+        let all_args: Vec<&str> = prefix_args
+            .iter()
+            .map(|s| s.as_str())
+            .chain(args.iter().copied())
+            .collect();
         let output = Command::new(&cmd)
             .args(&all_args)
             .stdin(Stdio::null())
@@ -767,13 +852,26 @@ impl DefaultPackageManager {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     }
 
-    fn install_npm(&self, source: &NpmSource, scope: &SourceScope, temporary: bool) -> anyhow::Result<()> {
+    fn install_npm(
+        &self,
+        source: &NpmSource,
+        scope: &SourceScope,
+        temporary: bool,
+    ) -> anyhow::Result<()> {
         if *scope == SourceScope::User && !temporary {
             return self.run_npm_command(&["install", "-g", &source.spec], None);
         }
         let install_root = self.npm_install_root(scope, temporary);
         self.ensure_npm_project(&install_root)?;
-        self.run_npm_command(&["install", &source.spec, "--prefix", &install_root.to_string_lossy()], None)
+        self.run_npm_command(
+            &[
+                "install",
+                &source.spec,
+                "--prefix",
+                &install_root.to_string_lossy(),
+            ],
+            None,
+        )
     }
 
     fn uninstall_npm(&self, source: &NpmSource, scope: &SourceScope) -> anyhow::Result<()> {
@@ -785,7 +883,12 @@ impl DefaultPackageManager {
             return Ok(());
         }
         self.run_npm_command(
-            &["uninstall", &source.name, "--prefix", &install_root.to_string_lossy()],
+            &[
+                "uninstall",
+                &source.name,
+                "--prefix",
+                &install_root.to_string_lossy(),
+            ],
             None,
         )
     }
@@ -798,7 +901,10 @@ impl DefaultPackageManager {
         } else {
             // For user scope, install next to global npm root.
             let root = self.global_npm_root();
-            PathBuf::from(&root).parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from(&root))
+            PathBuf::from(&root)
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from(&root))
         }
     }
 
@@ -806,15 +912,22 @@ impl DefaultPackageManager {
         if let Some(ref root) = self.global_npm_root {
             return root.clone();
         }
-        self.run_npm_command_capture(&["root", "-g"]).unwrap_or_else(|_| "/usr/local/lib/node_modules".to_owned())
+        self.run_npm_command_capture(&["root", "-g"])
+            .unwrap_or_else(|_| "/usr/local/lib/node_modules".to_owned())
     }
 
     fn npm_install_path(&self, source: &NpmSource, scope: &SourceScope) -> PathBuf {
         match scope {
-            SourceScope::Temporary => self.temp_dir("npm", None).join("node_modules").join(&source.name),
-            SourceScope::Project => {
-                self.cwd.join(CONFIG_DIR_NAME).join("npm").join("node_modules").join(&source.name)
-            }
+            SourceScope::Temporary => self
+                .temp_dir("npm", None)
+                .join("node_modules")
+                .join(&source.name),
+            SourceScope::Project => self
+                .cwd
+                .join(CONFIG_DIR_NAME)
+                .join("npm")
+                .join("node_modules")
+                .join(&source.name),
             SourceScope::User => PathBuf::from(self.global_npm_root()).join(&source.name),
         }
     }
@@ -908,9 +1021,20 @@ impl DefaultPackageManager {
 
     fn git_install_path(&self, source: &GitSource, scope: &SourceScope) -> PathBuf {
         match scope {
-            SourceScope::Temporary => self.temp_dir(&format!("git-{}", source.host), Some(&source.path)),
-            SourceScope::Project => self.cwd.join(CONFIG_DIR_NAME).join("git").join(&source.host).join(&source.path),
-            SourceScope::User => self.agent_dir.join("git").join(&source.host).join(&source.path),
+            SourceScope::Temporary => {
+                self.temp_dir(&format!("git-{}", source.host), Some(&source.path))
+            }
+            SourceScope::Project => self
+                .cwd
+                .join(CONFIG_DIR_NAME)
+                .join("git")
+                .join(&source.host)
+                .join(&source.path),
+            SourceScope::User => self
+                .agent_dir
+                .join("git")
+                .join(&source.host)
+                .join(&source.path),
         }
     }
 
@@ -930,7 +1054,10 @@ impl DefaultPackageManager {
         let mut h = DefaultHasher::new();
         format!("{}-{}", prefix, suffix.unwrap_or("")).hash(&mut h);
         let hash = format!("{:016x}", h.finish());
-        let dir = std::env::temp_dir().join("sage-extensions").join(prefix).join(&hash[..8]);
+        let dir = std::env::temp_dir()
+            .join("sage-extensions")
+            .join(prefix)
+            .join(&hash[..8]);
         if let Some(suf) = suffix {
             dir.join(suf)
         } else {
@@ -976,11 +1103,21 @@ impl DefaultPackageManager {
         &self,
         package_root: &Path,
         acc: &mut ResourceAccumulator,
-        filter: Option<&(Option<Vec<String>>, Option<Vec<String>>, Option<Vec<String>>, Option<Vec<String>>)>,
+        filter: Option<&(
+            Option<Vec<String>>,
+            Option<Vec<String>>,
+            Option<Vec<String>>,
+            Option<Vec<String>>,
+        )>,
         metadata: &PathMetadata,
     ) -> bool {
         if let Some(f) = filter {
-            for resource_type in [ResourceType::Extensions, ResourceType::Skills, ResourceType::Prompts, ResourceType::Themes] {
+            for resource_type in [
+                ResourceType::Extensions,
+                ResourceType::Skills,
+                ResourceType::Prompts,
+                ResourceType::Themes,
+            ] {
                 let patterns = match resource_type {
                     ResourceType::Extensions => f.0.as_deref(),
                     ResourceType::Skills => f.1.as_deref(),
@@ -1013,7 +1150,12 @@ impl DefaultPackageManager {
 
         // Check for pi manifest in package.json
         if let Some(manifest) = self.read_pi_manifest(package_root) {
-            for resource_type in [ResourceType::Extensions, ResourceType::Skills, ResourceType::Prompts, ResourceType::Themes] {
+            for resource_type in [
+                ResourceType::Extensions,
+                ResourceType::Skills,
+                ResourceType::Prompts,
+                ResourceType::Themes,
+            ] {
                 let entries = match resource_type {
                     ResourceType::Extensions => manifest.extensions.as_deref(),
                     ResourceType::Skills => manifest.skills.as_deref(),
@@ -1035,7 +1177,12 @@ impl DefaultPackageManager {
 
         // Convention-based discovery
         let mut found_any = false;
-        for resource_type in [ResourceType::Extensions, ResourceType::Skills, ResourceType::Prompts, ResourceType::Themes] {
+        for resource_type in [
+            ResourceType::Extensions,
+            ResourceType::Skills,
+            ResourceType::Prompts,
+            ResourceType::Themes,
+        ] {
             let dir = package_root.join(resource_type_dir_name(resource_type));
             if dir.exists() {
                 let files = collect_resource_files(&dir, resource_type);
@@ -1053,7 +1200,12 @@ impl DefaultPackageManager {
         &self,
         source: &LocalSource,
         acc: &mut ResourceAccumulator,
-        filter: Option<&(Option<Vec<String>>, Option<Vec<String>>, Option<Vec<String>>, Option<Vec<String>>)>,
+        filter: Option<&(
+            Option<Vec<String>>,
+            Option<Vec<String>>,
+            Option<Vec<String>>,
+            Option<Vec<String>>,
+        )>,
         metadata: &PathMetadata,
         base: &Path,
     ) {
@@ -1061,7 +1213,9 @@ impl DefaultPackageManager {
         if !resolved.exists() {
             return;
         }
-        let Ok(stat) = std::fs::metadata(&resolved) else { return };
+        let Ok(stat) = std::fs::metadata(&resolved) else {
+            return;
+        };
         if stat.is_file() {
             let mut m = metadata.clone();
             m.base_dir = resolved.parent().map(|p| p.to_string_lossy().into());
@@ -1092,7 +1246,9 @@ impl DefaultPackageManager {
             if !resolved.exists() {
                 continue;
             }
-            let Ok(stat) = std::fs::metadata(&resolved) else { continue };
+            let Ok(stat) = std::fs::metadata(&resolved) else {
+                continue;
+            };
             if stat.is_file() {
                 Self::add_resource(target, &resolved, metadata, true);
             } else if stat.is_dir() {
@@ -1125,7 +1281,12 @@ impl DefaultPackageManager {
             base_dir: Some(project_base.to_string_lossy().into()),
         };
 
-        for resource_type in [ResourceType::Extensions, ResourceType::Skills, ResourceType::Prompts, ResourceType::Themes] {
+        for resource_type in [
+            ResourceType::Extensions,
+            ResourceType::Skills,
+            ResourceType::Prompts,
+            ResourceType::Themes,
+        ] {
             let dir_name = resource_type_dir_name(resource_type);
             let project_dir = project_base.join(dir_name);
             let user_dir = global_base.join(dir_name);
@@ -1191,7 +1352,11 @@ impl DefaultPackageManager {
     fn to_resolved_paths(&self, acc: ResourceAccumulator) -> ResolvedPaths {
         let to_vec = |map: HashMap<PathBuf, (PathMetadata, bool)>| -> Vec<ResolvedResource> {
             map.into_iter()
-                .map(|(path, (metadata, enabled))| ResolvedResource { path, enabled, metadata })
+                .map(|(path, (metadata, enabled))| ResolvedResource {
+                    path,
+                    enabled,
+                    metadata,
+                })
                 .collect()
         };
         ResolvedPaths {
@@ -1204,7 +1369,10 @@ impl DefaultPackageManager {
 
     // ─── Deduplication ────────────────────────────────────────────────────────
 
-    fn dedupe_packages(&self, packages: Vec<(PackageSource, SourceScope)>) -> Vec<(PackageSource, SourceScope)> {
+    fn dedupe_packages(
+        &self,
+        packages: Vec<(PackageSource, SourceScope)>,
+    ) -> Vec<(PackageSource, SourceScope)> {
         let mut seen: HashMap<String, (PackageSource, SourceScope)> = HashMap::new();
         for (pkg, scope) in packages {
             let source_str = pkg.source().to_owned();
@@ -1241,7 +1409,12 @@ impl DefaultPackageManager {
         }
     }
 
-    fn package_sources_match(&self, existing: &PackageSource, input: &str, scope: &SourceScope) -> bool {
+    fn package_sources_match(
+        &self,
+        existing: &PackageSource,
+        input: &str,
+        scope: &SourceScope,
+    ) -> bool {
         let left = self.package_identity(existing.source(), Some(scope));
         let right = self.package_identity(input, Some(scope));
         left == right

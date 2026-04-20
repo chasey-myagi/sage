@@ -291,14 +291,24 @@ impl SettingsSelectorComponent {
                 id: "hide-thinking",
                 label: "Hide thinking",
                 description: "Hide thinking blocks in assistant responses",
-                current_value: if cfg.hide_thinking_block { "true" } else { "false" }.into(),
+                current_value: if cfg.hide_thinking_block {
+                    "true"
+                } else {
+                    "false"
+                }
+                .into(),
                 values: vec!["true".into(), "false".into()],
             },
             SettingItem {
                 id: "collapse-changelog",
                 label: "Collapse changelog",
                 description: "Show condensed changelog after updates",
-                current_value: if cfg.collapse_changelog { "true" } else { "false" }.into(),
+                current_value: if cfg.collapse_changelog {
+                    "true"
+                } else {
+                    "false"
+                }
+                .into(),
                 values: vec!["true".into(), "false".into()],
             },
             SettingItem {
@@ -320,7 +330,13 @@ impl SettingsSelectorComponent {
                 label: "Tree filter mode",
                 description: "Default filter when opening /tree",
                 current_value: cfg.tree_filter_mode.as_str().into(),
-                values: vec!["default".into(), "no-tools".into(), "user-only".into(), "labeled-only".into(), "all".into()],
+                values: vec![
+                    "default".into(),
+                    "no-tools".into(),
+                    "user-only".into(),
+                    "labeled-only".into(),
+                    "all".into(),
+                ],
             },
             SettingItem {
                 id: "show-images",
@@ -333,7 +349,12 @@ impl SettingsSelectorComponent {
                 id: "auto-resize-images",
                 label: "Auto-resize images",
                 description: "Resize large images to 2000x2000 max for better model compatibility",
-                current_value: if cfg.auto_resize_images { "true" } else { "false" }.into(),
+                current_value: if cfg.auto_resize_images {
+                    "true"
+                } else {
+                    "false"
+                }
+                .into(),
                 values: vec!["true".into(), "false".into()],
             },
             SettingItem {
@@ -347,14 +368,24 @@ impl SettingsSelectorComponent {
                 id: "skill-commands",
                 label: "Skill commands",
                 description: "Register skills as /skill:name commands",
-                current_value: if cfg.enable_skill_commands { "true" } else { "false" }.into(),
+                current_value: if cfg.enable_skill_commands {
+                    "true"
+                } else {
+                    "false"
+                }
+                .into(),
                 values: vec!["true".into(), "false".into()],
             },
             SettingItem {
                 id: "show-hardware-cursor",
                 label: "Show hardware cursor",
                 description: "Show the terminal cursor while still positioning it for IME support",
-                current_value: if cfg.show_hardware_cursor { "true" } else { "false" }.into(),
+                current_value: if cfg.show_hardware_cursor {
+                    "true"
+                } else {
+                    "false"
+                }
+                .into(),
                 values: vec!["true".into(), "false".into()],
             },
             SettingItem {
@@ -369,7 +400,14 @@ impl SettingsSelectorComponent {
                 label: "Autocomplete max items",
                 description: "Max visible items in autocomplete dropdown (3-20)",
                 current_value: cfg.autocomplete_max_visible.to_string(),
-                values: vec!["3".into(), "5".into(), "7".into(), "10".into(), "15".into(), "20".into()],
+                values: vec![
+                    "3".into(),
+                    "5".into(),
+                    "7".into(),
+                    "10".into(),
+                    "15".into(),
+                    "20".into(),
+                ],
             },
             SettingItem {
                 id: "clear-on-shrink",
@@ -388,9 +426,13 @@ impl SettingsSelectorComponent {
         match id {
             "autocompact" => (self.callbacks.on_auto_compact_change)(new_value == "true"),
             "show-images" => (self.callbacks.on_show_images_change)(new_value == "true"),
-            "auto-resize-images" => (self.callbacks.on_auto_resize_images_change)(new_value == "true"),
+            "auto-resize-images" => {
+                (self.callbacks.on_auto_resize_images_change)(new_value == "true")
+            }
             "block-images" => (self.callbacks.on_block_images_change)(new_value == "true"),
-            "skill-commands" => (self.callbacks.on_enable_skill_commands_change)(new_value == "true"),
+            "skill-commands" => {
+                (self.callbacks.on_enable_skill_commands_change)(new_value == "true")
+            }
             "steering-mode" => {
                 if let Some(mode) = DeliveryMode::from_str(new_value) {
                     (self.callbacks.on_steering_mode_change)(mode);
@@ -407,7 +449,9 @@ impl SettingsSelectorComponent {
                 }
             }
             "hide-thinking" => (self.callbacks.on_hide_thinking_block_change)(new_value == "true"),
-            "collapse-changelog" => (self.callbacks.on_collapse_changelog_change)(new_value == "true"),
+            "collapse-changelog" => {
+                (self.callbacks.on_collapse_changelog_change)(new_value == "true")
+            }
             "quiet-startup" => (self.callbacks.on_quiet_startup_change)(new_value == "true"),
             "double-escape-action" => {
                 if let Some(action) = DoubleEscapeAction::from_str(new_value) {
@@ -419,7 +463,9 @@ impl SettingsSelectorComponent {
                     (self.callbacks.on_tree_filter_mode_change)(mode);
                 }
             }
-            "show-hardware-cursor" => (self.callbacks.on_show_hardware_cursor_change)(new_value == "true"),
+            "show-hardware-cursor" => {
+                (self.callbacks.on_show_hardware_cursor_change)(new_value == "true")
+            }
             "editor-padding" => {
                 if let Ok(v) = new_value.parse::<u32>() {
                     (self.callbacks.on_editor_padding_x_change)(v);
@@ -581,9 +627,14 @@ mod tests {
 
     #[test]
     fn cycle_value_advances_selection() {
-        let mut comp = SettingsSelectorComponent::new(SettingsConfig::default(), make_noop_callbacks());
+        let mut comp =
+            SettingsSelectorComponent::new(SettingsConfig::default(), make_noop_callbacks());
         // Find the autocompact item
-        let idx = comp.items.iter().position(|i| i.id == "autocompact").unwrap();
+        let idx = comp
+            .items
+            .iter()
+            .position(|i| i.id == "autocompact")
+            .unwrap();
         comp.selected_index = idx;
         let initial = comp.items[idx].current_value.clone();
         comp.cycle_value();

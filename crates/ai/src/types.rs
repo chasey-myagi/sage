@@ -1,9 +1,9 @@
 // LLM-side types — Phase 2
 // Defines types needed for LLM API calls, enriched for multi-provider support.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use serde::{Deserialize, Serialize};
 
 // ============================================================================
 // Core LLM result types (re-used by agent-core)

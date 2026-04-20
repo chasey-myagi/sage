@@ -42,8 +42,8 @@ pub fn short_hash(s: &str) -> String {
     //   h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
     //
     // The second line uses the *new* h1 (already updated) for the h1 term.
-    let new_h1 = (h1 ^ (h1 >> 16)).wrapping_mul(2246822507)
-        ^ (h2 ^ (h2 >> 13)).wrapping_mul(3266489909);
+    let new_h1 =
+        (h1 ^ (h1 >> 16)).wrapping_mul(2246822507) ^ (h2 ^ (h2 >> 13)).wrapping_mul(3266489909);
     let new_h2 = (h2 ^ (h2 >> 16)).wrapping_mul(2246822507)
         ^ (new_h1 ^ (new_h1 >> 13)).wrapping_mul(3266489909);
 
@@ -97,7 +97,8 @@ mod tests {
         let h = short_hash("test string 123 !@#");
         // base-36 output uses only lowercase letters and digits.
         assert!(
-            h.chars().all(|c| c.is_ascii_digit() || c.is_ascii_lowercase()),
+            h.chars()
+                .all(|c| c.is_ascii_digit() || c.is_ascii_lowercase()),
             "unexpected char in hash: {h}"
         );
     }

@@ -4,13 +4,13 @@
 //!
 //! Renders a tool call's invocation and result in a styled box.
 
-use tui::tui::{Component, Container};
 use tui::components::spacer::Spacer;
 use tui::components::text::Text;
+use tui::tui::{Component, Container};
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor, ThemeBg};
 use crate::modes::interactive::components::dynamic_border::DynamicBorder;
 use crate::modes::interactive::components::keybinding_hints::key_hint;
+use crate::modes::interactive::theme::{ThemeBg, ThemeColor, get_theme};
 
 // ============================================================================
 // Tool result types
@@ -71,7 +71,11 @@ impl ToolExecutionComponent {
     /// Set the result of the tool execution.
     pub fn set_result(&mut self, content: Vec<ToolResultContent>, is_error: bool) {
         self.result = Some(content);
-        self.status = if is_error { ToolStatus::Error } else { ToolStatus::Success };
+        self.status = if is_error {
+            ToolStatus::Error
+        } else {
+            ToolStatus::Success
+        };
         self.is_partial = false;
     }
 
@@ -117,7 +121,11 @@ impl ToolExecutionComponent {
                             }
                             other => {
                                 let s = other.to_string();
-                                if s.len() > 40 { format!("{}…", &s[..37]) } else { s }
+                                if s.len() > 40 {
+                                    format!("{}…", &s[..37])
+                                } else {
+                                    s
+                                }
                             }
                         };
                         format!("{k}={val}")
@@ -131,13 +139,19 @@ impl ToolExecutionComponent {
             }
             other => {
                 let s = other.to_string();
-                if s.len() > 60 { format!("{}…", &s[..57]) } else { s }
+                if s.len() > 60 {
+                    format!("{}…", &s[..57])
+                } else {
+                    s
+                }
             }
         }
     }
 
     fn render_result_text(&self) -> Vec<String> {
-        let Some(content) = &self.result else { return vec![] };
+        let Some(content) = &self.result else {
+            return vec![];
+        };
         content
             .iter()
             .filter_map(|c| match c {
@@ -182,15 +196,14 @@ impl Component for ToolExecutionComponent {
 
             // Collapse hint
             box_content.add_child(Box::new(Spacer::new(1)));
-            box_content.add_child(Box::new(Text::new(
-                key_hint("ctrl+e", "collapse"),
-                1,
-                0,
-            )));
+            box_content.add_child(Box::new(Text::new(key_hint("ctrl+e", "collapse"), 1, 0)));
         } else if self.result.is_some() {
             // Expand hint
             box_content.add_child(Box::new(Text::new(
-                t.fg(ThemeColor::Dim, &format!("  {}", key_hint("ctrl+e", "expand"))),
+                t.fg(
+                    ThemeColor::Dim,
+                    &format!("  {}", key_hint("ctrl+e", "expand")),
+                ),
                 0,
                 0,
             )));
@@ -227,7 +240,9 @@ mod tests {
             serde_json::json!({"path": "/tmp/test.txt"}),
         );
         comp.set_result(
-            vec![ToolResultContent::Text { text: "file contents".to_string() }],
+            vec![ToolResultContent::Text {
+                text: "file contents".to_string(),
+            }],
             false,
         );
         let lines = comp.render(80);
@@ -237,13 +252,11 @@ mod tests {
 
     #[test]
     fn error_tool_shows_error_marker() {
-        let mut comp = ToolExecutionComponent::new(
-            "write_file",
-            "call-789",
-            serde_json::json!({}),
-        );
+        let mut comp = ToolExecutionComponent::new("write_file", "call-789", serde_json::json!({}));
         comp.set_result(
-            vec![ToolResultContent::Text { text: "Permission denied".to_string() }],
+            vec![ToolResultContent::Text {
+                text: "Permission denied".to_string(),
+            }],
             true,
         );
         let lines = comp.render(80);

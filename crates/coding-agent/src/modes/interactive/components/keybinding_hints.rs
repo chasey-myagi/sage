@@ -2,7 +2,7 @@
 //!
 //! Translated from `components/keybinding-hints.ts`.
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor};
+use crate::modes::interactive::theme::{ThemeColor, get_theme};
 
 /// Format a keybinding name with dim styling.
 pub fn key_text(keybinding: &str) -> String {

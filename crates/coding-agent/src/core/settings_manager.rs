@@ -237,7 +237,10 @@ pub fn merge_settings(base: &Settings, overrides: &Settings) -> Settings {
     };
     let markdown = match (&overrides.markdown, &base.markdown) {
         (Some(o), Some(b)) => Some(MarkdownSettings {
-            code_block_indent: o.code_block_indent.clone().or_else(|| b.code_block_indent.clone()),
+            code_block_indent: o
+                .code_block_indent
+                .clone()
+                .or_else(|| b.code_block_indent.clone()),
         }),
         (Some(o), None) => Some(o.clone()),
         (None, b) => b.clone(),
@@ -550,7 +553,14 @@ impl SettingsManager {
                 error: anyhow::anyhow!("{}", e),
             });
         }
-        Self::new(storage, global_load.0, project_load.0, global_err, project_err, initial_errors)
+        Self::new(
+            storage,
+            global_load.0,
+            project_load.0,
+            global_err,
+            project_err,
+            initial_errors,
+        )
     }
 
     /// Create an in-memory SettingsManager (no file I/O).
@@ -564,7 +574,10 @@ impl SettingsManager {
         Self::from_storage(storage)
     }
 
-    fn load_from_storage(storage: &dyn SettingsStorage, scope: SettingsScope) -> anyhow::Result<Settings> {
+    fn load_from_storage(
+        storage: &dyn SettingsStorage,
+        scope: SettingsScope,
+    ) -> anyhow::Result<Settings> {
         let mut content: Option<String> = None;
         storage.with_lock(scope, &mut |current| {
             content = current.map(|s| s.to_owned());
@@ -579,7 +592,10 @@ impl SettingsManager {
         }
     }
 
-    fn try_load_from_storage(storage: &dyn SettingsStorage, scope: SettingsScope) -> (Settings, Option<anyhow::Error>) {
+    fn try_load_from_storage(
+        storage: &dyn SettingsStorage,
+        scope: SettingsScope,
+    ) -> (Settings, Option<anyhow::Error>) {
         match Self::load_from_storage(storage, scope) {
             Ok(s) => (s, None),
             Err(e) => (Settings::default(), Some(e)),
@@ -607,7 +623,8 @@ impl SettingsManager {
         self.modified_project_fields.clear();
         self.modified_project_nested_fields.clear();
 
-        let project_load = Self::try_load_from_storage(self.storage.as_ref(), SettingsScope::Project);
+        let project_load =
+            Self::try_load_from_storage(self.storage.as_ref(), SettingsScope::Project);
         if project_load.1.is_none() {
             self.project_settings = project_load.0;
             self.project_settings_load_error = None;
@@ -699,7 +716,8 @@ impl SettingsManager {
         modified_fields: &HashSet<SettingsField>,
         modified_nested_fields: &HashMap<SettingsField, HashSet<String>>,
     ) {
-        let snapshot_value = serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Object(Default::default()));
+        let snapshot_value =
+            serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Object(Default::default()));
         let snapshot_map = match snapshot_value {
             serde_json::Value::Object(m) => m,
             _ => Default::default(),
@@ -731,7 +749,10 @@ impl SettingsManager {
                             merged_nested.insert(key.clone(), val.clone());
                         }
                     }
-                    current_map.insert(field_key.to_owned(), serde_json::Value::Object(merged_nested));
+                    current_map.insert(
+                        field_key.to_owned(),
+                        serde_json::Value::Object(merged_nested),
+                    );
                 } else if let Some(val) = snapshot_map.get(field_key) {
                     current_map.insert(field_key.to_owned(), val.clone());
                 } else {
@@ -852,7 +873,10 @@ impl SettingsManager {
     }
 
     pub fn get_steering_mode(&self) -> &str {
-        self.settings.steering_mode.as_deref().unwrap_or("one-at-a-time")
+        self.settings
+            .steering_mode
+            .as_deref()
+            .unwrap_or("one-at-a-time")
     }
 
     pub fn set_steering_mode(&mut self, mode: &str) {
@@ -862,7 +886,10 @@ impl SettingsManager {
     }
 
     pub fn get_follow_up_mode(&self) -> &str {
-        self.settings.follow_up_mode.as_deref().unwrap_or("one-at-a-time")
+        self.settings
+            .follow_up_mode
+            .as_deref()
+            .unwrap_or("one-at-a-time")
     }
 
     pub fn set_follow_up_mode(&mut self, mode: &str) {
@@ -902,7 +929,11 @@ impl SettingsManager {
     }
 
     pub fn get_compaction_enabled(&self) -> bool {
-        self.settings.compaction.as_ref().and_then(|c| c.enabled).unwrap_or(true)
+        self.settings
+            .compaction
+            .as_ref()
+            .and_then(|c| c.enabled)
+            .unwrap_or(true)
     }
 
     pub fn set_compaction_enabled(&mut self, enabled: bool) {
@@ -915,11 +946,19 @@ impl SettingsManager {
     }
 
     pub fn get_compaction_reserve_tokens(&self) -> u32 {
-        self.settings.compaction.as_ref().and_then(|c| c.reserve_tokens).unwrap_or(16384)
+        self.settings
+            .compaction
+            .as_ref()
+            .and_then(|c| c.reserve_tokens)
+            .unwrap_or(16384)
     }
 
     pub fn get_compaction_keep_recent_tokens(&self) -> u32 {
-        self.settings.compaction.as_ref().and_then(|c| c.keep_recent_tokens).unwrap_or(20000)
+        self.settings
+            .compaction
+            .as_ref()
+            .and_then(|c| c.keep_recent_tokens)
+            .unwrap_or(20000)
     }
 
     /// Returns a snapshot of compaction settings with defaults applied.
@@ -934,20 +973,36 @@ impl SettingsManager {
     pub fn get_branch_summary_settings(&self) -> BranchSummarySettings {
         BranchSummarySettings {
             reserve_tokens: Some(
-                self.settings.branch_summary.as_ref().and_then(|b| b.reserve_tokens).unwrap_or(16384),
+                self.settings
+                    .branch_summary
+                    .as_ref()
+                    .and_then(|b| b.reserve_tokens)
+                    .unwrap_or(16384),
             ),
             skip_prompt: Some(
-                self.settings.branch_summary.as_ref().and_then(|b| b.skip_prompt).unwrap_or(false),
+                self.settings
+                    .branch_summary
+                    .as_ref()
+                    .and_then(|b| b.skip_prompt)
+                    .unwrap_or(false),
             ),
         }
     }
 
     pub fn get_branch_summary_skip_prompt(&self) -> bool {
-        self.settings.branch_summary.as_ref().and_then(|b| b.skip_prompt).unwrap_or(false)
+        self.settings
+            .branch_summary
+            .as_ref()
+            .and_then(|b| b.skip_prompt)
+            .unwrap_or(false)
     }
 
     pub fn get_retry_enabled(&self) -> bool {
-        self.settings.retry.as_ref().and_then(|r| r.enabled).unwrap_or(true)
+        self.settings
+            .retry
+            .as_ref()
+            .and_then(|r| r.enabled)
+            .unwrap_or(true)
     }
 
     pub fn set_retry_enabled(&mut self, enabled: bool) {
@@ -963,9 +1018,27 @@ impl SettingsManager {
     pub fn get_retry_settings(&self) -> RetrySettings {
         RetrySettings {
             enabled: Some(self.get_retry_enabled()),
-            max_retries: Some(self.settings.retry.as_ref().and_then(|r| r.max_retries).unwrap_or(3)),
-            base_delay_ms: Some(self.settings.retry.as_ref().and_then(|r| r.base_delay_ms).unwrap_or(2000)),
-            max_delay_ms: Some(self.settings.retry.as_ref().and_then(|r| r.max_delay_ms).unwrap_or(60000)),
+            max_retries: Some(
+                self.settings
+                    .retry
+                    .as_ref()
+                    .and_then(|r| r.max_retries)
+                    .unwrap_or(3),
+            ),
+            base_delay_ms: Some(
+                self.settings
+                    .retry
+                    .as_ref()
+                    .and_then(|r| r.base_delay_ms)
+                    .unwrap_or(2000),
+            ),
+            max_delay_ms: Some(
+                self.settings
+                    .retry
+                    .as_ref()
+                    .and_then(|r| r.max_delay_ms)
+                    .unwrap_or(60000),
+            ),
         }
     }
 
@@ -1129,7 +1202,11 @@ impl SettingsManager {
     }
 
     pub fn get_show_images(&self) -> bool {
-        self.settings.terminal.as_ref().and_then(|t| t.show_images).unwrap_or(true)
+        self.settings
+            .terminal
+            .as_ref()
+            .and_then(|t| t.show_images)
+            .unwrap_or(true)
     }
 
     pub fn set_show_images(&mut self, show: bool) {
@@ -1142,7 +1219,12 @@ impl SettingsManager {
     }
 
     pub fn get_clear_on_shrink(&self) -> bool {
-        if let Some(val) = self.settings.terminal.as_ref().and_then(|t| t.clear_on_shrink) {
+        if let Some(val) = self
+            .settings
+            .terminal
+            .as_ref()
+            .and_then(|t| t.clear_on_shrink)
+        {
             return val;
         }
         std::env::var("SAGE_CLEAR_ON_SHRINK").as_deref() == Ok("1")
@@ -1152,13 +1234,21 @@ impl SettingsManager {
         if self.global_settings.terminal.is_none() {
             self.global_settings.terminal = Some(TerminalSettings::default());
         }
-        self.global_settings.terminal.as_mut().unwrap().clear_on_shrink = Some(enabled);
+        self.global_settings
+            .terminal
+            .as_mut()
+            .unwrap()
+            .clear_on_shrink = Some(enabled);
         self.mark_modified(SettingsField::Terminal, Some("clearOnShrink"));
         self.save();
     }
 
     pub fn get_image_auto_resize(&self) -> bool {
-        self.settings.images.as_ref().and_then(|i| i.auto_resize).unwrap_or(true)
+        self.settings
+            .images
+            .as_ref()
+            .and_then(|i| i.auto_resize)
+            .unwrap_or(true)
     }
 
     pub fn set_image_auto_resize(&mut self, enabled: bool) {
@@ -1171,7 +1261,11 @@ impl SettingsManager {
     }
 
     pub fn get_block_images(&self) -> bool {
-        self.settings.images.as_ref().and_then(|i| i.block_images).unwrap_or(false)
+        self.settings
+            .images
+            .as_ref()
+            .and_then(|i| i.block_images)
+            .unwrap_or(false)
     }
 
     pub fn set_block_images(&mut self, blocked: bool) {
@@ -1194,7 +1288,10 @@ impl SettingsManager {
     }
 
     pub fn get_double_escape_action(&self) -> &str {
-        self.settings.double_escape_action.as_deref().unwrap_or("tree")
+        self.settings
+            .double_escape_action
+            .as_deref()
+            .unwrap_or("tree")
     }
 
     pub fn set_double_escape_action(&mut self, action: &str) {
@@ -1205,8 +1302,16 @@ impl SettingsManager {
 
     pub fn get_tree_filter_mode(&self) -> &str {
         let valid = ["default", "no-tools", "user-only", "labeled-only", "all"];
-        let mode = self.settings.tree_filter_mode.as_deref().unwrap_or("default");
-        if valid.contains(&mode) { mode } else { "default" }
+        let mode = self
+            .settings
+            .tree_filter_mode
+            .as_deref()
+            .unwrap_or("default");
+        if valid.contains(&mode) {
+            mode
+        } else {
+            "default"
+        }
     }
 
     pub fn set_tree_filter_mode(&mut self, mode: &str) {
@@ -1249,7 +1354,11 @@ impl SettingsManager {
     }
 
     pub fn get_code_block_indent(&self) -> &str {
-        self.settings.markdown.as_ref().and_then(|m| m.code_block_indent.as_deref()).unwrap_or("  ")
+        self.settings
+            .markdown
+            .as_ref()
+            .and_then(|m| m.code_block_indent.as_deref())
+            .unwrap_or("  ")
     }
 }
 
@@ -1385,7 +1494,10 @@ pub fn migrate_keybinding_names(
     let mut migrated = false;
 
     for (key, value) in raw {
-        let new_key = migrations.get(key.as_str()).copied().unwrap_or(key.as_str());
+        let new_key = migrations
+            .get(key.as_str())
+            .copied()
+            .unwrap_or(key.as_str());
         if new_key != key.as_str() {
             migrated = true;
             // If the new name already exists in the source, skip this old entry
@@ -1460,7 +1572,11 @@ mod tests {
             fs::write(agent_dir.join("settings.json"), json).unwrap();
         }
         if let Some(json) = project_json {
-            fs::write(project_dir.join(CONFIG_DIR_NAME).join("settings.json"), json).unwrap();
+            fs::write(
+                project_dir.join(CONFIG_DIR_NAME).join("settings.json"),
+                json,
+            )
+            .unwrap();
         }
 
         let mgr = SettingsManager::create(&project_dir, &agent_dir);
@@ -1472,7 +1588,10 @@ mod tests {
     }
 
     fn project_settings_path(tmp: &TempDir) -> PathBuf {
-        tmp.path().join("project").join(CONFIG_DIR_NAME).join("settings.json")
+        tmp.path()
+            .join("project")
+            .join(CONFIG_DIR_NAME)
+            .join("settings.json")
     }
 
     fn read_json(path: &Path) -> serde_json::Value {
@@ -1490,8 +1609,7 @@ mod tests {
 
     #[test]
     fn global_settings_loaded() {
-        let (mgr, _tmp) =
-            make_manager_with_files(Some(r#"{"defaultProvider":"anthropic"}"#), None);
+        let (mgr, _tmp) = make_manager_with_files(Some(r#"{"defaultProvider":"anthropic"}"#), None);
         assert_eq!(mgr.get_default_provider(), Some("anthropic"));
     }
 
@@ -1639,7 +1757,12 @@ mod tests {
         mgr.set_project_packages(vec![PackageSource::Simple("npm:test-pkg".to_string())]);
 
         assert!(project_dir.join(CONFIG_DIR_NAME).exists());
-        assert!(project_dir.join(CONFIG_DIR_NAME).join("settings.json").exists());
+        assert!(
+            project_dir
+                .join(CONFIG_DIR_NAME)
+                .join("settings.json")
+                .exists()
+        );
     }
 
     // ─── shellCommandPrefix ───────────────────────────────────────────────────
@@ -1650,7 +1773,10 @@ mod tests {
             Some(r#"{"shellCommandPrefix":"shopt -s expand_aliases"}"#),
             None,
         );
-        assert_eq!(mgr.get_shell_command_prefix(), Some("shopt -s expand_aliases"));
+        assert_eq!(
+            mgr.get_shell_command_prefix(),
+            Some("shopt -s expand_aliases")
+        );
     }
 
     #[test]
@@ -1682,8 +1808,7 @@ mod tests {
 
     #[test]
     fn session_dir_returns_global_value() {
-        let (mgr, _tmp) =
-            make_manager_with_files(Some(r#"{"sessionDir":"/tmp/sessions"}"#), None);
+        let (mgr, _tmp) = make_manager_with_files(Some(r#"{"sessionDir":"/tmp/sessions"}"#), None);
         assert_eq!(mgr.get_session_dir(), Some("/tmp/sessions"));
     }
 
@@ -1747,7 +1872,8 @@ mod tests {
 
     #[test]
     fn preserve_custom_settings_when_changing_theme() {
-        let (mut mgr, tmp) = make_manager_with_files(Some(r#"{"defaultModel":"claude-sonnet"}"#), None);
+        let (mut mgr, tmp) =
+            make_manager_with_files(Some(r#"{"defaultModel":"claude-sonnet"}"#), None);
         let path = agent_settings_path(&tmp);
 
         let mut current: serde_json::Value = read_json(&path);
@@ -1835,10 +1961,7 @@ mod tests {
         mgr.set_project_extension_paths(vec!["./updated-extension.ts".to_string()]);
 
         let saved = read_json(&proj_path);
-        assert_eq!(
-            saved["prompts"],
-            serde_json::json!(["./new-prompt.md"])
-        );
+        assert_eq!(saved["prompts"], serde_json::json!(["./new-prompt.md"]));
         assert_eq!(
             saved["extensions"],
             serde_json::json!(["./updated-extension.ts"])
@@ -1868,22 +1991,19 @@ mod tests {
 
     #[test]
     fn migrate_queue_mode_to_steering_mode() {
-        let (mgr, _tmp) =
-            make_manager_with_files(Some(r#"{"queueMode":"all"}"#), None);
+        let (mgr, _tmp) = make_manager_with_files(Some(r#"{"queueMode":"all"}"#), None);
         assert_eq!(mgr.get_steering_mode(), "all");
     }
 
     #[test]
     fn migrate_websockets_true_to_transport_websocket() {
-        let (mgr, _tmp) =
-            make_manager_with_files(Some(r#"{"websockets":true}"#), None);
+        let (mgr, _tmp) = make_manager_with_files(Some(r#"{"websockets":true}"#), None);
         assert_eq!(mgr.get_transport(), "websocket");
     }
 
     #[test]
     fn migrate_websockets_false_to_transport_sse() {
-        let (mgr, _tmp) =
-            make_manager_with_files(Some(r#"{"websockets":false}"#), None);
+        let (mgr, _tmp) = make_manager_with_files(Some(r#"{"websockets":false}"#), None);
         assert_eq!(mgr.get_transport(), "sse");
     }
 
@@ -1911,8 +2031,7 @@ mod tests {
         let changed = migrate_keybindings_config_file(dir.path());
         assert!(changed, "expected migration to report changes");
 
-        let migrated_str =
-            fs::read_to_string(dir.path().join("keybindings.json")).unwrap();
+        let migrated_str = fs::read_to_string(dir.path().join("keybindings.json")).unwrap();
         let migrated: serde_json::Value = serde_json::from_str(&migrated_str).unwrap();
 
         assert_eq!(
@@ -1947,8 +2066,7 @@ mod tests {
         let changed = migrate_keybindings_config_file(dir.path());
         assert!(changed, "expected migration to report changes");
 
-        let migrated_str =
-            fs::read_to_string(dir.path().join("keybindings.json")).unwrap();
+        let migrated_str = fs::read_to_string(dir.path().join("keybindings.json")).unwrap();
         let migrated: serde_json::Value = serde_json::from_str(&migrated_str).unwrap();
 
         assert_eq!(

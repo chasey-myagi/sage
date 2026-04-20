@@ -8,8 +8,8 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
@@ -88,7 +88,10 @@ pub async fn execute_bash(
     cwd: &Path,
     options: BashExecutorOptions,
 ) -> anyhow::Result<BashResult> {
-    let cancelled_flag = options.cancel.clone().unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    let cancelled_flag = options
+        .cancel
+        .clone()
+        .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
 
     // Build the child process
     let mut child = Command::new("bash")
@@ -242,9 +245,13 @@ mod tests {
 
     #[tokio::test]
     async fn execute_echo_command() {
-        let result = execute_bash("echo hello", Path::new("/tmp"), BashExecutorOptions::default())
-            .await
-            .unwrap();
+        let result = execute_bash(
+            "echo hello",
+            Path::new("/tmp"),
+            BashExecutorOptions::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(result.output.trim(), "hello");
         assert_eq!(result.exit_code, Some(0));
         assert!(!result.cancelled);

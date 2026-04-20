@@ -381,7 +381,13 @@ mod tests {
     fn head_truncates_by_lines() {
         let lines: Vec<String> = (0..10).map(|i| format!("line{i}")).collect();
         let content = lines.join("\n");
-        let result = truncate_head(&content, TruncationOptions { max_lines: Some(5), max_bytes: None });
+        let result = truncate_head(
+            &content,
+            TruncationOptions {
+                max_lines: Some(5),
+                max_bytes: None,
+            },
+        );
         assert!(result.truncated);
         assert_eq!(result.truncated_by, Some(TruncatedBy::Lines));
         assert_eq!(result.output_lines, 5);
@@ -395,7 +401,13 @@ mod tests {
     fn head_truncates_by_bytes() {
         // 5 lines of 20 chars each = 100+ bytes; limit to 50 bytes
         let content = "12345678901234567890\n12345678901234567890\n12345678901234567890\n12345678901234567890\n12345678901234567890";
-        let result = truncate_head(content, TruncationOptions { max_lines: None, max_bytes: Some(50) });
+        let result = truncate_head(
+            content,
+            TruncationOptions {
+                max_lines: None,
+                max_bytes: Some(50),
+            },
+        );
         assert!(result.truncated);
         assert_eq!(result.truncated_by, Some(TruncatedBy::Bytes));
         assert!(result.output_bytes <= 50);
@@ -406,7 +418,13 @@ mod tests {
     #[test]
     fn head_first_line_exceeds_limit() {
         let content = "a".repeat(100) + "\nline2";
-        let result = truncate_head(&content, TruncationOptions { max_lines: None, max_bytes: Some(50) });
+        let result = truncate_head(
+            &content,
+            TruncationOptions {
+                max_lines: None,
+                max_bytes: Some(50),
+            },
+        );
         assert!(result.truncated);
         assert!(result.first_line_exceeds_limit);
         assert_eq!(result.content, "");
@@ -429,7 +447,13 @@ mod tests {
     fn tail_truncates_by_lines_keeps_end() {
         let lines: Vec<String> = (0..10).map(|i| format!("line{i}")).collect();
         let content = lines.join("\n");
-        let result = truncate_tail(&content, TruncationOptions { max_lines: Some(3), max_bytes: None });
+        let result = truncate_tail(
+            &content,
+            TruncationOptions {
+                max_lines: Some(3),
+                max_bytes: None,
+            },
+        );
         assert!(result.truncated);
         // Should keep the LAST 3 lines
         assert_eq!(result.output_lines, 3);
@@ -444,7 +468,13 @@ mod tests {
     #[test]
     fn tail_truncates_by_bytes() {
         let content = "12345678901234567890\n12345678901234567890\n12345678901234567890\n12345678901234567890\n12345678901234567890";
-        let result = truncate_tail(content, TruncationOptions { max_lines: None, max_bytes: Some(50) });
+        let result = truncate_tail(
+            content,
+            TruncationOptions {
+                max_lines: None,
+                max_bytes: Some(50),
+            },
+        );
         assert!(result.truncated);
         assert!(result.output_bytes <= 50);
         // Should keep the tail (last lines)

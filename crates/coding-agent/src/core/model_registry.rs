@@ -116,14 +116,21 @@ impl ModelRegistry {
     /// Find all models matching an optional fuzzy pattern across all providers.
     pub fn find_all(&self, pattern: Option<&str>) -> Vec<&ModelEntry> {
         match pattern {
-            Some(p) => self.models.iter().filter(|m| m.matches_pattern(p)).collect(),
+            Some(p) => self
+                .models
+                .iter()
+                .filter(|m| m.matches_pattern(p))
+                .collect(),
             None => self.models.iter().collect(),
         }
     }
 
     /// Get all models for a specific provider.
     pub fn models_for_provider(&self, provider: &str) -> Vec<&ModelEntry> {
-        self.models.iter().filter(|m| m.provider == provider).collect()
+        self.models
+            .iter()
+            .filter(|m| m.provider == provider)
+            .collect()
     }
 
     /// All loaded models.
@@ -135,11 +142,7 @@ impl ModelRegistry {
     ///
     /// Returns `(entry, warning)` — warning is Some if the model was not found exactly
     /// but a fuzzy match was used.
-    pub fn resolve_cli_model(
-        &self,
-        cli_provider: Option<&str>,
-        cli_model: &str,
-    ) -> ResolvedModel {
+    pub fn resolve_cli_model(&self, cli_provider: Option<&str>, cli_model: &str) -> ResolvedModel {
         // Handle "provider/model" form
         let (provider, model_pat) = if let Some(slash) = cli_model.find('/') {
             let p = &cli_model[..slash];
@@ -175,10 +178,14 @@ impl ModelRegistry {
         }
 
         // Fuzzy match
-        let fuzzy: Vec<&ModelEntry> = self.models.iter().filter(|m| {
-            let provider_match = provider.as_deref().map_or(true, |p| m.provider == p);
-            provider_match && m.matches_pattern(model_pat_clean)
-        }).collect();
+        let fuzzy: Vec<&ModelEntry> = self
+            .models
+            .iter()
+            .filter(|m| {
+                let provider_match = provider.as_deref().map_or(true, |p| m.provider == p);
+                provider_match && m.matches_pattern(model_pat_clean)
+            })
+            .collect();
 
         match fuzzy.len() {
             0 => ResolvedModel {
@@ -333,7 +340,10 @@ mod tests {
         );
         let p = reg.get_provider("custom");
         assert!(p.is_some());
-        assert_eq!(p.unwrap().base_url.as_deref(), Some("https://api.custom.example"));
+        assert_eq!(
+            p.unwrap().base_url.as_deref(),
+            Some("https://api.custom.example")
+        );
     }
 
     #[test]

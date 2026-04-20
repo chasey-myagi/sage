@@ -9,14 +9,14 @@ pub mod cli;
 pub mod keys;
 pub mod models;
 
-#[cfg(test)]
-pub mod test_helpers;
 pub mod openai_compat;
 pub mod provider_errors;
 pub mod provider_specs;
 pub mod providers;
 pub mod registry;
 pub mod stream;
+#[cfg(test)]
+pub mod test_helpers;
 pub mod types;
 pub mod utils;
 

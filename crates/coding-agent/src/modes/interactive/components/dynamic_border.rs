@@ -4,7 +4,7 @@
 
 use tui::tui::Component;
 
-use crate::modes::interactive::theme::{get_theme, ThemeColor};
+use crate::modes::interactive::theme::{ThemeColor, get_theme};
 
 /// A horizontal line that fills the viewport width, colored with the theme's border color.
 pub struct DynamicBorder {

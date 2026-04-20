@@ -1,11 +1,10 @@
 /// Image component — renders terminal images using Kitty or iTerm2 protocol.
 /// Mirrors pi-mono `components/image.ts`.
-
 use std::cell::RefCell;
 
 use crate::terminal_image::{
-    get_capabilities, get_image_dimensions, image_fallback, render_image, ImageDimensions,
-    ImageRenderOptions,
+    ImageDimensions, ImageRenderOptions, get_capabilities, get_image_dimensions, image_fallback,
+    render_image,
 };
 use crate::tui::Component;
 
@@ -20,7 +19,9 @@ impl ImageTheme {
     where
         F: Fn(&str) -> String + Send + Sync + 'static,
     {
-        Self { fallback_color: Box::new(fallback_color) }
+        Self {
+            fallback_color: Box::new(fallback_color),
+        }
     }
 }
 
@@ -57,7 +58,10 @@ impl Image {
         let mime_type = mime_type.into();
         let dimensions = dimensions
             .or_else(|| get_image_dimensions(&base64_data, &mime_type))
-            .unwrap_or(ImageDimensions { width_px: 800, height_px: 600 });
+            .unwrap_or(ImageDimensions {
+                width_px: 800,
+                height_px: 600,
+            });
         let image_id = options.image_id;
 
         Self {
@@ -157,7 +161,10 @@ mod tests {
             "image/png",
             ImageTheme::new(|s: &str| s.to_string()),
             ImageOptions::default(),
-            Some(ImageDimensions { width_px: 100, height_px: 50 }),
+            Some(ImageDimensions {
+                width_px: 100,
+                height_px: 50,
+            }),
         );
         let lines = img.render(40);
         assert!(!lines.is_empty());

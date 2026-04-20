@@ -70,7 +70,11 @@ impl ApiProvider for OpenAiCodexResponsesProvider {
             Err(e) => return vec![AssistantMessageEvent::Error(e)],
         };
 
-        let base_url_opt = if model.base_url.is_empty() { None } else { Some(model.base_url.as_str()) };
+        let base_url_opt = if model.base_url.is_empty() {
+            None
+        } else {
+            Some(model.base_url.as_str())
+        };
         let url = resolve_codex_url(base_url_opt);
         let body = build_request_body(model, context, tools, options);
         let body_json = match serde_json::to_string(&body) {
@@ -78,7 +82,7 @@ impl ApiProvider for OpenAiCodexResponsesProvider {
             Err(e) => {
                 return vec![AssistantMessageEvent::Error(format!(
                     "Serialization error: {e}"
-                ))]
+                ))];
             }
         };
 
@@ -142,7 +146,7 @@ impl ApiProvider for OpenAiCodexResponsesProvider {
             None => {
                 return vec![AssistantMessageEvent::Error(
                     last_error.unwrap_or_else(|| "Failed after retries".to_string()),
-                )]
+                )];
             }
         };
 
@@ -156,7 +160,9 @@ impl ApiProvider for OpenAiCodexResponsesProvider {
             let chunk = match chunk_result {
                 Ok(b) => b,
                 Err(e) => {
-                    events.push(AssistantMessageEvent::Error(format!("Stream read error: {e}")));
+                    events.push(AssistantMessageEvent::Error(format!(
+                        "Stream read error: {e}"
+                    )));
                     return events;
                 }
             };
@@ -256,13 +262,16 @@ fn clamp_reasoning_effort(model_id: &str, level: &ReasoningLevel) -> &'static st
         model_id
     };
 
-    let is_high_end = id.starts_with("gpt-5.2")
-        || id.starts_with("gpt-5.3")
-        || id.starts_with("gpt-5.4");
+    let is_high_end =
+        id.starts_with("gpt-5.2") || id.starts_with("gpt-5.3") || id.starts_with("gpt-5.4");
 
     match level {
         ReasoningLevel::Minimal => {
-            if is_high_end { "low" } else { "minimal" }
+            if is_high_end {
+                "low"
+            } else {
+                "minimal"
+            }
         }
         ReasoningLevel::Low => "low",
         ReasoningLevel::Medium => "medium",
@@ -282,17 +291,16 @@ fn clamp_reasoning_effort(model_id: &str, level: &ReasoningLevel) -> &'static st
 // ---------------------------------------------------------------------------
 
 fn is_retryable_error(status: u16, error_text: &str) -> bool {
-    matches!(status, 429 | 500 | 502 | 503 | 504)
-        || {
-            let lower = error_text.to_lowercase();
-            lower.contains("rate_limit")
-                || lower.contains("rate limit")
-                || lower.contains("overloaded")
-                || lower.contains("service_unavailable")
-                || lower.contains("service unavailable")
-                || lower.contains("upstream connect")
-                || lower.contains("connection refused")
-        }
+    matches!(status, 429 | 500 | 502 | 503 | 504) || {
+        let lower = error_text.to_lowercase();
+        lower.contains("rate_limit")
+            || lower.contains("rate limit")
+            || lower.contains("overloaded")
+            || lower.contains("service_unavailable")
+            || lower.contains("service unavailable")
+            || lower.contains("upstream connect")
+            || lower.contains("connection refused")
+    }
 }
 
 fn parse_error_response(status: u16, raw: &str) -> String {
@@ -396,7 +404,10 @@ fn build_sse_headers(
         ("chatgpt-account-id".to_string(), account_id.to_string()),
         ("originator".to_string(), "pi".to_string()),
         ("User-Agent".to_string(), "pi".to_string()),
-        ("OpenAI-Beta".to_string(), "responses=experimental".to_string()),
+        (
+            "OpenAI-Beta".to_string(),
+            "responses=experimental".to_string(),
+        ),
         ("accept".to_string(), "text/event-stream".to_string()),
         ("content-type".to_string(), "application/json".to_string()),
     ];
@@ -425,7 +436,11 @@ fn find_event_boundary(buf: &[u8]) -> Option<usize> {
 }
 
 /// Process a complete SSE event block (one or more `"data: ..."` lines).
-fn process_sse_event_block(block: &str, events: &mut Vec<AssistantMessageEvent>, state: &mut StreamState) {
+fn process_sse_event_block(
+    block: &str,
+    events: &mut Vec<AssistantMessageEvent>,
+    state: &mut StreamState,
+) {
     let data_lines: Vec<&str> = block
         .lines()
         .filter(|l| l.starts_with("data:"))
@@ -466,7 +481,9 @@ fn map_codex_event(event_type: &str) -> Option<&'static str> {
     match event_type {
         "error" => Some("error"),
         "response.failed" => Some("response.failed"),
-        "response.done" | "response.completed" | "response.incomplete" => Some("response.completed"),
+        "response.done" | "response.completed" | "response.incomplete" => {
+            Some("response.completed")
+        }
         "response.output_item.added" => Some("response.output_item.added"),
         "response.output_item.done" => Some("response.output_item.done"),
         "response.output_text.delta" => Some("response.output_text.delta"),
@@ -510,22 +527,34 @@ mod tests {
 
     #[test]
     fn test_clamp_reasoning_effort_minimal_standard() {
-        assert_eq!(clamp_reasoning_effort("o3", &ReasoningLevel::Minimal), "minimal");
+        assert_eq!(
+            clamp_reasoning_effort("o3", &ReasoningLevel::Minimal),
+            "minimal"
+        );
     }
 
     #[test]
     fn test_clamp_reasoning_effort_minimal_high_end() {
-        assert_eq!(clamp_reasoning_effort("gpt-5.2-mini", &ReasoningLevel::Minimal), "low");
+        assert_eq!(
+            clamp_reasoning_effort("gpt-5.2-mini", &ReasoningLevel::Minimal),
+            "low"
+        );
     }
 
     #[test]
     fn test_clamp_reasoning_effort_xhigh_gpt51() {
-        assert_eq!(clamp_reasoning_effort("gpt-5.1", &ReasoningLevel::XHigh), "high");
+        assert_eq!(
+            clamp_reasoning_effort("gpt-5.1", &ReasoningLevel::XHigh),
+            "high"
+        );
     }
 
     #[test]
     fn test_clamp_reasoning_effort_xhigh_standard() {
-        assert_eq!(clamp_reasoning_effort("o3-mini", &ReasoningLevel::XHigh), "xhigh");
+        assert_eq!(
+            clamp_reasoning_effort("o3-mini", &ReasoningLevel::XHigh),
+            "xhigh"
+        );
     }
 
     #[test]
@@ -539,7 +568,10 @@ mod tests {
     #[test]
     fn test_map_codex_event_normalize_done() {
         assert_eq!(map_codex_event("response.done"), Some("response.completed"));
-        assert_eq!(map_codex_event("response.incomplete"), Some("response.completed"));
+        assert_eq!(
+            map_codex_event("response.incomplete"),
+            Some("response.completed")
+        );
     }
 
     #[test]
