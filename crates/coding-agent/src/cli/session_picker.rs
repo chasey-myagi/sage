@@ -5,6 +5,7 @@
 //! In TypeScript, this shows a TUI session selector. In Rust we provide an
 //! interactive CLI fallback that lists sessions and prompts the user to choose.
 
+use std::cmp::Reverse;
 use std::path::PathBuf;
 
 // ============================================================================
@@ -91,7 +92,7 @@ pub fn load_sessions_from_dir(dir: &std::path::Path) -> Vec<SessionInfo> {
     }
 
     // Sort by last modified (newest first)
-    sessions.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
+    sessions.sort_by_key(|b| Reverse(b.last_modified));
 
     sessions
 }

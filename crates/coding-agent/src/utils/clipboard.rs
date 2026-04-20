@@ -58,25 +58,21 @@ fn try_platform_clipboard(text: &str) {
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         // Linux: try Termux, Wayland, X11 in order.
-        if std::env::var("TERMUX_VERSION").is_ok() {
-            if run_stdin_command("termux-clipboard-set", &[], text).is_ok() {
-                return;
-            }
+        if std::env::var("TERMUX_VERSION").is_ok()
+            && run_stdin_command("termux-clipboard-set", &[], text).is_ok()
+        {
+            return;
         }
 
         let has_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
         let has_x11 = std::env::var("DISPLAY").is_ok();
 
-        if has_wayland {
-            if run_stdin_command("wl-copy", &[], text).is_ok() {
-                return;
-            }
+        if has_wayland && run_stdin_command("wl-copy", &[], text).is_ok() {
+            return;
         }
 
-        if has_x11 {
-            if run_stdin_command("xclip", &["-selection", "clipboard"], text).is_err() {
-                let _ = run_stdin_command("xsel", &["--clipboard", "--input"], text);
-            }
+        if has_x11 && run_stdin_command("xclip", &["-selection", "clipboard"], text).is_err() {
+            let _ = run_stdin_command("xsel", &["--clipboard", "--input"], text);
         }
     }
 }

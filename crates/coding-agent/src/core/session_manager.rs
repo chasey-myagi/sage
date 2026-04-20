@@ -2,6 +2,7 @@
 ///
 /// Mirrors pi-mono packages/coding-agent/src/core/session-manager.ts
 use chrono::Utc;
+use std::cmp::Reverse;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -603,7 +604,7 @@ pub fn find_most_recent_session(session_dir: &Path) -> Option<PathBuf> {
         })
         .collect();
 
-    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.sort_by_key(|b| Reverse(b.1));
     files.into_iter().next().map(|(p, _)| p)
 }
 
@@ -1707,7 +1708,7 @@ impl SessionManager {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| get_default_session_dir(cwd, None));
         let mut sessions = list_sessions_from_dir(&dir).await;
-        sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
+        sessions.sort_by_key(|b| Reverse(b.modified));
         sessions
     }
 }
