@@ -8,7 +8,7 @@ const PRIMARY_COLUMN_GAP: usize = 2;
 const MIN_DESCRIPTION_WIDTH: usize = 10;
 
 fn normalize_to_single_line(text: &str) -> String {
-    text.split(|c| c == '\r' || c == '\n')
+    text.split(['\r', '\n'])
         .collect::<Vec<_>>()
         .join(" ")
         .trim()
@@ -42,21 +42,13 @@ pub struct SelectListTruncatePrimaryContext<'a> {
     pub is_selected: bool,
 }
 
+#[derive(Default)]
 pub struct SelectListLayoutOptions {
     pub min_primary_column_width: Option<usize>,
     pub max_primary_column_width: Option<usize>,
+    #[allow(clippy::type_complexity)]
     pub truncate_primary:
         Option<Box<dyn Fn(SelectListTruncatePrimaryContext) -> String + Send + Sync>>,
-}
-
-impl Default for SelectListLayoutOptions {
-    fn default() -> Self {
-        Self {
-            min_primary_column_width: None,
-            max_primary_column_width: None,
-            truncate_primary: None,
-        }
-    }
 }
 
 pub struct SelectList {
@@ -67,8 +59,10 @@ pub struct SelectList {
     theme: SelectListTheme,
     layout: SelectListLayoutOptions,
 
+    #[allow(clippy::type_complexity)]
     pub on_select: Option<Box<dyn Fn(&SelectItem) + Send>>,
     pub on_cancel: Option<Box<dyn Fn() + Send>>,
+    #[allow(clippy::type_complexity)]
     pub on_selection_change: Option<Box<dyn Fn(&SelectItem) + Send>>,
 }
 
@@ -182,29 +176,29 @@ impl SelectList {
         let prefix = if is_selected { "→ " } else { "  " };
         let prefix_width = visible_width(prefix);
 
-        if let Some(desc) = description_single_line {
-            if width > 40 {
-                let effective_pcw =
-                    (primary_column_width.min(width.saturating_sub(prefix_width + 4))).max(1);
-                let max_primary_width = effective_pcw.saturating_sub(PRIMARY_COLUMN_GAP).max(1);
-                let truncated_value =
-                    self.truncate_primary(item, is_selected, max_primary_width, effective_pcw);
-                let truncated_value_width = visible_width(&truncated_value);
-                let spacing_len = effective_pcw.saturating_sub(truncated_value_width).max(1);
-                let spacing = " ".repeat(spacing_len);
-                let description_start = prefix_width + truncated_value_width + spacing_len;
-                let remaining_width = width.saturating_sub(description_start + 2);
+        if let Some(desc) = description_single_line
+            && width > 40
+        {
+            let effective_pcw =
+                (primary_column_width.min(width.saturating_sub(prefix_width + 4))).max(1);
+            let max_primary_width = effective_pcw.saturating_sub(PRIMARY_COLUMN_GAP).max(1);
+            let truncated_value =
+                self.truncate_primary(item, is_selected, max_primary_width, effective_pcw);
+            let truncated_value_width = visible_width(&truncated_value);
+            let spacing_len = effective_pcw.saturating_sub(truncated_value_width).max(1);
+            let spacing = " ".repeat(spacing_len);
+            let description_start = prefix_width + truncated_value_width + spacing_len;
+            let remaining_width = width.saturating_sub(description_start + 2);
 
-                if remaining_width > MIN_DESCRIPTION_WIDTH {
-                    let truncated_desc = truncate_to_width(desc, remaining_width, "", false);
-                    if is_selected {
-                        return (self.theme.selected_text)(&format!(
-                            "{prefix}{truncated_value}{spacing}{truncated_desc}"
-                        ));
-                    }
-                    let desc_text = (self.theme.description)(&format!("{spacing}{truncated_desc}"));
-                    return format!("{prefix}{truncated_value}{desc_text}");
+            if remaining_width > MIN_DESCRIPTION_WIDTH {
+                let truncated_desc = truncate_to_width(desc, remaining_width, "", false);
+                if is_selected {
+                    return (self.theme.selected_text)(&format!(
+                        "{prefix}{truncated_value}{spacing}{truncated_desc}"
+                    ));
                 }
+                let desc_text = (self.theme.description)(&format!("{spacing}{truncated_desc}"));
+                return format!("{prefix}{truncated_value}{desc_text}");
             }
         }
 
@@ -251,10 +245,7 @@ impl Component for SelectList {
         for i in start_index..end_index {
             let item = &self.filtered_items[i];
             let is_selected = i == self.selected_index;
-            let desc_single = item
-                .description
-                .as_deref()
-                .map(|d| normalize_to_single_line(d));
+            let desc_single = item.description.as_deref().map(normalize_to_single_line);
             lines.push(self.render_item(
                 item,
                 is_selected,
@@ -306,10 +297,10 @@ impl Component for SelectList {
                     cb(&item);
                 }
             }
-        } else if check_keybinding(key_data, "tui.select.cancel") {
-            if let Some(cb) = &self.on_cancel {
-                cb();
-            }
+        } else if check_keybinding(key_data, "tui.select.cancel")
+            && let Some(cb) = &self.on_cancel
+        {
+            cb();
         }
     }
 

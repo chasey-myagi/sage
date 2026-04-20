@@ -331,7 +331,7 @@ impl TUI {
 
     fn query_cell_size(&mut self) {
         use crate::terminal_image::get_capabilities;
-        if !get_capabilities().images.is_some() {
+        if get_capabilities().images.is_none() {
             return;
         }
         self.cell_size_query_pending = true;
@@ -411,32 +411,31 @@ impl TUI {
         }
 
         // If focused component is an overlay, verify it's still visible.
-        if let Some(focused_id) = self.overlay_focused_id {
-            if let Some(entry) = self.overlay_stack.iter().find(|e| e.id == focused_id) {
-                if !self.is_overlay_visible(entry) {
-                    // Focused overlay is no longer visible — redirect focus.
-                    let top_id = self
-                        .overlay_stack
-                        .iter()
-                        .rev()
-                        .find(|e| e.id != focused_id && self.is_overlay_visible(e))
-                        .map(|e| e.id);
-                    if let Some(new_id) = top_id {
-                        self.overlay_focused_id = Some(new_id);
-                        if let Some(e) = self.overlay_stack.iter_mut().find(|e| e.id == new_id) {
-                            e.overlay_had_focus = true;
-                        }
-                    } else {
-                        self.overlay_focused_id = None;
-                        // Fall back to pre_focus_idx of the (now hidden) overlay.
-                        let pre = self
-                            .overlay_stack
-                            .iter()
-                            .find(|e| e.id == focused_id)
-                            .and_then(|e| e.pre_focus_idx);
-                        self.focused_component_idx = pre;
-                    }
+        if let Some(focused_id) = self.overlay_focused_id
+            && let Some(entry) = self.overlay_stack.iter().find(|e| e.id == focused_id)
+            && !self.is_overlay_visible(entry)
+        {
+            // Focused overlay is no longer visible — redirect focus.
+            let top_id = self
+                .overlay_stack
+                .iter()
+                .rev()
+                .find(|e| e.id != focused_id && self.is_overlay_visible(e))
+                .map(|e| e.id);
+            if let Some(new_id) = top_id {
+                self.overlay_focused_id = Some(new_id);
+                if let Some(e) = self.overlay_stack.iter_mut().find(|e| e.id == new_id) {
+                    e.overlay_had_focus = true;
                 }
+            } else {
+                self.overlay_focused_id = None;
+                // Fall back to pre_focus_idx of the (now hidden) overlay.
+                let pre = self
+                    .overlay_stack
+                    .iter()
+                    .find(|e| e.id == focused_id)
+                    .and_then(|e| e.pre_focus_idx);
+                self.focused_component_idx = pre;
             }
         }
 
@@ -471,11 +470,11 @@ impl TUI {
                 entry.component.handle_input(data);
                 self.request_render(false);
             }
-        } else if let Some(idx) = self.focused_component_idx {
-            if let Some(child) = self.container.children.get_mut(idx) {
-                child.handle_input(data);
-                self.request_render(false);
-            }
+        } else if let Some(idx) = self.focused_component_idx
+            && let Some(child) = self.container.children.get_mut(idx)
+        {
+            child.handle_input(data);
+            self.request_render(false);
         }
     }
 
@@ -748,7 +747,7 @@ impl TUI {
     }
 
     /// Find and extract cursor position from rendered lines.
-    fn extract_cursor_position(lines: &mut Vec<String>, height: u16) -> Option<(usize, usize)> {
+    fn extract_cursor_position(lines: &mut [String], height: u16) -> Option<(usize, usize)> {
         let viewport_top = lines.len().saturating_sub(height as usize);
         for row in (viewport_top..lines.len()).rev() {
             let line = &lines[row];
@@ -1048,7 +1047,7 @@ impl TUI {
         if entry.hidden {
             return false;
         }
-        if let Some(ref vis_fn) = entry.options.as_ref().and_then(|o| o.visible.as_ref()) {
+        if let Some(vis_fn) = entry.options.as_ref().and_then(|o| o.visible.as_ref()) {
             return vis_fn(self.terminal.columns(), self.terminal.rows());
         }
         true
@@ -1075,11 +1074,11 @@ impl TUI {
     /// displayed but input routing reverts to the container child.
     pub fn set_focus(&mut self, child_idx: Option<usize>) {
         // If an overlay currently holds focus, clear that.
-        if let Some(focused_id) = self.overlay_focused_id.take() {
-            if let Some(entry) = self.overlay_stack.iter_mut().find(|e| e.id == focused_id) {
-                entry.overlay_had_focus = false;
-                entry.component.invalidate();
-            }
+        if let Some(focused_id) = self.overlay_focused_id.take()
+            && let Some(entry) = self.overlay_stack.iter_mut().find(|e| e.id == focused_id)
+        {
+            entry.overlay_had_focus = false;
+            entry.component.invalidate();
         }
 
         self.focused_component_idx = child_idx;
@@ -1190,7 +1189,7 @@ mod tests {
     struct TextComponent(String);
 
     impl Component for TextComponent {
-        fn render(&self, width: u16) -> Vec<String> {
+        fn render(&self, _width: u16) -> Vec<String> {
             vec![self.0.clone()]
         }
     }
@@ -1237,6 +1236,7 @@ mod tests {
             (mock, c, r)
         }
 
+        #[allow(dead_code)]
         fn all_written(&self) -> String {
             self.written.lock().unwrap().join("")
         }
@@ -1409,7 +1409,7 @@ mod tests {
     fn test_do_render_full_redraw_on_height_change() {
         let (mock, _cols, rows_lock) = ResizableMock::new(40, 10);
         let mut tui = TUI::new(Box::new(mock));
-        let (comp, lines_ref) = DynLinesComponent::new(vec![
+        let (comp, _lines_ref) = DynLinesComponent::new(vec![
             "Line 0".to_string(),
             "Line 1".to_string(),
             "Line 2".to_string(),

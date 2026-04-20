@@ -70,6 +70,7 @@ impl Input {
     }
 
     // Helper: grapheme-aware segment of string
+    #[allow(dead_code)]
     fn graphemes_before_cursor(&self) -> Vec<String> {
         self.value[..self.cursor]
             .chars()
@@ -77,6 +78,7 @@ impl Input {
             .collect()
     }
 
+    #[allow(dead_code)]
     fn graphemes_after_cursor(&self) -> Vec<String> {
         self.value[self.cursor..]
             .chars()
@@ -340,8 +342,7 @@ impl Input {
 
         let clean_text = pasted_text
             .replace("\r\n", "")
-            .replace('\r', "")
-            .replace('\n', "")
+            .replace(['\r', '\n'], "")
             .replace('\t', "    ");
 
         self.value = format!(
@@ -515,7 +516,7 @@ impl Component for Input {
         // Regular characters — reject control characters
         let has_control_chars = data.chars().any(|c| {
             let code = c as u32;
-            code < 32 || code == 0x7f || (code >= 0x80 && code <= 0x9f)
+            code < 32 || code == 0x7f || (0x80..=0x9f).contains(&code)
         });
         if !has_control_chars {
             self.insert_character(data);

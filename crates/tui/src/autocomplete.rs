@@ -1,5 +1,5 @@
 /// Autocomplete provider interface and CombinedAutocompleteProvider implementation.
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::fuzzy::fuzzy_filter;
 
@@ -37,7 +37,7 @@ fn build_fd_path_query(query: &str) -> String {
     let segments: Vec<String> = trimmed
         .split('/')
         .filter(|s| !s.is_empty())
-        .map(|s| escape_regex(s))
+        .map(escape_regex)
         .collect();
 
     if segments.is_empty() {
@@ -146,7 +146,7 @@ fn parse_path_prefix(prefix: &str) -> ParsedPathPrefix {
 
 fn build_completion_value(
     path: &str,
-    is_directory: bool,
+    _is_directory: bool,
     is_at_prefix: bool,
     is_quoted_prefix: bool,
 ) -> String {
@@ -174,6 +174,7 @@ pub struct AutocompleteItem {
 pub struct SlashCommand {
     pub name: String,
     pub description: Option<String>,
+    #[allow(clippy::type_complexity)]
     pub argument_completions:
         Option<std::sync::Arc<dyn Fn(&str) -> Vec<AutocompleteItem> + Send + Sync + 'static>>,
 }
@@ -366,11 +367,10 @@ impl CombinedAutocompleteProvider {
 
     // Expand home directory (~/) to actual home path
     fn expand_home_path(&self, path: &str) -> String {
-        if path.starts_with("~/") {
+        if let Some(rest) = path.strip_prefix("~/") {
             let home = dirs_next::home_dir()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "~".to_string());
-            let rest = &path[2..];
             if path.ends_with('/') && !format!("{home}/{rest}").ends_with('/') {
                 format!("{home}/{rest}/")
             } else {
@@ -387,10 +387,10 @@ impl CombinedAutocompleteProvider {
 
     fn extract_at_prefix(&self, text: &str) -> Option<String> {
         let quoted = extract_quoted_prefix(text);
-        if let Some(ref q) = quoted {
-            if q.starts_with("@\"") {
-                return quoted;
-            }
+        if let Some(ref q) = quoted
+            && q.starts_with("@\"")
+        {
+            return quoted;
         }
 
         let token_start = find_last_delimiter(text).map(|i| i + 1).unwrap_or(0);
@@ -580,6 +580,7 @@ impl CombinedAutocompleteProvider {
             || raw_prefix == "/"
             || (is_at_prefix && raw_prefix.is_empty());
 
+        #[allow(clippy::if_same_then_else)]
         let (search_dir, search_prefix) = if is_root_prefix {
             let dir = if raw_prefix.starts_with('~') || expanded_prefix.starts_with('/') {
                 expanded_prefix.clone()
@@ -633,18 +634,18 @@ impl CombinedAutocompleteProvider {
             }
 
             let mut is_directory = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            if !is_directory && entry.file_type().map(|t| t.is_symlink()).unwrap_or(false) {
-                if let Ok(meta) = std::fs::metadata(entry.path()) {
-                    is_directory = meta.is_dir();
-                }
+            if !is_directory
+                && entry.file_type().map(|t| t.is_symlink()).unwrap_or(false)
+                && let Ok(meta) = std::fs::metadata(entry.path())
+            {
+                is_directory = meta.is_dir();
             }
 
             let display_prefix = raw_prefix.as_str();
             let relative_path = if display_prefix.ends_with('/') {
                 format!("{display_prefix}{name}")
             } else if display_prefix.contains('/') || display_prefix.contains('\\') {
-                if display_prefix.starts_with("~/") {
-                    let home_relative = &display_prefix[2..];
+                if let Some(home_relative) = display_prefix.strip_prefix("~/") {
                     let dir = Path::new(home_relative)
                         .parent()
                         .map(|p| p.to_string_lossy().into_owned())
@@ -746,11 +747,11 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
         }
 
         // Check for slash commands
-        if text_before_cursor.starts_with('/') {
+        if let Some(prefix) = text_before_cursor.strip_prefix('/') {
             let space_idx = text_before_cursor.find(' ');
             if space_idx.is_none() {
                 // Completing command name
-                let prefix = &text_before_cursor[1..]; // Remove "/"
+                // Remove "/"
                 let command_names: Vec<(String, String, Option<String>)> = self
                     .commands
                     .iter()
@@ -786,23 +787,22 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
                 let cmd_name = &text_before_cursor[1..space_pos]; // text between "/" and " "
                 let arg_prefix = &text_before_cursor[space_pos + 1..];
                 if let Some(cmd) = self.commands.iter().find_map(|c| {
-                    if let CommandItem::Slash(s) = c {
-                        if s.name == cmd_name {
-                            return Some(s);
-                        }
+                    if let CommandItem::Slash(s) = c
+                        && s.name == cmd_name
+                    {
+                        return Some(s);
                     }
                     None
-                }) {
-                    if let Some(ref arg_fn) = cmd.argument_completions {
-                        let suggestions = arg_fn(arg_prefix);
-                        if suggestions.is_empty() {
-                            return None;
-                        }
-                        return Some(AutocompleteSuggestions {
-                            items: suggestions,
-                            prefix: arg_prefix.to_string(),
-                        });
+                }) && let Some(ref arg_fn) = cmd.argument_completions
+                {
+                    let suggestions = arg_fn(arg_prefix);
+                    if suggestions.is_empty() {
+                        return None;
                     }
+                    return Some(AutocompleteSuggestions {
+                        items: suggestions,
+                        prefix: arg_prefix.to_string(),
+                    });
                 }
             }
         }
@@ -942,8 +942,8 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
         let text_before_cursor = &current_line[..cursor_col.min(current_line.len())];
 
         // Don't trigger if we're typing a slash command at the start
-        !(text_before_cursor.trim_start().starts_with('/')
-            && !text_before_cursor.trim_start().contains(' '))
+        !text_before_cursor.trim_start().starts_with('/')
+            || text_before_cursor.trim_start().contains(' ')
     }
 }
 

@@ -380,6 +380,7 @@ pub enum KeyEventType {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ParsedKittySequence {
     codepoint: i32,
     shifted_key: Option<i32>,
@@ -541,15 +542,15 @@ fn matches_kitty_sequence(data: &str, expected_codepoint: i32, expected_modifier
         return true;
     }
     // Alternate match via base layout key for non-Latin keyboard layouts
-    if let Some(blk) = parsed.base_layout_key {
-        if blk == expected_codepoint {
-            let cp = parsed.codepoint;
-            let is_latin = (97..=122).contains(&cp);
-            let is_known_symbol =
-                cp >= 0 && symbol_keys().contains(&char::from_u32(cp as u32).unwrap_or('\0'));
-            if !is_latin && !is_known_symbol {
-                return true;
-            }
+    if let Some(blk) = parsed.base_layout_key
+        && blk == expected_codepoint
+    {
+        let cp = parsed.codepoint;
+        let is_latin = (97..=122).contains(&cp);
+        let is_known_symbol =
+            cp >= 0 && symbol_keys().contains(&char::from_u32(cp as u32).unwrap_or('\0'));
+        if !is_latin && !is_known_symbol {
+            return true;
         }
     }
     false
@@ -611,8 +612,9 @@ fn raw_ctrl_char(key: &str) -> Option<String> {
     None
 }
 
+#[allow(dead_code)]
 fn is_digit_key(key: &str) -> bool {
-    key.len() == 1 && key.chars().next().map_or(false, |c| c.is_ascii_digit())
+    key.len() == 1 && key.chars().next().is_some_and(|c| c.is_ascii_digit())
 }
 
 fn matches_printable_modify_other_keys(
@@ -946,25 +948,31 @@ pub fn matches_key(data: &str, key_id: &str) -> bool {
                 let codepoint = ch as i32;
                 let raw_ctrl = raw_ctrl_char(k);
 
-                if ctrl && alt && !shift && !kitty {
-                    if let Some(ref rc) = raw_ctrl {
-                        if data == format!("\x1b{rc}") {
-                            return true;
-                        }
-                    }
+                if ctrl
+                    && alt
+                    && !shift
+                    && !kitty
+                    && let Some(ref rc) = raw_ctrl
+                    && data == format!("\x1b{rc}")
+                {
+                    return true;
                 }
 
-                if alt && !ctrl && !shift && !kitty && (is_letter || is_digit) {
-                    if data == format!("\x1b{k}") {
-                        return true;
-                    }
+                if alt
+                    && !ctrl
+                    && !shift
+                    && !kitty
+                    && (is_letter || is_digit)
+                    && data == format!("\x1b{k}")
+                {
+                    return true;
                 }
 
                 if ctrl && !shift && !alt {
-                    if let Some(ref rc) = raw_ctrl {
-                        if data == rc.as_str() {
-                            return true;
-                        }
+                    if let Some(ref rc) = raw_ctrl
+                        && data == rc.as_str()
+                    {
+                        return true;
                     }
                     return matches_kitty_sequence(data, codepoint, MOD_CTRL)
                         || matches_printable_modify_other_keys(data, codepoint, MOD_CTRL);
@@ -1015,10 +1023,8 @@ pub fn parse_key(data: &str) -> Option<String> {
     }
 
     // Mode-aware legacy sequences
-    if kitty {
-        if data == "\x1b\r" || data == "\n" {
-            return Some("shift+enter".to_string());
-        }
+    if kitty && (data == "\x1b\r" || data == "\n") {
+        return Some("shift+enter".to_string());
     }
 
     if let Some(key_id) = legacy_sequence_key_id(data) {
@@ -1189,14 +1195,14 @@ fn format_parsed_key(
         "right"
     } else {
         // For printable chars, return with modifiers computed inline
-        if effective_cp >= 0 {
-            if let Some(ch) = char::from_u32(effective_cp as u32) {
-                let is_printable =
-                    (is_latin || is_digit || is_known_symbol) && (48..=126).contains(&effective_cp);
-                if is_printable {
-                    let key_str = ch.to_string();
-                    return format_key_name_with_modifiers(&key_str, modifier);
-                }
+        if effective_cp >= 0
+            && let Some(ch) = char::from_u32(effective_cp as u32)
+        {
+            let is_printable =
+                (is_latin || is_digit || is_known_symbol) && (48..=126).contains(&effective_cp);
+            if is_printable {
+                let key_str = ch.to_string();
+                return format_key_name_with_modifiers(&key_str, modifier);
             }
         }
         return None;

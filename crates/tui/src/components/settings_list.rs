@@ -28,29 +28,25 @@ pub struct SettingItem {
     /// If provided, Enter/Space cycles through these values.
     pub values: Option<Vec<String>>,
     /// If provided, Enter opens this submenu. Receives current value and done callback.
+    #[allow(clippy::type_complexity)]
     pub submenu: Option<
         Box<dyn Fn(String, Box<dyn Fn(Option<String>) + Send>) -> Box<dyn Component + Send> + Send>,
     >,
 }
 
 pub struct SettingsListTheme {
+    #[allow(clippy::type_complexity)]
     pub label: Box<dyn Fn(&str, bool) -> String + Send + Sync>,
+    #[allow(clippy::type_complexity)]
     pub value: Box<dyn Fn(&str, bool) -> String + Send + Sync>,
     pub description: Box<dyn Fn(&str) -> String + Send + Sync>,
     pub cursor: String,
     pub hint: Box<dyn Fn(&str) -> String + Send + Sync>,
 }
 
+#[derive(Default)]
 pub struct SettingsListOptions {
     pub enable_search: bool,
-}
-
-impl Default for SettingsListOptions {
-    fn default() -> Self {
-        Self {
-            enable_search: false,
-        }
-    }
 }
 
 pub struct SettingsList {
@@ -59,6 +55,7 @@ pub struct SettingsList {
     theme: SettingsListTheme,
     selected_index: usize,
     max_visible: usize,
+    #[allow(clippy::type_complexity)]
     on_change: Box<dyn Fn(&str, &str) + Send>,
     on_cancel: Box<dyn Fn() + Send>,
     search_input: Option<Input>,
@@ -138,11 +135,11 @@ impl SettingsList {
         let width = width as usize;
         let mut lines = Vec::new();
 
-        if self.search_enabled {
-            if let Some(search) = &self.search_input {
-                lines.extend(search.render(width as u16));
-                lines.push(String::new());
-            }
+        if self.search_enabled
+            && let Some(search) = &self.search_input
+        {
+            lines.extend(search.render(width as u16));
+            lines.push(String::new());
         }
 
         if self.items.is_empty() {
@@ -235,13 +232,13 @@ impl SettingsList {
         }
 
         // Description for selected item
-        if let Some(item) = self.get_display_item(self.selected_index) {
-            if let Some(desc) = &item.description {
-                lines.push(String::new());
-                let wrapped = wrap_text_with_ansi(desc, width.saturating_sub(4));
-                for line in &wrapped {
-                    lines.push((self.theme.description)(&format!("  {line}")));
-                }
+        if let Some(item) = self.get_display_item(self.selected_index)
+            && let Some(desc) = &item.description
+        {
+            lines.push(String::new());
+            let wrapped = wrap_text_with_ansi(desc, width.saturating_sub(4));
+            for line in &wrapped {
+                lines.push((self.theme.description)(&format!("  {line}")));
             }
         }
 
@@ -269,12 +266,10 @@ impl SettingsList {
             self.filtered_items_indices
                 .get(self.selected_index)
                 .copied()
+        } else if self.selected_index < self.items.len() {
+            Some(self.selected_index)
         } else {
-            if self.selected_index < self.items.len() {
-                Some(self.selected_index)
-            } else {
-                None
-            }
+            None
         };
 
         let item_index = match item_index {
@@ -290,26 +285,27 @@ impl SettingsList {
             // the submenu lifecycle externally.
             self.pending_events
                 .push_back(SettingsListEvent::OpenSubmenu { item_id });
-        } else if let Some(values) = &self.items[item_index].values {
-            if !values.is_empty() {
-                let current_index = values
-                    .iter()
-                    .position(|v| *v == self.items[item_index].current_value)
-                    .unwrap_or(0);
-                let next_index = (current_index + 1) % values.len();
-                let new_value = values[next_index].clone();
-                let item_id = self.items[item_index].id.clone();
-                self.items[item_index].current_value = new_value.clone();
-                (self.on_change)(&item_id, &new_value);
-                self.pending_events
-                    .push_back(SettingsListEvent::ValueChanged {
-                        id: item_id,
-                        value: new_value,
-                    });
-            }
+        } else if let Some(values) = &self.items[item_index].values
+            && !values.is_empty()
+        {
+            let current_index = values
+                .iter()
+                .position(|v| *v == self.items[item_index].current_value)
+                .unwrap_or(0);
+            let next_index = (current_index + 1) % values.len();
+            let new_value = values[next_index].clone();
+            let item_id = self.items[item_index].id.clone();
+            self.items[item_index].current_value = new_value.clone();
+            (self.on_change)(&item_id, &new_value);
+            self.pending_events
+                .push_back(SettingsListEvent::ValueChanged {
+                    id: item_id,
+                    value: new_value,
+                });
         }
     }
 
+    #[allow(dead_code)]
     fn close_submenu(&mut self) {
         self.submenu_component = None;
         if let Some(idx) = self.submenu_item_index.take() {

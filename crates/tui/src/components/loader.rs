@@ -52,7 +52,7 @@ impl Loader {
         // Initial display text
         let initial_text = format!("{} {}", spinner_fn(FRAMES[0]), message_fn(&msg));
 
-        let mut loader = Self {
+        let loader = Self {
             text: Text::new(initial_text, 1, 0),
             state: state.clone(),
             spinner_color_fn: spinner_fn,

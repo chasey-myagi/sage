@@ -87,10 +87,10 @@ impl Component for Image {
         {
             let cl = self.cached_lines.borrow();
             let cw = self.cached_width.borrow();
-            if let (Some(cl), Some(cw)) = (cl.as_ref(), cw.as_ref()) {
-                if *cw == width {
-                    return cl.clone();
-                }
+            if let (Some(cl), Some(cw)) = (cl.as_ref(), cw.as_ref())
+                && *cw == width
+            {
+                return cl.clone();
             }
         }
 

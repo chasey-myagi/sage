@@ -62,10 +62,10 @@ impl Component for Text {
         // Check cache
         if let (Some(ct), Some(cw), Some(cl)) =
             (&self.cached_text, &self.cached_width, &self.cached_lines)
+            && *ct == self.text
+            && *cw == width
         {
-            if *ct == self.text && *cw == width {
-                return cl.clone();
-            }
+            return cl.clone();
         }
 
         // Don't render anything if there's no actual text

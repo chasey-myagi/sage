@@ -12,7 +12,7 @@ pub fn visible_width(s: &str) -> usize {
         return 0;
     }
     // Fast path for pure ASCII printable
-    if s.bytes().all(|b| b >= 0x20 && b <= 0x7e) {
+    if s.bytes().all(|b| (0x20..=0x7e).contains(&b)) {
         return s.len();
     }
     let stripped = strip_ansi(s);
@@ -31,7 +31,7 @@ fn grapheme_width_str(s: &str) -> usize {
             // Regional indicator symbol. Check if the next char is also a regional indicator
             // so we can count a flag emoji pair as width 2 total (not 2+2=4).
             let next_cp = chars.get(i + 1).map(|&nc| nc as u32);
-            if next_cp.map_or(false, |ncp| (0x1F1E6..=0x1F1FF).contains(&ncp)) {
+            if next_cp.is_some_and(|ncp| (0x1F1E6..=0x1F1FF).contains(&ncp)) {
                 // Flag emoji pair (e.g. 🇨🇳) → width 2 total; consume both chars.
                 width += 2;
                 i += 2;
@@ -59,10 +59,7 @@ fn char_width(c: char) -> usize {
     if (0x1F1E6..=0x1F1FF).contains(&cp) {
         return 2;
     }
-    match UnicodeWidthChar::width(c) {
-        Some(w) => w,
-        None => 0,
-    }
+    UnicodeWidthChar::width(c).unwrap_or_default()
 }
 
 /// Strip ANSI escape sequences from a string.
@@ -71,11 +68,11 @@ pub fn strip_ansi(s: &str) -> String {
     let mut i = 0;
     let bytes = s.as_bytes();
     while i < bytes.len() {
-        if bytes[i] == b'\x1b' {
-            if let Some(ansi) = extract_ansi_code(s, i) {
-                i += ansi.1;
-                continue;
-            }
+        if bytes[i] == b'\x1b'
+            && let Some(ansi) = extract_ansi_code(s, i)
+        {
+            i += ansi.1;
+            continue;
         }
         // Find next potential escape or end of string
         let start = i;
@@ -171,6 +168,7 @@ pub fn extract_ansi_code(s: &str, pos: usize) -> Option<(&str, usize)> {
 /// Only does word wrapping — no padding, no background colors.
 /// Returns lines where each line is <= width visible chars.
 /// Active ANSI codes are preserved across line breaks.
+#[allow(unused_assignments)]
 pub fn wrap_text_with_ansi(text: &str, width: usize) -> Vec<String> {
     if text.is_empty() {
         return vec![String::new()];
@@ -226,8 +224,6 @@ fn wrap_single_line(line: &str, width: usize) -> Vec<String> {
                     line_to_push.push_str(&line_end_reset);
                 }
                 wrapped.push(line_to_push);
-                current_line = String::new();
-                current_visible_len = 0;
             }
             let broken = break_long_word(token, width, &mut tracker);
             let last = broken.last().cloned().unwrap_or_default();
@@ -423,7 +419,7 @@ fn truncate_fragment_to_width(text: &str, max_width: usize) -> (String, usize) {
         return (String::new(), 0);
     }
     // Fast path: pure ASCII
-    if text.bytes().all(|b| b >= 0x20 && b <= 0x7e) {
+    if text.bytes().all(|b| (0x20..=0x7e).contains(&b)) {
         let clipped = &text[..max_width.min(text.len())];
         return (clipped.to_string(), clipped.len());
     }
@@ -889,7 +885,7 @@ mod tests {
     #[test]
     fn test_wrap_text_simple() {
         let lines = wrap_text_with_ansi("hello world", 5);
-        assert!(lines.len() >= 1);
+        assert!(!lines.is_empty());
         for line in &lines {
             assert!(visible_width(line) <= 5);
         }
@@ -992,8 +988,7 @@ mod tests {
         let wrapped = wrap_text_with_ansi(&text, 30);
 
         // Middle lines with underlined content should end with underline-off, not full reset
-        for i in 1..wrapped.len().saturating_sub(1) {
-            let line = &wrapped[i];
+        for line in wrapped.iter().take(wrapped.len().saturating_sub(1)).skip(1) {
             if line.contains(underline_on) {
                 assert!(line.ends_with(underline_off));
                 assert!(!line.ends_with("\x1b[0m"));
@@ -1014,8 +1009,8 @@ mod tests {
         }
 
         // Middle lines should NOT end with full reset
-        for i in 0..wrapped.len().saturating_sub(1) {
-            assert!(!wrapped[i].ends_with("\x1b[0m"));
+        for line in wrapped.iter().take(wrapped.len().saturating_sub(1)) {
+            assert!(!line.ends_with("\x1b[0m"));
         }
     }
 
@@ -1056,13 +1051,13 @@ mod tests {
         let wrapped = wrap_text_with_ansi(&text, 10);
 
         // Each continuation line should start with red code
-        for i in 1..wrapped.len() {
-            assert!(wrapped[i].starts_with(red));
+        for line in wrapped.iter().skip(1) {
+            assert!(line.starts_with(red));
         }
 
         // Middle lines should not end with full reset
-        for i in 0..wrapped.len().saturating_sub(1) {
-            assert!(!wrapped[i].ends_with("\x1b[0m"));
+        for line in wrapped.iter().take(wrapped.len().saturating_sub(1)) {
+            assert!(!line.ends_with("\x1b[0m"));
         }
     }
 

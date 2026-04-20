@@ -1,7 +1,7 @@
-/// Generic undo stack with clone-on-push semantics.
-///
-/// Stores clones of state snapshots. Popped snapshots are returned
-/// directly (no re-cloning) since they are already detached.
+//! Generic undo stack with clone-on-push semantics.
+//!
+//! Stores clones of state snapshots. Popped snapshots are returned
+//! directly (no re-cloning) since they are already detached.
 
 pub struct UndoStack<S> {
     stack: Vec<S>,

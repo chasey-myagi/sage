@@ -1,10 +1,10 @@
-/// StdinBuffer buffers input and emits complete sequences.
-///
-/// This is necessary because stdin data events can arrive in partial chunks.
-/// Without buffering, partial escape sequences can be misinterpreted.
-///
-/// Based on code from OpenTUI (https://github.com/anomalyco/opentui)
-/// MIT License - Copyright (c) 2025 opentui
+//! StdinBuffer buffers input and emits complete sequences.
+//!
+//! This is necessary because stdin data events can arrive in partial chunks.
+//! Without buffering, partial escape sequences can be misinterpreted.
+//!
+//! Based on code from OpenTUI (https://github.com/anomalyco/opentui)
+//! MIT License - Copyright (c) 2025 opentui
 
 const ESC: char = '\x1b';
 const BRACKETED_PASTE_START: &str = "\x1b[200~";
@@ -73,7 +73,7 @@ fn is_complete_csi_sequence(data: &str) -> SequenceStatus {
         None => return SequenceStatus::Incomplete,
     };
     let code = last_char as u32;
-    if code >= 0x40 && code <= 0x7e {
+    if (0x40..=0x7e).contains(&code) {
         // SGR mouse sequences
         if payload.starts_with('<') {
             let mouse_re = regex::Regex::new(r"^<\d+;\d+;\d+[Mm]$").unwrap();
@@ -769,7 +769,7 @@ mod tests {
         let mut buf = new_buf();
         let input = format!("{BRACKETED_PASTE_START}hello world{BRACKETED_PASTE_END}");
         let events = buf.process(&input);
-        let pastes = collect_paste(
+        let _pastes = collect_paste(
             events
                 .iter()
                 .filter_map(|e| match e {

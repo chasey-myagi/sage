@@ -64,6 +64,7 @@ enum JumpMode {
 }
 
 /// Multi-line text editor.
+#[allow(dead_code)]
 pub struct Editor {
     state: EditorState,
     focused: bool,
@@ -463,73 +464,67 @@ impl Editor {
 
     fn move_word_left(&mut self) {
         self.last_action = None;
-        loop {
-            if self.state.cursor_col == 0 {
-                if self.state.cursor_line == 0 {
-                    return;
-                }
-                self.state.cursor_line -= 1;
-                self.state.cursor_col = self.current_line().chars().count();
+        if self.state.cursor_col == 0 {
+            if self.state.cursor_line == 0 {
                 return;
             }
-            let line_chars: Vec<char> = self.current_line().chars().collect();
-            let mut pos = self.state.cursor_col;
-
-            while pos > 0 && is_whitespace_char(line_chars[pos - 1]) {
-                pos -= 1;
-            }
-            if pos > 0 {
-                if is_punctuation_char(line_chars[pos - 1]) {
-                    while pos > 0 && is_punctuation_char(line_chars[pos - 1]) {
-                        pos -= 1;
-                    }
-                } else {
-                    while pos > 0
-                        && !is_whitespace_char(line_chars[pos - 1])
-                        && !is_punctuation_char(line_chars[pos - 1])
-                    {
-                        pos -= 1;
-                    }
-                }
-            }
-            self.state.cursor_col = pos;
+            self.state.cursor_line -= 1;
+            self.state.cursor_col = self.current_line().chars().count();
             return;
         }
+        let line_chars: Vec<char> = self.current_line().chars().collect();
+        let mut pos = self.state.cursor_col;
+
+        while pos > 0 && is_whitespace_char(line_chars[pos - 1]) {
+            pos -= 1;
+        }
+        if pos > 0 {
+            if is_punctuation_char(line_chars[pos - 1]) {
+                while pos > 0 && is_punctuation_char(line_chars[pos - 1]) {
+                    pos -= 1;
+                }
+            } else {
+                while pos > 0
+                    && !is_whitespace_char(line_chars[pos - 1])
+                    && !is_punctuation_char(line_chars[pos - 1])
+                {
+                    pos -= 1;
+                }
+            }
+        }
+        self.state.cursor_col = pos;
     }
 
     fn move_word_right(&mut self) {
         self.last_action = None;
-        loop {
-            let line_chars: Vec<char> = self.current_line().chars().collect();
-            if self.state.cursor_col >= line_chars.len() {
-                if self.state.cursor_line + 1 >= self.state.lines.len() {
-                    return;
-                }
-                self.state.cursor_line += 1;
-                self.state.cursor_col = 0;
+        let line_chars: Vec<char> = self.current_line().chars().collect();
+        if self.state.cursor_col >= line_chars.len() {
+            if self.state.cursor_line + 1 >= self.state.lines.len() {
                 return;
             }
-            let mut pos = self.state.cursor_col;
-            while pos < line_chars.len() && is_whitespace_char(line_chars[pos]) {
-                pos += 1;
-            }
-            if pos < line_chars.len() {
-                if is_punctuation_char(line_chars[pos]) {
-                    while pos < line_chars.len() && is_punctuation_char(line_chars[pos]) {
-                        pos += 1;
-                    }
-                } else {
-                    while pos < line_chars.len()
-                        && !is_whitespace_char(line_chars[pos])
-                        && !is_punctuation_char(line_chars[pos])
-                    {
-                        pos += 1;
-                    }
-                }
-            }
-            self.state.cursor_col = pos;
+            self.state.cursor_line += 1;
+            self.state.cursor_col = 0;
             return;
         }
+        let mut pos = self.state.cursor_col;
+        while pos < line_chars.len() && is_whitespace_char(line_chars[pos]) {
+            pos += 1;
+        }
+        if pos < line_chars.len() {
+            if is_punctuation_char(line_chars[pos]) {
+                while pos < line_chars.len() && is_punctuation_char(line_chars[pos]) {
+                    pos += 1;
+                }
+            } else {
+                while pos < line_chars.len()
+                    && !is_whitespace_char(line_chars[pos])
+                    && !is_punctuation_char(line_chars[pos])
+                {
+                    pos += 1;
+                }
+            }
+        }
+        self.state.cursor_col = pos;
     }
 
     fn delete_word_backward(&mut self) {
@@ -946,6 +941,7 @@ impl Component for Editor {
         if kb.matches(&data, "tui.editor.cursorUp") {
             // History navigation: enter history if empty or already in history
             // and cursor is on the first visual line.
+            #[allow(clippy::if_same_then_else)]
             if self.is_editor_empty() {
                 self.navigate_history(-1);
             } else if self.history_index.is_some() && self.is_on_first_line() {

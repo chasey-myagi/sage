@@ -1,7 +1,7 @@
 /// Terminal trait and ProcessTerminal implementation.
-use std::io::{self, Write};
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::keys::set_kitty_protocol_active;
 use crate::stdin_buffer::{StdinBuffer, StdinBufferOptions, StdinEvent};
@@ -151,7 +151,7 @@ impl Terminal for CrosstermTerminal {
         on_resize: Box<dyn Fn() + Send + 'static>,
     ) {
         use crossterm::{
-            event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+            event::{self, Event},
             terminal,
         };
 
@@ -203,8 +203,11 @@ impl Terminal for CrosstermTerminal {
                                 if !seq.is_empty() {
                                     // Check for Kitty protocol response
                                     if !kitty_active.load(Ordering::SeqCst) {
-                                        let kitty_re =
-                                            regex::Regex::new(r"^\x1b\[\?(\d+)u$").unwrap();
+                                        static KITTY_RE: OnceLock<regex::Regex> = OnceLock::new();
+                                        #[allow(clippy::regex_creation_in_loops)]
+                                        let kitty_re = KITTY_RE.get_or_init(|| {
+                                            regex::Regex::new(r"^\x1b\[\?(\d+)u$").unwrap()
+                                        });
                                         if kitty_re.is_match(&seq) {
                                             kitty_active.store(true, Ordering::SeqCst);
                                             set_kitty_protocol_active(true);
@@ -355,11 +358,9 @@ fn key_event_to_sequence(event: &crossterm::event::KeyEvent) -> String {
 
     match event.code {
         KeyCode::Char(c) => {
-            if ctrl {
-                if c.is_ascii_alphabetic() {
-                    let code = (c.to_ascii_lowercase() as u8 - b'a' + 1) as char;
-                    return code.to_string();
-                }
+            if ctrl && c.is_ascii_alphabetic() {
+                let code = (c.to_ascii_lowercase() as u8 - b'a' + 1) as char;
+                return code.to_string();
             }
             if alt {
                 return format!("\x1b{c}");

@@ -287,7 +287,7 @@ impl KeybindingsManager {
     /// Get the resolved bindings (user overrides or defaults).
     pub fn get_resolved_bindings(&self) -> KeybindingsConfig {
         let mut resolved = HashMap::new();
-        for (id, _) in &self.definitions {
+        for id in self.definitions.keys() {
             let keys = self.keys_by_id.get(id).cloned().unwrap_or_default();
             resolved.insert(id.clone(), keys);
         }

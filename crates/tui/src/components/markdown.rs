@@ -37,6 +37,7 @@ pub struct MarkdownTheme {
     pub strikethrough: StyleFn,
     pub underline: StyleFn,
     pub code_block_indent: Option<String>,
+    #[allow(clippy::type_complexity)]
     pub highlight_code: Option<Box<dyn Fn(&str, Option<&str>) -> Vec<String> + Send + Sync>>,
 }
 
@@ -46,6 +47,7 @@ pub struct MarkdownTheme {
 
 /// Inline style flags for tracking nested inline formatting.
 #[derive(Default, Clone)]
+#[allow(dead_code)]
 struct InlineStyle {
     bold: bool,
     italic: bool,
@@ -308,9 +310,8 @@ impl<'a> RenderCtx<'a> {
                 line.push_str(" | ");
             }
             // Fill missing columns
-            for ci in header.len()..col_count {
-                let w = col_widths[ci];
-                line.push_str(&" ".repeat(w));
+            for w in col_widths.iter().take(col_count).skip(header.len()) {
+                line.push_str(&" ".repeat(*w));
                 line.push_str(" | ");
             }
             self.push_line(line.trim_end().to_string());
@@ -343,9 +344,8 @@ impl<'a> RenderCtx<'a> {
                 line.push_str(&" ".repeat(padding));
                 line.push_str(" | ");
             }
-            for ci in row.len()..col_count {
-                let w = col_widths[ci];
-                line.push_str(&" ".repeat(w));
+            for w in col_widths.iter().take(col_count).skip(row.len()) {
+                line.push_str(&" ".repeat(*w));
                 line.push_str(" | ");
             }
             self.push_line(line.trim_end().to_string());
@@ -501,8 +501,8 @@ fn render_markdown(text: &str, content_width: usize, theme: &MarkdownTheme) -> V
 
                 let rendered = if link_text.is_empty() || link_text == href {
                     // Auto-linked — strip mailto: for display
-                    let display = if href.starts_with("mailto:") {
-                        &href["mailto:".len()..]
+                    let display = if let Some(stripped) = href.strip_prefix("mailto:") {
+                        stripped
                     } else {
                         href.as_str()
                     };
@@ -531,7 +531,7 @@ fn render_markdown(text: &str, content_width: usize, theme: &MarkdownTheme) -> V
                         ctx.code_block_lines.push(line.to_string());
                     }
                     // Remove trailing empty string artifact from trailing \n in text
-                    while ctx.code_block_lines.last().map_or(false, |l| l.is_empty()) {
+                    while ctx.code_block_lines.last().is_some_and(|l| l.is_empty()) {
                         ctx.code_block_lines.pop();
                     }
                 } else if let Some(ref mut lt) = ctx.inline_style.link_text {
@@ -665,10 +665,11 @@ impl Component for Markdown {
             let ct = self.cached_text.borrow();
             let cw = self.cached_width.borrow();
             let cl = self.cached_lines.borrow();
-            if let (Some(ct), Some(cw), Some(cl)) = (ct.as_ref(), cw.as_ref(), cl.as_ref()) {
-                if *ct == self.text && *cw == width {
-                    return cl.clone();
-                }
+            if let (Some(ct), Some(cw), Some(cl)) = (ct.as_ref(), cw.as_ref(), cl.as_ref())
+                && *ct == self.text
+                && *cw == width
+            {
+                return cl.clone();
             }
         }
 
@@ -1267,7 +1268,7 @@ mod tests {
     fn test_blockquote_wraps_long_lines() {
         let long_text =
             "This is a very long blockquote line that should wrap to multiple lines when rendered";
-        let m = Markdown::new(&format!("> {long_text}"), 0, 0, default_theme(), None);
+        let m = Markdown::new(format!("> {long_text}"), 0, 0, default_theme(), None);
         let lines = m.render(30);
         let plain: Vec<String> = lines
             .iter()

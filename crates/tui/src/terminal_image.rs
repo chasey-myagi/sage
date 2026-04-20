@@ -219,7 +219,6 @@ pub fn encode_iterm2(
         params.push(format!("height={h}"));
     }
     if let Some(n) = name {
-        use std::io::Write;
         let encoded = base64_encode(n.as_bytes());
         params.push(format!("name={encoded}"));
     }
