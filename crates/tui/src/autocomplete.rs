@@ -1,4 +1,5 @@
 /// Autocomplete provider interface and CombinedAutocompleteProvider implementation.
+use std::cmp::Reverse;
 use std::path::Path;
 
 use crate::fuzzy::fuzzy_filter;
@@ -515,7 +516,7 @@ impl CombinedAutocompleteProvider {
             .filter(|(_, _, s)| *s > 0)
             .collect();
 
-        scored.sort_by(|a, b| b.2.cmp(&a.2));
+        scored.sort_by_key(|a| Reverse(a.2));
         scored.truncate(20);
 
         let mut suggestions = Vec::new();
