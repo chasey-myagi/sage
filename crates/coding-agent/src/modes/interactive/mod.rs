@@ -10,13 +10,13 @@ pub mod components;
 pub mod theme;
 
 use std::io;
-use std::time::Duration;
 
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use futures::StreamExt as _;
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
@@ -25,6 +25,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
+use tokio::sync::mpsc;
 
 // ============================================================================
 // InteractiveMode
@@ -49,6 +50,10 @@ pub struct InteractiveMode {
     input_buffer: String,
     messages: Vec<ChatMessage>,
     running: bool,
+    agent_rx: Option<mpsc::UnboundedReceiver<String>>,
+    is_thinking: bool,
+    provider_id: Option<String>,
+    model_id: Option<String>,
 }
 
 /// A single chat turn in the history display.
@@ -74,7 +79,19 @@ impl InteractiveMode {
             input_buffer: String::new(),
             messages: Vec::new(),
             running: false,
+            agent_rx: None,
+            is_thinking: false,
+            provider_id: None,
+            model_id: None,
         }
+    }
+
+    pub fn set_provider(&mut self, provider: Option<String>) {
+        self.provider_id = provider;
+    }
+
+    pub fn set_model(&mut self, model: Option<String>) {
+        self.model_id = model;
     }
 
     /// Initialise the TUI (equivalent to `interactiveMode.init()` in TS).
@@ -91,7 +108,6 @@ impl InteractiveMode {
 
     /// Run the interactive TUI event loop (equivalent to `interactiveMode.run()`).
     pub async fn run(&mut self) -> anyhow::Result<()> {
-        // Set up terminal
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -100,76 +116,108 @@ impl InteractiveMode {
 
         self.running = true;
 
-        // Render initial message if provided
-        if let Some(msg) = &self.options.initial_message.clone()
+        // Send initial message to agent if provided
+        if let Some(msg) = self.options.initial_message.clone()
             && !msg.is_empty()
         {
             self.messages.push(ChatMessage {
                 role: MessageRole::User,
                 content: msg.clone(),
             });
-            // In a real impl we'd send to the agent session here
-            self.messages.push(ChatMessage {
-                role: MessageRole::Assistant,
-                content: "(agent response would appear here)".to_string(),
-            });
+            self.spawn_agent(msg);
         }
 
-        loop {
-            terminal.draw(|f| self.render(f))?;
+        let mut event_stream = EventStream::new();
 
-            if event::poll(Duration::from_millis(16))?
-                && let Event::Key(key) = event::read()?
-            {
-                match (key.code, key.modifiers) {
-                    // Ctrl+C / Ctrl+D — quit
-                    (KeyCode::Char('c'), KeyModifiers::CONTROL)
-                    | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-                        self.running = false;
-                        break;
-                    }
-                    // Enter — submit input
-                    (KeyCode::Enter, _) => {
-                        let input = std::mem::take(&mut self.input_buffer);
-                        if !input.trim().is_empty() {
-                            self.messages.push(ChatMessage {
-                                role: MessageRole::User,
-                                content: input.clone(),
-                            });
-                            // In a real impl: send to agent session and await
-                            self.messages.push(ChatMessage {
-                                role: MessageRole::Assistant,
-                                content: format!("(response to: {input})"),
-                            });
+        loop {
+            // Drain agent response deltas
+            if let Some(rx) = &mut self.agent_rx {
+                loop {
+                    match rx.try_recv() {
+                        Ok(delta) => {
+                            if let Some(last) = self.messages.last_mut() {
+                                if last.role == MessageRole::Assistant {
+                                    last.content.push_str(&delta);
+                                } else {
+                                    self.messages.push(ChatMessage {
+                                        role: MessageRole::Assistant,
+                                        content: delta,
+                                    });
+                                }
+                            }
+                        }
+                        Err(mpsc::error::TryRecvError::Empty) => break,
+                        Err(mpsc::error::TryRecvError::Disconnected) => {
+                            self.agent_rx = None;
+                            self.is_thinking = false;
+                            break;
                         }
                     }
-                    // Backspace
-                    (KeyCode::Backspace, _) => {
-                        self.input_buffer.pop();
-                    }
-                    // Regular character input
-                    (KeyCode::Char(c), _) => {
-                        self.input_buffer.push(c);
-                    }
-                    _ => {}
                 }
             }
 
-            if !self.running {
-                break;
+            terminal.draw(|f| self.render(f))?;
+
+            tokio::select! {
+                maybe_event = event_stream.next() => {
+                    let Some(Ok(Event::Key(key))) = maybe_event else { continue };
+                    match (key.code, key.modifiers) {
+                        (KeyCode::Char('c'), KeyModifiers::CONTROL)
+                        | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                            self.running = false;
+                            break;
+                        }
+                        (KeyCode::Enter, _) if !self.is_thinking => {
+                            let input = std::mem::take(&mut self.input_buffer);
+                            if !input.trim().is_empty() {
+                                self.messages.push(ChatMessage {
+                                    role: MessageRole::User,
+                                    content: input.clone(),
+                                });
+                                self.messages.push(ChatMessage {
+                                    role: MessageRole::Assistant,
+                                    content: String::new(),
+                                });
+                                self.spawn_agent(input);
+                            }
+                        }
+                        (KeyCode::Backspace, _) => {
+                            self.input_buffer.pop();
+                        }
+                        (KeyCode::Char(c), _) => {
+                            self.input_buffer.push(c);
+                        }
+                        _ => {}
+                    }
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
             }
         }
 
-        // Restore terminal
         disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
         terminal.show_cursor()?;
-
         Ok(())
+    }
+
+    fn spawn_agent(&mut self, message: String) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.agent_rx = Some(rx);
+        self.is_thinking = true;
+
+        let provider_id = self.provider_id.clone();
+        let model_id = self.model_id.clone();
+
+        tokio::spawn(async move {
+            let _ = crate::agent_session::run_agent_session_to_channel(
+                message,
+                model_id,
+                provider_id,
+                None,
+                tx,
+            )
+            .await;
+        });
     }
 
     /// Stop the interactive mode (e.g., for startup benchmarks).
@@ -210,12 +258,13 @@ impl InteractiveMode {
             .wrap(Wrap { trim: false });
         f.render_widget(messages_widget, chunks[0]);
 
-        // Input area
-        let input_widget = Paragraph::new(self.input_buffer.as_str()).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Input (Enter to send, Ctrl+C to quit) "),
-        );
+        let input_title = if self.is_thinking {
+            " Thinking… (Ctrl+C to quit) "
+        } else {
+            " Input (Enter to send, Ctrl+C to quit) "
+        };
+        let input_widget = Paragraph::new(self.input_buffer.as_str())
+            .block(Block::default().borders(Borders::ALL).title(input_title));
         f.render_widget(input_widget, chunks[1]);
     }
 }

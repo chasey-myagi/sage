@@ -254,6 +254,18 @@ async fn main() {
             migrated_providers: vec![],
         };
         let mut interactive = InteractiveMode::new(options);
+        interactive.set_provider(
+            parsed
+                .provider
+                .clone()
+                .or_else(|| settings_manager.get_default_provider().map(str::to_owned)),
+        );
+        interactive.set_model(
+            parsed
+                .model
+                .clone()
+                .or_else(|| settings_manager.get_default_model().map(str::to_owned)),
+        );
         if let Err(e) = interactive.run().await {
             eprintln!("Interactive mode error: {e}");
             std::process::exit(1);

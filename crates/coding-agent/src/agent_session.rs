@@ -157,6 +157,48 @@ fn create_default_tools(backend: Arc<LocalBackend>) -> Vec<Arc<dyn agent_core::t
 
 // ── Public entry point ───────────────────────────────────────────────────────
 
+/// Run an agent session, sending text deltas through `tx` instead of stdout.
+///
+/// Drops `tx` when the agent finishes so the receiver knows the stream ended.
+pub async fn run_agent_session_to_channel(
+    message: String,
+    model_id: Option<String>,
+    provider_id: Option<String>,
+    api_key: Option<String>,
+    tx: tokio::sync::mpsc::UnboundedSender<String>,
+) -> anyhow::Result<()> {
+    if message.trim().is_empty() {
+        return Ok(());
+    }
+
+    let model = build_model(provider_id.as_deref(), model_id.as_deref())?;
+    let registry = Arc::new(ApiProviderRegistry::new());
+    ai::register_builtin_into(&registry);
+
+    let options = StreamOptions { api_key, ..StreamOptions::default() };
+    let provider: Arc<dyn LlmProvider> = Arc::new(RegistryProvider { registry: Arc::clone(&registry), options });
+
+    let mut agent = Agent::new(AgentOptions::new(
+        model,
+        "You are a helpful coding assistant.",
+        provider,
+    ));
+
+    let backend = LocalBackend::new();
+    let tools = create_default_tools(backend);
+    agent.set_tools(tools);
+
+    agent.subscribe(move |event| {
+        use agent_core::AgentEvent;
+        if let AgentEvent::MessageUpdate { delta, .. } = event {
+            let _ = tx.send(delta.clone());
+        }
+    });
+
+    agent.prompt_text(message).await.map_err(|e| anyhow::anyhow!(e))?;
+    Ok(())
+}
+
 /// Run a single-shot agent session in print mode.
 ///
 /// Resolves the model + provider, wires up tools, streams events to stdout,
