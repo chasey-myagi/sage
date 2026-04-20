@@ -27,6 +27,8 @@ use ratatui::{
 };
 use tokio::sync::mpsc;
 
+use crate::agent_session::AgentDelta;
+
 // ============================================================================
 // InteractiveMode
 // ============================================================================
@@ -50,10 +52,13 @@ pub struct InteractiveMode {
     input_buffer: String,
     messages: Vec<ChatMessage>,
     running: bool,
-    agent_rx: Option<mpsc::UnboundedReceiver<String>>,
+    agent_rx: Option<mpsc::UnboundedReceiver<AgentDelta>>,
     is_thinking: bool,
     provider_id: Option<String>,
     model_id: Option<String>,
+    session_input_tokens: u64,
+    session_output_tokens: u64,
+    session_cost_usd: f64,
 }
 
 /// A single chat turn in the history display.
@@ -83,6 +88,9 @@ impl InteractiveMode {
             is_thinking: false,
             provider_id: None,
             model_id: None,
+            session_input_tokens: 0,
+            session_output_tokens: 0,
+            session_cost_usd: 0.0,
         }
     }
 
@@ -134,7 +142,7 @@ impl InteractiveMode {
             if let Some(rx) = &mut self.agent_rx {
                 loop {
                     match rx.try_recv() {
-                        Ok(delta) => {
+                        Ok(AgentDelta::Text(delta)) => {
                             if let Some(last) = self.messages.last_mut() {
                                 if last.role == MessageRole::Assistant {
                                     last.content.push_str(&delta);
@@ -145,6 +153,12 @@ impl InteractiveMode {
                                     });
                                 }
                             }
+                        }
+                        Ok(AgentDelta::TurnUsage { usage, model }) => {
+                            self.session_input_tokens += usage.input;
+                            self.session_output_tokens += usage.output;
+                            let cost = ai::model_pricing::calculate_usd_cost(&usage, &model);
+                            self.session_cost_usd += cost.total;
                         }
                         Err(mpsc::error::TryRecvError::Empty) => break,
                         Err(mpsc::error::TryRecvError::Disconnected) => {
@@ -201,7 +215,7 @@ impl InteractiveMode {
     }
 
     fn spawn_agent(&mut self, message: String) {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded_channel::<AgentDelta>();
         self.agent_rx = Some(rx);
         self.is_thinking = true;
 
@@ -225,14 +239,32 @@ impl InteractiveMode {
         self.running = false;
     }
 
+    fn format_tokens(n: u64) -> String {
+        if n >= 1_000_000 {
+            format!("{:.1}M", n as f64 / 1_000_000.0)
+        } else if n >= 1_000 {
+            format!("{:.1}k", n as f64 / 1_000.0)
+        } else {
+            n.to_string()
+        }
+    }
+
+    fn format_cost(usd: f64) -> String {
+        if usd >= 1.0 {
+            format!("${:.2}", usd)
+        } else {
+            format!("${:.4}", usd)
+        }
+    }
+
     /// Render the TUI frame.
     fn render(&self, f: &mut ratatui::Frame) {
         let size = f.area();
 
-        // Split into message area and input area
+        // Three sections: messages | statusbar | input
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(3)])
+            .constraints([Constraint::Min(0), Constraint::Length(1), Constraint::Length(3)])
             .split(size);
 
         // Message history
@@ -258,6 +290,21 @@ impl InteractiveMode {
             .wrap(Wrap { trim: false });
         f.render_widget(messages_widget, chunks[0]);
 
+        // Status bar: token counts and cost
+        let status_text = if self.session_input_tokens == 0 && self.session_output_tokens == 0 {
+            " ↑0 ↓0 tokens | $0.0000".to_string()
+        } else {
+            format!(
+                " ↑{} ↓{} tokens | {}",
+                Self::format_tokens(self.session_input_tokens),
+                Self::format_tokens(self.session_output_tokens),
+                Self::format_cost(self.session_cost_usd),
+            )
+        };
+        let status_widget = Paragraph::new(status_text)
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(status_widget, chunks[1]);
+
         let input_title = if self.is_thinking {
             " Thinking… (Ctrl+C to quit) "
         } else {
@@ -265,7 +312,7 @@ impl InteractiveMode {
         };
         let input_widget = Paragraph::new(self.input_buffer.as_str())
             .block(Block::default().borders(Borders::ALL).title(input_title));
-        f.render_widget(input_widget, chunks[1]);
+        f.render_widget(input_widget, chunks[2]);
     }
 }
 

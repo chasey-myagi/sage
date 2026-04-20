@@ -13,7 +13,16 @@ use agent_core::tools::backend::LocalBackend;
 use agent_core::tools::{AgentTool as SimpleTool, ToolOutput, create_tool};
 use agent_core::types::{AgentToolResult, OnUpdateFn};
 use ai::registry::{ApiProviderRegistry, StreamOptions};
-use ai::types::{AssistantMessageEvent, InputType, Model, ModelCost};
+use ai::types::{AssistantMessageEvent, InputType, Model, ModelCost, Usage};
+
+/// Events sent through the interactive-mode channel.
+#[derive(Debug, Clone)]
+pub enum AgentDelta {
+    /// A streaming text fragment.
+    Text(String),
+    /// Token usage snapshot after a turn completes.
+    TurnUsage { usage: Usage, model: String },
+}
 
 // ── Registry-backed LLM provider adapter ────────────────────────────────────
 
@@ -157,7 +166,7 @@ fn create_default_tools(backend: Arc<LocalBackend>) -> Vec<Arc<dyn agent_core::t
 
 // ── Public entry point ───────────────────────────────────────────────────────
 
-/// Run an agent session, sending text deltas through `tx` instead of stdout.
+/// Run an agent session, sending [`AgentDelta`] events through `tx` instead of stdout.
 ///
 /// Drops `tx` when the agent finishes so the receiver knows the stream ended.
 pub async fn run_agent_session_to_channel(
@@ -165,7 +174,7 @@ pub async fn run_agent_session_to_channel(
     model_id: Option<String>,
     provider_id: Option<String>,
     api_key: Option<String>,
-    tx: tokio::sync::mpsc::UnboundedSender<String>,
+    tx: tokio::sync::mpsc::UnboundedSender<AgentDelta>,
 ) -> anyhow::Result<()> {
     if message.trim().is_empty() {
         return Ok(());
@@ -190,8 +199,17 @@ pub async fn run_agent_session_to_channel(
 
     agent.subscribe(move |event| {
         use agent_core::AgentEvent;
-        if let AgentEvent::MessageUpdate { delta, .. } = event {
-            let _ = tx.send(delta.clone());
+        match event {
+            AgentEvent::MessageUpdate { delta, .. } => {
+                let _ = tx.send(AgentDelta::Text(delta.clone()));
+            }
+            AgentEvent::TurnEnd { message, .. } => {
+                let _ = tx.send(AgentDelta::TurnUsage {
+                    usage: message.usage.clone(),
+                    model: message.model.clone(),
+                });
+            }
+            _ => {}
         }
     });
 
