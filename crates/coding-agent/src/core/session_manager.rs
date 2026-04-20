@@ -2,9 +2,9 @@
 ///
 /// Mirrors pi-mono packages/coding-agent/src/core/session-manager.ts
 use chrono::Utc;
-use std::cmp::Reverse;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use ulid::Ulid;
