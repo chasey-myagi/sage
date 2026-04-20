@@ -27,6 +27,12 @@ pub struct OpenAiResponsesProvider {
     client: Client,
 }
 
+impl Default for OpenAiResponsesProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpenAiResponsesProvider {
     pub fn new() -> Self {
         Self {
@@ -100,17 +106,17 @@ pub fn build_request_body(
 
     // Session ID for prompt caching.
     // pi-mono: only send prompt_cache_key when cache_retention is not "none".
-    if options.cache_retention.is_some() {
-        if let Some(ref session_id) = options.session_id {
-            body["prompt_cache_key"] = json!(session_id);
-        }
+    if options.cache_retention.is_some()
+        && let Some(ref session_id) = options.session_id
+    {
+        body["prompt_cache_key"] = json!(session_id);
     }
 
     // Prompt cache retention: "24h" for long retention on api.openai.com
-    if let Some(ref retention) = options.cache_retention {
-        if let Some(ttl) = get_prompt_cache_retention(&model.base_url, retention) {
-            body["prompt_cache_retention"] = json!(ttl);
-        }
+    if let Some(ref retention) = options.cache_retention
+        && let Some(ttl) = get_prompt_cache_retention(&model.base_url, retention)
+    {
+        body["prompt_cache_retention"] = json!(ttl);
     }
 
     body
@@ -294,16 +300,16 @@ pub async fn parse_sse_stream(response: reqwest::Response) -> Vec<AssistantMessa
             }
             if let Some(event_type) = line.strip_prefix("event: ") {
                 current_event_type = event_type.trim().to_string();
-            } else if let Some(data_str) = line.strip_prefix("data: ") {
-                if let Ok(data) = serde_json::from_str::<Value>(data_str.trim()) {
-                    let event_type = if current_event_type.is_empty() {
-                        data["type"].as_str().unwrap_or("").to_string()
-                    } else {
-                        current_event_type.clone()
-                    };
-                    if !event_type.is_empty() {
-                        process_responses_event(&event_type, &data, &mut state, &mut events);
-                    }
+            } else if let Some(data_str) = line.strip_prefix("data: ")
+                && let Ok(data) = serde_json::from_str::<Value>(data_str.trim())
+            {
+                let event_type = if current_event_type.is_empty() {
+                    data["type"].as_str().unwrap_or("").to_string()
+                } else {
+                    current_event_type.clone()
+                };
+                if !event_type.is_empty() {
+                    process_responses_event(&event_type, &data, &mut state, &mut events);
                 }
             }
         }

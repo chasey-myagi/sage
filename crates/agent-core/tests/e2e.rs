@@ -9,7 +9,7 @@ use agent_core::{
     agent_loop::LlmProvider,
     types::{
         AgentMessage, AgentTool, AgentToolResult, AssistantMessage, Content, StopReason,
-        ThinkingLevel, ToolExecutionMode, ToolResultMessage, UserMessage,
+        ToolResultMessage, UserMessage,
     },
 };
 use ai::{
@@ -461,31 +461,31 @@ fn eval_expr(expr: &str) -> String {
     // Try each operator (order: +/- before */ for splitting priority)
     let operators = ['+', '-', '*', '/'];
     for &op in &operators {
-        if let Some(pos) = expr.rfind(op) {
-            if pos > 0 {
-                let lhs = expr[..pos]
-                    .trim()
-                    .trim_matches(|c| c == '(' || c == ')')
-                    .trim();
-                let rhs = expr[pos + 1..]
-                    .trim()
-                    .trim_matches(|c| c == '(' || c == ')')
-                    .trim();
-                let a: f64 = lhs.parse().unwrap_or(f64::NAN);
-                let b: f64 = rhs.parse().unwrap_or(f64::NAN);
-                if !a.is_nan() && !b.is_nan() {
-                    let result = match op {
-                        '+' => a + b,
-                        '-' => a - b,
-                        '*' => a * b,
-                        '/' if b != 0.0 => a / b,
-                        _ => continue,
-                    };
-                    if result.fract() == 0.0 {
-                        return format!("{}", result as i64);
-                    }
-                    return format!("{result:.2}");
+        if let Some(pos) = expr.rfind(op)
+            && pos > 0
+        {
+            let lhs = expr[..pos]
+                .trim()
+                .trim_matches(|c| c == '(' || c == ')')
+                .trim();
+            let rhs = expr[pos + 1..]
+                .trim()
+                .trim_matches(|c| c == '(' || c == ')')
+                .trim();
+            let a: f64 = lhs.parse().unwrap_or(f64::NAN);
+            let b: f64 = rhs.parse().unwrap_or(f64::NAN);
+            if !a.is_nan() && !b.is_nan() {
+                let result = match op {
+                    '+' => a + b,
+                    '-' => a - b,
+                    '*' => a * b,
+                    '/' if b != 0.0 => a / b,
+                    _ => continue,
+                };
+                if result.fract() == 0.0 {
+                    return format!("{}", result as i64);
                 }
+                return format!("{result:.2}");
             }
         }
     }
@@ -688,14 +688,14 @@ async fn e2e_qwen_abort_execution() {
     );
 
     // If the final message is an aborted assistant, check error linkage.
-    if let AgentMessage::Assistant(a) = last {
-        if a.stop_reason == StopReason::Aborted {
-            assert!(
-                a.error_message.is_some(),
-                "aborted assistant should have error_message set"
-            );
-            assert_eq!(agent.error(), a.error_message.as_deref());
-        }
+    if let AgentMessage::Assistant(a) = last
+        && a.stop_reason == StopReason::Aborted
+    {
+        assert!(
+            a.error_message.is_some(),
+            "aborted assistant should have error_message set"
+        );
+        assert_eq!(agent.error(), a.error_message.as_deref());
     }
 }
 

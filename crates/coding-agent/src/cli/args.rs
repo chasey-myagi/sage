@@ -291,29 +291,28 @@ pub fn parse_args(args: &[String], extension_flags: Option<&HashMap<String, Flag
             result.verbose = true;
         } else if arg == "--offline" {
             result.offline = true;
-        } else if arg.starts_with('@') {
-            result.file_args.push(arg[1..].to_string());
-        } else if arg.starts_with("--") {
-            if let Some(flags) = extension_flags {
-                let flag_name = &arg[2..];
-                if let Some(flag_type) = flags.get(flag_name) {
-                    match flag_type {
-                        FlagType::Boolean => {
-                            result
-                                .unknown_flags
-                                .insert(flag_name.to_string(), FlagValue::Bool(true));
-                        }
-                        FlagType::String if i + 1 < len => {
-                            i += 1;
-                            result
-                                .unknown_flags
-                                .insert(flag_name.to_string(), FlagValue::Str(args[i].clone()));
-                        }
-                        _ => {}
+        } else if let Some(stripped) = arg.strip_prefix('@') {
+            result.file_args.push(stripped.to_string());
+        } else if let Some(flag_name) = arg.strip_prefix("--") {
+            if let Some(flags) = extension_flags
+                && let Some(flag_type) = flags.get(flag_name)
+            {
+                match flag_type {
+                    FlagType::Boolean => {
+                        result
+                            .unknown_flags
+                            .insert(flag_name.to_string(), FlagValue::Bool(true));
                     }
+                    FlagType::String if i + 1 < len => {
+                        i += 1;
+                        result
+                            .unknown_flags
+                            .insert(flag_name.to_string(), FlagValue::Str(args[i].clone()));
+                    }
+                    _ => {}
                 }
-                // Unknown flags without extension_flags are silently ignored (first pass)
             }
+            // Unknown flags without extension_flags are silently ignored (first pass)
         } else if !arg.starts_with('-') {
             result.messages.push(arg.clone());
         }

@@ -425,13 +425,13 @@ mod tests {
         let result = resolve_api_key("qwen");
         // An empty string API key should either be an error or return empty —
         // either way it should not be a non-empty Ok value
-        match &result {
-            Ok(key) => assert!(
+        // Also acceptable: treating empty as missing (Err case ignored).
+        if let Ok(key) = &result {
+            assert!(
                 key.is_empty(),
                 "empty env var should produce empty key, got: {}",
                 key
-            ),
-            Err(_) => {} // Also acceptable: treating empty as missing
+            );
         }
         // Cleanup
         unsafe { std::env::remove_var("DASHSCOPE_API_KEY") };
@@ -481,12 +481,10 @@ mod tests {
         // Key with only whitespace should be treated as empty/missing
         unsafe { std::env::set_var("DASHSCOPE_API_KEY", "   ") };
         let result = resolve_api_key("qwen");
-        match &result {
-            Ok(key) => {
-                // If Ok, the key should be trimmed or the raw whitespace
-                assert!(key.trim().is_empty() || !key.is_empty());
-            }
-            Err(_) => {} // Also acceptable: whitespace-only treated as missing
+        // Also acceptable: whitespace-only treated as missing (Err case ignored).
+        if let Ok(key) = &result {
+            // If Ok, the key should be trimmed or the raw whitespace
+            assert!(key.trim().is_empty() || !key.is_empty());
         }
         unsafe { std::env::remove_var("DASHSCOPE_API_KEY") };
     }

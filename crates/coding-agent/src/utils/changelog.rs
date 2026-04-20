@@ -37,6 +37,7 @@ pub fn parse_changelog(changelog_path: &Path) -> Vec<ChangelogEntry> {
     let mut entries = Vec::new();
     let mut current_lines: Vec<&str> = Vec::new();
     let mut current_version: Option<(u32, u32, u32)> = None;
+    let re = regex::Regex::new(r"##\s+\[?(\d+)\.(\d+)\.(\d+)\]?").unwrap();
 
     for line in content.lines() {
         if line.starts_with("## ") {
@@ -52,7 +53,6 @@ pub fn parse_changelog(changelog_path: &Path) -> Vec<ChangelogEntry> {
             }
 
             // Parse version from this line: ## [x.y.z] or ## x.y.z
-            let re = regex::Regex::new(r"##\s+\[?(\d+)\.(\d+)\.(\d+)\]?").unwrap();
             if let Some(caps) = re.captures(line) {
                 let major: u32 = caps[1].parse().unwrap_or(0);
                 let minor: u32 = caps[2].parse().unwrap_or(0);

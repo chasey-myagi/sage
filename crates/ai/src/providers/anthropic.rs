@@ -18,6 +18,12 @@ pub struct AnthropicProvider {
     client: Client,
 }
 
+impl Default for AnthropicProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AnthropicProvider {
     pub fn new() -> Self {
         Self {
@@ -402,12 +408,11 @@ fn apply_cache_control_to_last_user_message(
     // Walk backwards to find the last user message
     for msg in messages.iter_mut().rev() {
         if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
-            if let Some(content) = msg.get_mut("content") {
-                if let Some(blocks) = content.as_array_mut() {
-                    if let Some(last_block) = blocks.last_mut() {
-                        last_block["cache_control"] = build_cache_control(retention, base_url);
-                    }
-                }
+            if let Some(content) = msg.get_mut("content")
+                && let Some(blocks) = content.as_array_mut()
+                && let Some(last_block) = blocks.last_mut()
+            {
+                last_block["cache_control"] = build_cache_control(retention, base_url);
             }
             break;
         }
@@ -756,18 +761,18 @@ fn convert_messages(messages: &[LlmMessage]) -> Vec<Value> {
 /// Parse a data URL (e.g. `data:image/png;base64,iVBOR...`) into Anthropic's
 /// image source format. Falls back to a text placeholder on parse failure.
 fn convert_image_content(url: &str) -> Value {
-    if let Some(rest) = url.strip_prefix("data:") {
-        if let Some((meta, data)) = rest.split_once(',') {
-            let media_type = meta.trim_end_matches(";base64");
-            return json!({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": media_type,
-                    "data": data,
-                },
-            });
-        }
+    if let Some(rest) = url.strip_prefix("data:")
+        && let Some((meta, data)) = rest.split_once(',')
+    {
+        let media_type = meta.trim_end_matches(";base64");
+        return json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": data,
+            },
+        });
     }
 
     // Non-data URL or unparseable — use a text placeholder.
@@ -1025,10 +1030,10 @@ fn process_sse_line(
                     // Signatures are tracked in BlockState but not emitted as events —
                     // they're used at a higher layer for verification.
                     let index = json.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
-                    if let Some(block) = active_blocks.iter_mut().find(|b| b.index == index) {
-                        if let Some(sig) = delta.get("signature").and_then(|s| s.as_str()) {
-                            block.signature.push_str(sig);
-                        }
+                    if let Some(block) = active_blocks.iter_mut().find(|b| b.index == index)
+                        && let Some(sig) = delta.get("signature").and_then(|s| s.as_str())
+                    {
+                        block.signature.push_str(sig);
                     }
                 }
                 _ => {

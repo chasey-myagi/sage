@@ -53,6 +53,12 @@ pub struct ToolRegistry {
     tools: Vec<Box<dyn AgentTool>>,
 }
 
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolRegistry {
     pub fn new() -> Self {
         Self { tools: Vec::new() }
@@ -726,7 +732,7 @@ mod tests {
         let backend = LocalBackend::new();
         for name in &tool_names {
             let tool = super::create_tool(name, backend.clone())
-                .expect(&format!("create_tool({}) should succeed", name));
+                .unwrap_or_else(|| panic!("create_tool({}) should succeed", name));
             registry.register(tool);
         }
 

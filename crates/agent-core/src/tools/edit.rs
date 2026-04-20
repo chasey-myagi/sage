@@ -329,7 +329,7 @@ mod tests {
     fn test_normalize_smart_single_quotes() {
         // \u{2018} = ' , \u{2019} = '
         let input = "it\u{2018}s a test\u{2019}";
-        let result = fuzzy_normalize(&input);
+        let result = fuzzy_normalize(input);
         assert_eq!(result, "it's a test'");
     }
 
@@ -337,7 +337,7 @@ mod tests {
     fn test_normalize_smart_double_quotes() {
         // \u{201C} = " , \u{201D} = "
         let input = "\u{201C}hello\u{201D}";
-        let result = fuzzy_normalize(&input);
+        let result = fuzzy_normalize(input);
         assert_eq!(result, "\"hello\"");
     }
 
@@ -345,7 +345,7 @@ mod tests {
     fn test_normalize_em_dash() {
         // \u{2014} = — (em dash)
         let input = "foo \u{2014} bar";
-        let result = fuzzy_normalize(&input);
+        let result = fuzzy_normalize(input);
         assert_eq!(result, "foo -- bar");
     }
 
@@ -353,14 +353,14 @@ mod tests {
     fn test_normalize_en_dash() {
         // \u{2013} = – (en dash)
         let input = "1\u{2013}10";
-        let result = fuzzy_normalize(&input);
+        let result = fuzzy_normalize(input);
         assert_eq!(result, "1-10");
     }
 
     #[test]
     fn test_normalize_trailing_whitespace_removed() {
         let input = "hello   \nworld  \n";
-        let result = fuzzy_normalize(&input);
+        let result = fuzzy_normalize(input);
         // Each line should have trailing whitespace stripped
         for line in result.lines() {
             assert_eq!(line, line.trim_end());
@@ -370,7 +370,7 @@ mod tests {
     #[test]
     fn test_normalize_preserves_leading_whitespace() {
         let input = "  indented\n    more indented";
-        let result = fuzzy_normalize(&input);
+        let result = fuzzy_normalize(input);
         assert!(result.starts_with("  indented"));
         assert!(result.contains("    more indented"));
     }
@@ -668,8 +668,8 @@ mod tests {
     #[test]
     fn test_apply_fuzzy_multiple_hits_returns_error() {
         // Two lines that both fuzzy-match the same needle via smart-quote normalization
-        let content = "let x = \u{201C}val\u{201D};\nlet y = \u{201C}val\u{201D};\n";
-        let old = "let x = \"val\";"; // Would fuzzy-match... but wait, only 1st line has "x"
+        let _content = "let x = \u{201C}val\u{201D};\nlet y = \u{201C}val\u{201D};\n";
+        let _old = "let x = \"val\";"; // Would fuzzy-match... but wait, only 1st line has "x"
         // Use a needle that truly matches both lines after normalization:
         let content2 = "\u{201C}val\u{201D}\n\u{201C}val\u{201D}\n";
         let result = apply_edit(content2, "\"val\"", "\"new\"");

@@ -57,10 +57,10 @@ pub fn retain_thought_signature<'a>(
     existing: Option<&'a str>,
     incoming: Option<&'a str>,
 ) -> Option<&'a str> {
-    if let Some(s) = incoming {
-        if !s.is_empty() {
-            return Some(s);
-        }
+    if let Some(s) = incoming
+        && !s.is_empty()
+    {
+        return Some(s);
     }
     existing
 }
@@ -72,10 +72,10 @@ pub fn retain_thought_signature_owned(
     existing: Option<String>,
     incoming: Option<String>,
 ) -> Option<String> {
-    if let Some(ref s) = incoming {
-        if !s.is_empty() {
-            return incoming;
-        }
+    if let Some(ref s) = incoming
+        && !s.is_empty()
+    {
+        return incoming;
     }
     existing
 }
@@ -138,7 +138,7 @@ fn is_valid_base64_thought_signature(signature: &str) -> bool {
     if signature.is_empty() {
         return false;
     }
-    if signature.len() % 4 != 0 {
+    if !signature.len().is_multiple_of(4) {
         return false;
     }
     signature

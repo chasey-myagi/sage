@@ -371,10 +371,10 @@ impl SettingsStorage for FileSettingsStorage {
         let next = f(current_content.as_deref());
         if let Some(content) = next {
             // Only create directory when we actually need to write.
-            if let Some(parent) = path.parent() {
-                if !parent.exists() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
+            if let Some(parent) = path.parent()
+                && !parent.exists()
+            {
+                let _ = std::fs::create_dir_all(parent);
             }
             let _ = std::fs::write(path, content);
         }
@@ -401,39 +401,35 @@ fn migrate_settings(raw: serde_json::Value) -> anyhow::Result<Settings> {
     }
 
     // Migrate legacy websockets boolean -> transport enum
-    if !map.contains_key("transport") {
-        if let Some(ws) = map.get("websockets").and_then(|v| v.as_bool()) {
-            map.insert(
-                "transport".to_string(),
-                serde_json::Value::String(if ws { "websocket" } else { "sse" }.to_string()),
-            );
-            map.remove("websockets");
-        }
+    if !map.contains_key("transport")
+        && let Some(ws) = map.get("websockets").and_then(|v| v.as_bool())
+    {
+        map.insert(
+            "transport".to_string(),
+            serde_json::Value::String(if ws { "websocket" } else { "sse" }.to_string()),
+        );
+        map.remove("websockets");
     }
 
     // Migrate old skills object format to new array format
-    if let Some(skills_val) = map.get("skills").cloned() {
-        if let serde_json::Value::Object(skills_obj) = skills_val {
-            // enableSkillCommands migration
-            if let Some(esc) = skills_obj.get("enableSkillCommands") {
-                if !map.contains_key("enableSkillCommands") {
-                    map.insert("enableSkillCommands".to_string(), esc.clone());
-                }
-            }
-            // customDirectories migration
-            if let Some(dirs) = skills_obj.get("customDirectories") {
-                if let serde_json::Value::Array(arr) = dirs {
-                    if !arr.is_empty() {
-                        map.insert("skills".to_string(), serde_json::Value::Array(arr.clone()));
-                    } else {
-                        map.remove("skills");
-                    }
-                } else {
-                    map.remove("skills");
-                }
+    if let Some(skills_val) = map.get("skills").cloned()
+        && let serde_json::Value::Object(skills_obj) = skills_val
+    {
+        // enableSkillCommands migration
+        if let Some(esc) = skills_obj.get("enableSkillCommands")
+            && !map.contains_key("enableSkillCommands")
+        {
+            map.insert("enableSkillCommands".to_string(), esc.clone());
+        }
+        // customDirectories migration
+        if let Some(serde_json::Value::Array(arr)) = skills_obj.get("customDirectories") {
+            if !arr.is_empty() {
+                map.insert("skills".to_string(), serde_json::Value::Array(arr.clone()));
             } else {
                 map.remove("skills");
             }
+        } else {
+            map.remove("skills");
         }
     }
 
@@ -1083,7 +1079,7 @@ impl SettingsManager {
     }
 
     pub fn get_npm_command(&self) -> Option<Vec<String>> {
-        self.settings.npm_command.as_ref().map(|v| v.clone())
+        self.settings.npm_command.clone()
     }
 
     pub fn set_npm_command(&mut self, command: Option<Vec<String>>) {
@@ -2011,8 +2007,10 @@ mod tests {
 
     #[test]
     fn in_memory_manager_works() {
-        let mut settings = Settings::default();
-        settings.theme = Some("dark".to_string());
+        let settings = Settings {
+            theme: Some("dark".to_string()),
+            ..Default::default()
+        };
         let mut mgr = SettingsManager::in_memory(settings);
         assert_eq!(mgr.get_theme(), Some("dark"));
         mgr.set_theme("light");

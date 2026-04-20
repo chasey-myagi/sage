@@ -25,11 +25,11 @@ pub fn convert_messages(messages: &[LlmMessage]) -> Vec<Value> {
             }
 
             LlmMessage::User { content } => {
-                if content.len() == 1 {
-                    if let LlmContent::Text(text) = &content[0] {
-                        input.push(json!({ "role": "user", "content": text }));
-                        continue;
-                    }
+                if content.len() == 1
+                    && let LlmContent::Text(text) = &content[0]
+                {
+                    input.push(json!({ "role": "user", "content": text }));
+                    continue;
                 }
                 // Multimodal or multi-part content.
                 let parts: Vec<Value> = content
@@ -215,24 +215,24 @@ pub fn process_responses_event(
             let response = &data["response"];
             let status = response["status"].as_str().unwrap_or("completed");
 
-            if let Some(usage_obj) = response.get("usage") {
-                if usage_obj.is_object() {
-                    let input_tokens = usage_obj["input_tokens"].as_u64().unwrap_or(0);
-                    let output_tokens = usage_obj["output_tokens"].as_u64().unwrap_or(0);
-                    let cached_tokens = usage_obj
-                        .pointer("/input_tokens_details/cached_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+            if let Some(usage_obj) = response.get("usage")
+                && usage_obj.is_object()
+            {
+                let input_tokens = usage_obj["input_tokens"].as_u64().unwrap_or(0);
+                let output_tokens = usage_obj["output_tokens"].as_u64().unwrap_or(0);
+                let cached_tokens = usage_obj
+                    .pointer("/input_tokens_details/cached_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
 
-                    events.push(AssistantMessageEvent::Usage(Usage {
-                        input: input_tokens.saturating_sub(cached_tokens),
-                        output: output_tokens,
-                        cache_read: cached_tokens,
-                        cache_write: 0,
-                        total_tokens: input_tokens + output_tokens,
-                        ..Usage::default()
-                    }));
-                }
+                events.push(AssistantMessageEvent::Usage(Usage {
+                    input: input_tokens.saturating_sub(cached_tokens),
+                    output: output_tokens,
+                    cache_read: cached_tokens,
+                    cache_write: 0,
+                    total_tokens: input_tokens + output_tokens,
+                    ..Usage::default()
+                }));
             }
 
             let has_tool_calls = state.item_types.values().any(|t| t == "function_call");

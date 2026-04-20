@@ -140,6 +140,7 @@ pub struct ScopedModelItem {
 }
 
 /// Callbacks for model enable/disable operations.
+#[allow(clippy::type_complexity)]
 pub struct ModelsCallbacks {
     pub on_model_toggle: Box<dyn Fn(&str, bool) + Send>,
     pub on_persist: Box<dyn Fn(Vec<String>) + Send>,
@@ -374,21 +375,21 @@ impl ScopedModelsSelectorComponent {
 
     /// Reorder: move selected item up/down within enabled list.
     pub fn reorder(&mut self, delta: i64) {
-        if let Some(item) = self.filtered_items.get(self.selected_index).cloned() {
-            if self.enabled_ids.is_enabled(&item.full_id) {
-                let all_ids = self.all_ids.clone();
-                self.enabled_ids = self
-                    .enabled_ids
-                    .clone()
-                    .move_id(&all_ids, &item.full_id, delta);
-                self.is_dirty = true;
-                // Move selection by delta to track the moved item
-                let new_sel = self.selected_index as i64 + delta;
-                if new_sel >= 0 && new_sel < self.filtered_items.len() as i64 {
-                    self.selected_index = new_sel as usize;
-                }
-                self.refresh();
+        if let Some(item) = self.filtered_items.get(self.selected_index).cloned()
+            && self.enabled_ids.is_enabled(&item.full_id)
+        {
+            let all_ids = self.all_ids.clone();
+            self.enabled_ids = self
+                .enabled_ids
+                .clone()
+                .move_id(&all_ids, &item.full_id, delta);
+            self.is_dirty = true;
+            // Move selection by delta to track the moved item
+            let new_sel = self.selected_index as i64 + delta;
+            if new_sel >= 0 && new_sel < self.filtered_items.len() as i64 {
+                self.selected_index = new_sel as usize;
             }
+            self.refresh();
         }
     }
 

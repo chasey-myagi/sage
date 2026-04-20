@@ -37,10 +37,10 @@ pub fn expand_path(p: &str) -> PathBuf {
     if normalized == "~" {
         return dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
     }
-    if let Some(rest) = normalized.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
+    if let Some(rest) = normalized.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
     }
     PathBuf::from(normalized)
 }

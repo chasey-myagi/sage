@@ -109,10 +109,10 @@ fn try_complete_json(s: &str) -> Option<Value> {
 
     // Close any trailing incomplete object key or value separator.
     // (heuristic: if the last non-whitespace char is ',' or ':', add a null)
-    if let Some(lc) = last_char {
-        if lc == ',' || lc == ':' {
-            suffix.push_str("null");
-        }
+    if let Some(lc) = last_char
+        && (lc == ',' || lc == ':')
+    {
+        suffix.push_str("null");
     }
 
     // Close all unclosed brackets in reverse stack order.

@@ -227,6 +227,7 @@ type CodeResult = Option<String>; // Some(code) or None if cancelled
 
 struct OAuthServer {
     /// Call to cancel the wait without a code.
+    #[allow(dead_code)]
     cancel_tx: Arc<tokio::sync::Mutex<Option<oneshot::Sender<CodeResult>>>>,
     /// Awaitable that resolves when a code arrives (or is cancelled).
     code_rx: tokio::sync::Mutex<Option<oneshot::Receiver<CodeResult>>>,
@@ -234,11 +235,12 @@ struct OAuthServer {
 }
 
 impl OAuthServer {
+    #[allow(dead_code)]
     fn cancel_wait(&self) {
-        if let Ok(mut guard) = self.cancel_tx.try_lock() {
-            if let Some(tx) = guard.take() {
-                let _ = tx.send(None);
-            }
+        if let Ok(mut guard) = self.cancel_tx.try_lock()
+            && let Some(tx) = guard.take()
+        {
+            let _ = tx.send(None);
         }
     }
 
@@ -252,10 +254,10 @@ impl OAuthServer {
     }
 
     fn close(&self) {
-        if let Ok(mut guard) = self.shutdown_tx.try_lock() {
-            if let Some(tx) = guard.take() {
-                let _ = tx.send(());
-            }
+        if let Ok(mut guard) = self.shutdown_tx.try_lock()
+            && let Some(tx) = guard.take()
+        {
+            let _ = tx.send(());
         }
     }
 }
@@ -267,12 +269,12 @@ impl OAuthServer {
 ///
 /// Mirrors `startLocalOAuthServer()` from `openai-codex.ts`.
 async fn start_local_oauth_server(state: String) -> OAuthServer {
-    let (code_tx, code_rx) = oneshot::channel::<CodeResult>();
+    let (code_tx, _code_rx) = oneshot::channel::<CodeResult>();
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
 
     let code_tx = Arc::new(tokio::sync::Mutex::new(Some(code_tx)));
     let code_tx_clone = code_tx.clone();
-    let cancel_tx = Arc::new(tokio::sync::Mutex::new(
+    let _cancel_tx = Arc::new(tokio::sync::Mutex::new(
         Option::<oneshot::Sender<CodeResult>>::None,
     ));
 
@@ -287,10 +289,10 @@ async fn start_local_oauth_server(state: String) -> OAuthServer {
                     "[openai-codex] Failed to bind http://127.0.0.1:1455 ({err}). Falling back to manual paste."
                 );
                 // Signal no code available
-                if let Ok(mut guard) = code_tx_clone.try_lock() {
-                    if let Some(tx) = guard.take() {
-                        let _ = tx.send(None);
-                    }
+                if let Ok(mut guard) = code_tx_clone.try_lock()
+                    && let Some(tx) = guard.take()
+                {
+                    let _ = tx.send(None);
                 }
                 return;
             }
@@ -347,7 +349,7 @@ async fn start_local_oauth_server(state: String) -> OAuthServer {
         // Wait for either real code or cancellation
         let result = tokio::select! {
             v = async {
-                let mut g = code_tx.lock().await;
+                let g = code_tx.lock().await;
                 // code_tx was already taken/sent in the server task
                 // We watch via a different approach — use a barrier
                 drop(g);
@@ -434,7 +436,7 @@ pub async fn login_openai_codex(
     on_prompt: impl Fn(
         OAuthPrompt,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>,
-    on_progress: Option<impl Fn(String)>,
+    _on_progress: Option<impl Fn(String)>,
     on_manual_code_input: Option<
         impl Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>,
     >,
@@ -478,11 +480,11 @@ pub async fn login_openai_codex(
             code = Some(browser_code);
         } else if let Some(manual_input) = manual_code_res {
             let (c, s) = parse_authorization_input(&manual_input);
-            if let Some(s_val) = s {
-                if s_val != state {
-                    server.close();
-                    anyhow::bail!("State mismatch");
-                }
+            if let Some(s_val) = s
+                && s_val != state
+            {
+                server.close();
+                anyhow::bail!("State mismatch");
             }
             code = c;
         } else {
@@ -506,10 +508,10 @@ pub async fn login_openai_codex(
         })
         .await;
         let (c, s) = parse_authorization_input(&input);
-        if let Some(s_val) = s {
-            if s_val != state {
-                anyhow::bail!("State mismatch");
-            }
+        if let Some(s_val) = s
+            && s_val != state
+        {
+            anyhow::bail!("State mismatch");
         }
         c.ok_or_else(|| anyhow::anyhow!("Missing authorization code"))?
     };

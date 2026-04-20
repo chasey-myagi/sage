@@ -80,7 +80,7 @@ pub fn load_sessions_from_dir(dir: &std::path::Path) -> Vec<SessionInfo> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().map_or(false, |e| e == "jsonl") {
+        if path.extension().is_some_and(|e| e == "jsonl") {
             let last_modified = entry.metadata().ok().and_then(|m| m.modified().ok());
             sessions.push(SessionInfo {
                 path,

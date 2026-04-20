@@ -5,8 +5,6 @@
 //! Multi-line editor for extension prompts, with optional external-editor
 //! support (Ctrl+G / VISUAL / EDITOR).
 
-use crate::modes::interactive::components::dynamic_border::DynamicBorder;
-
 // ============================================================================
 // ExtensionEditorComponent
 // ============================================================================

@@ -35,10 +35,10 @@ pub fn build_initial_message(
         parts.push(stdin.to_string());
     }
 
-    if let Some(ft) = file_text {
-        if !ft.is_empty() {
-            parts.push(ft.to_string());
-        }
+    if let Some(ft) = file_text
+        && !ft.is_empty()
+    {
+        parts.push(ft.to_string());
     }
 
     if !messages.is_empty() {

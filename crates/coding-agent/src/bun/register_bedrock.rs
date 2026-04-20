@@ -183,10 +183,8 @@ fn find_section(content: &str, section: &str) -> std::collections::HashMap<Strin
             continue;
         }
 
-        if in_section {
-            if let Some((k, v)) = line.split_once('=') {
-                map.insert(k.trim().to_lowercase(), v.trim().to_string());
-            }
+        if in_section && let Some((k, v)) = line.split_once('=') {
+            map.insert(k.trim().to_lowercase(), v.trim().to_string());
         }
     }
 
@@ -218,12 +216,11 @@ fn resolve_region_with_config(profile: &str, config_path: Option<&std::path::Pat
         return r;
     }
 
-    if let Some(path) = config_path {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if let Some(r) = parse_config_region(&content, profile) {
-                return r;
-            }
-        }
+    if let Some(path) = config_path
+        && let Ok(content) = std::fs::read_to_string(path)
+        && let Some(r) = parse_config_region(&content, profile)
+    {
+        return r;
     }
 
     "us-east-1".to_string()

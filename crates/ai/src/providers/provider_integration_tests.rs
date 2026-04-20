@@ -86,17 +86,22 @@ fn collect_usage(events: &[AssistantMessageEvent]) -> Vec<&crate::types::Usage> 
 
 /// Find the first index of an event matching a given discriminant tag.
 fn event_position(events: &[AssistantMessageEvent], tag: &str) -> Option<usize> {
-    events.iter().position(|e| match (e, tag) {
-        (AssistantMessageEvent::TextDelta(_), "TextDelta") => true,
-        (AssistantMessageEvent::ThinkingDelta(_), "ThinkingDelta") => true,
-        (AssistantMessageEvent::ThinkingBlockEnd { .. }, "ThinkingBlockEnd") => true,
-        (AssistantMessageEvent::Usage(_), "Usage") => true,
-        (AssistantMessageEvent::Done { .. }, "Done") => true,
-        (AssistantMessageEvent::ToolCallStart { .. }, "ToolCallStart") => true,
-        (AssistantMessageEvent::ToolCallDelta { .. }, "ToolCallDelta") => true,
-        (AssistantMessageEvent::ToolCallEnd { .. }, "ToolCallEnd") => true,
-        (AssistantMessageEvent::Error(_), "Error") => true,
-        _ => false,
+    events.iter().position(|e| {
+        matches!(
+            (e, tag),
+            (AssistantMessageEvent::TextDelta(_), "TextDelta")
+                | (AssistantMessageEvent::ThinkingDelta(_), "ThinkingDelta")
+                | (
+                    AssistantMessageEvent::ThinkingBlockEnd { .. },
+                    "ThinkingBlockEnd"
+                )
+                | (AssistantMessageEvent::Usage(_), "Usage")
+                | (AssistantMessageEvent::Done { .. }, "Done")
+                | (AssistantMessageEvent::ToolCallStart { .. }, "ToolCallStart")
+                | (AssistantMessageEvent::ToolCallDelta { .. }, "ToolCallDelta")
+                | (AssistantMessageEvent::ToolCallEnd { .. }, "ToolCallEnd")
+                | (AssistantMessageEvent::Error(_), "Error")
+        )
     })
 }
 

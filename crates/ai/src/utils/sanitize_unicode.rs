@@ -47,13 +47,13 @@ pub fn sanitize_surrogates(text: &str) -> String {
         if let Some(code) = parse_u_escape(bytes, i) {
             // High surrogate? Peek ahead 6 bytes for a low-surrogate escape.
             if (0xD800..=0xDBFF).contains(&code) {
-                if let Some(low) = parse_u_escape(bytes, i + 6) {
-                    if (0xDC00..=0xDFFF).contains(&low) {
-                        // Paired — keep both, advance by 12.
-                        out.push_str(&text[i..i + 12]);
-                        i += 12;
-                        continue;
-                    }
+                if let Some(low) = parse_u_escape(bytes, i + 6)
+                    && (0xDC00..=0xDFFF).contains(&low)
+                {
+                    // Paired — keep both, advance by 12.
+                    out.push_str(&text[i..i + 12]);
+                    i += 12;
+                    continue;
                 }
                 // Unpaired high — drop it.
                 i += 6;

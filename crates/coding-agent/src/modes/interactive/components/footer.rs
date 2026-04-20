@@ -104,10 +104,10 @@ impl Component for FooterComponent {
         // Build pwd + optional branch + optional session name
         let mut pwd = d.pwd.clone();
         // Replace HOME with ~
-        if let Ok(home) = std::env::var("HOME") {
-            if pwd.starts_with(&home) {
-                pwd = format!("~{}", &pwd[home.len()..]);
-            }
+        if let Ok(home) = std::env::var("HOME")
+            && pwd.starts_with(&home)
+        {
+            pwd = format!("~{}", &pwd[home.len()..]);
         }
         if let Some(branch) = &d.git_branch {
             pwd = format!("{pwd} ({branch})");

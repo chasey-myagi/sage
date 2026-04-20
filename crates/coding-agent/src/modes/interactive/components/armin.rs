@@ -25,8 +25,8 @@ const BITS: &[u8] = &[
     0xff, 0xff, 0xdf, 0x78, 0xff, 0xff, 0xdf, 0x7d, 0xff, 0xff, 0x3f, 0x7e, 0xff, 0xff, 0xff, 0x7f,
 ];
 
-const BYTES_PER_ROW: usize = (WIDTH + 7) / 8;
-const DISPLAY_HEIGHT: usize = (HEIGHT + 1) / 2;
+const BYTES_PER_ROW: usize = WIDTH.div_ceil(8);
+const DISPLAY_HEIGHT: usize = HEIGHT.div_ceil(2);
 
 fn get_pixel(x: usize, y: usize) -> bool {
     if y >= HEIGHT || x >= WIDTH {

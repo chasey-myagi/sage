@@ -35,18 +35,21 @@ const DEFAULT_PROJECT_ID: &str = "rising-fact-p41fc";
 // Local callback server
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::type_complexity)]
 struct CallbackServer {
     code_rx: tokio::sync::Mutex<Option<oneshot::Receiver<Option<(String, String)>>>>,
+    #[allow(dead_code)]
     cancel_tx: Arc<tokio::sync::Mutex<Option<oneshot::Sender<Option<(String, String)>>>>>,
     shutdown_tx: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 impl CallbackServer {
+    #[allow(dead_code)]
     fn cancel_wait(&self) {
-        if let Ok(mut g) = self.cancel_tx.try_lock() {
-            if let Some(tx) = g.take() {
-                let _ = tx.send(None);
-            }
+        if let Ok(mut g) = self.cancel_tx.try_lock()
+            && let Some(tx) = g.take()
+        {
+            let _ = tx.send(None);
         }
     }
 
@@ -60,10 +63,10 @@ impl CallbackServer {
     }
 
     fn close(&self) {
-        if let Ok(mut g) = self.shutdown_tx.try_lock() {
-            if let Some(tx) = g.take() {
-                let _ = tx.send(());
-            }
+        if let Ok(mut g) = self.shutdown_tx.try_lock()
+            && let Some(tx) = g.take()
+        {
+            let _ = tx.send(());
         }
     }
 }
@@ -115,7 +118,7 @@ async fn start_callback_server() -> anyhow::Result<CallbackServer> {
     });
 
     let shutdown_arc = Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
-    let cancel_arc = Arc::new(tokio::sync::Mutex::new(
+    let _cancel_arc = Arc::new(tokio::sync::Mutex::new(
         Option::<oneshot::Sender<Option<(String, String)>>>::None,
     ));
 
@@ -127,6 +130,7 @@ async fn start_callback_server() -> anyhow::Result<CallbackServer> {
     })
 }
 
+#[allow(clippy::type_complexity)]
 async fn handle_callback(
     path_and_query: &str,
     code_tx: &Arc<tokio::sync::Mutex<Option<oneshot::Sender<Option<(String, String)>>>>>,
@@ -277,10 +281,10 @@ async fn discover_project(access_token: &str) -> (String, bool) {
                     match data.cloudaicompanion_project {
                         Some(serde_json::Value::String(s)) if !s.is_empty() => return (s, false),
                         Some(serde_json::Value::Object(ref map)) => {
-                            if let Some(serde_json::Value::String(id)) = map.get("id") {
-                                if !id.is_empty() {
-                                    return (id.clone(), false);
-                                }
+                            if let Some(serde_json::Value::String(id)) = map.get("id")
+                                && !id.is_empty()
+                            {
+                                return (id.clone(), false);
                             }
                         }
                         _ => {}
@@ -423,11 +427,11 @@ pub async fn login_antigravity(
             code = Some(browser_code);
         } else if let Some(manual_input) = manual_res {
             let (c, s) = parse_redirect_url(&manual_input);
-            if let Some(s_val) = s {
-                if s_val != state {
-                    server.close();
-                    anyhow::bail!("OAuth state mismatch - possible CSRF attack");
-                }
+            if let Some(s_val) = s
+                && s_val != state
+            {
+                server.close();
+                anyhow::bail!("OAuth state mismatch - possible CSRF attack");
             }
             code = c;
         } else {

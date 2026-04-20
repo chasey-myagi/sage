@@ -109,6 +109,7 @@ fn api_key_for_provider(provider: &str) -> &'static str {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn parse_provider_models(
     data: &Value,
     provider_key: &str,
@@ -137,10 +138,10 @@ fn parse_provider_models(
         if m.status.as_deref() == Some("deprecated") {
             continue;
         }
-        if let Some(skip_fn) = extra_skip {
-            if skip_fn(model_id, &m) {
-                continue;
-            }
+        if let Some(skip_fn) = extra_skip
+            && skip_fn(model_id, &m)
+        {
+            continue;
         }
         let supports_image = m
             .modalities
@@ -464,11 +465,10 @@ fn regex_matches_claude4(id: &str) -> bool {
     // claude-(haiku|sonnet|opus)-4[.\-] or claude-...-4 at end
     let pat = ["claude-haiku-4", "claude-sonnet-4", "claude-opus-4"];
     for p in &pat {
-        if id.starts_with(p) {
-            let rest = &id[p.len()..];
-            if rest.is_empty() || rest.starts_with('.') || rest.starts_with('-') {
-                return true;
-            }
+        if let Some(rest) = id.strip_prefix(p)
+            && (rest.is_empty() || rest.starts_with('.') || rest.starts_with('-'))
+        {
+            return true;
         }
     }
     false
@@ -633,6 +633,7 @@ fn add_hardcoded_models(models: &mut Vec<ModelEntry>) {
     }
 
     // ── Missing OpenAI models ───────────────────────────────────────────────
+    #[allow(clippy::type_complexity)]
     let openai_extra: &[(&str, &str, bool, &[&str], u64, u64, f64, f64, f64, f64)] = &[
         (
             "gpt-5-chat-latest",
@@ -720,18 +721,18 @@ fn add_hardcoded_models(models: &mut Vec<ModelEntry>) {
     // ── GitHub Copilot: add gpt-5.3-codex if gpt-5.2-codex exists ──────────
     let has_copilot_523 = has_model(models, "github-copilot", "gpt-5.2-codex");
     let has_copilot_533 = has_model(models, "github-copilot", "gpt-5.3-codex");
-    if has_copilot_523 && !has_copilot_533 {
-        if let Some(base) = models
+    if has_copilot_523
+        && !has_copilot_533
+        && let Some(base) = models
             .iter()
             .find(|m| m.provider == "github-copilot" && m.id == "gpt-5.2-codex")
             .cloned()
-        {
-            models.push(ModelEntry {
-                id: "gpt-5.3-codex".into(),
-                name: "GPT-5.3 Codex".into(),
-                ..base
-            });
-        }
+    {
+        models.push(ModelEntry {
+            id: "gpt-5.3-codex".into(),
+            name: "GPT-5.3 Codex".into(),
+            ..base
+        });
     }
 
     // ── xAI: missing Grok Code Fast ────────────────────────────────────────
@@ -780,6 +781,7 @@ fn add_hardcoded_models(models: &mut Vec<ModelEntry>) {
     let codex_base_url = "https://chatgpt.com/backend-api";
     let codex_ctx = 272000u64;
     let codex_max = 128000u64;
+    #[allow(clippy::type_complexity)]
     let codex_models: &[(&str, &str, f64, f64, f64, f64, &[&str], u64)] = &[
         (
             "gpt-5.1",
@@ -958,6 +960,7 @@ fn add_hardcoded_models(models: &mut Vec<ModelEntry>) {
 
     // ── Antigravity models ──────────────────────────────────────────────────
     let antigravity_endpoint = "https://daily-cloudcode-pa.sandbox.googleapis.com";
+    #[allow(clippy::type_complexity)]
     let antigravity_models: &[(&str, &str, bool, &[&str], u64, u64, f64, f64, f64, f64)] = &[
         (
             "gemini-3.1-pro-high",
@@ -1101,6 +1104,7 @@ fn add_hardcoded_models(models: &mut Vec<ModelEntry>) {
 
     // ── Vertex AI models ────────────────────────────────────────────────────
     let vertex_base_url = "https://{location}-aiplatform.googleapis.com";
+    #[allow(clippy::type_complexity)]
     let vertex_models: &[(&str, &str, bool, u64, u64, f64, f64, f64, f64)] = &[
         (
             "gemini-3-pro-preview",
@@ -1394,11 +1398,11 @@ fn generate_output(models: &[ModelEntry]) -> String {
         .iter()
         .filter(|m| {
             let key = (m.provider.clone(), m.id.clone());
-            if seen.contains_key(&key) {
-                false
-            } else {
-                seen.insert(key, true);
+            if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(key) {
+                e.insert(true);
                 true
+            } else {
+                false
             }
         })
         .collect();

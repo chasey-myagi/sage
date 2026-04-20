@@ -33,9 +33,8 @@ pub fn bedrock_extensive_test_enabled() -> bool {
 // ─── Known Issue Sets ────────────────────────────────────────────────────────
 // Mirrors pi-mono's const sets in bedrock-models.test.ts.
 // Only used inside tests — suppress dead_code lints in non-test builds.
-#[allow(dead_code)]
-
 /// Models that require an inference profile ARN (not available on-demand).
+#[allow(dead_code)]
 const REQUIRES_INFERENCE_PROFILE: &[&str] = &[
     "anthropic.claude-3-5-haiku-20241022-v1:0",
     "anthropic.claude-3-5-sonnet-20241022-v2:0",

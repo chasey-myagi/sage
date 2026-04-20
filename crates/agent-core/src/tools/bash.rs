@@ -57,12 +57,12 @@ impl super::AgentTool for BashTool {
             }
         };
 
+        // Clamp timeout: 1 second minimum, 10 minutes maximum.
         let timeout_secs = args
             .get("timeout")
             .and_then(|v| v.as_u64())
             .unwrap_or(120)
-            .max(1) // minimum 1 second
-            .min(600); // maximum 10 minutes
+            .clamp(1, 600);
 
         match self.0.shell(command, timeout_secs).await {
             Ok(output) => {
@@ -340,7 +340,7 @@ mod tests {
         let output = tool
             .execute(json!({"command": "echo out && echo err >&2"}))
             .await;
-        let text = match &output.content[0] {
+        let _text = match &output.content[0] {
             crate::types::Content::Text { text } => text.clone(),
             _ => String::new(),
         };

@@ -89,7 +89,7 @@ impl AssistantMessageComponent {
             self.content_container.add_child(Box::new(Spacer::new(1)));
         }
 
-        let md_theme = build_default_md_theme();
+        let _md_theme = build_default_md_theme();
         let t = get_theme();
 
         for (i, content) in message.content.iter().enumerate() {

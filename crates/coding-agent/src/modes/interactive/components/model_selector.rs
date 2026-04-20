@@ -27,6 +27,7 @@ pub struct ModelSelectorComponent {
     selected_index: usize,
     search_query: String,
     current_model_id: Option<String>,
+    #[allow(clippy::type_complexity)]
     on_select: Option<Box<dyn Fn(&ModelItem) + Send>>,
     on_cancel: Option<Box<dyn Fn() + Send>>,
 }
@@ -93,10 +94,10 @@ impl ModelSelectorComponent {
             }
             "\r" | "\n" => {
                 // Enter — select
-                if let Some(&idx) = self.filtered.get(self.selected_index) {
-                    if let Some(ref f) = self.on_select {
-                        f(&self.models[idx]);
-                    }
+                if let Some(&idx) = self.filtered.get(self.selected_index)
+                    && let Some(ref f) = self.on_select
+                {
+                    f(&self.models[idx]);
                 }
                 true
             }
@@ -113,7 +114,7 @@ impl ModelSelectorComponent {
                 self.refresh_filter();
                 true
             }
-            ch if ch.len() == 1 && ch.chars().next().map_or(false, |c| !c.is_control()) => {
+            ch if ch.len() == 1 && ch.chars().next().is_some_and(|c| !c.is_control()) => {
                 self.search_query.push_str(ch);
                 self.refresh_filter();
                 true
@@ -127,7 +128,7 @@ impl Component for ModelSelectorComponent {
     fn render(&self, width: u16) -> Vec<String> {
         let t = get_theme();
         let mut container = Container::new();
-        let width_u = width as usize;
+        let _width_u = width as usize;
 
         // Top border
         container.add_child(Box::new(DynamicBorder::new()));

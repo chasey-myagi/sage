@@ -17,13 +17,11 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 use agent_core::event::AgentEvent;
-use agent_core::types::{
-    AgentMessage, AgentTool, AgentToolResult, AssistantMessage, Content, ThinkingLevel, UserMessage,
-};
+use agent_core::types::{AgentMessage, AssistantMessage, Content, ThinkingLevel, UserMessage};
 
 use crate::core::settings_manager::SettingsManager;
 
@@ -371,25 +369,23 @@ impl AgentSession {
     /// Mirrors pi-mono's `_processAgentEvent(event)`.
     pub async fn handle_agent_event(&mut self, event: AgentEvent) {
         // When a user message starts, remove it from steering/follow-up queues.
-        if let AgentEvent::MessageStart { ref message } = event {
-            if let AgentMessage::User(user_msg) = message {
-                let text = user_msg
-                    .content
-                    .iter()
-                    .filter_map(|c| match c {
-                        Content::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<String>();
-                if !text.is_empty() {
-                    // Check steering queue first, then follow-up queue.
-                    if let Some(pos) = self.steering_messages.iter().position(|m| m == &text) {
-                        self.steering_messages.remove(pos);
-                    } else if let Some(pos) =
-                        self.follow_up_messages.iter().position(|m| m == &text)
-                    {
-                        self.follow_up_messages.remove(pos);
-                    }
+        if let AgentEvent::MessageStart { ref message } = event
+            && let AgentMessage::User(user_msg) = message
+        {
+            let text = user_msg
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    Content::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<String>();
+            if !text.is_empty() {
+                // Check steering queue first, then follow-up queue.
+                if let Some(pos) = self.steering_messages.iter().position(|m| m == &text) {
+                    self.steering_messages.remove(pos);
+                } else if let Some(pos) = self.follow_up_messages.iter().position(|m| m == &text) {
+                    self.follow_up_messages.remove(pos);
                 }
             }
         }
@@ -398,40 +394,40 @@ impl AgentSession {
         self.emit(AgentSessionEvent::Core(event.clone()));
 
         // Track assistant messages for auto-compaction.
-        if let AgentEvent::MessageEnd { ref message } = event {
-            if let AgentMessage::Assistant(assistant) = message {
-                self.last_assistant_message = Some(assistant.clone());
+        if let AgentEvent::MessageEnd { ref message } = event
+            && let AgentMessage::Assistant(assistant) = message
+        {
+            self.last_assistant_message = Some(assistant.clone());
 
-                // Reset overflow flag on success.
-                if assistant.stop_reason != agent_core::types::StopReason::Error {
-                    self.overflow_recovery_attempted = false;
-                }
+            // Reset overflow flag on success.
+            if assistant.stop_reason != agent_core::types::StopReason::Error {
+                self.overflow_recovery_attempted = false;
+            }
 
-                // Reset retry counter on successful response.
-                if assistant.stop_reason != agent_core::types::StopReason::Error
-                    && self.retry_attempt > 0
-                {
-                    self.emit(AgentSessionEvent::AutoRetryEnd {
-                        success: true,
-                        attempt: self.retry_attempt,
-                        final_error: None,
-                    });
-                    self.retry_attempt = 0;
-                }
+            // Reset retry counter on successful response.
+            if assistant.stop_reason != agent_core::types::StopReason::Error
+                && self.retry_attempt > 0
+            {
+                self.emit(AgentSessionEvent::AutoRetryEnd {
+                    success: true,
+                    attempt: self.retry_attempt,
+                    final_error: None,
+                });
+                self.retry_attempt = 0;
             }
         }
 
         // Check auto-retry and auto-compaction after agent completes.
-        if let AgentEvent::AgentEnd { .. } = event {
-            if let Some(msg) = self.last_assistant_message.take() {
-                if self.is_retryable_error(&msg) {
-                    let did_retry = self.handle_retryable_error(&msg).await;
-                    if did_retry {
-                        return;
-                    }
+        if let AgentEvent::AgentEnd { .. } = event
+            && let Some(msg) = self.last_assistant_message.take()
+        {
+            if self.is_retryable_error(&msg) {
+                let did_retry = self.handle_retryable_error(&msg).await;
+                if did_retry {
+                    return;
                 }
-                self.check_compaction(&msg, true).await;
             }
+            self.check_compaction(&msg, true).await;
         }
     }
 
@@ -662,9 +658,9 @@ impl AgentSession {
 
         if let Some(idx) = requested_index {
             // Try to find nearest available at or above the requested level.
-            for i in idx..ordered.len() {
-                if available.contains(&ordered[i]) {
-                    return ordered[i];
+            for level in ordered.iter().skip(idx) {
+                if available.contains(level) {
+                    return *level;
                 }
             }
             // Fall back to nearest below.
@@ -1012,7 +1008,6 @@ impl AgentSession {
             }
             self.run_auto_compaction(CompactionReason::Overflow, true)
                 .await;
-            return;
         }
 
         // Case 2: Threshold — context is getting large.
@@ -1756,10 +1751,9 @@ mod tests {
                 error_message: Some(ref msg),
                 ..
             } = event
+                && msg.contains("Context overflow recovery failed")
             {
-                if msg.contains("Context overflow recovery failed") {
-                    got_failure = true;
-                }
+                got_failure = true;
             }
         }
         assert!(got_failure, "expected overflow failure event");

@@ -39,6 +39,7 @@ pub struct CustomEditor {
     /// Paste-image handler.
     pub on_paste_image: Option<Box<dyn Fn() + Send>>,
     /// Extension shortcut handler. Returns `true` if the input was handled.
+    #[allow(clippy::type_complexity)]
     pub on_extension_shortcut: Option<Box<dyn Fn(&str) -> bool + Send>>,
 }
 
@@ -99,10 +100,10 @@ impl CustomEditor {
     /// Returns `true` if the input was consumed by an app-level handler.
     pub fn handle_input(&mut self, data: &str) -> bool {
         // 1. Extension shortcuts
-        if let Some(handler) = &self.on_extension_shortcut {
-            if handler(data) {
-                return true;
-            }
+        if let Some(handler) = &self.on_extension_shortcut
+            && handler(data)
+        {
+            return true;
         }
 
         // 2. Paste image (Ctrl+Shift+V or configured binding)

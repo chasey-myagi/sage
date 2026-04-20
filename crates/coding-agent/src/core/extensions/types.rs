@@ -139,6 +139,7 @@ pub struct ResourcesDiscoverResult {
 // Session Events
 // ============================================================================
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionEvent {

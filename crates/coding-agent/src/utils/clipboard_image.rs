@@ -390,6 +390,8 @@ pub fn read_clipboard_image() -> Option<ClipboardImage> {
         return None;
     }
 
+    // Assigned conditionally below depending on target_os.
+    #[allow(unused_assignments)]
     let mut image: Option<ClipboardImage> = None;
 
     #[cfg(target_os = "linux")]

@@ -68,10 +68,10 @@ impl ExtensionSelectorComponent {
 
     /// Confirm the current selection.
     pub fn confirm(&self) {
-        if let Some(option) = self.options.get(self.selected_index) {
-            if let Some(cb) = &self.on_select {
-                cb(option.clone());
-            }
+        if let Some(option) = self.options.get(self.selected_index)
+            && let Some(cb) = &self.on_select
+        {
+            cb(option.clone());
         }
     }
 

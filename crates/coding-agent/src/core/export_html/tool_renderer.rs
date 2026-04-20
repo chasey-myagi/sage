@@ -105,12 +105,8 @@ impl ToolHtmlRenderer {
             self.renderer
                 .render_result(tool_call_id, tool_name, result, details, is_error)?;
 
-        let collapsed = rendered.collapsed.map(|lines| {
-            // If lines is already HTML (from ansi_lines_to_html) pass through;
-            // otherwise treat as raw ANSI.
-            lines
-        });
-        let expanded = rendered.expanded.map(|lines| lines);
+        let collapsed = rendered.collapsed;
+        let expanded = rendered.expanded;
 
         Some(RenderedToolResult {
             collapsed,

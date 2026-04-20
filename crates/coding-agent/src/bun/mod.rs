@@ -5,5 +5,3 @@
 // function that callers invoke before constructing an AWS client.
 
 pub mod register_bedrock;
-
-pub use register_bedrock::{AwsCredentials, CredentialError, discover_aws_credentials};

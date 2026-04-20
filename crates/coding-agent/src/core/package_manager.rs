@@ -171,7 +171,7 @@ fn collect_files(dir: &Path, pattern: fn(&str) -> bool) -> Vec<PathBuf> {
         }
         let ft = entry
             .file_type()
-            .unwrap_or_else(|_| return entry.file_type().unwrap());
+            .unwrap_or_else(|_| entry.file_type().unwrap());
         if ft.is_dir() {
             files.extend(collect_files(&path, pattern));
         } else if ft.is_file() && pattern(&name_str) {
@@ -261,10 +261,10 @@ fn collect_extension_entries(dir: &Path) -> Vec<PathBuf> {
         };
         if ft.is_file() && is_extension_file(&name_str) {
             result.push(path);
-        } else if ft.is_dir() {
-            if let Some(sub_entries) = resolve_extension_entries(&path) {
-                result.extend(sub_entries);
-            }
+        } else if ft.is_dir()
+            && let Some(sub_entries) = resolve_extension_entries(&path)
+        {
+            result.extend(sub_entries);
         }
     }
     result
@@ -273,28 +273,25 @@ fn collect_extension_entries(dir: &Path) -> Vec<PathBuf> {
 fn resolve_extension_entries(dir: &Path) -> Option<Vec<PathBuf>> {
     // Check package.json for pi.extensions
     let pkg_path = dir.join("package.json");
-    if pkg_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&pkg_path) {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(exts) = val
-                    .get("pi")
-                    .and_then(|p| p.get("extensions"))
-                    .and_then(|e| e.as_array())
-                {
-                    let mut entries = Vec::new();
-                    for ext in exts {
-                        if let Some(ext_str) = ext.as_str() {
-                            let resolved = dir.join(ext_str);
-                            if resolved.exists() {
-                                entries.push(resolved);
-                            }
-                        }
-                    }
-                    if !entries.is_empty() {
-                        return Some(entries);
-                    }
+    if pkg_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&pkg_path)
+        && let Ok(val) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(exts) = val
+            .get("pi")
+            .and_then(|p| p.get("extensions"))
+            .and_then(|e| e.as_array())
+    {
+        let mut entries = Vec::new();
+        for ext in exts {
+            if let Some(ext_str) = ext.as_str() {
+                let resolved = dir.join(ext_str);
+                if resolved.exists() {
+                    entries.push(resolved);
                 }
             }
+        }
+        if !entries.is_empty() {
+            return Some(entries);
         }
     }
     // Check for index.ts / index.js
@@ -333,45 +330,45 @@ fn parse_git_url(source: &str) -> Option<GitSource> {
     let trimmed = source.trim();
 
     // SSH: git@github.com:owner/repo.git
-    if trimmed.starts_with("git@") {
-        if let Some(colon_pos) = trimmed.find(':') {
-            let host_part = &trimmed[4..colon_pos]; // after "git@"
-            let path_part = &trimmed[colon_pos + 1..];
-            let (path, ref_) = split_ref(path_part);
-            let repo = if trimmed.contains("git@github.com") {
-                format!("https://github.com/{}", path)
-            } else {
-                source.to_owned()
-            };
-            return Some(GitSource {
-                repo,
-                host: host_part.to_owned(),
-                path: path.trim_end_matches(".git").to_owned(),
-                ref_,
-                pinned: false,
-            });
-        }
+    if trimmed.starts_with("git@")
+        && let Some(colon_pos) = trimmed.find(':')
+    {
+        let host_part = &trimmed[4..colon_pos]; // after "git@"
+        let path_part = &trimmed[colon_pos + 1..];
+        let (path, ref_) = split_ref(path_part);
+        let repo = if trimmed.contains("git@github.com") {
+            format!("https://github.com/{}", path)
+        } else {
+            source.to_owned()
+        };
+        return Some(GitSource {
+            repo,
+            host: host_part.to_owned(),
+            path: path.trim_end_matches(".git").to_owned(),
+            ref_,
+            pinned: false,
+        });
     }
 
     // HTTPS: https://github.com/owner/repo(.git)(@ref)
-    if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
-        if let Ok(url) = url::Url::parse(trimmed) {
-            let host = url.host_str().unwrap_or("").to_owned();
-            let path = url
-                .path()
-                .trim_start_matches('/')
-                .trim_end_matches(".git")
-                .to_owned();
-            let (path_no_ref, ref_) = split_ref(&path);
-            let pinned = ref_.is_some();
-            return Some(GitSource {
-                repo: format!("https://{}/{}", host, path_no_ref),
-                host,
-                path: path_no_ref,
-                ref_,
-                pinned,
-            });
-        }
+    if (trimmed.starts_with("https://") || trimmed.starts_with("http://"))
+        && let Ok(url) = url::Url::parse(trimmed)
+    {
+        let host = url.host_str().unwrap_or("").to_owned();
+        let path = url
+            .path()
+            .trim_start_matches('/')
+            .trim_end_matches(".git")
+            .to_owned();
+        let (path_no_ref, ref_) = split_ref(&path);
+        let pinned = ref_.is_some();
+        return Some(GitSource {
+            repo: format!("https://{}/{}", host, path_no_ref),
+            host,
+            path: path_no_ref,
+            ref_,
+            pinned,
+        });
     }
 
     // Shorthand: "owner/repo" or "owner/repo@ref" (GitHub)
@@ -1099,6 +1096,7 @@ impl DefaultPackageManager {
 
     // ─── Resource collection ──────────────────────────────────────────────────
 
+    #[allow(clippy::type_complexity)]
     fn collect_package_resources(
         &self,
         package_root: &Path,
@@ -1196,6 +1194,7 @@ impl DefaultPackageManager {
         found_any
     }
 
+    #[allow(clippy::type_complexity)]
     fn resolve_local_extension_source(
         &self,
         source: &LocalSource,
@@ -1263,8 +1262,8 @@ impl DefaultPackageManager {
     fn add_auto_discovered_resources(
         &self,
         acc: &mut ResourceAccumulator,
-        global: &crate::core::settings_manager::Settings,
-        project: &crate::core::settings_manager::Settings,
+        _global: &crate::core::settings_manager::Settings,
+        _project: &crate::core::settings_manager::Settings,
         global_base: &Path,
         project_base: &Path,
     ) {

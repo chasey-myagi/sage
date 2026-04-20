@@ -101,57 +101,57 @@ impl InteractiveMode {
         self.running = true;
 
         // Render initial message if provided
-        if let Some(msg) = &self.options.initial_message.clone() {
-            if !msg.is_empty() {
-                self.messages.push(ChatMessage {
-                    role: MessageRole::User,
-                    content: msg.clone(),
-                });
-                // In a real impl we'd send to the agent session here
-                self.messages.push(ChatMessage {
-                    role: MessageRole::Assistant,
-                    content: "(agent response would appear here)".to_string(),
-                });
-            }
+        if let Some(msg) = &self.options.initial_message.clone()
+            && !msg.is_empty()
+        {
+            self.messages.push(ChatMessage {
+                role: MessageRole::User,
+                content: msg.clone(),
+            });
+            // In a real impl we'd send to the agent session here
+            self.messages.push(ChatMessage {
+                role: MessageRole::Assistant,
+                content: "(agent response would appear here)".to_string(),
+            });
         }
 
         loop {
             terminal.draw(|f| self.render(f))?;
 
-            if event::poll(Duration::from_millis(16))? {
-                if let Event::Key(key) = event::read()? {
-                    match (key.code, key.modifiers) {
-                        // Ctrl+C / Ctrl+D — quit
-                        (KeyCode::Char('c'), KeyModifiers::CONTROL)
-                        | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-                            self.running = false;
-                            break;
-                        }
-                        // Enter — submit input
-                        (KeyCode::Enter, _) => {
-                            let input = std::mem::take(&mut self.input_buffer);
-                            if !input.trim().is_empty() {
-                                self.messages.push(ChatMessage {
-                                    role: MessageRole::User,
-                                    content: input.clone(),
-                                });
-                                // In a real impl: send to agent session and await
-                                self.messages.push(ChatMessage {
-                                    role: MessageRole::Assistant,
-                                    content: format!("(response to: {input})"),
-                                });
-                            }
-                        }
-                        // Backspace
-                        (KeyCode::Backspace, _) => {
-                            self.input_buffer.pop();
-                        }
-                        // Regular character input
-                        (KeyCode::Char(c), _) => {
-                            self.input_buffer.push(c);
-                        }
-                        _ => {}
+            if event::poll(Duration::from_millis(16))?
+                && let Event::Key(key) = event::read()?
+            {
+                match (key.code, key.modifiers) {
+                    // Ctrl+C / Ctrl+D — quit
+                    (KeyCode::Char('c'), KeyModifiers::CONTROL)
+                    | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                        self.running = false;
+                        break;
                     }
+                    // Enter — submit input
+                    (KeyCode::Enter, _) => {
+                        let input = std::mem::take(&mut self.input_buffer);
+                        if !input.trim().is_empty() {
+                            self.messages.push(ChatMessage {
+                                role: MessageRole::User,
+                                content: input.clone(),
+                            });
+                            // In a real impl: send to agent session and await
+                            self.messages.push(ChatMessage {
+                                role: MessageRole::Assistant,
+                                content: format!("(response to: {input})"),
+                            });
+                        }
+                    }
+                    // Backspace
+                    (KeyCode::Backspace, _) => {
+                        self.input_buffer.pop();
+                    }
+                    // Regular character input
+                    (KeyCode::Char(c), _) => {
+                        self.input_buffer.push(c);
+                    }
+                    _ => {}
                 }
             }
 

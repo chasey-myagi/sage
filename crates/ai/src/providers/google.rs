@@ -24,6 +24,12 @@ pub struct GoogleProvider {
     client: Client,
 }
 
+impl Default for GoogleProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GoogleProvider {
     pub fn new() -> Self {
         Self {
@@ -60,17 +66,17 @@ pub(crate) fn convert_messages(messages: &[LlmMessage]) -> Vec<Value> {
                         LlmContent::Text(text) => json!({ "text": text }),
                         LlmContent::Image { url } => {
                             // Attempt to parse data URL: data:<mime>;base64,<data>
-                            if let Some(rest) = url.strip_prefix("data:") {
-                                if let Some(semi_pos) = rest.find(';') {
-                                    let mime = &rest[..semi_pos];
-                                    if let Some(data) = rest[semi_pos..].strip_prefix(";base64,") {
-                                        return json!({
-                                            "inlineData": {
-                                                "mimeType": mime,
-                                                "data": data,
-                                            }
-                                        });
-                                    }
+                            if let Some(rest) = url.strip_prefix("data:")
+                                && let Some(semi_pos) = rest.find(';')
+                            {
+                                let mime = &rest[..semi_pos];
+                                if let Some(data) = rest[semi_pos..].strip_prefix(";base64,") {
+                                    return json!({
+                                        "inlineData": {
+                                            "mimeType": mime,
+                                            "data": data,
+                                        }
+                                    });
                                 }
                             }
                             // Fallback: treat as a text reference
@@ -138,7 +144,7 @@ fn flush_tool_parts(pending: &mut Vec<Value>, contents: &mut Vec<Value>) {
     if pending.is_empty() {
         return;
     }
-    contents.push(json!({ "role": "user", "parts": pending.drain(..).collect::<Vec<_>>() }));
+    contents.push(json!({ "role": "user", "parts": std::mem::take(pending) }));
 }
 
 /// Given a Tool message, walk backwards through the message list to find the
@@ -232,60 +238,60 @@ pub(crate) fn parse_google_sse_data(data: &str) -> Vec<AssistantMessageEvent> {
     }
 
     // --- Candidates ---
-    if let Some(candidates) = json.get("candidates").and_then(|c| c.as_array()) {
-        if let Some(candidate) = candidates.first() {
-            // Parts
-            if let Some(parts) = candidate
-                .get("content")
-                .and_then(|c| c.get("parts"))
-                .and_then(|p| p.as_array())
-            {
-                for part in parts {
-                    // Thinking delta: { "thought": true, "text": "..." }
-                    if part.get("thought").and_then(|t| t.as_bool()) == Some(true) {
-                        if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                            events.push(AssistantMessageEvent::ThinkingDelta(text.to_string()));
-                        }
-                        continue;
-                    }
-
-                    // Function call: { "functionCall": { "name": ..., "args": ... } }
-                    if let Some(fc) = part.get("functionCall") {
-                        let name = fc
-                            .get("name")
-                            .and_then(|n| n.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let args = fc.get("args").cloned().unwrap_or(json!({}));
-                        let args_str = serde_json::to_string(&args).unwrap_or_default();
-                        let counter = TOOL_CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
-                        let id = format!("call_google_{counter}");
-
-                        events.push(AssistantMessageEvent::ToolCallStart {
-                            id: id.clone(),
-                            name,
-                        });
-                        events.push(AssistantMessageEvent::ToolCallDelta {
-                            id: id.clone(),
-                            arguments_delta: args_str,
-                        });
-                        events.push(AssistantMessageEvent::ToolCallEnd { id });
-                        continue;
-                    }
-
-                    // Text delta: { "text": "..." }
+    if let Some(candidates) = json.get("candidates").and_then(|c| c.as_array())
+        && let Some(candidate) = candidates.first()
+    {
+        // Parts
+        if let Some(parts) = candidate
+            .get("content")
+            .and_then(|c| c.get("parts"))
+            .and_then(|p| p.as_array())
+        {
+            for part in parts {
+                // Thinking delta: { "thought": true, "text": "..." }
+                if part.get("thought").and_then(|t| t.as_bool()) == Some(true) {
                     if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                        events.push(AssistantMessageEvent::TextDelta(text.to_string()));
+                        events.push(AssistantMessageEvent::ThinkingDelta(text.to_string()));
                     }
+                    continue;
+                }
+
+                // Function call: { "functionCall": { "name": ..., "args": ... } }
+                if let Some(fc) = part.get("functionCall") {
+                    let name = fc
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let args = fc.get("args").cloned().unwrap_or(json!({}));
+                    let args_str = serde_json::to_string(&args).unwrap_or_default();
+                    let counter = TOOL_CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
+                    let id = format!("call_google_{counter}");
+
+                    events.push(AssistantMessageEvent::ToolCallStart {
+                        id: id.clone(),
+                        name,
+                    });
+                    events.push(AssistantMessageEvent::ToolCallDelta {
+                        id: id.clone(),
+                        arguments_delta: args_str,
+                    });
+                    events.push(AssistantMessageEvent::ToolCallEnd { id });
+                    continue;
+                }
+
+                // Text delta: { "text": "..." }
+                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                    events.push(AssistantMessageEvent::TextDelta(text.to_string()));
                 }
             }
+        }
 
-            // Finish reason
-            if let Some(reason_str) = candidate.get("finishReason").and_then(|r| r.as_str()) {
-                events.push(AssistantMessageEvent::Done {
-                    stop_reason: map_finish_reason(reason_str),
-                });
-            }
+        // Finish reason
+        if let Some(reason_str) = candidate.get("finishReason").and_then(|r| r.as_str()) {
+            events.push(AssistantMessageEvent::Done {
+                stop_reason: map_finish_reason(reason_str),
+            });
         }
     }
 

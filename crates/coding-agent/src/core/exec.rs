@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 // ============================================================================
@@ -88,11 +87,11 @@ pub async fn exec_command(
         let _ = stderr_res;
 
         // Check cancellation flag after output collection.
-        if let Some(ref cancel) = options.cancel {
-            if cancel.load(Ordering::Relaxed) {
-                let _ = child.kill().await;
-                return (None, true);
-            }
+        if let Some(ref cancel) = options.cancel
+            && cancel.load(Ordering::Relaxed)
+        {
+            let _ = child.kill().await;
+            return (None, true);
         }
 
         match child.wait().await {

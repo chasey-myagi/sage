@@ -148,7 +148,7 @@ mod tests {
 
         assert_eq!(header_map.get("X-Initiator"), Some(&"user"));
         assert_eq!(header_map.get("Openai-Intent"), Some(&"conversation-edits"));
-        assert!(header_map.get("Copilot-Vision-Request").is_none());
+        assert!(!header_map.contains_key("Copilot-Vision-Request"));
     }
 
     #[test]

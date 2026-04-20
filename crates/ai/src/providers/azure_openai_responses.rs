@@ -33,6 +33,12 @@ pub struct AzureOpenAiResponsesProvider {
     client: Client,
 }
 
+impl Default for AzureOpenAiResponsesProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AzureOpenAiResponsesProvider {
     pub fn new() -> Self {
         Self {
@@ -323,7 +329,7 @@ mod tests {
         unsafe {
             std::env::set_var(
                 "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
-                &format!("{}=custom-deploy", model.id),
+                format!("{}=custom-deploy", model.id),
             )
         };
         let name = resolve_deployment_name(&model);

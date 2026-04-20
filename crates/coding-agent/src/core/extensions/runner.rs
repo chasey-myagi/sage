@@ -158,11 +158,9 @@ impl ExtensionRunner {
 
     /// Whether any extension has registered a handler for the given event type.
     pub fn has_handlers(&self, event_type: &str) -> bool {
-        self.extensions.iter().any(|ext| {
-            ext.handlers
-                .get(event_type)
-                .map_or(false, |h| !h.is_empty())
-        })
+        self.extensions
+            .iter()
+            .any(|ext| ext.handlers.get(event_type).is_some_and(|h| !h.is_empty()))
     }
 
     /// Get all registered tools (first registration per name wins).
@@ -354,10 +352,10 @@ impl ExtensionRunner {
                 _ => continue,
             };
             for handler in handlers {
-                if let Some(r) = handler(&event, &ctx) {
-                    if let Some(sp) = r.get("systemPrompt").and_then(|v| v.as_str()) {
-                        result.system_prompt = Some(sp.to_string());
-                    }
+                if let Some(r) = handler(&event, &ctx)
+                    && let Some(sp) = r.get("systemPrompt").and_then(|v| v.as_str())
+                {
+                    result.system_prompt = Some(sp.to_string());
                 }
             }
         }
@@ -426,17 +424,17 @@ impl ExtensionRunner {
                     "text": current_text,
                     "source": format!("{:?}", source).to_lowercase(),
                 });
-                if let Some(r) = handler(&event, &ctx) {
-                    if let Some(action) = r.get("action").and_then(|v| v.as_str()) {
-                        match action {
-                            "handled" => return InputEventResult::Handled,
-                            "transform" => {
-                                if let Some(t) = r.get("text").and_then(|v| v.as_str()) {
-                                    current_text = t.to_string();
-                                }
+                if let Some(r) = handler(&event, &ctx)
+                    && let Some(action) = r.get("action").and_then(|v| v.as_str())
+                {
+                    match action {
+                        "handled" => return InputEventResult::Handled,
+                        "transform" => {
+                            if let Some(t) = r.get("text").and_then(|v| v.as_str()) {
+                                current_text = t.to_string();
                             }
-                            _ => {}
                         }
+                        _ => {}
                     }
                 }
             }
@@ -537,11 +535,11 @@ impl ExtensionRunner {
 
 /// Helper to emit `session_shutdown` event if the runner has registered handlers.
 pub fn emit_session_shutdown_event(runner: Option<&ExtensionRunner>) -> bool {
-    if let Some(r) = runner {
-        if r.has_handlers("session_shutdown") {
-            r.emit_session_shutdown();
-            return true;
-        }
+    if let Some(r) = runner
+        && r.has_handlers("session_shutdown")
+    {
+        r.emit_session_shutdown();
+        return true;
     }
     false
 }

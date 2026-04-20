@@ -440,7 +440,7 @@ mod tests {
         let q = parse_search_query(r#"foo "bar"#);
         if let ParsedSearchQuery::Tokens(tokens) = q {
             // Falls back to simple whitespace split
-            assert!(tokens.len() >= 1);
+            assert!(!tokens.is_empty());
         } else {
             panic!("expected Tokens");
         }

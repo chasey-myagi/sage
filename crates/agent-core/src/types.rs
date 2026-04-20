@@ -173,15 +173,11 @@ impl fmt::Display for ThinkingLevel {
 /// - `Parallel`: tool calls are started concurrently; results are collected in call order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ToolExecutionMode {
     Sequential,
+    #[default]
     Parallel,
-}
-
-impl Default for ToolExecutionMode {
-    fn default() -> Self {
-        ToolExecutionMode::Parallel
-    }
 }
 
 /// Result from a tool execution.

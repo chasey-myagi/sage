@@ -30,6 +30,12 @@ pub struct OpenAiCodexResponsesProvider {
     client: Client,
 }
 
+impl Default for OpenAiCodexResponsesProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpenAiCodexResponsesProvider {
     pub fn new() -> Self {
         Self {
@@ -257,7 +263,7 @@ fn build_request_body(
 /// pi-mono: clampReasoningEffort
 fn clamp_reasoning_effort(model_id: &str, level: &ReasoningLevel) -> &'static str {
     let id = if model_id.contains('/') {
-        model_id.split('/').last().unwrap_or(model_id)
+        model_id.split('/').next_back().unwrap_or(model_id)
     } else {
         model_id
     };
@@ -304,42 +310,42 @@ fn is_retryable_error(status: u16, error_text: &str) -> bool {
 }
 
 fn parse_error_response(status: u16, raw: &str) -> String {
-    if let Ok(parsed) = serde_json::from_str::<Value>(raw) {
-        if let Some(err) = parsed.get("error") {
-            let code = err.get("code").and_then(|v| v.as_str()).unwrap_or("");
-            let err_type = err.get("type").and_then(|v| v.as_str()).unwrap_or("");
-            let code_or_type = if !code.is_empty() { code } else { err_type };
+    if let Ok(parsed) = serde_json::from_str::<Value>(raw)
+        && let Some(err) = parsed.get("error")
+    {
+        let code = err.get("code").and_then(|v| v.as_str()).unwrap_or("");
+        let err_type = err.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let code_or_type = if !code.is_empty() { code } else { err_type };
 
-            if code_or_type.contains("usage_limit_reached")
-                || code_or_type.contains("usage_not_included")
-                || code_or_type.contains("rate_limit_exceeded")
-                || status == 429
-            {
-                let plan = err
-                    .get("plan_type")
-                    .and_then(|v| v.as_str())
-                    .map(|p| format!(" ({} plan)", p.to_lowercase()))
-                    .unwrap_or_default();
-                let resets_at = err.get("resets_at").and_then(|v| v.as_u64());
-                let when = if let Some(ts) = resets_at {
-                    use std::time::{SystemTime, UNIX_EPOCH};
-                    let now_secs = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let mins = ts.saturating_sub(now_secs) / 60;
-                    format!(" Try again in ~{mins} min.")
-                } else {
-                    String::new()
-                };
-                return format!("You have hit your ChatGPT usage limit{plan}.{when}")
-                    .trim()
-                    .to_string();
-            }
+        if code_or_type.contains("usage_limit_reached")
+            || code_or_type.contains("usage_not_included")
+            || code_or_type.contains("rate_limit_exceeded")
+            || status == 429
+        {
+            let plan = err
+                .get("plan_type")
+                .and_then(|v| v.as_str())
+                .map(|p| format!(" ({} plan)", p.to_lowercase()))
+                .unwrap_or_default();
+            let resets_at = err.get("resets_at").and_then(|v| v.as_u64());
+            let when = if let Some(ts) = resets_at {
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let now_secs = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let mins = ts.saturating_sub(now_secs) / 60;
+                format!(" Try again in ~{mins} min.")
+            } else {
+                String::new()
+            };
+            return format!("You have hit your ChatGPT usage limit{plan}.{when}")
+                .trim()
+                .to_string();
+        }
 
-            if let Some(msg) = err.get("message").and_then(|v| v.as_str()) {
-                return msg.to_string();
-            }
+        if let Some(msg) = err.get("message").and_then(|v| v.as_str()) {
+            return msg.to_string();
         }
     }
     if !raw.is_empty() {

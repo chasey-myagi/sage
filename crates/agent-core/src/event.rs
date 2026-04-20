@@ -206,6 +206,7 @@ pub struct EventStream<T, R> {
 
 impl<T, R: Default> EventStream<T, R> {
     /// Create a new `(EventSender, EventReceiver)` pair.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new() -> (EventSender<T, R>, EventReceiver<T, R>) {
         let (tx, rx) = mpsc::unbounded_channel();
         let sender = EventSender {
@@ -373,7 +374,7 @@ mod tests {
         t1.await.unwrap();
         t2.await.unwrap();
         let mut count = 0;
-        while let Some(_) = receiver.next().await {
+        while receiver.next().await.is_some() {
             count += 1;
         }
         assert_eq!(count, 10);

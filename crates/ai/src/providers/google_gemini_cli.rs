@@ -41,6 +41,12 @@ pub struct GoogleGeminiCliProvider {
     client: Client,
 }
 
+impl Default for GoogleGeminiCliProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GoogleGeminiCliProvider {
     pub fn new() -> Self {
         Self {
@@ -256,10 +262,10 @@ fn parse_retry_delay_json(text: &str) -> Option<u64> {
 }
 
 fn extract_error_message(error_text: &str) -> String {
-    if let Ok(parsed) = serde_json::from_str::<Value>(error_text) {
-        if let Some(msg) = parsed.pointer("/error/message").and_then(|v| v.as_str()) {
-            return msg.to_string();
-        }
+    if let Ok(parsed) = serde_json::from_str::<Value>(error_text)
+        && let Some(msg) = parsed.pointer("/error/message").and_then(|v| v.as_str())
+    {
+        return msg.to_string();
     }
     error_text.to_string()
 }
@@ -268,6 +274,7 @@ fn extract_error_message(error_text: &str) -> String {
 // Request body builder (pi-mono: buildRequest)
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_request(
     model: &Model,
     context: &LlmContext,
@@ -469,7 +476,7 @@ fn parse_cloud_code_sse_data(data: &str) -> Vec<AssistantMessageEvent> {
                     let provided_id = fc.get("id").and_then(|v| v.as_str());
                     let counter = TOOL_CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
                     let tool_call_id = provided_id
-                        .filter(|_| !provided_id.is_some()) // simplification: always generate
+                        .filter(|_| provided_id.is_none()) // simplification: always generate
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| format!("{name}_{counter}"));
 

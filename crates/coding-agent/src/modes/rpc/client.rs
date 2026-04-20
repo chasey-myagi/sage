@@ -140,17 +140,17 @@ impl RpcClient {
             read_jsonl_lines(reader, |line| {
                 if let Ok(data) = serde_json::from_str::<Value>(&line) {
                     // Check if it's a response to a pending request
-                    if data.get("type").and_then(|v| v.as_str()) == Some("response") {
-                        if let Some(id) = data.get("id").and_then(|v| v.as_str()) {
-                            let mut reqs = pending_requests.lock().unwrap();
-                            if let Some(mut pending) = reqs.remove(id) {
-                                if let Ok(response) = serde_json::from_value::<RpcResponse>(data) {
-                                    if let Some(resolve) = pending.resolve.take() {
-                                        resolve(response);
-                                    }
-                                }
-                                return;
+                    if data.get("type").and_then(|v| v.as_str()) == Some("response")
+                        && let Some(id) = data.get("id").and_then(|v| v.as_str())
+                    {
+                        let mut reqs = pending_requests.lock().unwrap();
+                        if let Some(mut pending) = reqs.remove(id) {
+                            if let Ok(response) = serde_json::from_value::<RpcResponse>(data)
+                                && let Some(resolve) = pending.resolve.take()
+                            {
+                                resolve(response);
                             }
+                            return;
                         }
                     }
 
@@ -178,16 +178,13 @@ impl RpcClient {
         std::thread::sleep(Duration::from_millis(100));
 
         // Check if process exited immediately
-        match child.try_wait()? {
-            Some(status) => {
-                let err_msg = self.stderr.lock().unwrap().clone();
-                anyhow::bail!(
-                    "Agent process exited immediately with status {:?}. Stderr: {}",
-                    status,
-                    err_msg
-                );
-            }
-            None => {}
+        if let Some(status) = child.try_wait()? {
+            let err_msg = self.stderr.lock().unwrap().clone();
+            anyhow::bail!(
+                "Agent process exited immediately with status {:?}. Stderr: {}",
+                status,
+                err_msg
+            );
         }
 
         self.stdin = Some(stdin);

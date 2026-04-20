@@ -8,7 +8,6 @@ use tui::components::spacer::Spacer;
 use tui::components::text::Text;
 use tui::tui::{Component, Container};
 
-use crate::modes::interactive::components::dynamic_border::DynamicBorder;
 use crate::modes::interactive::components::keybinding_hints::key_hint;
 use crate::modes::interactive::theme::{ThemeBg, ThemeColor, get_theme};
 
@@ -154,9 +153,9 @@ impl ToolExecutionComponent {
         };
         content
             .iter()
-            .filter_map(|c| match c {
-                ToolResultContent::Text { text } => Some(text.clone()),
-                ToolResultContent::Image { .. } => Some("[image]".to_string()),
+            .map(|c| match c {
+                ToolResultContent::Text { text } => text.clone(),
+                ToolResultContent::Image { .. } => "[image]".to_string(),
             })
             .collect()
     }
@@ -179,18 +178,18 @@ impl Component for ToolExecutionComponent {
         );
 
         // Box with colored background
-        let bg_key = self.bg_color_key();
+        let _bg_key = self.bg_color_key();
         let mut box_content = Container::new();
         box_content.add_child(Box::new(Text::new(title_line, 1, 0)));
 
         if self.expanded {
-            if let Some(result_lines) = Some(self.render_result_text()) {
-                if !result_lines.is_empty() {
-                    box_content.add_child(Box::new(Spacer::new(1)));
-                    for line in result_lines {
-                        let colored = t.fg(ThemeColor::ToolOutput, &line);
-                        box_content.add_child(Box::new(Text::new(colored, 1, 0)));
-                    }
+            if let Some(result_lines) = Some(self.render_result_text())
+                && !result_lines.is_empty()
+            {
+                box_content.add_child(Box::new(Spacer::new(1)));
+                for line in result_lines {
+                    let colored = t.fg(ThemeColor::ToolOutput, &line);
+                    box_content.add_child(Box::new(Text::new(colored, 1, 0)));
                 }
             }
 

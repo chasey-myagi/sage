@@ -67,25 +67,25 @@ pub(crate) fn resolve_api_key(options_key: Option<&str>) -> Option<String> {
 
 /// Resolve the GCP project ID from environment variables.
 pub(crate) fn resolve_project() -> Result<String, String> {
-    if let Ok(p) = std::env::var("GOOGLE_CLOUD_PROJECT") {
-        if !p.is_empty() {
-            return Ok(p);
-        }
+    if let Ok(p) = std::env::var("GOOGLE_CLOUD_PROJECT")
+        && !p.is_empty()
+    {
+        return Ok(p);
     }
-    if let Ok(p) = std::env::var("GCLOUD_PROJECT") {
-        if !p.is_empty() {
-            return Ok(p);
-        }
+    if let Ok(p) = std::env::var("GCLOUD_PROJECT")
+        && !p.is_empty()
+    {
+        return Ok(p);
     }
     Err("Vertex AI requires a project ID. Set GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT.".into())
 }
 
 /// Resolve the GCP location from environment variables.
 pub(crate) fn resolve_location() -> Result<String, String> {
-    if let Ok(l) = std::env::var("GOOGLE_CLOUD_LOCATION") {
-        if !l.is_empty() {
-            return Ok(l);
-        }
+    if let Ok(l) = std::env::var("GOOGLE_CLOUD_LOCATION")
+        && !l.is_empty()
+    {
+        return Ok(l);
     }
     Err("Vertex AI requires a location. Set GOOGLE_CLOUD_LOCATION.".into())
 }

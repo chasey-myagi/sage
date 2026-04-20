@@ -54,12 +54,11 @@ impl super::AgentTool for WriteTool {
         };
 
         let path = std::path::Path::new(&file_path);
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    return error_output(&format!("Failed to create parent directory: {e}"));
-                }
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            return error_output(&format!("Failed to create parent directory: {e}"));
         }
 
         match self.0.write_file(&file_path, content.as_bytes()).await {

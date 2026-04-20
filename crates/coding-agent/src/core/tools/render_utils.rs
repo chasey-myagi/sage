@@ -15,10 +15,10 @@ use std::env;
 ///
 /// Mirrors `shortenPath()` from `render-utils.ts`.
 pub fn shorten_path(path: &str) -> String {
-    if let Ok(home) = env::var("HOME") {
-        if path.starts_with(&home) {
-            return format!("~{}", &path[home.len()..]);
-        }
+    if let Ok(home) = env::var("HOME")
+        && path.starts_with(&home)
+    {
+        return format!("~{}", &path[home.len()..]);
     }
     path.to_string()
 }

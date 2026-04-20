@@ -68,24 +68,24 @@ pub struct OverflowCheck<'a> {
 ///    `context_window` is supplied.
 pub fn is_context_overflow(msg: &OverflowCheck<'_>, context_window: Option<u64>) -> bool {
     // Case 1: error-based overflow
-    if msg.stop_reason == StopReason::Error {
-        if let Some(err) = msg.error_message {
-            if OVERFLOW_PATTERNS.iter().any(|p| p.is_match(err)) {
-                return true;
-            }
-            if CEREBRAS_NO_BODY.is_match(err) {
-                return true;
-            }
+    if msg.stop_reason == StopReason::Error
+        && let Some(err) = msg.error_message
+    {
+        if OVERFLOW_PATTERNS.iter().any(|p| p.is_match(err)) {
+            return true;
+        }
+        if CEREBRAS_NO_BODY.is_match(err) {
+            return true;
         }
     }
 
     // Case 2: silent overflow (successful stop, usage > window)
-    if let Some(window) = context_window {
-        if msg.stop_reason == StopReason::Stop {
-            let input_tokens = msg.usage.input + msg.usage.cache_read;
-            if input_tokens > window {
-                return true;
-            }
+    if let Some(window) = context_window
+        && msg.stop_reason == StopReason::Stop
+    {
+        let input_tokens = msg.usage.input + msg.usage.cache_read;
+        if input_tokens > window {
+            return true;
         }
     }
 

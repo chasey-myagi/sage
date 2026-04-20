@@ -68,6 +68,7 @@ impl<T: ?Sized + LlmProvider> LlmProvider for Arc<T> {
 /// Configuration for the agent loop.
 ///
 /// Mirrors pi-mono's AgentLoopConfig interface.
+#[allow(clippy::type_complexity)]
 pub struct AgentLoopConfig {
     pub model: Model,
 
@@ -346,7 +347,7 @@ async fn run_loop(
             // at a lower threshold to strip old tool results and thinking blocks.
             if let Some(ref settings) = config.compaction_settings {
                 let context_tokens = calculate_context_tokens(&assistant_message.usage);
-                let context_window = config.model.context_window as u32;
+                let context_window = config.model.context_window;
 
                 let overflow = is_context_overflow(&assistant_message, context_window);
                 let needs_compact =
@@ -449,7 +450,7 @@ async fn stream_assistant_response(
     config: &AgentLoopConfig,
     provider: Arc<dyn LlmProvider>,
     emit: &Arc<dyn Fn(AgentEvent) + Send + Sync>,
-    token: Option<CancellationToken>,
+    _token: Option<CancellationToken>,
 ) -> AssistantMessage {
     let messages = if let Some(transform) = &config.transform_context {
         transform(context.messages.clone()).await
@@ -482,7 +483,6 @@ async fn stream_assistant_response(
 
     let mut accum = MessageAccumulator::new();
     let mut emitted_start = false;
-    let mut last_delta = String::new();
 
     for event in &events {
         match event {
@@ -496,12 +496,11 @@ async fn stream_assistant_response(
                     context.messages.push(AgentMessage::Assistant(partial));
                 }
                 accum.text.push_str(delta);
-                last_delta = delta.clone();
                 let partial = accum.build_partial(&config.model);
                 *context.messages.last_mut().unwrap() = AgentMessage::Assistant(partial.clone());
                 emit(AgentEvent::MessageUpdate {
                     message: AgentMessage::Assistant(partial),
-                    delta: last_delta.clone(),
+                    delta: delta.clone(),
                 });
             }
             AssistantMessageEvent::ThinkingDelta(delta) => {
@@ -819,6 +818,7 @@ async fn execute_tool_calls_parallel(
     token: Option<CancellationToken>,
 ) -> Vec<ToolResultMessage> {
     let mut immediate_results: Vec<(usize, ToolResultMessage)> = Vec::new();
+    #[allow(clippy::type_complexity)]
     let mut runnable: Vec<(
         usize,
         String,
@@ -1060,6 +1060,7 @@ async fn execute_prepared_tool_call(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn finalize_tool_call(
     context: &AgentContext,
     assistant_message: &AssistantMessage,
@@ -1145,7 +1146,7 @@ fn create_error_result(message: &str) -> AgentToolResult {
 pub fn default_convert_to_llm(messages: &[AgentMessage]) -> Vec<LlmMessage> {
     messages
         .iter()
-        .filter_map(|msg| match msg {
+        .map(|msg| match msg {
             AgentMessage::User(u) => {
                 let content = u
                     .content
@@ -1158,7 +1159,7 @@ pub fn default_convert_to_llm(messages: &[AgentMessage]) -> Vec<LlmMessage> {
                         _ => None,
                     })
                     .collect();
-                Some(LlmMessage::User { content })
+                LlmMessage::User { content }
             }
             AgentMessage::Assistant(a) => {
                 let text: String = a
@@ -1206,11 +1207,11 @@ pub fn default_convert_to_llm(messages: &[AgentMessage]) -> Vec<LlmMessage> {
                     })
                     .collect();
 
-                Some(LlmMessage::Assistant {
+                LlmMessage::Assistant {
                     content: text,
                     tool_calls,
                     thinking_blocks,
-                })
+                }
             }
             AgentMessage::ToolResult(r) => {
                 let content: String = r
@@ -1221,18 +1222,18 @@ pub fn default_convert_to_llm(messages: &[AgentMessage]) -> Vec<LlmMessage> {
                         _ => None,
                     })
                     .collect();
-                Some(LlmMessage::Tool {
+                LlmMessage::Tool {
                     tool_call_id: r.tool_call_id.clone(),
                     content,
                     tool_name: Some(r.tool_name.clone()),
-                })
+                }
             }
-            AgentMessage::CompactionSummary(cs) => Some(LlmMessage::User {
+            AgentMessage::CompactionSummary(cs) => LlmMessage::User {
                 content: vec![LlmContent::Text(format!(
                     "[Previous conversation summary]\n\n{}",
                     cs.summary
                 ))],
-            }),
+            },
         })
         .collect()
 }
@@ -1243,7 +1244,7 @@ pub fn default_convert_to_llm(messages: &[AgentMessage]) -> Vec<LlmMessage> {
 mod loop_tests {
     use super::*;
     use crate::test_helpers::{StatefulProvider, test_model};
-    use ai::types::{AssistantMessageEvent, StopReason as SR, Usage};
+    use ai::types::{AssistantMessageEvent, StopReason as SR};
     use std::sync::{Arc, Mutex};
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -1285,13 +1286,13 @@ mod loop_tests {
         AgentMessage::User(UserMessage::from_text(text))
     }
 
-    fn make_config(provider: Arc<dyn LlmProvider>) -> Arc<AgentLoopConfig> {
+    fn make_config(_provider: Arc<dyn LlmProvider>) -> Arc<AgentLoopConfig> {
         Arc::new(AgentLoopConfig {
             model: test_model(),
             system_prompt: "You are helpful.".into(),
             tool_execution: ToolExecutionMode::Parallel,
             tools: vec![],
-            convert_to_llm: Box::new(|msgs| default_convert_to_llm(msgs)),
+            convert_to_llm: Box::new(default_convert_to_llm),
             transform_context: None,
             get_steering_messages: None,
             get_follow_up_messages: None,
@@ -1307,6 +1308,7 @@ mod loop_tests {
         Arc::new(|_| {})
     }
 
+    #[allow(clippy::type_complexity)]
     fn collecting_emit() -> (
         Arc<dyn Fn(AgentEvent) + Send + Sync>,
         Arc<Mutex<Vec<AgentEvent>>>,
@@ -1387,7 +1389,7 @@ mod loop_tests {
             system_prompt: "You are helpful.".into(),
             tool_execution: ToolExecutionMode::Sequential,
             tools: vec![],
-            convert_to_llm: Box::new(|msgs| default_convert_to_llm(msgs)),
+            convert_to_llm: Box::new(default_convert_to_llm),
             transform_context: Some(Box::new(move |msgs: Vec<AgentMessage>| {
                 let count = Arc::clone(&transformed_count_clone);
                 Box::pin(async move {
@@ -1472,7 +1474,7 @@ mod loop_tests {
             system_prompt: String::new(),
             tool_execution: ToolExecutionMode::Sequential,
             tools: vec![Arc::new(EchoTool) as Arc<dyn AgentTool>],
-            convert_to_llm: Box::new(|msgs| default_convert_to_llm(msgs)),
+            convert_to_llm: Box::new(default_convert_to_llm),
             transform_context: None,
             get_steering_messages: None,
             get_follow_up_messages: None,
@@ -1540,7 +1542,7 @@ mod loop_tests {
             }
             async fn execute(
                 &self,
-                id: &str,
+                _id: &str,
                 args: serde_json::Value,
                 _signal: Option<tokio_util::sync::CancellationToken>,
                 _on_update: Option<&crate::types::OnUpdateFn>,
@@ -1606,7 +1608,7 @@ mod loop_tests {
                 first_notified: Arc::clone(&first_notified),
                 first_done: Arc::clone(&first_done),
             }) as Arc<dyn AgentTool>],
-            convert_to_llm: Box::new(|msgs| default_convert_to_llm(msgs)),
+            convert_to_llm: Box::new(default_convert_to_llm),
             transform_context: None,
             get_steering_messages: None,
             get_follow_up_messages: None,
@@ -1745,7 +1747,7 @@ mod loop_tests {
             system_prompt: String::new(),
             tool_execution: ToolExecutionMode::Sequential,
             tools: vec![Arc::new(CountingEcho { count: ec }) as Arc<dyn AgentTool>],
-            convert_to_llm: Box::new(|msgs| default_convert_to_llm(msgs)),
+            convert_to_llm: Box::new(default_convert_to_llm),
             transform_context: None,
             get_steering_messages: Some(Box::new(move || {
                 let delivered = Arc::clone(&delivered_clone);
@@ -1794,10 +1796,10 @@ mod loop_tests {
                 AgentEvent::MessageStart {
                     message: AgentMessage::User(u),
                 } => {
-                    if let Some(Content::Text { text }) = u.content.first() {
-                        if text == "interrupt" {
-                            return Some("interrupt".to_string());
-                        }
+                    if let Some(Content::Text { text }) = u.content.first()
+                        && text == "interrupt"
+                    {
+                        return Some("interrupt".to_string());
                     }
                     None
                 }

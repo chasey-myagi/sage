@@ -58,7 +58,7 @@ fn detect_image_mime_type(path: &Path) -> Option<&'static str> {
 /// Mirrors `processFileArguments()` from TypeScript.
 pub fn process_file_arguments(
     file_args: &[String],
-    options: Option<&ProcessFileOptions>,
+    _options: Option<&ProcessFileOptions>,
 ) -> Result<ProcessedFiles, String> {
     let mut result = ProcessedFiles::default();
 
@@ -107,18 +107,17 @@ pub fn process_file_arguments(
 
 fn expand_path(p: &str) -> std::path::PathBuf {
     let trimmed = p.trim();
-    if let Some(rest) = trimmed.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
+    if let Some(rest) = trimmed.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
     }
     std::path::PathBuf::from(trimmed)
 }
 
 fn base64_encode(data: &[u8]) -> String {
-    use std::fmt::Write;
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as usize;
         let b1 = if chunk.len() > 1 {
@@ -132,7 +131,7 @@ fn base64_encode(data: &[u8]) -> String {
             0
         };
 
-        out.push(CHARS[(b0 >> 2)] as char);
+        out.push(CHARS[b0 >> 2] as char);
         out.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);
         if chunk.len() > 1 {
             out.push(CHARS[((b1 & 0xf) << 2) | (b2 >> 6)] as char);

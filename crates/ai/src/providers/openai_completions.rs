@@ -24,6 +24,12 @@ pub struct OpenAiCompletionsProvider {
     client: Client,
 }
 
+impl Default for OpenAiCompletionsProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpenAiCompletionsProvider {
     pub fn new() -> Self {
         Self {
@@ -203,10 +209,10 @@ impl OpenAiCompletionsProvider {
                         "content": content,
                     });
                     // pi-mono: requiresToolResultName — add "name" field when provider needs it.
-                    if compat.requires_tool_result_name {
-                        if let Some(name) = tool_name {
-                            tool_msg["name"] = json!(name);
-                        }
+                    if compat.requires_tool_result_name
+                        && let Some(name) = tool_name
+                    {
+                        tool_msg["name"] = json!(name);
                     }
                     messages.push(tool_msg);
                     last_role = "tool";

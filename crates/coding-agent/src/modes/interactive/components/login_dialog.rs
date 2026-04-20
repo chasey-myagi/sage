@@ -31,6 +31,7 @@ pub struct LoginDialogComponent {
     provider_name: String,
     state: LoginDialogState,
     input_buffer: String,
+    #[allow(clippy::type_complexity)]
     on_complete: Option<Box<dyn Fn(bool, Option<String>) + Send>>,
 }
 

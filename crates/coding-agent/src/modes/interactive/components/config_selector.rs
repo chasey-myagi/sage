@@ -128,6 +128,7 @@ pub struct ConfigSelectorComponent {
 
     pub on_cancel: Option<Box<dyn Fn() + Send>>,
     pub on_exit: Option<Box<dyn Fn() + Send>>,
+    #[allow(clippy::type_complexity)]
     pub on_toggle: Option<Box<dyn Fn(&ResourceItem, bool) + Send>>,
 }
 
@@ -191,13 +192,12 @@ impl ConfigSelectorComponent {
             .iter()
             .enumerate()
             .filter_map(|(i, entry)| {
-                if let FlatEntry::Item(item) = entry {
-                    if item.display_name.to_lowercase().contains(&lower)
+                if let FlatEntry::Item(item) = entry
+                    && (item.display_name.to_lowercase().contains(&lower)
                         || item.resource_type.label().to_lowercase().contains(&lower)
-                        || item.path.to_lowercase().contains(&lower)
-                    {
-                        return Some(i);
-                    }
+                        || item.path.to_lowercase().contains(&lower))
+                {
+                    return Some(i);
                 }
                 None
             })
@@ -270,29 +270,29 @@ impl ConfigSelectorComponent {
     /// Toggle the currently selected item.
     pub fn toggle_selected(&mut self) {
         let filtered_idx = self.selected_index;
-        if let Some(&flat_idx) = self.filtered_items.get(filtered_idx) {
-            if let FlatEntry::Item(item) = &self.flat_items[flat_idx] {
-                let new_enabled = !item.enabled;
-                let item_clone = item.clone();
-                // Update in flat_items
-                if let FlatEntry::Item(ref mut i) = self.flat_items[flat_idx] {
-                    i.enabled = new_enabled;
-                }
-                // Update in groups
-                for group in &mut self.groups {
-                    for subgroup in &mut group.subgroups {
-                        for grp_item in &mut subgroup.items {
-                            if grp_item.path == item_clone.path
-                                && grp_item.resource_type == item_clone.resource_type
-                            {
-                                grp_item.enabled = new_enabled;
-                            }
+        if let Some(&flat_idx) = self.filtered_items.get(filtered_idx)
+            && let FlatEntry::Item(item) = &self.flat_items[flat_idx]
+        {
+            let new_enabled = !item.enabled;
+            let item_clone = item.clone();
+            // Update in flat_items
+            if let FlatEntry::Item(ref mut i) = self.flat_items[flat_idx] {
+                i.enabled = new_enabled;
+            }
+            // Update in groups
+            for group in &mut self.groups {
+                for subgroup in &mut group.subgroups {
+                    for grp_item in &mut subgroup.items {
+                        if grp_item.path == item_clone.path
+                            && grp_item.resource_type == item_clone.resource_type
+                        {
+                            grp_item.enabled = new_enabled;
                         }
                     }
                 }
-                if let Some(cb) = &self.on_toggle {
-                    cb(&item_clone, new_enabled);
-                }
+            }
+            if let Some(cb) = &self.on_toggle {
+                cb(&item_clone, new_enabled);
             }
         }
     }

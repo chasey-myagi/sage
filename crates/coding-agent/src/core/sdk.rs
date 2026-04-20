@@ -35,8 +35,6 @@ fn thinking_level_from_str(s: &str) -> Option<ThinkingLevel> {
 }
 
 // Re-exports — mirrors the `export { ... }` block in sdk.ts.
-pub use crate::core::agent_session::{AgentSessionEvent, CompactionResult};
-pub use crate::core::tools::{all_llm_tools, coding_llm_tools, read_only_llm_tools};
 
 // ============================================================================
 // Options
@@ -120,17 +118,17 @@ pub fn create_agent_session(
         .settings_manager
         .unwrap_or_else(|| SettingsManager::create(&cwd, &agent_dir));
 
-    let thinking_level = options.thinking_level.unwrap_or_else(|| {
+    let _thinking_level = options.thinking_level.unwrap_or_else(|| {
         settings_manager
             .get_default_thinking_level()
-            .and_then(|s| thinking_level_from_str(s))
+            .and_then(thinking_level_from_str)
             .unwrap_or(ThinkingLevel::Medium)
     });
 
     let cwd_str = cwd.to_string_lossy().to_string();
     let session_dir = get_default_session_dir(&cwd_str, Some(&agent_dir));
 
-    let session_manager = options
+    let _session_manager = options
         .session_manager
         .unwrap_or_else(|| SessionManager::create(&cwd_str, Some(&session_dir)));
 

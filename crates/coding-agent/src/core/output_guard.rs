@@ -30,7 +30,6 @@ pub fn take_over_stdout() {
 
     #[cfg(unix)]
     {
-        use std::os::unix::io::RawFd;
         unsafe {
             // dup2(STDERR_FILENO, STDOUT_FILENO): redirect stdout → stderr
             libc::dup2(libc::STDERR_FILENO, libc::STDOUT_FILENO);

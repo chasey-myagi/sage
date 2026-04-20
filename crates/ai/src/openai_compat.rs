@@ -13,6 +13,12 @@ pub struct OpenAiCompatProvider {
     client: Client,
 }
 
+impl Default for OpenAiCompatProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpenAiCompatProvider {
     pub fn new() -> Self {
         Self {

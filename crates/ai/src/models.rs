@@ -5487,7 +5487,6 @@ pub fn construct_model_from_discovered(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::*;
 
     // ========================================================================
     // resolve_model

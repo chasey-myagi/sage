@@ -38,10 +38,10 @@ impl ModelEntry {
         if self.id.to_lowercase().contains(&pat) {
             return true;
         }
-        if let Some(name) = &self.name {
-            if name.to_lowercase().contains(&pat) {
-                return true;
-            }
+        if let Some(name) = &self.name
+            && name.to_lowercase().contains(&pat)
+        {
+            return true;
         }
         false
     }
@@ -166,7 +166,7 @@ impl ModelRegistry {
 
         // Exact ID match first
         let exact = self.models.iter().find(|m| {
-            let provider_match = provider.as_deref().map_or(true, |p| m.provider == p);
+            let provider_match = provider.as_deref().is_none_or(|p| m.provider == p);
             provider_match && m.id == model_pat_clean
         });
         if let Some(entry) = exact {
@@ -182,7 +182,7 @@ impl ModelRegistry {
             .models
             .iter()
             .filter(|m| {
-                let provider_match = provider.as_deref().map_or(true, |p| m.provider == p);
+                let provider_match = provider.as_deref().is_none_or(|p| m.provider == p);
                 provider_match && m.matches_pattern(model_pat_clean)
             })
             .collect();

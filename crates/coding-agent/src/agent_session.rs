@@ -11,7 +11,7 @@ use agent_core::agent::{Agent, AgentOptions};
 use agent_core::agent_loop::LlmProvider;
 use agent_core::tools::backend::LocalBackend;
 use agent_core::tools::{AgentTool as SimpleTool, ToolOutput, create_tool};
-use agent_core::types::{AgentToolResult, Content, OnUpdateFn};
+use agent_core::types::{AgentToolResult, OnUpdateFn};
 use ai::registry::{ApiProviderRegistry, StreamOptions};
 use ai::types::{AssistantMessageEvent, InputType, Model, ModelCost};
 

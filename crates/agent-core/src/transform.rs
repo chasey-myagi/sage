@@ -195,7 +195,7 @@ pub fn skip_empty_assistant_messages(messages: &mut Vec<LlmMessage>) {
 }
 
 /// Normalize tool-call IDs across all messages for cross-provider compatibility.
-pub fn normalize_tool_call_ids(messages: &mut Vec<LlmMessage>, max_len: usize) {
+pub fn normalize_tool_call_ids(messages: &mut [LlmMessage], max_len: usize) {
     let mut id_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
     for msg in messages.iter() {

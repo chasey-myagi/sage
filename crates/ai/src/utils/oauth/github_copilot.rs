@@ -81,10 +81,10 @@ fn get_base_url_from_token(token: &str) -> Option<String> {
 ///
 /// Mirrors `getGitHubCopilotBaseUrl()` from `github-copilot.ts`.
 pub fn get_github_copilot_base_url(token: Option<&str>, enterprise_domain: Option<&str>) -> String {
-    if let Some(tok) = token {
-        if let Some(url) = get_base_url_from_token(tok) {
-            return url;
-        }
+    if let Some(tok) = token
+        && let Some(url) = get_base_url_from_token(tok)
+    {
+        return url;
     }
     if let Some(domain) = enterprise_domain {
         return format!("https://copilot-api.{domain}");

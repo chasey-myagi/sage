@@ -197,8 +197,7 @@ pub fn save_keybindings_to_file(path: &Path, config: &KeybindingsConfig) -> std:
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let json = serde_json::to_string_pretty(config)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;
     std::fs::write(path, format!("{json}\n"))
 }
 
@@ -210,7 +209,7 @@ pub fn save_keybindings_to_file(path: &Path, config: &KeybindingsConfig) -> std:
 pub fn migrate_keybindings_config_file(agent_dir: Option<&Path>) -> bool {
     let dir = agent_dir
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(get_agent_dir()));
+        .unwrap_or_else(get_agent_dir);
     let path = dir.join("keybindings.json");
 
     if !path.exists() {
@@ -258,7 +257,7 @@ impl KeybindingsManager {
     pub fn create(agent_dir: Option<&Path>) -> Self {
         let dir = agent_dir
             .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from(get_agent_dir()));
+            .unwrap_or_else(get_agent_dir);
         let config_path = dir.join("keybindings.json");
         let user_bindings = load_keybindings_from_file(&config_path);
         Self {

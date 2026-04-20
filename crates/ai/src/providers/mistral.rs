@@ -27,6 +27,12 @@ pub struct MistralProvider {
     client: Client,
 }
 
+impl Default for MistralProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MistralProvider {
     pub fn new() -> Self {
         Self {
@@ -292,11 +298,11 @@ fn build_messages(
 
                 if !chunks.is_empty() {
                     // If single text chunk, can use string shorthand
-                    if chunks.len() == 1 {
-                        if let Some(text) = chunks[0].get("text").and_then(|v| v.as_str()) {
-                            result.push(json!({ "role": "user", "content": text }));
-                            continue;
-                        }
+                    if chunks.len() == 1
+                        && let Some(text) = chunks[0].get("text").and_then(|v| v.as_str())
+                    {
+                        result.push(json!({ "role": "user", "content": text }));
+                        continue;
                     }
                     result.push(json!({ "role": "user", "content": chunks }));
                 } else if had_images && !supports_images {
@@ -445,16 +451,16 @@ fn build_chat_payload(
     // System prompt prepended as system message (pi-mono does this in buildChatPayload)
     // Note: already handled in build_messages via LlmMessage::System; but pi-mono also
     // unshifts context.systemPrompt. Handle here for the context-level system prompt.
-    if !context.system_prompt.is_empty() {
-        if let Some(msgs) = body["messages"].as_array_mut() {
-            msgs.insert(
-                0,
-                json!({
-                    "role": "system",
-                    "content": context.system_prompt,
-                }),
-            );
-        }
+    if !context.system_prompt.is_empty()
+        && let Some(msgs) = body["messages"].as_array_mut()
+    {
+        msgs.insert(
+            0,
+            json!({
+                "role": "system",
+                "content": context.system_prompt,
+            }),
+        );
     }
 
     // Tools (pi-mono: toFunctionTools)
@@ -583,12 +589,13 @@ fn process_sse_line(
     };
 
     // Finish reason
-    if let Some(finish_reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
-        if !finish_reason.is_empty() && finish_reason != "null" {
-            events.push(AssistantMessageEvent::Done {
-                stop_reason: map_stop_reason(finish_reason),
-            });
-        }
+    if let Some(finish_reason) = choice.get("finish_reason").and_then(|v| v.as_str())
+        && !finish_reason.is_empty()
+        && finish_reason != "null"
+    {
+        events.push(AssistantMessageEvent::Done {
+            stop_reason: map_stop_reason(finish_reason),
+        });
     }
 
     // Usage in the chunk (Mistral sometimes sends it here)
@@ -621,57 +628,51 @@ fn process_sse_line(
     };
 
     // Text content delta — can be string or array of content chunks
-    if let Some(content_val) = delta.get("content") {
-        if !content_val.is_null() {
-            match content_val {
-                Value::String(text) => {
-                    if !text.is_empty() {
-                        events.push(AssistantMessageEvent::TextDelta(text.clone()));
-                    }
+    if let Some(content_val) = delta.get("content")
+        && !content_val.is_null()
+    {
+        match content_val {
+            Value::String(text) => {
+                if !text.is_empty() {
+                    events.push(AssistantMessageEvent::TextDelta(text.clone()));
                 }
-                Value::Array(items) => {
-                    for item in items {
-                        match item.get("type").and_then(|t| t.as_str()) {
-                            Some("text") => {
-                                if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                                    if !text.is_empty() {
-                                        events.push(AssistantMessageEvent::TextDelta(
-                                            text.to_string(),
-                                        ));
-                                    }
-                                }
-                            }
-                            Some("thinking") => {
-                                // pi-mono: thinking chunks are arrays of {type:"text", text:...}
-                                if let Some(parts) = item.get("thinking").and_then(|t| t.as_array())
-                                {
-                                    let thinking_text: String = parts
-                                        .iter()
-                                        .filter_map(|p| {
-                                            if p.get("type").and_then(|t| t.as_str())
-                                                == Some("text")
-                                            {
-                                                p.get("text")
-                                                    .and_then(|t| t.as_str())
-                                                    .map(|s| s.to_string())
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect();
-                                    if !thinking_text.is_empty() {
-                                        events.push(AssistantMessageEvent::ThinkingDelta(
-                                            thinking_text,
-                                        ));
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                _ => {}
             }
+            Value::Array(items) => {
+                for item in items {
+                    match item.get("type").and_then(|t| t.as_str()) {
+                        Some("text") => {
+                            if let Some(text) = item.get("text").and_then(|t| t.as_str())
+                                && !text.is_empty()
+                            {
+                                events.push(AssistantMessageEvent::TextDelta(text.to_string()));
+                            }
+                        }
+                        Some("thinking") => {
+                            // pi-mono: thinking chunks are arrays of {type:"text", text:...}
+                            if let Some(parts) = item.get("thinking").and_then(|t| t.as_array()) {
+                                let thinking_text: String = parts
+                                    .iter()
+                                    .filter_map(|p| {
+                                        if p.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                            p.get("text")
+                                                .and_then(|t| t.as_str())
+                                                .map(|s| s.to_string())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+                                if !thinking_text.is_empty() {
+                                    events
+                                        .push(AssistantMessageEvent::ThinkingDelta(thinking_text));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -688,7 +689,7 @@ fn process_sse_line(
             let fallback_id = format!("toolcall:{index}");
             let raw_id = call_id_raw.unwrap_or(&fallback_id);
 
-            if !active_tool_calls.contains_key(&index) {
+            active_tool_calls.entry(index).or_insert_with(|| {
                 // First chunk for this tool call index
                 let normalized_id = normalizer.normalize(raw_id);
                 let name = tool_call
@@ -702,14 +703,11 @@ fn process_sse_line(
                     id: normalized_id.clone(),
                     name,
                 });
-                active_tool_calls.insert(
-                    index,
-                    ActiveToolCall {
-                        id: normalized_id,
-                        partial_args: String::new(),
-                    },
-                );
-            }
+                ActiveToolCall {
+                    id: normalized_id,
+                    partial_args: String::new(),
+                }
+            });
 
             // Argument delta
             if let Some(atc) = active_tool_calls.get_mut(&index) {
@@ -731,11 +729,11 @@ fn process_sse_line(
     }
 
     // If finish reason was tool_calls, emit ToolCallEnd for all active tool calls
-    if let Some(finish_reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
-        if finish_reason == "tool_calls" {
-            for (_, atc) in active_tool_calls.drain() {
-                events.push(AssistantMessageEvent::ToolCallEnd { id: atc.id });
-            }
+    if let Some(finish_reason) = choice.get("finish_reason").and_then(|v| v.as_str())
+        && finish_reason == "tool_calls"
+    {
+        for (_, atc) in active_tool_calls.drain() {
+            events.push(AssistantMessageEvent::ToolCallEnd { id: atc.id });
         }
     }
 }

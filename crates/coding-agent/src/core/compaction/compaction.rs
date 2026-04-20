@@ -8,7 +8,7 @@ use crate::core::compaction::utils::{
     FileOperations, SUMMARIZATION_SYSTEM_PROMPT, compute_file_lists, create_file_ops,
     extract_file_ops_from_message, format_file_operations, serialize_conversation,
 };
-use crate::core::session_manager::{CompactionEntry, SessionEntry};
+use crate::core::session_manager::SessionEntry;
 
 // ============================================================================
 // Types
@@ -59,10 +59,10 @@ pub const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = CompactionSettings {
 
 /// Calculate total context tokens from a usage Value.
 pub fn calculate_context_tokens(usage: &Value) -> u64 {
-    if let Some(total) = usage.get("totalTokens").and_then(|t| t.as_u64()) {
-        if total > 0 {
-            return total;
-        }
+    if let Some(total) = usage.get("totalTokens").and_then(|t| t.as_u64())
+        && total > 0
+    {
+        return total;
     }
     let input = usage.get("input").and_then(|v| v.as_u64()).unwrap_or(0);
     let output = usage.get("output").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -90,10 +90,10 @@ fn get_assistant_usage(msg: &Value) -> Option<&Value> {
 /// Find the last non-aborted assistant message usage from session entries.
 pub fn get_last_assistant_usage(entries: &[SessionEntry]) -> Option<Value> {
     for entry in entries.iter().rev() {
-        if let SessionEntry::Message(e) = entry {
-            if let Some(usage) = get_assistant_usage(&e.message) {
-                return Some(usage.clone());
-            }
+        if let SessionEntry::Message(e) = entry
+            && let Some(usage) = get_assistant_usage(&e.message)
+        {
+            return Some(usage.clone());
         }
     }
     None
@@ -122,7 +122,7 @@ pub fn estimate_context_tokens(messages: &[Value]) -> ContextUsageEstimate {
 
     if let Some((usage, idx)) = usage_info {
         let usage_tokens = calculate_context_tokens(&usage);
-        let trailing_tokens: u64 = messages[idx + 1..].iter().map(|m| estimate_tokens(m)).sum();
+        let trailing_tokens: u64 = messages[idx + 1..].iter().map(estimate_tokens).sum();
         ContextUsageEstimate {
             tokens: usage_tokens + trailing_tokens,
             usage_tokens,
@@ -130,7 +130,7 @@ pub fn estimate_context_tokens(messages: &[Value]) -> ContextUsageEstimate {
             last_usage_index: Some(idx),
         }
     } else {
-        let estimated: u64 = messages.iter().map(|m| estimate_tokens(m)).sum();
+        let estimated: u64 = messages.iter().map(estimate_tokens).sum();
         ContextUsageEstimate {
             tokens: estimated,
             usage_tokens: 0,
@@ -259,7 +259,7 @@ pub fn estimate_tokens(message: &Value) -> u64 {
             .unwrap_or(0),
         _ => 0,
     };
-    (chars as u64 + 3) / 4
+    (chars as u64).div_ceil(4)
 }
 
 // ============================================================================
@@ -272,8 +272,7 @@ fn find_valid_cut_points(
     end_index: usize,
 ) -> Vec<usize> {
     let mut cut_points = Vec::new();
-    for i in start_index..end_index {
-        let entry = &entries[i];
+    for (i, entry) in entries.iter().enumerate().take(end_index).skip(start_index) {
         match entry {
             SessionEntry::Message(e) => {
                 let role = e.message.get("role").and_then(|r| r.as_str()).unwrap_or("");
@@ -554,26 +553,22 @@ fn extract_file_operations(
     let mut file_ops = create_file_ops();
 
     // Collect from previous compaction's details (if pi-generated)
-    if let Some(idx) = prev_compaction_index {
-        if let SessionEntry::Compaction(prev) = &entries[idx] {
-            if prev.from_hook != Some(true) {
-                if let Some(details) = &prev.details {
-                    if let Some(read_files) = details.get("readFiles").and_then(|r| r.as_array()) {
-                        for f in read_files {
-                            if let Some(s) = f.as_str() {
-                                file_ops.read.insert(s.to_string());
-                            }
-                        }
-                    }
-                    if let Some(modified_files) =
-                        details.get("modifiedFiles").and_then(|m| m.as_array())
-                    {
-                        for f in modified_files {
-                            if let Some(s) = f.as_str() {
-                                file_ops.edited.insert(s.to_string());
-                            }
-                        }
-                    }
+    if let Some(idx) = prev_compaction_index
+        && let SessionEntry::Compaction(prev) = &entries[idx]
+        && prev.from_hook != Some(true)
+        && let Some(details) = &prev.details
+    {
+        if let Some(read_files) = details.get("readFiles").and_then(|r| r.as_array()) {
+            for f in read_files {
+                if let Some(s) = f.as_str() {
+                    file_ops.read.insert(s.to_string());
+                }
+            }
+        }
+        if let Some(modified_files) = details.get("modifiedFiles").and_then(|m| m.as_array()) {
+            for f in modified_files {
+                if let Some(s) = f.as_str() {
+                    file_ops.edited.insert(s.to_string());
                 }
             }
         }
@@ -835,10 +830,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::session_manager::{
-        CompactionEntry, ModelChangeEntry, SessionEntry, SessionMessageEntry,
-        ThinkingLevelChangeEntry,
-    };
+    use crate::core::session_manager::{CompactionEntry, SessionEntry, SessionMessageEntry};
 
     fn make_usage(input: u64, output: u64, cache_read: u64, cache_write: u64) -> Value {
         serde_json::json!({

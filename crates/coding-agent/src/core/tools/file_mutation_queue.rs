@@ -86,6 +86,7 @@ where
 /// Mirrors `withFileMutationQueue()` from `file-mutation-queue.ts` for async
 /// callers.  Acquires the per-file lock synchronously (briefly blocks) before
 /// driving `f()` to completion.
+#[allow(clippy::await_holding_lock)]
 pub async fn with_file_mutation_queue<T, Fut, F>(file_path: &str, f: F) -> T
 where
     F: FnOnce() -> Fut,

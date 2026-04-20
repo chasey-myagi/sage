@@ -127,10 +127,10 @@ impl ThinkingSelectorComponent {
 
     /// Confirm the current selection.
     pub fn confirm(&self) {
-        if let Some(level) = self.available_levels.get(self.selected_index) {
-            if let Some(cb) = &self.on_select {
-                cb(*level);
-            }
+        if let Some(level) = self.available_levels.get(self.selected_index)
+            && let Some(cb) = &self.on_select
+        {
+            cb(*level);
         }
     }
 

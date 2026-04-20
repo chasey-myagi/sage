@@ -85,23 +85,25 @@ impl ToolPolicy {
             "read" => {
                 // Empty allowed_read_paths = no read restrictions configured → pass through.
                 // This is consistent with grep/find/ls behavior below.
-                if let Some(p) = args.get("file_path").and_then(|v| v.as_str()) {
-                    if !self.allowed_read_paths.is_empty() && !self.is_read_allowed(p) {
-                        return Err(format!(
-                            "Read access to '{p}' is not allowed by tool policy"
-                        ));
-                    }
+                if let Some(p) = args.get("file_path").and_then(|v| v.as_str())
+                    && !self.allowed_read_paths.is_empty()
+                    && !self.is_read_allowed(p)
+                {
+                    return Err(format!(
+                        "Read access to '{p}' is not allowed by tool policy"
+                    ));
                 }
                 Ok(())
             }
             "write" | "edit" => {
                 // Empty allowed_write_paths = no write restrictions configured → pass through.
-                if let Some(p) = args.get("file_path").and_then(|v| v.as_str()) {
-                    if !self.allowed_write_paths.is_empty() && !self.is_write_allowed(p) {
-                        return Err(format!(
-                            "Write access to '{p}' is not allowed by tool policy"
-                        ));
-                    }
+                if let Some(p) = args.get("file_path").and_then(|v| v.as_str())
+                    && !self.allowed_write_paths.is_empty()
+                    && !self.is_write_allowed(p)
+                {
+                    return Err(format!(
+                        "Write access to '{p}' is not allowed by tool policy"
+                    ));
                 }
                 Ok(())
             }

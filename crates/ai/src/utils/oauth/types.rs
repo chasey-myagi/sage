@@ -67,6 +67,7 @@ pub struct OAuthAuthInfo {
 /// Mirrors `OAuthLoginCallbacks` from `types.ts`.
 /// In Rust the callbacks are boxed async closures / futures rather than
 /// JS-style function objects.
+#[allow(clippy::type_complexity)]
 pub struct OAuthLoginCallbacks {
     /// Called when the provider has an auth URL ready for the user.
     pub on_auth: Box<dyn Fn(OAuthAuthInfo) + Send + Sync>,

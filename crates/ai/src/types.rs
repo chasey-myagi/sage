@@ -413,7 +413,7 @@ mod tests {
         let mut map = HashMap::new();
         map.insert(ReasoningLevel::Low, "low_val".to_string());
         assert_eq!(map.get(&ReasoningLevel::Low).unwrap(), "low_val");
-        assert!(map.get(&ReasoningLevel::High).is_none());
+        assert!(!map.contains_key(&ReasoningLevel::High));
     }
 
     #[test]

@@ -254,7 +254,7 @@ impl SliceLen for [u8] {
 mod tests {
     use super::*;
     use crate::utils::photon::PhotonImage;
-    use image::{DynamicImage, RgbaImage};
+    use image::RgbaImage;
 
     fn make_2x1_image() -> PhotonImage {
         let img = RgbaImage::from_raw(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 255]).unwrap();

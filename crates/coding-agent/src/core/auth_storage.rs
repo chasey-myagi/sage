@@ -167,6 +167,7 @@ impl AuthStorageBackend for InMemoryAuthStorageBackend {
 /// 3. OAuth token from `auth.json` (auto-refreshed)
 /// 4. Environment variable
 /// 5. Fallback resolver (custom providers)
+#[allow(clippy::type_complexity)]
 pub struct AuthStorage {
     storage: Box<dyn AuthStorageBackend>,
     data: AuthStorageData,
@@ -311,10 +312,10 @@ impl AuthStorage {
         if std::env::var(format!("{}_API_KEY", provider.to_uppercase())).is_ok() {
             return true;
         }
-        if let Some(ref f) = self.fallback_resolver {
-            if f(provider).is_some() {
-                return true;
-            }
+        if let Some(ref f) = self.fallback_resolver
+            && f(provider).is_some()
+        {
+            return true;
         }
         false
     }
@@ -386,10 +387,10 @@ impl AuthStorage {
 
         // 4. Environment variable
         let env_var = format!("{}_API_KEY", provider_id.to_uppercase());
-        if let Ok(val) = std::env::var(&env_var) {
-            if !val.is_empty() {
-                return Some(val);
-            }
+        if let Ok(val) = std::env::var(&env_var)
+            && !val.is_empty()
+        {
+            return Some(val);
         }
 
         // 5. Fallback resolver

@@ -76,7 +76,7 @@ pub fn parse_command_args(args_string: &str) -> Vec<String> {
 pub fn substitute_args(content: &str, args: &[String]) -> String {
     // Step 1: Replace $1, $2, … (positional) — BEFORE wildcards
     let mut result = {
-        let mut s = content.to_string();
+        let s = content.to_string();
         // Collect replacements first to avoid index confusion
         let mut out = String::new();
         let bytes = s.as_bytes();
@@ -146,13 +146,13 @@ pub fn substitute_args(content: &str, args: &[String]) -> String {
 
 fn parse_frontmatter(raw: &str) -> (std::collections::HashMap<String, String>, String) {
     let mut front = std::collections::HashMap::new();
-    if raw.starts_with("---") {
-        let end = match raw[3..].find("---") {
-            Some(i) => i + 3,
+    if let Some(after_open) = raw.strip_prefix("---") {
+        let end = match after_open.find("---") {
+            Some(i) => i,
             None => return (front, raw.to_string()),
         };
-        let fm_section = &raw[3..end];
-        let body = raw[end + 3..].trim_start_matches('\n').to_string();
+        let fm_section = &after_open[..end];
+        let body = after_open[end + 3..].trim_start_matches('\n').to_string();
         for line in fm_section.lines() {
             if let Some(colon) = line.find(':') {
                 let key = line[..colon].trim().to_string();
@@ -208,10 +208,11 @@ fn load_templates_from_dir(
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_file() && path.extension().map_or(false, |e| e == "md") {
-            if let Some(t) = load_template_from_file(&path, get_source_info(&path)) {
-                templates.push(t);
-            }
+        if path.is_file()
+            && path.extension().is_some_and(|e| e == "md")
+            && let Some(t) = load_template_from_file(&path, get_source_info(&path))
+        {
+            templates.push(t);
         }
     }
 
@@ -267,10 +268,10 @@ pub fn load_prompt_templates(options: LoadPromptTemplatesOptions) -> Vec<PromptT
         }
         if resolved.is_dir() {
             templates.extend(load_templates_from_dir(&resolved, &get_source_info));
-        } else if resolved.extension().map_or(false, |e| e == "md") {
-            if let Some(t) = load_template_from_file(&resolved, get_source_info(&resolved)) {
-                templates.push(t);
-            }
+        } else if resolved.extension().is_some_and(|e| e == "md")
+            && let Some(t) = load_template_from_file(&resolved, get_source_info(&resolved))
+        {
+            templates.push(t);
         }
     }
 

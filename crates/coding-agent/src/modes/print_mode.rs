@@ -81,11 +81,11 @@ pub async fn run_print_mode<S: PrintModeSession>(
     let stdout = std::io::stdout();
 
     // Send initial message
-    if let Some(msg) = &options.initial_message {
-        if let Err(e) = session.prompt(msg).await {
-            eprintln!("Error: {e}");
-            exit_code = 1;
-        }
+    if let Some(msg) = &options.initial_message
+        && let Err(e) = session.prompt(msg).await
+    {
+        eprintln!("Error: {e}");
+        exit_code = 1;
     }
 
     // Send remaining messages

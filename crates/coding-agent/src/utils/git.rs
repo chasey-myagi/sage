@@ -48,10 +48,11 @@ fn split_ref(url: &str) -> (String, Option<String>) {
     // scp-like: `git@host:path[@ref]`
     if let Some(rest) = url.strip_prefix("git@") {
         if let Some((host, path)) = rest.split_once(':') {
-            if let Some((repo_path, ref_)) = path.split_once('@') {
-                if !repo_path.is_empty() && !ref_.is_empty() {
-                    return (format!("git@{host}:{repo_path}"), Some(ref_.to_string()));
-                }
+            if let Some((repo_path, ref_)) = path.split_once('@')
+                && !repo_path.is_empty()
+                && !ref_.is_empty()
+            {
+                return (format!("git@{host}:{repo_path}"), Some(ref_.to_string()));
             }
             return (url.to_string(), None);
         }
@@ -59,25 +60,25 @@ fn split_ref(url: &str) -> (String, Option<String>) {
     }
 
     // URL with scheme: split @ref from the pathname
-    if url.contains("://") {
-        if let Some(scheme_end) = url.find("://") {
-            let after_scheme = &url[scheme_end + 3..];
-            // host portion runs until the next `/`.
-            if let Some(slash) = after_scheme.find('/') {
-                let (host, path_part) = after_scheme.split_at(slash);
-                let path_part = &path_part[1..]; // skip the `/`
-                if let Some(at) = path_part.find('@') {
-                    let repo_path = &path_part[..at];
-                    let ref_ = &path_part[at + 1..];
-                    if !repo_path.is_empty() && !ref_.is_empty() {
-                        let new_url = format!("{}://{host}/{repo_path}", &url[..scheme_end]);
-                        let trimmed = new_url.trim_end_matches('/').to_string();
-                        return (trimmed, Some(ref_.to_string()));
-                    }
+    if url.contains("://")
+        && let Some(scheme_end) = url.find("://")
+    {
+        let after_scheme = &url[scheme_end + 3..];
+        // host portion runs until the next `/`.
+        if let Some(slash) = after_scheme.find('/') {
+            let (host, path_part) = after_scheme.split_at(slash);
+            let path_part = &path_part[1..]; // skip the `/`
+            if let Some(at) = path_part.find('@') {
+                let repo_path = &path_part[..at];
+                let ref_ = &path_part[at + 1..];
+                if !repo_path.is_empty() && !ref_.is_empty() {
+                    let new_url = format!("{}://{host}/{repo_path}", &url[..scheme_end]);
+                    let trimmed = new_url.trim_end_matches('/').to_string();
+                    return (trimmed, Some(ref_.to_string()));
                 }
             }
-            return (url.to_string(), None);
         }
+        return (url.to_string(), None);
     }
 
     // Bare form `host/path[@ref]`
@@ -157,10 +158,12 @@ fn parse_known_host(url: &str) -> Option<GitSource> {
     // `host:user/repo` shorthand (e.g. `github:user/repo`).
     if let Some((maybe_host, rest)) = repo_without_ref.split_once(':') {
         // Skip scp-like `git@host:path` which are handled by the generic parser.
-        if !maybe_host.contains('/') && !maybe_host.contains('.') && maybe_host != "git@" {
-            if let Some(domain) = resolve_host_shorthand(maybe_host) {
-                return finalize_shorthand(domain, rest, ref_);
-            }
+        if !maybe_host.contains('/')
+            && !maybe_host.contains('.')
+            && maybe_host != "git@"
+            && let Some(domain) = resolve_host_shorthand(maybe_host)
+        {
+            return finalize_shorthand(domain, rest, ref_);
         }
     }
 

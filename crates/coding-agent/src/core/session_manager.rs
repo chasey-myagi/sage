@@ -264,10 +264,10 @@ impl SessionEntry {
     pub fn message_text_content(&self) -> Option<String> {
         if let SessionEntry::Message(e) = self {
             let content = &e.message["content"];
-            if let Some(text) = content.as_str() {
-                if !text.is_empty() {
-                    return Some(text.to_string());
-                }
+            if let Some(text) = content.as_str()
+                && !text.is_empty()
+            {
+                return Some(text.to_string());
             }
             if let Some(arr) = content.as_array() {
                 let parts: Vec<&str> = arr
@@ -371,7 +371,7 @@ fn generate_id(by_id: &HashMap<String, SessionEntry>) -> String {
 // ============================================================================
 
 /// Migrate v1 → v2: add id/parentId tree structure.
-fn migrate_v1_to_v2(entries: &mut Vec<Value>) {
+fn migrate_v1_to_v2(entries: &mut [Value]) {
     let mut ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut prev_id: Option<String> = None;
 
@@ -416,7 +416,7 @@ fn migrate_v1_to_v2(entries: &mut Vec<Value>) {
 }
 
 /// Migrate v2 → v3: rename hookMessage role to custom.
-fn migrate_v2_to_v3(entries: &mut Vec<Value>) {
+fn migrate_v2_to_v3(entries: &mut [Value]) {
     for entry in entries.iter_mut() {
         let entry_type = entry
             .get("type")
@@ -431,23 +431,20 @@ fn migrate_v2_to_v3(entries: &mut Vec<Value>) {
             continue;
         }
 
-        if entry_type == "message" {
-            if let Some(role) = entry
+        if entry_type == "message"
+            && let Some(role) = entry
                 .get("message")
                 .and_then(|m| m.get("role"))
                 .and_then(|r| r.as_str())
-            {
-                if role == "hookMessage" {
-                    if let Some(msg) = entry.get_mut("message").and_then(|m| m.as_object_mut()) {
-                        msg.insert("role".to_string(), Value::String("custom".to_string()));
-                    }
-                }
-            }
+            && role == "hookMessage"
+            && let Some(msg) = entry.get_mut("message").and_then(|m| m.as_object_mut())
+        {
+            msg.insert("role".to_string(), Value::String("custom".to_string()));
         }
     }
 }
 
-fn migrate_to_current_version(entries: &mut Vec<Value>) -> bool {
+fn migrate_to_current_version(entries: &mut [Value]) -> bool {
     let version = entries
         .iter()
         .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("session"))
@@ -542,7 +539,7 @@ pub fn load_entries_from_file(file_path: &Path) -> Vec<Value> {
         Err(_) => return Vec::new(),
     };
 
-    let mut entries = parse_session_entries_raw(&content);
+    let entries = parse_session_entries_raw(&content);
 
     if entries.is_empty() {
         return entries;
@@ -762,21 +759,18 @@ pub fn build_session_context(
         // Emit kept messages (before compaction, starting from firstKeptEntryId)
         let first_kept_id = &compaction.first_kept_entry_id;
         let mut found_first_kept = false;
-        for i in 0..comp_idx {
-            let entry = path[i];
+        for &entry in path.iter().take(comp_idx) {
             if entry.id() == first_kept_id {
                 found_first_kept = true;
             }
-            if found_first_kept {
-                if let Some(msg) = append_message(entry) {
-                    messages.push(msg);
-                }
+            if found_first_kept && let Some(msg) = append_message(entry) {
+                messages.push(msg);
             }
         }
 
         // Emit messages after compaction
-        for i in (comp_idx + 1)..path.len() {
-            if let Some(msg) = append_message(path[i]) {
+        for &entry in path.iter().skip(comp_idx + 1) {
+            if let Some(msg) = append_message(entry) {
                 messages.push(msg);
             }
         }
@@ -1434,10 +1428,10 @@ impl SessionManager {
         details: Option<Value>,
         from_hook: Option<bool>,
     ) -> anyhow::Result<String> {
-        if let Some(id) = branch_from_id {
-            if !self.by_id.contains_key(id) {
-                anyhow::bail!("Entry {} not found", id);
-            }
+        if let Some(id) = branch_from_id
+            && !self.by_id.contains_key(id)
+        {
+            anyhow::bail!("Entry {} not found", id);
         }
         self.leaf_id = branch_from_id.map(|s| s.to_string());
 
@@ -1769,7 +1763,7 @@ async fn build_session_info(file_path: &Path) -> Option<SessionInfo> {
     let mtime: chrono::DateTime<Utc> = stats
         .modified()
         .ok()
-        .map(|t| chrono::DateTime::<Utc>::from(t))
+        .map(chrono::DateTime::<Utc>::from)
         .unwrap_or_else(Utc::now);
 
     let mut message_count = 0usize;
@@ -1903,7 +1897,7 @@ pub fn parse_session_entries(content: &str) -> Vec<Value> {
 }
 
 /// Apply migrations to a set of entries in-place.
-pub fn migrate_session_entries(entries: &mut Vec<Value>) {
+pub fn migrate_session_entries(entries: &mut [Value]) {
     migrate_to_current_version(entries);
 }
 

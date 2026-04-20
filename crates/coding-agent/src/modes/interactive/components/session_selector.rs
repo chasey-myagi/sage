@@ -72,6 +72,7 @@ pub struct SessionSelectorComponent {
     filtered: Vec<usize>,
     selected_index: usize,
     search_query: String,
+    #[allow(clippy::type_complexity)]
     on_select: Option<Box<dyn Fn(&SessionInfo) + Send>>,
     on_cancel: Option<Box<dyn Fn() + Send>>,
 }
@@ -133,10 +134,10 @@ impl SessionSelectorComponent {
                 true
             }
             "\r" | "\n" => {
-                if let Some(&idx) = self.filtered.get(self.selected_index) {
-                    if let Some(ref f) = self.on_select {
-                        f(&self.sessions[idx]);
-                    }
+                if let Some(&idx) = self.filtered.get(self.selected_index)
+                    && let Some(ref f) = self.on_select
+                {
+                    f(&self.sessions[idx]);
                 }
                 true
             }
@@ -151,7 +152,7 @@ impl SessionSelectorComponent {
                 self.refresh_filter();
                 true
             }
-            ch if ch.len() == 1 && ch.chars().next().map_or(false, |c| !c.is_control()) => {
+            ch if ch.len() == 1 && ch.chars().next().is_some_and(|c| !c.is_control()) => {
                 self.search_query.push_str(ch);
                 self.refresh_filter();
                 true

@@ -20,10 +20,6 @@ use self::jsonl::read_jsonl_lines;
 use self::types::RpcResponse;
 
 // Re-export commonly used types
-pub use types::{
-    QueueMode, RpcSessionState, RpcSlashCommand, SlashCommandSource, StreamingBehavior,
-    ThinkingLevel,
-};
 
 // ============================================================================
 // Session trait required by RPC mode
@@ -156,8 +152,7 @@ pub fn run_rpc_mode<S: RpcSession>(session: &mut S) -> anyhow::Result<()> {
         let parsed: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(e) => {
-                let resp =
-                    RpcResponse::err(None, "parse", &format!("Failed to parse command: {e}"));
+                let resp = RpcResponse::err(None, "parse", format!("Failed to parse command: {e}"));
                 output_json(&serde_json::to_value(resp).unwrap_or(Value::Null));
                 continue;
             }
@@ -404,7 +399,7 @@ fn handle_command<S: RpcSession>(
         unknown => serde_json::to_value(RpcResponse::err(
             id,
             unknown,
-            &format!("Unknown command: {unknown}"),
+            format!("Unknown command: {unknown}"),
         ))
         .unwrap(),
     }
@@ -413,7 +408,6 @@ fn handle_command<S: RpcSession>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn rpc_response_ok_no_data() {

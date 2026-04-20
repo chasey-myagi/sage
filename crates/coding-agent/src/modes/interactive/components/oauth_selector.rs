@@ -75,10 +75,10 @@ impl OAuthSelectorComponent {
 
     /// Confirm the current selection.
     pub fn confirm(&self) {
-        if let Some(provider) = self.providers.get(self.selected_index) {
-            if let Some(cb) = &self.on_select {
-                cb(provider.id.clone());
-            }
+        if let Some(provider) = self.providers.get(self.selected_index)
+            && let Some(cb) = &self.on_select
+        {
+            cb(provider.id.clone());
         }
     }
 

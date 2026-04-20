@@ -28,6 +28,7 @@ const MAX_OUTPUT_BYTES: usize = DEFAULT_MAX_BYTES * 2;
 // ============================================================================
 
 /// Options for [`execute_bash`].
+#[allow(clippy::type_complexity)]
 #[derive(Default)]
 pub struct BashExecutorOptions {
     /// Callback for streaming sanitized output chunks.
@@ -191,6 +192,7 @@ pub async fn execute_bash(
 
 /// Process a single chunk of output text: accumulate into rolling buffer, stream to callback,
 /// and write to temp file if threshold exceeded.
+#[allow(clippy::type_complexity)]
 fn process_chunk(
     text: &str,
     total_bytes: &mut usize,

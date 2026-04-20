@@ -65,15 +65,15 @@ impl super::AgentTool for ReadTool {
             None => return error_output("missing required parameter: file_path"),
         };
 
-        if let Some(n) = args.get("offset").and_then(|v| v.as_i64()) {
-            if n < 0 {
-                return error_output("offset must be non-negative");
-            }
+        if let Some(n) = args.get("offset").and_then(|v| v.as_i64())
+            && n < 0
+        {
+            return error_output("offset must be non-negative");
         }
-        if let Some(n) = args.get("limit").and_then(|v| v.as_i64()) {
-            if n < 0 {
-                return error_output("limit must be non-negative");
-            }
+        if let Some(n) = args.get("limit").and_then(|v| v.as_i64())
+            && n < 0
+        {
+            return error_output("limit must be non-negative");
         }
 
         match self.0.read_file(file_path).await {

@@ -55,7 +55,7 @@ pub fn list_models(models: &[ModelRef], search_pattern: Option<&str>) {
                     || m.id.to_lowercase().contains(&lower)
                     || m.name
                         .as_ref()
-                        .map_or(false, |n| n.to_lowercase().contains(&lower))
+                        .is_some_and(|n| n.to_lowercase().contains(&lower))
             })
             .collect()
     } else {

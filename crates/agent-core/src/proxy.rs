@@ -5,7 +5,6 @@
 // the `partial` field from delta events to reduce bandwidth.
 // We reconstruct the partial message client-side.
 
-use crate::types::*;
 use ai::types::{AssistantMessageEvent, Model, StopReason, Usage};
 use serde::{Deserialize, Serialize};
 
@@ -124,7 +123,7 @@ pub struct ProxyStreamOptions {
 
 /// Partial content block used during proxy stream reconstruction.
 #[derive(Debug, Clone)]
-enum PartialContent {
+pub enum PartialContent {
     Text {
         text: String,
         text_signature: Option<String>,
@@ -135,6 +134,7 @@ enum PartialContent {
     },
     ToolCall {
         id: String,
+        #[allow(dead_code)]
         name: String,
         partial_json: String,
     },
@@ -151,7 +151,7 @@ pub fn process_proxy_event(
     usage: &mut Usage,
     stop_reason: &mut StopReason,
     error_message: &mut Option<String>,
-    model: &Model,
+    _model: &Model,
 ) -> Option<AssistantMessageEvent> {
     match event {
         ProxyEvent::Start => {
@@ -230,7 +230,7 @@ pub fn process_proxy_event(
         } => {
             let idx = *content_index;
             if let Some(Some(PartialContent::Thinking {
-                thinking,
+                thinking: _,
                 thinking_signature,
             })) = partial_content.get_mut(idx)
             {
@@ -356,7 +356,7 @@ pub async fn collect_proxy_events(
 
     let url = format!("{}/api/stream", options.proxy_url);
 
-    let mut req = client
+    let req = client
         .post(&url)
         .header("Authorization", format!("Bearer {}", options.auth_token))
         .header("Content-Type", "application/json")
@@ -575,7 +575,7 @@ mod tests {
             &model,
         );
 
-        if let Some(Some(PartialContent::Thinking { thinking, .. })) = partial_content.get(0) {
+        if let Some(Some(PartialContent::Thinking { thinking, .. })) = partial_content.first() {
             assert_eq!(thinking, "thinking...");
         } else {
             panic!("expected Thinking content");
@@ -779,7 +779,7 @@ mod tests {
             &model,
         );
 
-        if let Some(Some(PartialContent::ToolCall { partial_json, .. })) = partial_content.get(0) {
+        if let Some(Some(PartialContent::ToolCall { partial_json, .. })) = partial_content.first() {
             assert_eq!(partial_json, r#"{"cmd":"ls"}"#);
         } else {
             panic!("expected ToolCall content");

@@ -5,6 +5,12 @@
 //! Commands are sent as JSON lines on stdin.
 //! Responses and events are emitted as JSON lines on stdout.
 
+// `RpcExtensionUIRequest` below intentionally uses the same serde rename tag
+// on every variant and discriminates at the application level via the `method`
+// field — the duplicate match arms in serde-generated deserializer code are
+// expected.
+#![allow(unreachable_patterns)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -330,6 +336,8 @@ impl RpcResponse {
 // Extension UI Requests (stdout) — for RPC extension UI bridge
 // ============================================================================
 
+// All variants intentionally share the same serde tag "extension_ui_request"
+// and are discriminated by the `method` field at the application level.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RpcExtensionUIRequest {

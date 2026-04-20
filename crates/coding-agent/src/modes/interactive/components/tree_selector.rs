@@ -103,6 +103,7 @@ pub struct TreeList {
 
     pub on_select: Option<Box<dyn Fn(String) + Send>>,
     pub on_cancel: Option<Box<dyn Fn() + Send>>,
+    #[allow(clippy::type_complexity)]
     pub on_label_edit: Option<Box<dyn Fn(String, Option<String>) + Send>>,
 }
 
@@ -240,9 +241,7 @@ impl TreeList {
                 is_virtual_root_child,
             });
 
-            let child_indent = if multiple_children {
-                indent + 1
-            } else if just_branched && indent > 0 {
+            let child_indent = if multiple_children || (just_branched && indent > 0) {
                 indent + 1
             } else {
                 indent
@@ -343,8 +342,8 @@ impl TreeList {
                         entry.is_message() && entry.message_role() == Some("user")
                     }
                     FilterMode::NoTools => {
-                        !is_settings_entry
-                            && !(entry.is_message() && entry.message_role() == Some("toolResult"))
+                        !(is_settings_entry
+                            || entry.is_message() && entry.message_role() == Some("toolResult"))
                     }
                     FilterMode::LabeledOnly => flat_node.node.label.is_some(),
                     FilterMode::All => true,
@@ -373,10 +372,10 @@ impl TreeList {
             for flat_node in &flat_nodes_clone {
                 let id = flat_node.node.entry.id().to_string();
                 let parent_id = flat_node.node.entry.parent_id();
-                if let Some(pid) = parent_id {
-                    if self.folded_nodes.contains(pid) || skip_set.contains(pid) {
-                        skip_set.insert(id);
-                    }
+                if let Some(pid) = parent_id
+                    && (self.folded_nodes.contains(pid) || skip_set.contains(pid))
+                {
+                    skip_set.insert(id);
                 }
             }
             self.filtered_nodes
@@ -496,9 +495,7 @@ impl TreeList {
                 .unwrap_or_default();
             let multiple_children = children.len() > 1;
 
-            let child_indent = if multiple_children {
-                indent + 1
-            } else if just_branched && indent > 0 {
+            let child_indent = if multiple_children || (just_branched && indent > 0) {
                 indent + 1
             } else {
                 indent
@@ -687,12 +684,13 @@ impl TreeList {
             .filtered_nodes
             .get(self.selected_index)
             .map(|n| n.node.entry.id().to_string());
-        if let Some(id) = current_id {
-            if self.is_foldable(&id) && !self.folded_nodes.contains(&id) {
-                self.folded_nodes.insert(id);
-                self.apply_filter();
-                return;
-            }
+        if let Some(id) = current_id
+            && self.is_foldable(&id)
+            && !self.folded_nodes.contains(&id)
+        {
+            self.folded_nodes.insert(id);
+            self.apply_filter();
+            return;
         }
         self.selected_index = self.find_branch_segment_start("up");
     }
@@ -702,12 +700,12 @@ impl TreeList {
             .filtered_nodes
             .get(self.selected_index)
             .map(|n| n.node.entry.id().to_string());
-        if let Some(id) = current_id {
-            if self.folded_nodes.contains(&id) {
-                self.folded_nodes.remove(&id);
-                self.apply_filter();
-                return;
-            }
+        if let Some(id) = current_id
+            && self.folded_nodes.contains(&id)
+        {
+            self.folded_nodes.remove(&id);
+            self.apply_filter();
+            return;
         }
         self.selected_index = self.find_branch_segment_start("down");
     }
@@ -724,10 +722,10 @@ impl TreeList {
     }
 
     pub fn handle_confirm(&self) {
-        if let Some(selected) = self.filtered_nodes.get(self.selected_index) {
-            if let Some(cb) = &self.on_select {
-                cb(selected.node.entry.id().to_string());
-            }
+        if let Some(selected) = self.filtered_nodes.get(self.selected_index)
+            && let Some(cb) = &self.on_select
+        {
+            cb(selected.node.entry.id().to_string());
         }
     }
 
@@ -742,13 +740,13 @@ impl TreeList {
     }
 
     pub fn handle_label_edit(&self) {
-        if let Some(selected) = self.filtered_nodes.get(self.selected_index) {
-            if let Some(cb) = &self.on_label_edit {
-                cb(
-                    selected.node.entry.id().to_string(),
-                    selected.node.label.clone(),
-                );
-            }
+        if let Some(selected) = self.filtered_nodes.get(self.selected_index)
+            && let Some(cb) = &self.on_label_edit
+        {
+            cb(
+                selected.node.entry.id().to_string(),
+                selected.node.label.clone(),
+            );
         }
     }
 
@@ -784,10 +782,12 @@ pub struct TreeSelectorComponent {
     pub label_input_entry_id: Option<String>,
     pub label_input_value: String,
     pub focused: bool,
+    #[allow(clippy::type_complexity)]
     on_label_change: Option<Box<dyn Fn(String, Option<String>) + Send>>,
 }
 
 impl TreeSelectorComponent {
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub fn new(
         tree: Vec<SessionTreeNode>,
         current_leaf_id: Option<String>,
@@ -933,7 +933,7 @@ impl TreeSelectorComponent {
                 // Single printable char → search
                 let has_control = key.chars().any(|c| {
                     let code = c as u32;
-                    code < 32 || code == 0x7f || (code >= 0x80 && code <= 0x9f)
+                    code < 32 || code == 0x7f || (0x80..=0x9f).contains(&code)
                 });
                 if !has_control && !key.is_empty() {
                     for ch in key.chars() {
@@ -1028,8 +1028,8 @@ mod tests {
         let mut list = TreeList::new(tree, None, 20, None, Some(FilterMode::All));
         // When no target is specified, the last node is selected (most-recent leaf).
         // Tree order: root(0), child1(1), child2(2) → default index = 2.
-        assert!(list.filtered_nodes.len() > 0);
-        let initial = list.selected_index;
+        assert!(!list.filtered_nodes.is_empty());
+        let _initial = list.selected_index;
         list.handle_select_up(); // wrap around or move up
         // After moving, index should differ from initial (unless at boundaries)
         let _ = list.selected_index; // just ensure it doesn't panic

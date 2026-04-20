@@ -72,17 +72,17 @@ fn find_bash_on_path() -> Option<PathBuf> {
 
 /// Resolve the shell configuration (cached).
 pub fn get_shell_config() -> Result<ShellConfig, ShellError> {
-    if let Ok(guard) = cache().lock() {
-        if let Some(cfg) = guard.as_ref() {
-            return Ok(cfg.clone());
-        }
+    if let Ok(guard) = cache().lock()
+        && let Some(cfg) = guard.as_ref()
+    {
+        return Ok(cfg.clone());
     }
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let agent_dir = crate::config::get_agent_dir();
     let settings = SettingsManager::create(cwd, agent_dir);
 
-    let config = resolve_shell_config(settings.get_shell_path().as_deref())?;
+    let config = resolve_shell_config(settings.get_shell_path())?;
 
     if let Ok(mut guard) = cache().lock() {
         *guard = Some(config.clone());

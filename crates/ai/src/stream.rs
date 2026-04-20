@@ -74,46 +74,47 @@ pub fn parse_sse_chunk(
 
     // Usage (only when choices is empty/absent)
     let choices = json.get("choices").and_then(|c| c.as_array());
-    let empty_choices = choices.map_or(true, |c| c.is_empty());
+    let empty_choices = choices.is_none_or(|c| c.is_empty());
 
-    if let Some(usage) = json.get("usage") {
-        if usage.is_object() && empty_choices {
-            let prompt_tokens = usage
-                .get("prompt_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let completion_tokens = usage
-                .get("completion_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let cache_read = usage
-                .get("prompt_tokens_details")
-                .and_then(|d| d.get("cached_tokens"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            // Reasoning tokens from completion_tokens_details (pi-mono: parseChunkUsage)
-            let reasoning_tokens = usage
-                .get("completion_tokens_details")
-                .and_then(|d| d.get("reasoning_tokens"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+    if let Some(usage) = json.get("usage")
+        && usage.is_object()
+        && empty_choices
+    {
+        let prompt_tokens = usage
+            .get("prompt_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let completion_tokens = usage
+            .get("completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let cache_read = usage
+            .get("prompt_tokens_details")
+            .and_then(|d| d.get("cached_tokens"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        // Reasoning tokens from completion_tokens_details (pi-mono: parseChunkUsage)
+        let reasoning_tokens = usage
+            .get("completion_tokens_details")
+            .and_then(|d| d.get("reasoning_tokens"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
 
-            // Subtract cached tokens from input (OpenAI includes cached in prompt_tokens)
-            let input = prompt_tokens.saturating_sub(cache_read);
-            // Add reasoning tokens to output (some providers don't include them)
-            let output = completion_tokens + reasoning_tokens;
-            let total = input + output + cache_read;
+        // Subtract cached tokens from input (OpenAI includes cached in prompt_tokens)
+        let input = prompt_tokens.saturating_sub(cache_read);
+        // Add reasoning tokens to output (some providers don't include them)
+        let output = completion_tokens + reasoning_tokens;
+        let total = input + output + cache_read;
 
-            if input > 0 || output > 0 || total > 0 {
-                return Ok(Some(AssistantMessageEvent::Usage(Usage {
-                    input,
-                    output,
-                    cache_read,
-                    cache_write: 0,
-                    total_tokens: total,
-                    ..Usage::default()
-                })));
-            }
+        if input > 0 || output > 0 || total > 0 {
+            return Ok(Some(AssistantMessageEvent::Usage(Usage {
+                input,
+                output,
+                cache_read,
+                cache_write: 0,
+                total_tokens: total,
+                ..Usage::default()
+            })));
         }
     }
 
@@ -124,19 +125,19 @@ pub fn parse_sse_chunk(
     };
 
     // finish_reason
-    if let Some(finish_reason) = choice.get("finish_reason") {
-        if !finish_reason.is_null() {
-            let reason_str = finish_reason.as_str().unwrap_or("");
-            // pi-mono: mapStopReason — map finish_reason to StopReason
-            let stop_reason = match reason_str {
-                "stop" | "end" => StopReason::Stop,
-                "length" => StopReason::Length,
-                "function_call" | "tool_calls" => StopReason::ToolUse,
-                "content_filter" | "network_error" => StopReason::Error,
-                _ => StopReason::Error,
-            };
-            return Ok(Some(AssistantMessageEvent::Done { stop_reason }));
-        }
+    if let Some(finish_reason) = choice.get("finish_reason")
+        && !finish_reason.is_null()
+    {
+        let reason_str = finish_reason.as_str().unwrap_or("");
+        // pi-mono: mapStopReason — map finish_reason to StopReason
+        let stop_reason = match reason_str {
+            "stop" | "end" => StopReason::Stop,
+            "length" => StopReason::Length,
+            "function_call" | "tool_calls" => StopReason::ToolUse,
+            "content_filter" | "network_error" => StopReason::Error,
+            _ => StopReason::Error,
+        };
+        return Ok(Some(AssistantMessageEvent::Done { stop_reason }));
     }
 
     // Delta
@@ -148,47 +149,46 @@ pub fn parse_sse_chunk(
     // Reasoning/thinking fields — check in pi-mono priority order:
     // reasoning_content (DeepSeek), reasoning (generic), reasoning_text (other)
     for field in &["reasoning_content", "reasoning", "reasoning_text"] {
-        if let Some(val) = delta.get(*field) {
-            if !val.is_null() {
-                let text = val.as_str().unwrap_or("").to_string();
-                if !text.is_empty() {
-                    return Ok(Some(AssistantMessageEvent::ThinkingDelta(text)));
-                }
+        if let Some(val) = delta.get(*field)
+            && !val.is_null()
+        {
+            let text = val.as_str().unwrap_or("").to_string();
+            if !text.is_empty() {
+                return Ok(Some(AssistantMessageEvent::ThinkingDelta(text)));
             }
         }
     }
 
     // tool_calls
-    if let Some(tool_calls) = delta.get("tool_calls") {
-        if let Some(arr) = tool_calls.as_array() {
-            if let Some(tc) = arr.first() {
-                let id = tc
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+    if let Some(tool_calls) = delta.get("tool_calls")
+        && let Some(arr) = tool_calls.as_array()
+        && let Some(tc) = arr.first()
+    {
+        let id = tc
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-                if let Some(func) = tc.get("function") {
-                    let name = func
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let args = func
-                        .get("arguments")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
+        if let Some(func) = tc.get("function") {
+            let name = func
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let args = func
+                .get("arguments")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
 
-                    if !name.is_empty() {
-                        return Ok(Some(AssistantMessageEvent::ToolCallStart { id, name }));
-                    } else if !args.is_empty() {
-                        return Ok(Some(AssistantMessageEvent::ToolCallDelta {
-                            id,
-                            arguments_delta: args,
-                        }));
-                    }
-                }
+            if !name.is_empty() {
+                return Ok(Some(AssistantMessageEvent::ToolCallStart { id, name }));
+            } else if !args.is_empty() {
+                return Ok(Some(AssistantMessageEvent::ToolCallDelta {
+                    id,
+                    arguments_delta: args,
+                }));
             }
         }
     }
@@ -208,6 +208,12 @@ pub fn parse_sse_chunk(
 /// Incrementally accumulates JSON fragments from streaming tool call arguments.
 pub struct IncrementalJsonParser {
     buf: String,
+}
+
+impl Default for IncrementalJsonParser {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl IncrementalJsonParser {

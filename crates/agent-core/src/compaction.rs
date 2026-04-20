@@ -2033,9 +2033,8 @@ mod tests {
             keep_recent_tokens: 300,
             ..Default::default()
         };
-        let mut prep =
-            prepare_compaction(&messages, 50000, &settings, Some("## Goal\nBuild module X"))
-                .unwrap();
+        let prep = prepare_compaction(&messages, 50000, &settings, Some("## Goal\nBuild module X"))
+            .unwrap();
         // Ensure previous_summary is set (triggers update prompt path)
         assert!(prep.previous_summary.is_some());
 

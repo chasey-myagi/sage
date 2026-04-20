@@ -224,10 +224,7 @@ pub fn load_skill_from_file(
         .unwrap_or("")
         .to_string();
 
-    let is_skill_md = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map_or(false, |n| n == "SKILL.md");
+    let is_skill_md = file_path.file_name().and_then(|n| n.to_str()) == Some("SKILL.md");
 
     // For SKILL.md: name must match parent dir; for plain .md: use file stem
     let effective_name = fm.name.clone().unwrap_or_else(|| {

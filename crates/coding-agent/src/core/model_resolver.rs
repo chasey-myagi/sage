@@ -81,10 +81,8 @@ fn is_alias(id: &str) -> bool {
     }
     // Check if ends with -YYYYMMDD (8 digits)
     let parts: Vec<&str> = id.rsplitn(2, '-').collect();
-    if parts.len() == 2 {
-        if parts[0].len() == 8 && parts[0].chars().all(|c| c.is_ascii_digit()) {
-            return false;
-        }
+    if parts.len() == 2 && parts[0].len() == 8 && parts[0].chars().all(|c| c.is_ascii_digit()) {
+        return false;
     }
     true
 }
@@ -179,7 +177,7 @@ fn try_match_model<'a>(pattern: &str, available: &'a [ModelRef]) -> Option<&'a M
             m.id.to_lowercase().contains(&lower)
                 || m.name
                     .as_ref()
-                    .map_or(false, |n| n.to_lowercase().contains(&lower))
+                    .is_some_and(|n| n.to_lowercase().contains(&lower))
         })
         .collect();
 
@@ -344,14 +342,15 @@ pub fn resolve_cli_model<'a>(
 
     let mut provider = cli_provider.and_then(|p| provider_map.get(&p.to_lowercase()).cloned());
 
-    if cli_provider.is_some() && provider.is_none() {
+    if let Some(cli_p) = cli_provider
+        && provider.is_none()
+    {
         return ResolveCliModelResult {
             model: None,
             thinking_level: None,
             warning: None,
             error: Some(format!(
-                "Unknown provider \"{}\". Use --list-models to see available providers/models.",
-                cli_provider.unwrap()
+                "Unknown provider \"{cli_p}\". Use --list-models to see available providers/models."
             )),
         };
     }
@@ -360,14 +359,14 @@ pub fn resolve_cli_model<'a>(
     let mut pattern = cli_model.to_string();
     let mut inferred_provider = false;
 
-    if provider.is_none() {
-        if let Some(slash) = cli_model.find('/') {
-            let maybe_provider = &cli_model[..slash];
-            if let Some(canonical) = provider_map.get(&maybe_provider.to_lowercase()).cloned() {
-                provider = Some(canonical);
-                pattern = cli_model[slash + 1..].to_string();
-                inferred_provider = true;
-            }
+    if provider.is_none()
+        && let Some(slash) = cli_model.find('/')
+    {
+        let maybe_provider = &cli_model[..slash];
+        if let Some(canonical) = provider_map.get(&maybe_provider.to_lowercase()).cloned() {
+            provider = Some(canonical);
+            pattern = cli_model[slash + 1..].to_string();
+            inferred_provider = true;
         }
     }
 
@@ -388,12 +387,12 @@ pub fn resolve_cli_model<'a>(
     }
 
     // Strip duplicate provider prefix if both --provider and provider/model given
-    if cli_provider.is_some() {
-        if let Some(ref p) = provider {
-            let prefix = format!("{}/", p);
-            if cli_model.to_lowercase().starts_with(&prefix.to_lowercase()) {
-                pattern = cli_model[prefix.len()..].to_string();
-            }
+    if cli_provider.is_some()
+        && let Some(ref p) = provider
+    {
+        let prefix = format!("{}/", p);
+        if cli_model.to_lowercase().starts_with(&prefix.to_lowercase()) {
+            pattern = cli_model[prefix.len()..].to_string();
         }
     }
 

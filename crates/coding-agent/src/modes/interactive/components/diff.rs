@@ -105,30 +105,29 @@ pub fn render_diff(diff_text: &str, _options: RenderDiffOptions) -> String {
 
             // Look ahead for matching +/- pair for intra-line diff
             if prefix == "-" {
-                if let Some(next_line) = lines.get(i + 1) {
-                    if let Some(("+", next_num, next_content)) = parse_diff_line(next_line) {
-                        let next_content_with_tabs = replace_tabs(next_content);
-                        let (rm, ad) =
-                            render_intra_line_diff(&content_with_tabs, &next_content_with_tabs);
+                if let Some(next_line) = lines.get(i + 1)
+                    && let Some(("+", next_num, next_content)) = parse_diff_line(next_line)
+                {
+                    let next_content_with_tabs = replace_tabs(next_content);
+                    let (rm, ad) =
+                        render_intra_line_diff(&content_with_tabs, &next_content_with_tabs);
 
-                        let removed_prefix =
-                            t.fg(ThemeColor::ToolDiffRemoved, &format!("-{line_num} "));
-                        let added_prefix =
-                            t.fg(ThemeColor::ToolDiffAdded, &format!("+{next_num} "));
+                    let removed_prefix =
+                        t.fg(ThemeColor::ToolDiffRemoved, &format!("-{line_num} "));
+                    let added_prefix = t.fg(ThemeColor::ToolDiffAdded, &format!("+{next_num} "));
 
-                        result_lines.push(format!(
-                            "{}{}",
-                            removed_prefix,
-                            t.fg(ThemeColor::ToolDiffRemoved, &rm)
-                        ));
-                        result_lines.push(format!(
-                            "{}{}",
-                            added_prefix,
-                            t.fg(ThemeColor::ToolDiffAdded, &ad)
-                        ));
-                        i += 2;
-                        continue;
-                    }
+                    result_lines.push(format!(
+                        "{}{}",
+                        removed_prefix,
+                        t.fg(ThemeColor::ToolDiffRemoved, &rm)
+                    ));
+                    result_lines.push(format!(
+                        "{}{}",
+                        added_prefix,
+                        t.fg(ThemeColor::ToolDiffAdded, &ad)
+                    ));
+                    i += 2;
+                    continue;
                 }
 
                 // No matching added line — render plain removed

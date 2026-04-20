@@ -162,24 +162,21 @@ pub fn prepare_branch_entries(entries: &[SessionEntry], token_budget: u64) -> Br
 
     // First pass: collect file ops from ALL entries
     for entry in entries {
-        if let SessionEntry::BranchSummary(e) = entry {
-            if e.from_hook != Some(true) {
-                if let Some(details) = &e.details {
-                    if let Some(read_files) = details.get("readFiles").and_then(|r| r.as_array()) {
-                        for f in read_files {
-                            if let Some(s) = f.as_str() {
-                                file_ops.read.insert(s.to_string());
-                            }
-                        }
+        if let SessionEntry::BranchSummary(e) = entry
+            && e.from_hook != Some(true)
+            && let Some(details) = &e.details
+        {
+            if let Some(read_files) = details.get("readFiles").and_then(|r| r.as_array()) {
+                for f in read_files {
+                    if let Some(s) = f.as_str() {
+                        file_ops.read.insert(s.to_string());
                     }
-                    if let Some(modified_files) =
-                        details.get("modifiedFiles").and_then(|m| m.as_array())
-                    {
-                        for f in modified_files {
-                            if let Some(s) = f.as_str() {
-                                file_ops.edited.insert(s.to_string());
-                            }
-                        }
+                }
+            }
+            if let Some(modified_files) = details.get("modifiedFiles").and_then(|m| m.as_array()) {
+                for f in modified_files {
+                    if let Some(s) = f.as_str() {
+                        file_ops.edited.insert(s.to_string());
                     }
                 }
             }
@@ -202,11 +199,10 @@ pub fn prepare_branch_entries(entries: &[SessionEntry], token_budget: u64) -> Br
             if matches!(
                 entry,
                 SessionEntry::Compaction(_) | SessionEntry::BranchSummary(_)
-            ) {
-                if total_tokens < (token_budget as f64 * 0.9) as u64 {
-                    messages.insert(0, message);
-                    total_tokens += tokens;
-                }
+            ) && total_tokens < (token_budget as f64 * 0.9) as u64
+            {
+                messages.insert(0, message);
+                total_tokens += tokens;
             }
             break;
         }
@@ -405,7 +401,7 @@ mod tests {
         let entry3 = make_user_entry("3", Some("2"), "branch A");
         let entry4 = make_user_entry("4", Some("2"), "branch B");
 
-        let all = vec![
+        let all = [
             entry1.clone(),
             entry2.clone(),
             entry3.clone(),

@@ -105,11 +105,14 @@ pub struct AgentOptions {
     pub transform_context: Option<Arc<dyn TransformContextHook>>,
     // ── Extended options (pi-mono parity) ───────────────────────────────────
     pub session_id: Option<String>,
+    #[allow(clippy::type_complexity)]
     pub get_api_key: Option<Arc<dyn Fn(&str) -> Option<String> + Send + Sync>>,
+    #[allow(clippy::type_complexity)]
     pub convert_to_llm: Option<Arc<dyn Fn(&[AgentMessage]) -> Vec<LlmMessage> + Send + Sync>>,
     pub transport: Option<String>,
     pub thinking_budgets: Option<serde_json::Value>,
     pub max_retry_delay_ms: Option<u64>,
+    #[allow(clippy::type_complexity)]
     pub on_payload: Option<Arc<dyn Fn(&serde_json::Value) + Send + Sync>>,
 }
 
@@ -178,16 +181,20 @@ pub struct Agent {
     provider: Arc<dyn LlmProvider>,
     cancellation: Option<CancellationToken>,
     /// Resolves when the current run completes.
+    #[allow(dead_code)]
     run_done_tx: Option<oneshot::Sender<()>>,
     run_done_rx: Option<Arc<Mutex<Option<oneshot::Receiver<()>>>>>,
 
     // ── Extended fields (pi-mono parity) ───────────────────────────────────
     session_id: Option<String>,
+    #[allow(clippy::type_complexity)]
     get_api_key: Option<Arc<dyn Fn(&str) -> Option<String> + Send + Sync>>,
+    #[allow(clippy::type_complexity)]
     convert_to_llm: Option<Arc<dyn Fn(&[AgentMessage]) -> Vec<LlmMessage> + Send + Sync>>,
     transport: String,
     thinking_budgets: Option<serde_json::Value>,
     max_retry_delay_ms: Option<u64>,
+    #[allow(clippy::type_complexity)]
     on_payload: Option<Arc<dyn Fn(&serde_json::Value) + Send + Sync>>,
 }
 
@@ -631,10 +638,7 @@ impl Agent {
         self.error = None;
 
         // Reuse a pre-allocated token (e.g. from abort_handle()); otherwise create a fresh one.
-        let token = self
-            .cancellation
-            .take()
-            .unwrap_or_else(CancellationToken::new);
+        let token = self.cancellation.take().unwrap_or_default();
         self.cancellation = Some(token.clone());
 
         // Capture queue drainers as closures.
@@ -643,7 +647,7 @@ impl Agent {
         let follow_up_queue = Arc::new(Mutex::new(std::mem::take(&mut self.follow_up_queue)));
         let steering_mode = self.steering_mode;
         let follow_up_mode = self.follow_up_mode;
-        let mut skip_steering = skip_initial_steering_poll;
+        let _skip_steering = skip_initial_steering_poll;
 
         let steering_queue_clone = Arc::clone(&steering_queue);
         let follow_up_queue_clone = Arc::clone(&follow_up_queue);
@@ -668,7 +672,7 @@ impl Agent {
             convert_to_llm: if let Some(f) = convert_to_llm_fn {
                 Box::new(move |msgs: &[AgentMessage]| f(msgs))
             } else {
-                Box::new(|msgs| default_convert_to_llm(msgs))
+                Box::new(default_convert_to_llm)
             },
             get_api_key,
             max_retry_delay_ms,
@@ -779,12 +783,9 @@ impl Agent {
             if let Some(msgs) = messages {
                 run_agent_loop(msgs, context, config, provider, emit, Some(token_clone)).await
             } else {
-                match run_agent_loop_continue(context, config, provider, emit, Some(token_clone))
+                run_agent_loop_continue(context, config, provider, emit, Some(token_clone))
                     .await
-                {
-                    Ok(msgs) => msgs,
-                    Err(_) => vec![],
-                }
+                    .unwrap_or_default()
             }
         });
 

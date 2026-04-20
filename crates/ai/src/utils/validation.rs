@@ -80,33 +80,33 @@ pub(crate) fn validate_against_schema(
     errors: &mut Vec<(String, String)>,
 ) {
     // Handle `type`
-    if let Some(ty) = schema.get("type").and_then(Value::as_str) {
-        if !type_matches(ty, value) {
-            errors.push((
-                path.to_string(),
-                format!("must be {ty}, got {}", value_type_name(value)),
-            ));
-            // Don't dig into mismatched types — downstream checks would just
-            // cascade noise.
-            return;
-        }
+    if let Some(ty) = schema.get("type").and_then(Value::as_str)
+        && !type_matches(ty, value)
+    {
+        errors.push((
+            path.to_string(),
+            format!("must be {ty}, got {}", value_type_name(value)),
+        ));
+        // Don't dig into mismatched types — downstream checks would just
+        // cascade noise.
+        return;
     }
 
     // Enum
-    if let Some(variants) = schema.get("enum").and_then(Value::as_array) {
-        if !variants.iter().any(|v| v == value) {
-            errors.push((
-                path.to_string(),
-                format!(
-                    "must be one of {}",
-                    variants
-                        .iter()
-                        .map(|v| v.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-            ));
-        }
+    if let Some(variants) = schema.get("enum").and_then(Value::as_array)
+        && !variants.iter().any(|v| v == value)
+    {
+        errors.push((
+            path.to_string(),
+            format!(
+                "must be one of {}",
+                variants
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ));
     }
 
     // Object-specific checks
@@ -114,10 +114,10 @@ pub(crate) fn validate_against_schema(
         // Required
         if let Some(required) = schema.get("required").and_then(Value::as_array) {
             for req in required {
-                if let Some(name) = req.as_str() {
-                    if !obj.contains_key(name) {
-                        errors.push((name.to_string(), "must have required property".into()));
-                    }
+                if let Some(name) = req.as_str()
+                    && !obj.contains_key(name)
+                {
+                    errors.push((name.to_string(), "must have required property".into()));
                 }
             }
         }
@@ -268,7 +268,7 @@ mod tests {
             name: "bash",
             arguments: &bad,
         };
-        assert!(validate_tool_call(&[tool.clone()], &call).is_err());
+        assert!(validate_tool_call(std::slice::from_ref(&tool), &call).is_err());
 
         let ok = json!({"mode": "read"});
         let call = ToolCallView {
@@ -300,7 +300,7 @@ mod tests {
             name: "bash",
             arguments: &bad,
         };
-        assert!(validate_tool_call(&[tool.clone()], &call).is_err());
+        assert!(validate_tool_call(std::slice::from_ref(&tool), &call).is_err());
 
         let good = json!({"files": [{"path": "/tmp/a"}, {"path": "/tmp/b"}]});
         let call = ToolCallView {
@@ -369,7 +369,7 @@ mod tests {
             name: "bash",
             arguments: &good,
         };
-        assert!(validate_tool_call(&[tool.clone()], &call).is_ok());
+        assert!(validate_tool_call(std::slice::from_ref(&tool), &call).is_ok());
 
         let bad = json!({"flag": "yes"});
         let call = ToolCallView {
@@ -387,7 +387,7 @@ mod tests {
             "properties": {"n": {"type": "number"}},
             "required": ["n"]
         }));
-        let args = json!({"n": 3.14});
+        let args = json!({"n": 2.5});
         let call = ToolCallView {
             name: "bash",
             arguments: &args,
@@ -431,7 +431,7 @@ mod tests {
             name: "bash",
             arguments: &good,
         };
-        assert!(validate_tool_call(&[tool.clone()], &call).is_ok());
+        assert!(validate_tool_call(std::slice::from_ref(&tool), &call).is_ok());
 
         let bad = json!({"tags": "not-an-array"});
         let call = ToolCallView {

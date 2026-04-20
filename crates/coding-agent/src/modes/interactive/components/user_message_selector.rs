@@ -73,10 +73,10 @@ impl UserMessageList {
 
     /// Confirm the current selection.
     pub fn confirm(&self) {
-        if let Some(msg) = self.messages.get(self.selected_index) {
-            if let Some(cb) = &self.on_select {
-                cb(msg.id.clone());
-            }
+        if let Some(msg) = self.messages.get(self.selected_index)
+            && let Some(cb) = &self.on_select
+        {
+            cb(msg.id.clone());
         }
     }
 
@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     fn is_empty_detection() {
-        let called = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let _called = std::sync::Arc::new(std::sync::Mutex::new(false));
         let comp_empty = UserMessageSelectorComponent::new(vec![], |_| {}, || {});
         assert!(comp_empty.is_empty());
 

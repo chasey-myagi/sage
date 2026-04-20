@@ -7,13 +7,24 @@
 //! - Print / single-shot (`run_print_mode`)
 //! - RPC JSON server (`run_rpc_mode`)
 
+// Many items in the binary's submodules expose API surface that is only wired
+// up for specific features or future expansion; silence dead_code at the
+// module level to keep the binary building cleanly.
+#[allow(dead_code)]
 mod agent_session;
+#[allow(dead_code)]
 mod bun;
+#[allow(dead_code)]
 mod cli;
+#[allow(dead_code)]
 mod config;
+#[allow(dead_code)]
 mod core;
+#[allow(dead_code)]
 mod migrations;
+#[allow(dead_code)]
 mod modes;
+#[allow(dead_code)]
 mod utils;
 
 use std::env;
@@ -28,6 +39,7 @@ use modes::interactive::{InteractiveMode, InteractiveModeOptions};
 // Package command handling
 // ============================================================================
 
+#[allow(dead_code)]
 type PackageCommand = &'static str;
 
 fn get_package_command_usage(command: &str) -> String {
@@ -62,6 +74,7 @@ fn print_package_command_help(command: &str) {
     }
 }
 
+#[allow(dead_code)]
 struct PackageCommandOptions {
     command: String,
     source: Option<String>,
@@ -324,6 +337,7 @@ fn list_models(registry: &ModelRegistry, pattern: Option<&str>) {
 }
 
 /// Minimal print-mode runner (placeholder until AgentSession is wired up).
+#[allow(dead_code)]
 async fn run_print_mode_simple(
     initial_message: Option<&str>,
     extra_messages: &[String],

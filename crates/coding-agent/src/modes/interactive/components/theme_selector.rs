@@ -18,8 +18,10 @@ pub struct ThemeSelectorComponent {
     themes: Vec<String>,
     selected_index: usize,
     current_theme: String,
+    #[allow(clippy::type_complexity)]
     on_select: Option<Box<dyn Fn(&str) + Send>>,
     on_cancel: Option<Box<dyn Fn() + Send>>,
+    #[allow(clippy::type_complexity)]
     on_preview: Option<Box<dyn Fn(&str) + Send>>,
 }
 
@@ -72,10 +74,10 @@ impl ThemeSelectorComponent {
                 true
             }
             "\r" | "\n" => {
-                if let Some(theme) = self.themes.get(self.selected_index) {
-                    if let Some(ref f) = self.on_select {
-                        f(theme);
-                    }
+                if let Some(theme) = self.themes.get(self.selected_index)
+                    && let Some(ref f) = self.on_select
+                {
+                    f(theme);
                 }
                 true
             }
@@ -153,7 +155,7 @@ mod tests {
 
     #[test]
     fn navigate_down_triggers_preview() {
-        let mut previewed = String::new();
+        let _previewed = String::new();
         let mut comp = ThemeSelectorComponent::new("dark");
         comp.set_on_preview(move |name| {
             // Can't capture `previewed` mutably in Fn — just verify it's called

@@ -34,61 +34,49 @@ pub fn migrate_auth_to_auth_json() -> Vec<String> {
     let mut providers: Vec<String> = Vec::new();
 
     // Migrate oauth.json
-    if oauth_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&oauth_path) {
-            if let Ok(serde_json::Value::Object(obj)) =
-                serde_json::from_str::<serde_json::Value>(&content)
-            {
-                for (provider, cred) in obj {
-                    if let serde_json::Value::Object(mut cred_obj) = cred {
-                        cred_obj.insert("type".into(), serde_json::Value::String("oauth".into()));
-                        migrated.insert(provider.clone(), serde_json::Value::Object(cred_obj));
-                        providers.push(provider);
-                    }
-                }
-                // Rename oauth.json → oauth.json.migrated
-                let migrated_path = agent_dir.join("oauth.json.migrated");
-                let _ = std::fs::rename(&oauth_path, &migrated_path);
+    if oauth_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&oauth_path)
+        && let Ok(serde_json::Value::Object(obj)) =
+            serde_json::from_str::<serde_json::Value>(&content)
+    {
+        for (provider, cred) in obj {
+            if let serde_json::Value::Object(mut cred_obj) = cred {
+                cred_obj.insert("type".into(), serde_json::Value::String("oauth".into()));
+                migrated.insert(provider.clone(), serde_json::Value::Object(cred_obj));
+                providers.push(provider);
             }
         }
+        // Rename oauth.json → oauth.json.migrated
+        let migrated_path = agent_dir.join("oauth.json.migrated");
+        let _ = std::fs::rename(&oauth_path, &migrated_path);
     }
 
     // Migrate settings.json apiKeys
-    if settings_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&settings_path) {
-            if let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(api_keys) = settings
-                    .get("apiKeys")
-                    .cloned()
-                    .and_then(|v| v.as_object().cloned())
-                {
-                    for (provider, key) in api_keys {
-                        if !migrated.contains_key(&provider) {
-                            if let Some(key_str) = key.as_str() {
-                                let mut cred_obj = serde_json::Map::new();
-                                cred_obj.insert(
-                                    "type".into(),
-                                    serde_json::Value::String("api_key".into()),
-                                );
-                                cred_obj.insert(
-                                    "key".into(),
-                                    serde_json::Value::String(key_str.into()),
-                                );
-                                migrated
-                                    .insert(provider.clone(), serde_json::Value::Object(cred_obj));
-                                providers.push(provider);
-                            }
-                        }
-                    }
-                    // Remove apiKeys from settings
-                    if let Some(obj) = settings.as_object_mut() {
-                        obj.remove("apiKeys");
-                    }
-                    if let Ok(updated) = serde_json::to_string_pretty(&settings) {
-                        let _ = std::fs::write(&settings_path, updated);
-                    }
-                }
+    if settings_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&settings_path)
+        && let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(api_keys) = settings
+            .get("apiKeys")
+            .cloned()
+            .and_then(|v| v.as_object().cloned())
+    {
+        for (provider, key) in api_keys {
+            if !migrated.contains_key(&provider)
+                && let Some(key_str) = key.as_str()
+            {
+                let mut cred_obj = serde_json::Map::new();
+                cred_obj.insert("type".into(), serde_json::Value::String("api_key".into()));
+                cred_obj.insert("key".into(), serde_json::Value::String(key_str.into()));
+                migrated.insert(provider.clone(), serde_json::Value::Object(cred_obj));
+                providers.push(provider);
             }
+        }
+        // Remove apiKeys from settings
+        if let Some(obj) = settings.as_object_mut() {
+            obj.remove("apiKeys");
+        }
+        if let Ok(updated) = serde_json::to_string_pretty(&settings) {
+            let _ = std::fs::write(&settings_path, updated);
         }
     }
 
@@ -171,7 +159,7 @@ pub fn migrate_sessions_from_agent_root() {
         );
         let correct_dir = agent_dir.join("sessions").join(&safe_path);
 
-        if let Err(_) = std::fs::create_dir_all(&correct_dir) {
+        if std::fs::create_dir_all(&correct_dir).is_err() {
             continue;
         }
 

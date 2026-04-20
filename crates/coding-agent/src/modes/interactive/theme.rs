@@ -82,6 +82,7 @@ pub enum ThemeColor {
 }
 
 /// Background color keys.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ThemeBg {
     SelectedBg,
@@ -551,10 +552,10 @@ pub fn detect_terminal_background() -> &'static str {
     let colorfgbg = env::var("COLORFGBG").unwrap_or_default();
     if !colorfgbg.is_empty() {
         let parts: Vec<&str> = colorfgbg.split(';').collect();
-        if let Some(last) = parts.last() {
-            if let Ok(bg) = last.parse::<u8>() {
-                return if bg < 8 { "dark" } else { "light" };
-            }
+        if let Some(last) = parts.last()
+            && let Ok(bg) = last.parse::<u8>()
+        {
+            return if bg < 8 { "dark" } else { "light" };
         }
     }
     "dark"

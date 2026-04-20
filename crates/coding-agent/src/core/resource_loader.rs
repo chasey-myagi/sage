@@ -90,6 +90,7 @@ pub trait ResourceLoader {
 // Options
 // ============================================================================
 
+#[derive(Default)]
 pub struct DefaultResourceLoaderOptions {
     pub cwd: Option<PathBuf>,
     pub agent_dir: Option<PathBuf>,
@@ -102,24 +103,6 @@ pub struct DefaultResourceLoaderOptions {
     pub no_themes: bool,
     pub system_prompt: Option<String>,
     pub append_system_prompt: Option<String>,
-}
-
-impl Default for DefaultResourceLoaderOptions {
-    fn default() -> Self {
-        Self {
-            cwd: None,
-            agent_dir: None,
-            settings_manager: None,
-            additional_skill_paths: Vec::new(),
-            additional_prompt_template_paths: Vec::new(),
-            additional_theme_paths: Vec::new(),
-            no_skills: false,
-            no_prompt_templates: false,
-            no_themes: false,
-            system_prompt: None,
-            append_system_prompt: None,
-        }
-    }
 }
 
 // ============================================================================
@@ -538,13 +521,13 @@ impl ResourceLoader for DefaultResourceLoader {
 fn load_context_file_from_dir(dir: &Path) -> Option<AgentsFile> {
     for filename in &["AGENTS.md", "CLAUDE.md"] {
         let path = dir.join(filename);
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                return Some(AgentsFile {
-                    path: path.to_string_lossy().into(),
-                    content,
-                });
-            }
+        if path.exists()
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            return Some(AgentsFile {
+                path: path.to_string_lossy().into(),
+                content,
+            });
         }
     }
     None
@@ -564,10 +547,10 @@ fn load_project_context_files(cwd: &Path, agent_dir: &Path) -> Vec<AgentsFile> {
     let root = PathBuf::from("/");
 
     loop {
-        if let Some(file) = load_context_file_from_dir(&current) {
-            if seen.insert(file.path.clone()) {
-                ancestor_files.push(file);
-            }
+        if let Some(file) = load_context_file_from_dir(&current)
+            && seen.insert(file.path.clone())
+        {
+            ancestor_files.push(file);
         }
         if current == root {
             break;
