@@ -83,16 +83,14 @@ fn try_complete_json(s: &str) -> Option<Value> {
                 '"' => in_string = true,
                 '{' => stack.push(b'{'),
                 '[' => stack.push(b'['),
-                '}' => {
-                    if stack.last() == Some(&b'{') {
-                        stack.pop();
-                    }
+                '}' if stack.last() == Some(&b'{') => {
+                    stack.pop();
                 }
-                ']' => {
-                    if stack.last() == Some(&b'[') {
-                        stack.pop();
-                    }
+                '}' => {}
+                ']' if stack.last() == Some(&b'[') => {
+                    stack.pop();
                 }
+                ']' => {}
                 _ => {}
             }
         }

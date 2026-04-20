@@ -508,13 +508,13 @@ impl ApiProvider for BedrockProvider {
                             });
                         }
                     }
-                    bedrock::types::ConverseStreamOutput::ContentBlockStop(_) => {
-                        if !current_tool_id.is_empty() {
-                            events.push(AssistantMessageEvent::ToolCallEnd {
-                                id: current_tool_id.clone(),
-                            });
-                            current_tool_id.clear();
-                        }
+                    bedrock::types::ConverseStreamOutput::ContentBlockStop(_)
+                        if !current_tool_id.is_empty() =>
+                    {
+                        events.push(AssistantMessageEvent::ToolCallEnd {
+                            id: current_tool_id.clone(),
+                        });
+                        current_tool_id.clear();
                     }
                     bedrock::types::ConverseStreamOutput::MessageStop(stop_event) => {
                         stop_reason = map_stop_reason(stop_event.stop_reason());

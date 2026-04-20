@@ -632,11 +632,10 @@ fn process_sse_line(
         && !content_val.is_null()
     {
         match content_val {
-            Value::String(text) => {
-                if !text.is_empty() {
-                    events.push(AssistantMessageEvent::TextDelta(text.clone()));
-                }
+            Value::String(text) if !text.is_empty() => {
+                events.push(AssistantMessageEvent::TextDelta(text.clone()));
             }
+            Value::String(_) => {}
             Value::Array(items) => {
                 for item in items {
                     match item.get("type").and_then(|t| t.as_str()) {
