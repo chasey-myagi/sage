@@ -30,15 +30,15 @@
 | `test` | 测试 |
 | `chore` | 构建、CI、依赖 |
 
-scope: `caster`, `sandbox`, `protocol`, `guest`, `runner`
+scope: `ai`, `agent-core`, `tui`, `coding-agent`
 
 示例：
 ```
-feat(sandbox): implement msb_krun VM creation via SandboxBuilder
-feat(guest): add PID 1 init with filesystem mounting
-feat(protocol): CBOR wire protocol with length-prefixed frames
-fix(runner): enforce allowed_binaries whitelist correctly
-chore(ci): add cross-compilation for guest-agent
+feat(ai): add Mistral provider
+fix(agent-core): handle empty tool call arguments
+refactor(tui): replace hand-written markdown parser with pulldown-cmark
+fix(coding-agent): validate agent name against path traversal
+chore(ci): add Clippy -Dwarnings gate
 ```
 
 ## PR 流程

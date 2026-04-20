@@ -1,0 +1,34 @@
+[package]
+name = "agent-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Agent execution framework: loop, state, tools, hooks, and context compaction"
+keywords = ["agent", "llm", "ai", "async"]
+categories = ["asynchronous"]
+
+[dependencies]
+ai = { path = "../ai" }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+glob = { workspace = true }
+regex = { workspace = true }
+ulid = { workspace = true }
+chrono = { workspace = true }
+libc = { workspace = true }
+serde_yaml = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+serial_test = { workspace = true }
+tracing-test = { workspace = true }
+tempfile = { workspace = true }

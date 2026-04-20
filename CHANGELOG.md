@@ -1,7 +1,25 @@
 # Changelog
 
-所有值得记录的变更按倒序列在这里。版本遵循 semver，但在 v0.1.0 之前
-不保证 API / CLI / 磁盘布局稳定。
+所有值得记录的变更按倒序列在这里。版本遵循 semver。
+
+## [0.1.0] — 2026-04-20
+
+首个公开发布版本。完成从 pi-mono TypeScript 参考实现到 Rust 的全量移植。
+
+### 架构
+
+- **4-crate workspace**：`ai` / `agent-core` / `tui` / `coding-agent`，与 pi-mono 包结构对应。
+- 移除 microVM 沙箱（sage-sandbox）、Feishu channel（sage-channel-feishu）、daemon 模式等超出 pi-mono 核心范围的模块。
+- `tui` crate 完全独立（不依赖 ai / agent-core），组件系统对齐 pi-tui。
+
+### LLM Providers（`crates/ai`）
+
+18 个 provider 1:1 移植自 pi-mono：Anthropic、OpenAI Completions/Responses、Google Gemini、Google Vertex、Azure OpenAI、Bedrock、Mistral、Groq、Cerebras、xAI 及多个 OpenAI-compat 变体。
+
+- Kitty keyboard protocol 支持（`crates/tui`）
+- pulldown-cmark Markdown 渲染
+- CancellationToken 贯通 agent 循环与 LLM 调用
+- Homebrew tap 分发（`brew install chasey-myagi/tap/sage`）
 
 ## [0.0.3] — 2026-04-18
 
