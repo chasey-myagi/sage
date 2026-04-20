@@ -128,6 +128,7 @@ jobs:
 
           # If it's not the first release, update existing version/sha fields
           sed -i \
+            -e "s|version \"[0-9.]*\"|version \"${VERSION_NUM}\"|g" \
             -e "s|/releases/download/v[0-9.]*/sage-v[0-9.]*-darwin-arm64|/releases/download/${VERSION}/sage-${VERSION}-darwin-arm64|g" \
             -e "s|/releases/download/v[0-9.]*/sage-v[0-9.]*-darwin-x86_64|/releases/download/${VERSION}/sage-${VERSION}-darwin-x86_64|g" \
             -e "s|/releases/download/v[0-9.]*/sage-v[0-9.]*-linux-x86_64|/releases/download/${VERSION}/sage-${VERSION}-linux-x86_64|g" \
