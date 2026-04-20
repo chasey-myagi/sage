@@ -265,9 +265,13 @@ async fn main() {
             parts.extend_from_slice(&parsed.messages);
             parts.join("\n")
         };
-        let effective_provider = parsed.provider.clone()
+        let effective_provider = parsed
+            .provider
+            .clone()
             .or_else(|| settings_manager.get_default_provider().map(str::to_owned));
-        let effective_model = parsed.model.clone()
+        let effective_model = parsed
+            .model
+            .clone()
             .or_else(|| settings_manager.get_default_model().map(str::to_owned));
         if let Err(e) = agent_session::run_agent_session(
             all_messages,
