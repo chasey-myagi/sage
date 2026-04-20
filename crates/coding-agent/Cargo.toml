@@ -1,0 +1,57 @@
+[package]
+name = "coding-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Interactive coding agent CLI — chat, run, skill management"
+keywords = ["agent", "llm", "cli", "ai", "coding"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "sage"
+path = "src/main.rs"
+
+[features]
+default = []
+clipboard = ["arboard"]
+
+[dependencies]
+ai = { path = "../ai" }
+agent-core = { path = "../agent-core" }
+tui = { path = "../tui" }
+tokio = { workspace = true, features = ["sync"] }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+chrono = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+regex = { workspace = true }
+glob = { workspace = true }
+ulid = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+unicode-width = "0.2"
+unicode-normalization = { workspace = true }
+base64 = { workspace = true }
+reqwest = { workspace = true }
+dirs = "5"
+url = "2"
+pathdiff = "0.2"
+arboard = { version = "3", optional = true }
+image = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+tracing-test = { workspace = true }
+serial_test = { workspace = true }
+tempfile = { workspace = true }

@@ -1,0 +1,43 @@
+[package]
+name = "ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Unified LLM API — Anthropic, OpenAI, Google, Bedrock and OpenAI-compatible providers"
+keywords = ["llm", "anthropic", "openai", "ai", "async"]
+categories = ["asynchronous"]
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }
+bytes = { workspace = true }
+async-stream = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+url = { workspace = true }
+regex = { workspace = true }
+aws-config = { workspace = true }
+aws-sdk-bedrockruntime = { workspace = true }
+aws-smithy-types = { workspace = true }
+aws-types = { workspace = true }
+
+[[bin]]
+name = "generate-models"
+path = "src/bin/generate_models.rs"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+mockito = "1"
+serial_test = { workspace = true }
+tracing-test = { workspace = true }
+tempfile = { workspace = true }
+chrono = { workspace = true }

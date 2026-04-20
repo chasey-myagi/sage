@@ -1,0 +1,21 @@
+[package]
+name = "tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Terminal UI component library — differential rendering, keyboard, markdown"
+keywords = ["tui", "terminal", "ui", "ratatui"]
+categories = ["command-line-interface"]
+
+[dependencies]
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+anyhow = { workspace = true }
+base64 = { workspace = true }
+unicode-width = "0.2"
+regex = { workspace = true }
+dirs-next = "2"
+pulldown-cmark = { workspace = true }
+tokio-util = { workspace = true }
+

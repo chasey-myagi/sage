@@ -19,3 +19,8 @@ Thumbs.db
 
 # Claude Code / agent working dirs
 .claude/
+
+# Review artifacts (generated during code review sessions)
+**/check-list.md
+**/issue-found*.md
+**/optimization-found*.md
