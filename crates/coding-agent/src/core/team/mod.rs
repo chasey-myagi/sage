@@ -10,7 +10,7 @@ use agent_core::agent_loop::LlmProvider;
 use agent_core::types::{AgentMessage, AgentTool, Content, UserMessage};
 use ai::types::Model;
 
-use crate::core::agent::definition::{AgentModel, PermissionMode};
+use crate::core::agent::definition::{AgentModel, AgentPermissionMode};
 use crate::core::agent::runner::{AgentError, resolve_model_override, resolve_system_prompt};
 
 /// Status of a team member.
@@ -84,7 +84,11 @@ pub fn generate_unique_name(base_name: &str, existing_names: &[&str]) -> String 
         }
     }
 
-    // Fallback: append a timestamp-based suffix (should not happen in practice)
+    // Fallback: append a ULID suffix (should not happen in practice with < 100 members).
+    tracing::warn!(
+        base = %base_name,
+        "generate_unique_name: 100+ name collisions, falling back to ULID suffix"
+    );
     format!("{base_name}-{}", ulid::Ulid::new())
 }
 
@@ -93,17 +97,17 @@ pub fn generate_unique_name(base_name: &str, existing_names: &[&str]) -> String 
 /// - When `agent_tools` contains `"*"` the agent inherits all tools — every
 ///   call is allowed.
 /// - When the list is explicit only the listed names are permitted.
-/// - `PermissionMode::Auto` / `AcceptEdits` / `Bubble` all allow every tool
+/// - `AgentPermissionMode::Auto` / `AcceptEdits` / `Bubble` all allow every tool
 ///   (permission decisions are handled upstream).
-/// - `PermissionMode::Default` (or `None`) respects the explicit tool list.
+/// - `AgentPermissionMode::Default` (or `None`) respects the explicit tool list.
 fn build_can_use_tool(
     agent_tools: &[String],
-    permission_mode: Option<&PermissionMode>,
+    permission_mode: Option<&AgentPermissionMode>,
 ) -> Arc<dyn Fn(&str, Option<&[String]>) -> Result<(), String> + Send + Sync> {
     // Auto / AcceptEdits / Bubble: pass everything through.
     let mode_allows_all = matches!(
         permission_mode,
-        Some(PermissionMode::Auto | PermissionMode::AcceptEdits | PermissionMode::Bubble)
+        Some(AgentPermissionMode::Auto | AgentPermissionMode::AcceptEdits | AgentPermissionMode::Bubble)
     );
 
     if mode_allows_all || agent_tools.iter().any(|t| t == "*") {
@@ -373,7 +377,7 @@ mod tests {
     fn build_can_use_tool_explicit_list_blocks_unlisted() {
         let f = build_can_use_tool(
             &["read".to_string(), "grep".to_string()],
-            Some(&PermissionMode::Default),
+            Some(&AgentPermissionMode::Default),
         );
         assert!(f("read", None).is_ok());
         assert!(f("grep", None).is_ok());
@@ -385,14 +389,14 @@ mod tests {
     fn build_can_use_tool_auto_mode_allows_all() {
         let f = build_can_use_tool(
             &["read".to_string()], // would block bash in Default mode
-            Some(&PermissionMode::Auto),
+            Some(&AgentPermissionMode::Auto),
         );
         assert!(f("bash", None).is_ok());
     }
 
     #[test]
     fn build_can_use_tool_bubble_mode_allows_all() {
-        let f = build_can_use_tool(&[], Some(&PermissionMode::Bubble));
+        let f = build_can_use_tool(&[], Some(&AgentPermissionMode::Bubble));
         assert!(f("bash", None).is_ok());
     }
 
@@ -478,7 +482,7 @@ mod tests {
         // Primary list doesn't include "glob", but extra list does.
         let f = build_can_use_tool(
             &["read".to_string()],
-            Some(&PermissionMode::Default),
+            Some(&AgentPermissionMode::Default),
         );
         assert!(f("read", None).is_ok());
         assert!(f("glob", None).is_err(), "glob not in primary list should fail without extra");
@@ -492,7 +496,7 @@ mod tests {
     fn build_can_use_tool_extra_list_empty_does_not_affect_primary() {
         let f = build_can_use_tool(
             &["read".to_string()],
-            Some(&PermissionMode::Default),
+            Some(&AgentPermissionMode::Default),
         );
         assert!(f("bash", Some(&[])).is_err(), "empty extra list should not allow bash");
     }
@@ -501,7 +505,7 @@ mod tests {
     fn build_can_use_tool_accept_edits_mode_allows_all() {
         let f = build_can_use_tool(
             &["read".to_string()], // would block bash in Default mode
-            Some(&PermissionMode::AcceptEdits),
+            Some(&AgentPermissionMode::AcceptEdits),
         );
         assert!(f("bash", None).is_ok(), "AcceptEdits mode should allow all tools");
         assert!(f("write", None).is_ok());

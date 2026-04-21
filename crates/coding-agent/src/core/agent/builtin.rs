@@ -1,7 +1,7 @@
 //! Built-in agent registration — mirrors CC `tools/AgentTool/builtInAgents.ts`
 //! and `tools/AgentTool/built-in/`.
 
-use super::definition::{AgentDef, AgentModel, AgentSource, PermissionMode};
+use super::definition::{AgentDef, AgentModel, AgentPermissionMode, AgentSource};
 use std::collections::HashMap;
 
 /// Register all built-in agent definitions.
@@ -120,7 +120,7 @@ pub fn register_builtin_agents() -> HashMap<String, AgentDef> {
             tools: vec!["*".to_string()],
             max_turns: Some(200),
             model: Some(AgentModel::Inherit),
-            permission_mode: Some(PermissionMode::Bubble),
+            permission_mode: Some(AgentPermissionMode::Bubble),
             source: AgentSource::BuiltIn,
             mcp_servers: None,
             system_prompt_fn: "get_fork_prompt".to_string(),
@@ -152,7 +152,7 @@ mod tests {
         let agents = register_builtin_agents();
         let fork = agents.get("fork").unwrap();
         assert_eq!(fork.model, Some(AgentModel::Inherit));
-        assert_eq!(fork.permission_mode, Some(PermissionMode::Bubble));
+        assert_eq!(fork.permission_mode, Some(AgentPermissionMode::Bubble));
     }
 
     #[test]

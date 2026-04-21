@@ -3,10 +3,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Agent permission mode — mirrors CC's `PermissionMode`.
+/// Agent permission mode for agent definition — mirrors CC's `PermissionMode`.
+///
+/// Note: this is distinct from `utils::permissions::mode::PermissionMode` which
+/// is the full permission engine mode used by `ToolPermissionContext`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub enum PermissionMode {
+pub enum AgentPermissionMode {
     Default,
     Auto,
     AcceptEdits,
@@ -63,7 +66,7 @@ pub struct AgentDef {
     pub max_turns: Option<u32>,
     /// Model to run the agent with. `None` means use the session default.
     pub model: Option<AgentModel>,
-    pub permission_mode: Option<PermissionMode>,
+    pub permission_mode: Option<AgentPermissionMode>,
     pub source: AgentSource,
     /// Optional MCP server specs specific to this agent.
     pub mcp_servers: Option<Vec<MCPServerSpec>>,

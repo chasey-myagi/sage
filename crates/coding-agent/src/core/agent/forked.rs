@@ -132,11 +132,38 @@ Output format (plain text labels, not markdown headers):
 }
 
 /// Filter out assistant messages containing orphaned tool calls (tool_use blocks
-/// with no corresponding tool_result). Prevents sending illegal context to the
-/// LLM API.
+/// with no corresponding tool_result), and ToolResult messages that have no
+/// corresponding tool_use in any assistant message. Prevents sending illegal
+/// context to the LLM API.
+///
+/// Two-phase cleanup:
+/// - Phase 1: collect all tool_call IDs from assistant messages.
+/// - Phase 2: collect all tool_call IDs that have results.
+/// - Filter: remove assistant messages with orphan tool_use (no result);
+///   also remove ToolResult messages with no matching tool_use.
 ///
 /// Mirrors CC `runAgent.ts:filterIncompleteToolCalls`.
 pub fn filter_incomplete_tool_calls(messages: &[AgentMessage]) -> Vec<AgentMessage> {
+    // Phase 1: collect all tool_call IDs that appear in assistant messages.
+    let tool_call_ids: HashSet<&str> = messages
+        .iter()
+        .filter_map(|msg| {
+            if let AgentMessage::Assistant(AssistantMessage { content, .. }) = msg {
+                Some(content.iter().filter_map(|b| {
+                    if let Content::ToolCall { id, .. } = b {
+                        Some(id.as_str())
+                    } else {
+                        None
+                    }
+                }))
+            } else {
+                None
+            }
+        })
+        .flatten()
+        .collect();
+
+    // Phase 2: collect tool_call IDs that have results.
     let ids_with_results: HashSet<&str> = messages
         .iter()
         .filter_map(|msg| {
@@ -151,17 +178,22 @@ pub fn filter_incomplete_tool_calls(messages: &[AgentMessage]) -> Vec<AgentMessa
     messages
         .iter()
         .filter(|msg| {
-            if let AgentMessage::Assistant(AssistantMessage { content, .. }) = msg {
-                let has_orphan = content.iter().any(|block| {
-                    if let Content::ToolCall { id, .. } = block {
-                        !ids_with_results.contains(id.as_str())
-                    } else {
-                        false
-                    }
-                });
-                !has_orphan
-            } else {
-                true
+            match msg {
+                // Remove assistant messages that contain an orphan tool_use (no corresponding result).
+                AgentMessage::Assistant(AssistantMessage { content, .. }) => {
+                    !content.iter().any(|block| {
+                        if let Content::ToolCall { id, .. } = block {
+                            !ids_with_results.contains(id.as_str())
+                        } else {
+                            false
+                        }
+                    })
+                }
+                // Remove ToolResult messages that have no corresponding tool_use.
+                AgentMessage::ToolResult(tr) => {
+                    tool_call_ids.contains(tr.tool_call_id.as_str())
+                }
+                _ => true,
             }
         })
         .cloned()
@@ -336,12 +368,33 @@ mod tests {
 
     #[test]
     fn filter_incomplete_tool_calls_preserves_non_assistant_messages() {
+        // User messages are always preserved; ToolResult without a matching
+        // tool_use is an orphan and gets removed (phase-2 cleanup).
         let messages = vec![
             user_text_msg("a"),
             user_text_msg("b"),
-            tool_result_msg("x", "data"),
+            tool_result_msg("x", "data"), // orphan — no assistant tool_use for "x"
         ];
         let filtered = filter_incomplete_tool_calls(&messages);
-        assert_eq!(filtered.len(), 3);
+        // Only the two user messages survive; the orphan ToolResult is dropped.
+        assert_eq!(filtered.len(), 2);
+        assert!(matches!(filtered[0], AgentMessage::User(_)));
+        assert!(matches!(filtered[1], AgentMessage::User(_)));
+    }
+
+    #[test]
+    fn filter_incomplete_tool_calls_removes_orphan_tool_result() {
+        // ToolResult with no corresponding assistant tool_use should be dropped.
+        let messages = vec![
+            user_text_msg("start"),
+            assistant_msg_with_tool_call("tc-1"),
+            tool_result_msg("tc-1", "ok"),
+            tool_result_msg("tc-orphan", "stale"), // no matching tool_use
+        ];
+        let filtered = filter_incomplete_tool_calls(&messages);
+        assert_eq!(filtered.len(), 3, "orphan ToolResult should be removed");
+        assert!(matches!(filtered[0], AgentMessage::User(_)));
+        assert!(matches!(filtered[1], AgentMessage::Assistant(_)));
+        assert!(matches!(filtered[2], AgentMessage::ToolResult(_)));
     }
 }

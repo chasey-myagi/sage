@@ -2,6 +2,7 @@
 //
 // Phase 1 MVP: basic HTTP fetch with simple HTML-to-text extraction.
 
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use crate::types::Content;
@@ -14,6 +15,13 @@ fn error_output(msg: impl Into<String>) -> ToolOutput {
         is_error: true,
     }
 }
+
+// Compiled once per process — avoids re-compilation on every HTML page fetch.
+static RE_SCRIPT: OnceLock<regex::Regex> = OnceLock::new();
+static RE_STYLE: OnceLock<regex::Regex> = OnceLock::new();
+static RE_TAGS: OnceLock<regex::Regex> = OnceLock::new();
+static RE_BLANK: OnceLock<regex::Regex> = OnceLock::new();
+static RE_SPACES: OnceLock<regex::Regex> = OnceLock::new();
 
 fn extract_text_from_html(html: &str) -> String {
     // Phase 1: strip tags with regex; Phase 2: use scraper/html2text.
@@ -38,13 +46,19 @@ fn extract_text_from_html(html: &str) -> String {
         .replace("</h6>", "\n\n");
 
     // Remove <script> and <style> blocks.
-    let re_script = regex::Regex::new(r"(?si)<script[^>]*>.*?</script>").unwrap();
+    let re_script = RE_SCRIPT.get_or_init(|| {
+        regex::Regex::new(r"(?si)<script[^>]*>.*?</script>").unwrap()
+    });
     let text = re_script.replace_all(&text, " ");
-    let re_style = regex::Regex::new(r"(?si)<style[^>]*>.*?</style>").unwrap();
+    let re_style = RE_STYLE.get_or_init(|| {
+        regex::Regex::new(r"(?si)<style[^>]*>.*?</style>").unwrap()
+    });
     let text = re_style.replace_all(&text, " ");
 
     // Strip remaining tags.
-    let re_tags = regex::Regex::new(r"<[^>]+>").unwrap();
+    let re_tags = RE_TAGS.get_or_init(|| {
+        regex::Regex::new(r"<[^>]+>").unwrap()
+    });
     let text = re_tags.replace_all(&text, "");
 
     // Decode common HTML entities.
@@ -57,9 +71,13 @@ fn extract_text_from_html(html: &str) -> String {
         .replace("&nbsp;", " ");
 
     // Collapse excessive whitespace / blank lines.
-    let re_blank = regex::Regex::new(r"\n{3,}").unwrap();
+    let re_blank = RE_BLANK.get_or_init(|| {
+        regex::Regex::new(r"\n{3,}").unwrap()
+    });
     let text = re_blank.replace_all(&text, "\n\n");
-    let re_spaces = regex::Regex::new(r" {2,}").unwrap();
+    let re_spaces = RE_SPACES.get_or_init(|| {
+        regex::Regex::new(r" {2,}").unwrap()
+    });
     let text = re_spaces.replace_all(&text, " ");
 
     text.trim().to_string()

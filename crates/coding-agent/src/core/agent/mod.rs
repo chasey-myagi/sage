@@ -10,7 +10,7 @@ pub mod runner;
 
 #[allow(unused_imports)]
 pub use definition::{
-    AgentDef, AgentLoader, AgentModel, AgentSource, MCPServerSpec, PermissionMode,
+    AgentDef, AgentLoader, AgentModel, AgentPermissionMode, AgentSource, MCPServerSpec,
 };
 #[allow(unused_imports)]
 pub use forked::{

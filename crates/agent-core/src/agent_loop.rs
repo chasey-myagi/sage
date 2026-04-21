@@ -883,6 +883,7 @@ async fn execute_tool_calls_parallel(
                     text: format!("Tool panicked: {e}"),
                 }],
                 details: serde_json::Value::Null,
+                is_error: true,
             },
             is_error: true,
         });
@@ -1135,6 +1136,7 @@ fn create_error_result(message: &str) -> AgentToolResult {
             text: message.to_string(),
         }],
         details: serde_json::Value::Object(Default::default()),
+        is_error: true,
     }
 }
 
@@ -1459,6 +1461,7 @@ mod loop_tests {
                         text: format!("echoed: {val}"),
                     }],
                     details: serde_json::Value::Null,
+                    is_error: false,
                 }
             }
         }
@@ -1564,6 +1567,7 @@ mod loop_tests {
                         text: format!("echoed: {val}"),
                     }],
                     details: serde_json::Value::Null,
+                    is_error: false,
                 }
             }
         }
@@ -1702,6 +1706,7 @@ mod loop_tests {
                         text: format!("ok:{val}"),
                     }],
                     details: serde_json::Value::Null,
+                    is_error: false,
                 }
             }
         }
