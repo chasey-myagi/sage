@@ -13,6 +13,7 @@ pub mod exec;
 pub mod export_html;
 pub mod extensions;
 pub mod footer_data_provider;
+pub mod hooks;
 pub mod keybindings;
 pub mod messages;
 pub mod model_registry;
