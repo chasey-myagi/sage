@@ -359,13 +359,89 @@ fn build_model(provider_id: Option<&str>, model_id: Option<&str>) -> anyhow::Res
     })
 }
 
+// ── SpawnSubagentTool ────────────────────────────────────────────────────────
+
+struct SpawnSubagentTool;
+
+#[async_trait::async_trait]
+impl SimpleTool for SpawnSubagentTool {
+    fn name(&self) -> &str {
+        "spawn_subagent"
+    }
+
+    fn description(&self) -> &str {
+        "Spawn a sub-agent to handle a task asynchronously in the background. \
+         The sub-agent has access to the full set of coding tools and runs \
+         independently. Returns the unique agent ID of the spawned agent. \
+         Use this to parallelise independent sub-tasks or to delegate \
+         specialised work to a background worker."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "The prompt or task description for the sub-agent to execute."
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Optional model ID override (e.g. 'claude-opus-4-5'). Inherits the session default when omitted."
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Optional working directory for the sub-agent. Defaults to the current directory when omitted."
+                }
+            },
+            "required": ["task"]
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> ToolOutput {
+        let task = match args.get("task").and_then(|v| v.as_str()) {
+            Some(t) => t.to_string(),
+            None => {
+                return ToolOutput {
+                    content: vec![Content::Text {
+                        text: "Error: 'task' parameter is required".to_string(),
+                    }],
+                    is_error: true,
+                };
+            }
+        };
+
+        let model_id = args.get("model").and_then(|v| v.as_str()).map(str::to_string);
+        let cwd = args
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .map(std::path::PathBuf::from);
+
+        match spawn_subagent(task, None, model_id, None, None, None, cwd).await {
+            Ok(agent_id) => ToolOutput {
+                content: vec![Content::Text {
+                    text: format!("Sub-agent spawned with ID: {agent_id}"),
+                }],
+                is_error: false,
+            },
+            Err(e) => ToolOutput {
+                content: vec![Content::Text {
+                    text: format!("Failed to spawn sub-agent: {e}"),
+                }],
+                is_error: true,
+            },
+        }
+    }
+}
+
 // ── Default tool list ────────────────────────────────────────────────────────
 
 /// Create the default coding-agent tools backed by the local filesystem.
 ///
 /// All standard tools are wrapped in `ToolAdapter` which enforces permission
-/// rules from settings.json before each execution.  `EnterPlanMode` and
-/// `ExitPlanMode` are also registered so the LLM can use plan mode.
+/// rules from settings.json before each execution.  `EnterPlanMode`,
+/// `ExitPlanMode`, and `SpawnSubagent` are also registered so the LLM can use
+/// plan mode and delegate sub-tasks.
 fn create_default_tools(
     backend: Arc<LocalBackend>,
     permission_ctx: Arc<Mutex<ToolPermissionContext>>,
@@ -390,6 +466,10 @@ fn create_default_tools(
     tools.push(Arc::new(ExitPlanModeTool {
         permission_ctx: Arc::clone(&permission_ctx),
     }));
+    tools.push(Arc::new(ToolAdapter::new(
+        Box::new(SpawnSubagentTool),
+        Arc::clone(&permission_ctx),
+    )));
 
     tools
 }
