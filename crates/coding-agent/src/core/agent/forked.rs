@@ -136,19 +136,52 @@ Output format (plain text labels, not markdown headers):
 /// corresponding tool_use in any assistant message. Prevents sending illegal
 /// context to the LLM API.
 ///
-/// Two-phase cleanup:
-/// - Phase 1: collect all tool_call IDs from assistant messages.
-/// - Phase 2: collect all tool_call IDs that have results.
-/// - Filter: remove assistant messages with orphan tool_use (no result);
-///   also remove ToolResult messages with no matching tool_use.
+/// Four-step cleanup:
+/// - Phase 1: collect tool_call IDs that have results.
+/// - Phase 2a: determine which assistant messages are kept (ALL their tool_use IDs
+///   have results). Stored as an index set to avoid repeating the check.
+/// - Phase 2b: collect tool_call IDs only from kept assistant messages, using the
+///   index set — avoids re-running the "all_have_results" predicate.
+/// - Filter: one-pass using both index sets; ToolResult messages whose parent
+///   assistant was dropped are also removed (prevents orphan ToolResults).
 ///
 /// Mirrors CC `runAgent.ts:filterIncompleteToolCalls`.
 pub fn filter_incomplete_tool_calls(messages: &[AgentMessage]) -> Vec<AgentMessage> {
-    // Phase 1: collect all tool_call IDs that appear in assistant messages.
-    let tool_call_ids: HashSet<&str> = messages
+    // Phase 1: collect tool_call IDs that have results.
+    let ids_with_results: HashSet<&str> = messages
         .iter()
         .filter_map(|msg| {
+            if let AgentMessage::ToolResult(tr) = msg {
+                Some(tr.tool_call_id.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Phase 2a: determine which assistant messages are kept (ALL their tool_use IDs have results).
+    let kept_assistant_indices: HashSet<usize> = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(i, msg)| {
             if let AgentMessage::Assistant(AssistantMessage { content, .. }) = msg {
+                let all_have_results = content.iter().all(|block| match block {
+                    Content::ToolCall { id, .. } => ids_with_results.contains(id.as_str()),
+                    _ => true,
+                });
+                all_have_results.then_some(i)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Phase 2b: collect tool_call IDs only from kept assistant messages.
+    // Using kept_assistant_indices avoids repeating the "all_have_results" check.
+    let kept_tool_call_ids: HashSet<&str> = kept_assistant_indices
+        .iter()
+        .filter_map(|&i| {
+            if let AgentMessage::Assistant(AssistantMessage { content, .. }) = &messages[i] {
                 Some(content.iter().filter_map(|b| {
                     if let Content::ToolCall { id, .. } = b {
                         Some(id.as_str())
@@ -163,39 +196,17 @@ pub fn filter_incomplete_tool_calls(messages: &[AgentMessage]) -> Vec<AgentMessa
         .flatten()
         .collect();
 
-    // Phase 2: collect tool_call IDs that have results.
-    let ids_with_results: HashSet<&str> = messages
-        .iter()
-        .filter_map(|msg| {
-            if let AgentMessage::ToolResult(tr) = msg {
-                Some(tr.tool_call_id.as_str())
-            } else {
-                None
-            }
-        })
-        .collect();
-
     messages
         .iter()
-        .filter(|msg| {
-            match msg {
-                // Remove assistant messages that contain an orphan tool_use (no corresponding result).
-                AgentMessage::Assistant(AssistantMessage { content, .. }) => {
-                    !content.iter().any(|block| {
-                        if let Content::ToolCall { id, .. } = block {
-                            !ids_with_results.contains(id.as_str())
-                        } else {
-                            false
-                        }
-                    })
-                }
-                // Remove ToolResult messages that have no corresponding tool_use.
-                AgentMessage::ToolResult(tr) => {
-                    tool_call_ids.contains(tr.tool_call_id.as_str())
-                }
-                _ => true,
-            }
+        .enumerate()
+        .filter(|(i, msg)| match msg {
+            AgentMessage::Assistant(_) => kept_assistant_indices.contains(i),
+            // Use kept_tool_call_ids: if the parent assistant was dropped,
+            // its tool results are dropped too (avoids orphan ToolResults).
+            AgentMessage::ToolResult(tr) => kept_tool_call_ids.contains(tr.tool_call_id.as_str()),
+            _ => true,
         })
+        .map(|(_, m)| m)
         .cloned()
         .collect()
 }
@@ -396,5 +407,157 @@ mod tests {
         assert!(matches!(filtered[0], AgentMessage::User(_)));
         assert!(matches!(filtered[1], AgentMessage::Assistant(_)));
         assert!(matches!(filtered[2], AgentMessage::ToolResult(_)));
+    }
+
+    fn assistant_msg_with_two_tool_calls(id_a: &str, id_b: &str) -> AgentMessage {
+        use agent_core::types::{AssistantMessage, StopReason, Usage};
+        AgentMessage::Assistant(AssistantMessage {
+            content: vec![
+                Content::ToolCall {
+                    id: id_a.to_string(),
+                    name: "bash".to_string(),
+                    arguments: serde_json::json!({}),
+                },
+                Content::ToolCall {
+                    id: id_b.to_string(),
+                    name: "read".to_string(),
+                    arguments: serde_json::json!({}),
+                },
+            ],
+            provider: "test".to_string(),
+            model: "test".to_string(),
+            usage: Usage::default(),
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            timestamp: 0,
+        })
+    }
+
+    #[test]
+    fn filter_incomplete_tool_calls_drops_partial_results_with_dropped_assistant() {
+        // Assistant has [A, B] tool_use, only ToolResult(A) exists.
+        // The assistant is dropped (B has no result).
+        // ToolResult(A) must also be dropped — not become an orphan.
+        let messages = vec![
+            user_text_msg("start"),
+            assistant_msg_with_two_tool_calls("tc-a", "tc-b"),
+            tool_result_msg("tc-a", "result-a"), // only A has a result; B is missing
+        ];
+        let filtered = filter_incomplete_tool_calls(&messages);
+        // Only the user message survives; assistant and its partial ToolResult are both dropped.
+        assert_eq!(
+            filtered.len(),
+            1,
+            "assistant with partial results and its ToolResult must both be dropped"
+        );
+        assert!(matches!(filtered[0], AgentMessage::User(_)));
+    }
+
+    #[test]
+    fn filter_incomplete_tool_calls_preserves_text_only_assistant() {
+        let messages = vec![
+            user_text_msg("start"),
+            AgentMessage::Assistant({
+                use agent_core::types::{AssistantMessage, StopReason, Usage};
+                AssistantMessage {
+                    content: vec![Content::Text {
+                        text: "thinking out loud".to_string(),
+                    }],
+                    provider: "test".to_string(),
+                    model: "test".to_string(),
+                    usage: Usage::default(),
+                    stop_reason: StopReason::Stop,
+                    error_message: None,
+                    timestamp: 0,
+                }
+            }),
+            user_text_msg("follow up"),
+        ];
+        let filtered = filter_incomplete_tool_calls(&messages);
+        assert_eq!(filtered.len(), 3, "text-only assistant should be preserved");
+    }
+
+    #[test]
+    fn filter_incomplete_tool_calls_drops_all_when_any_tool_call_missing_result() {
+        // Assistant has 3 tool calls; only tc-1 and tc-3 have results, tc-2 does not.
+        // The whole assistant message (and all its results) should be dropped.
+        use agent_core::types::{AssistantMessage, StopReason, Usage};
+        let messages = vec![
+            user_text_msg("start"),
+            AgentMessage::Assistant(AssistantMessage {
+                content: vec![
+                    Content::ToolCall {
+                        id: "tc-1".to_string(),
+                        name: "bash".to_string(),
+                        arguments: serde_json::json!({}),
+                    },
+                    Content::ToolCall {
+                        id: "tc-2".to_string(),
+                        name: "read".to_string(),
+                        arguments: serde_json::json!({}),
+                    },
+                    Content::ToolCall {
+                        id: "tc-3".to_string(),
+                        name: "grep".to_string(),
+                        arguments: serde_json::json!({}),
+                    },
+                ],
+                provider: "test".to_string(),
+                model: "test".to_string(),
+                usage: Usage::default(),
+                stop_reason: StopReason::ToolUse,
+                error_message: None,
+                timestamp: 0,
+            }),
+            tool_result_msg("tc-1", "result 1"),
+            // no ToolResult for tc-2
+            tool_result_msg("tc-3", "result 3"),
+        ];
+        let filtered = filter_incomplete_tool_calls(&messages);
+        // Only the user message should remain; assistant and all its results dropped
+        assert_eq!(
+            filtered.len(),
+            1,
+            "partial results should all be removed with the assistant"
+        );
+        assert!(matches!(filtered[0], AgentMessage::User(_)));
+    }
+
+    #[test]
+    fn filter_incomplete_tool_calls_preserves_empty_content_assistant() {
+        // An assistant message with no content blocks (edge case) should be preserved
+        // since it has no orphan tool_use blocks.
+        use agent_core::types::{AssistantMessage, StopReason, Usage};
+        let messages = vec![AgentMessage::Assistant(AssistantMessage {
+            content: vec![],
+            provider: "test".to_string(),
+            model: "test".to_string(),
+            usage: Usage::default(),
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+        })];
+        let filtered = filter_incomplete_tool_calls(&messages);
+        assert_eq!(filtered.len(), 1, "empty-content assistant should be preserved");
+    }
+
+    #[test]
+    fn filter_incomplete_tool_calls_phase2b_drops_tool_result_whose_parent_assistant_was_dropped() {
+        // Phase 2b regression guard: when an assistant is dropped (tc-b missing its result),
+        // tc-a's ToolResult must also be dropped — it must NOT leak through as an orphan.
+        // Without Phase 2b, tc-a would survive because it's in ids_with_results (Phase 1).
+        let messages = vec![
+            user_text_msg("start"),
+            assistant_msg_with_two_tool_calls("tc-a", "tc-b"),
+            tool_result_msg("tc-a", "result-a"),
+            // No ToolResult for tc-b → assistant dropped → tc-a's result must also go.
+        ];
+        let filtered = filter_incomplete_tool_calls(&messages);
+        assert_eq!(filtered.len(), 1);
+        assert!(matches!(filtered[0], AgentMessage::User(_)));
+        assert!(
+            !filtered.iter().any(|m| matches!(m, AgentMessage::ToolResult(_))),
+            "ToolResult for tc-a must not survive when its parent assistant was dropped"
+        );
     }
 }

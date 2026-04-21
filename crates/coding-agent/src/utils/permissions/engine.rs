@@ -396,6 +396,19 @@ pub fn create_permission_request_message(
 }
 
 // ============================================================================
+// Plan mode read-only tool list
+// ============================================================================
+
+/// Tools permitted in plan mode (read-only exploration).
+/// This is the single source of truth for plan-mode access control.
+///
+/// NOTE: when adding a new tool, update this list if the tool is read-only.
+/// Long-term: migrate to a `is_readonly()` method on each Tool so this list
+/// is not needed — each tool declares its own side-effect category.
+pub const PLAN_MODE_READ_ONLY_TOOLS: &[&str] =
+    &["read", "grep", "find", "ls", "web_fetch", "web_search"];
+
+// ============================================================================
 // Basic permission check
 // ============================================================================
 
@@ -449,10 +462,7 @@ pub fn check_tool_permission(ctx: &ToolPermissionContext, tool_name: &str) -> Pe
     // Deny rules (step 2) have already been checked above, so a deny rule on a read-only
     // tool is still respected even in plan mode.
     if ctx.mode == PermissionMode::Plan {
-        let read_only = matches!(
-            tool_name,
-            "read" | "grep" | "find" | "ls" | "web_fetch" | "web_search"
-        );
+        let read_only = PLAN_MODE_READ_ONLY_TOOLS.contains(&tool_name);
         if !read_only {
             return PermissionDecision::Deny {
                 reason: Some(PermissionDecisionReason::Mode(PermissionMode::Plan)),

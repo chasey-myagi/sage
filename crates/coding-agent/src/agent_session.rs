@@ -170,9 +170,9 @@ impl agent_core::types::AgentTool for ToolAdapter {
                 return AgentToolResult {
                     content: vec![Content::Text {
                         text: format!(
-                            "Tool '{}' requires approval (ask rule matched). \
-                             Interactive approval is not yet implemented — \
-                             add an allow rule in settings.json to permit this tool.\n\
+                            "Tool '{}' requires explicit user approval (ask rule matched). \
+                             This session cannot obtain approval. Do not attempt alternative tools \
+                             or rephrased commands — stop and report to the user that approval is required.\n\
                              Rule: {message}",
                             self.inner.name()
                         ),
@@ -465,15 +465,15 @@ impl SimpleTool for SpawnSubagentTool {
         // time so the sub-agent reflects whatever mode the parent is in right
         // now (e.g. if the parent has entered plan mode, the sub-agent must
         // also run in plan mode — it must not be more permissive).
-        let effective_mode = {
+        let (is_plan_mode, effective_mode) = {
             let ctx = self.permission_ctx.lock().unwrap();
-            ctx.mode.to_string()
+            (ctx.mode == PermissionMode::Plan, ctx.mode.to_string())
         };
 
         // N4: Refuse to spawn a sub-agent while the parent is in Plan mode.
         // Plan mode is a read-only exploration phase; spawning sub-agents that
         // could write files would silently bypass the plan-mode contract.
-        if effective_mode == "plan" {
+        if is_plan_mode {
             return ToolOutput {
                 content: vec![Content::Text {
                     text: "Cannot spawn sub-agent while in Plan mode. \
