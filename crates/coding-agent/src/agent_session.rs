@@ -16,8 +16,6 @@ use agent_core::tools::{AgentTool as SimpleTool, ToolOutput, create_tool};
 use agent_core::types::{AgentToolResult, Content, OnUpdateFn};
 use ai::registry::{ApiProviderRegistry, StreamOptions};
 use ai::types::{AssistantMessageEvent, InputType, Model, ModelCost, Usage};
-use tokio::sync::Mutex;
-
 use crate::config::{CONFIG_DIR_NAME, get_agent_dir, get_sessions_dir};
 use crate::core::agent::runner::AgentError;
 use crate::core::hooks::executor::HookExecutor;
@@ -405,16 +403,17 @@ fn create_default_tools(
 /// the entire session — one broken MCP server should not block the agent.
 async fn load_mcp_tools(
     servers: &[McpServerConfig],
+    permission_ctx: Arc<Mutex<ToolPermissionContext>>,
 ) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
     let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> = Vec::new();
     for config in servers {
         match McpClient::connect(config).await {
             Ok(client) => {
-                let client = Arc::new(Mutex::new(client));
+                let client = Arc::new(tokio::sync::Mutex::new(client));
                 match discover_mcp_tools(&config.name, Arc::clone(&client)).await {
                     Ok(mcp_tools) => {
                         for t in mcp_tools {
-                            tools.push(Arc::new(ToolAdapter::new(Box::new(t))));
+                            tools.push(Arc::new(ToolAdapter::new(Box::new(t), Arc::clone(&permission_ctx))));
                         }
                     }
                     Err(e) => {
@@ -527,13 +526,13 @@ pub async fn run_agent_session_to_channel(
     let permission_ctx = build_permission_context(&permission_mode, &cwd);
 
     let backend = LocalBackend::new();
-    let mut tools = create_default_tools(backend, permission_ctx);
+    let mut tools = create_default_tools(backend, Arc::clone(&permission_ctx));
 
     // Load MCP tools from settings and append to the tool list.
     let agent_dir = get_agent_dir();
     let settings = SettingsManager::create(&cwd, &agent_dir).get_effective_settings();
     if let Some(servers) = &settings.mcp_servers {
-        tools.extend(load_mcp_tools(servers).await);
+        tools.extend(load_mcp_tools(servers, Arc::clone(&permission_ctx)).await);
     }
 
     agent.set_tools(tools);
@@ -718,13 +717,13 @@ pub async fn run_agent_session(
     let permission_ctx = build_permission_context(&permission_mode, &cwd);
 
     let backend = LocalBackend::new();
-    let mut tools = create_default_tools(backend, permission_ctx);
+    let mut tools = create_default_tools(backend, Arc::clone(&permission_ctx));
 
     // 4b. Load MCP tools from settings and append to the tool list.
     let agent_dir = get_agent_dir();
     let settings = SettingsManager::create(&cwd, &agent_dir).get_effective_settings();
     if let Some(servers) = &settings.mcp_servers {
-        tools.extend(load_mcp_tools(servers).await);
+        tools.extend(load_mcp_tools(servers, Arc::clone(&permission_ctx)).await);
     }
 
     agent.set_tools(tools);
