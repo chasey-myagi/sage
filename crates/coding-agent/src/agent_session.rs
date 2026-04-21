@@ -282,6 +282,8 @@ pub async fn spawn_subagent(
         parent_model: model,
     };
 
+    // Passes empty existing_members — concurrent spawns may produce duplicate names
+    // until callers thread live team membership into this call site.
     spawn_agent_in_team(config, &[])
         .await
         .map_err(|e: AgentError| anyhow::anyhow!("{e}"))

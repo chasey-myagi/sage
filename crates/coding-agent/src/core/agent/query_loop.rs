@@ -5,7 +5,6 @@
 //! tool-use blocks, executes allowed tools, and feeds the results back until
 //! the model produces a stop-sequence with no tool calls or `max_turns` is hit.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -27,10 +26,6 @@ use super::runner::AgentError;
 pub struct QueryLoopParams {
     /// System prompt sent to the LLM on every turn.
     pub system_prompt: String,
-    /// User context key-value pairs prepended to messages.
-    pub user_context: HashMap<String, String>,
-    /// System context key-value pairs appended to the system prompt.
-    pub system_context: HashMap<String, String>,
     /// Current message history (includes initial prompts + all prior turns).
     pub messages: Vec<AgentMessage>,
     /// Maximum number of LLM turns before the loop terminates.
@@ -78,10 +73,10 @@ pub fn run_query_loop(
     // Wire can_use_tool into the before_tool_call hook so the loop enforces
     // permissions at call time rather than pre-filtering the tool list.
     let can_use_tool = params.can_use_tool;
-    let allowed_tools = params.allowed_tools;
+    let allowed_tools = Arc::new(params.allowed_tools);
     let before_tool_call = Some(Box::new(
         move |ctx: BeforeToolCallContext| -> futures::future::BoxFuture<'static, BeforeToolCallResult> {
-            let allowed = allowed_tools.clone();
+            let allowed = Arc::clone(&allowed_tools);
             let result = can_use_tool(&ctx.tool_name, allowed.as_deref());
             Box::pin(async move {
                 match result {
@@ -166,7 +161,6 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
-    use agent_core::agent_loop::LlmProvider as _;
     use ai::types::{
         AssistantMessageEvent, InputType, LlmContext, LlmTool, Model, ModelCost, StopReason,
         api,
@@ -248,8 +242,6 @@ mod tests {
     ) -> QueryLoopParams {
         QueryLoopParams {
             system_prompt: "system".to_string(),
-            user_context: HashMap::new(),
-            system_context: HashMap::new(),
             messages,
             max_turns: 10,
             can_use_tool: allow_all(),
@@ -266,8 +258,6 @@ mod tests {
         let provider = Arc::new(MockProvider::new(vec![]));
         let _params = QueryLoopParams {
             system_prompt: "system".to_string(),
-            user_context: HashMap::new(),
-            system_context: HashMap::new(),
             messages: vec![],
             max_turns: 10,
             can_use_tool: allow_all(),

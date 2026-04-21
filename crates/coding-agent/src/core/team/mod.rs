@@ -113,11 +113,11 @@ fn build_can_use_tool(
     // Explicit allowlist — check at call time.
     let allowed: Vec<String> = agent_tools.to_vec();
     Arc::new(move |tool: &str, extra: Option<&[String]>| {
-        if allowed.contains(&tool.to_string()) {
+        if allowed.iter().any(|t| t == tool) {
             return Ok(());
         }
         if let Some(extra_list) = extra {
-            if extra_list.contains(&tool.to_string()) {
+            if extra_list.iter().any(|t| t == tool) {
                 return Ok(());
             }
         }

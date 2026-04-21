@@ -20,6 +20,10 @@ use super::definition::{AgentDef, AgentModel};
 use super::forked::{CacheSafeParams, filter_incomplete_tool_calls};
 use super::query_loop::{QueryLoopParams, run_query_loop};
 
+const OPUS_MODEL_ID: &str = "claude-opus-4-7";
+const SONNET_MODEL_ID: &str = "claude-sonnet-4-6";
+const HAIKU_MODEL_ID: &str = "claude-haiku-4-5-20251001";
+
 /// Errors that can occur while running a sub-agent.
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -213,8 +217,6 @@ pub fn run_agent(params: RunAgentParams) -> BoxStream<'static, Result<AgentMessa
 
     let loop_params = QueryLoopParams {
         system_prompt,
-        user_context: params.user_context,
-        system_context: params.system_context,
         messages: params.messages,
         max_turns,
         can_use_tool: params.can_use_tool,
@@ -238,18 +240,18 @@ pub fn resolve_model_override(agent_model: Option<&AgentModel>, parent: &Model) 
     match agent_model {
         None | Some(AgentModel::Inherit) => parent.clone(),
         Some(AgentModel::Opus) => Model {
-            id: "claude-opus-4-6".to_string(),
-            name: "claude-opus-4-6".to_string(),
+            id: OPUS_MODEL_ID.to_string(),
+            name: OPUS_MODEL_ID.to_string(),
             ..parent.clone()
         },
         Some(AgentModel::Sonnet) => Model {
-            id: "claude-sonnet-4-6".to_string(),
-            name: "claude-sonnet-4-6".to_string(),
+            id: SONNET_MODEL_ID.to_string(),
+            name: SONNET_MODEL_ID.to_string(),
             ..parent.clone()
         },
         Some(AgentModel::Haiku) => Model {
-            id: "claude-haiku-4-5-20251001".to_string(),
-            name: "claude-haiku-4-5-20251001".to_string(),
+            id: HAIKU_MODEL_ID.to_string(),
+            name: HAIKU_MODEL_ID.to_string(),
             ..parent.clone()
         },
         Some(AgentModel::Custom(id)) => Model {
