@@ -18,4 +18,5 @@ regex = { workspace = true }
 dirs-next = "2"
 pulldown-cmark = { workspace = true }
 tokio-util = { workspace = true }
+indexmap = { workspace = true }
 

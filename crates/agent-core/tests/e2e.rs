@@ -286,6 +286,7 @@ async fn mock_tool_execution_produces_tool_result() {
                     text: format!("{expr} = {result}"),
                 }],
                 details: serde_json::Value::Null,
+                is_error: false,
             }
         }
     }
@@ -448,6 +449,7 @@ impl AgentTool for CalcToolReal {
                 text: format!("{expr} = {result}"),
             }],
             details: serde_json::Value::Null,
+            is_error: false,
         }
     }
 }

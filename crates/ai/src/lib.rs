@@ -7,6 +7,7 @@
 pub mod bedrock_provider;
 pub mod cli;
 pub mod keys;
+pub mod model_pricing;
 pub mod models;
 
 pub mod openai_compat;

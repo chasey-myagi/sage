@@ -189,6 +189,8 @@ pub struct AgentToolResult {
     pub content: Vec<Content>,
     /// Structured details for UI or logging.
     pub details: Value,
+    /// Whether the tool execution resulted in an error.
+    pub is_error: bool,
 }
 
 /// Context passed to `beforeToolCall`.
@@ -659,9 +661,11 @@ mod tests {
                 text: "output".into(),
             }],
             details: json!({"key": "value"}),
+            is_error: false,
         };
         assert_eq!(result.content.len(), 1);
         assert_eq!(result.details["key"], "value");
+        assert!(!result.is_error);
     }
 
     #[test]

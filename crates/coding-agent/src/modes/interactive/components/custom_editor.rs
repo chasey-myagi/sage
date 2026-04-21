@@ -171,13 +171,8 @@ impl Default for CustomEditor {
     }
 }
 
-/// Simplified keybinding matcher. A full implementation would use
-/// `KeybindingsManager`; here we match common control sequences.
-fn matches_keybinding(data: &str, _action: &str) -> bool {
-    // Placeholder — real implementation delegates to KeybindingsManager.
-    // For testing purposes we just return false (no false positives).
-    let _ = data;
-    false
+fn matches_keybinding(data: &str, action: &str) -> bool {
+    crate::core::keybindings::check_app_keybinding(data, action)
 }
 
 // ============================================================================

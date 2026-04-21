@@ -5,15 +5,58 @@
 //! subscribes to events, sends the user message, and waits for completion.
 
 use std::io::Write as _;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use agent_core::agent::{Agent, AgentOptions};
 use agent_core::agent_loop::LlmProvider;
+use agent_core::mcp::{McpClient, McpServerConfig};
 use agent_core::tools::backend::LocalBackend;
+use agent_core::tools::mcp_tool::discover_mcp_tools;
 use agent_core::tools::{AgentTool as SimpleTool, ToolOutput, create_tool};
-use agent_core::types::{AgentToolResult, OnUpdateFn};
+use agent_core::types::{AgentToolResult, Content, OnUpdateFn};
 use ai::registry::{ApiProviderRegistry, StreamOptions};
-use ai::types::{AssistantMessageEvent, InputType, Model, ModelCost};
+use ai::types::{AssistantMessageEvent, InputType, Model, ModelCost, Usage};
+use crate::config::{CONFIG_DIR_NAME, get_agent_dir, get_sessions_dir};
+use crate::core::agent::runner::AgentError;
+use crate::core::hooks::executor::HookExecutor;
+use crate::core::hooks::runner::HookRunner;
+use crate::core::hooks::HooksLifecycle;
+use crate::core::settings_manager::SettingsManager;
+use crate::core::team::{SpawnAgentConfig, spawn_agent_in_team};
+use crate::core::tools::plan_mode::{
+    ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ExitPlanModeInput, PlanExitStrategy,
+    enter_plan_mode, exit_plan_mode,
+};
+use crate::utils::permissions::{
+    PermissionBehavior, PermissionDecision, PermissionMode, PermissionRuleSource,
+    ToolPermissionContext,
+};
+use crate::utils::permissions::engine::check_tool_permission;
+use crate::utils::permissions::loader::{load_permissions_from_file, permissions_json_to_rules};
+use crate::utils::permissions::parser::permission_rule_value_to_string;
+
+/// Events sent through the interactive-mode channel.
+#[derive(Debug, Clone)]
+pub enum AgentDelta {
+    /// A streaming text fragment.
+    Text(String),
+    /// Token usage snapshot after a turn completes.
+    TurnUsage {
+        usage: Usage,
+        model: String,
+        is_fast: bool,
+    },
+    /// A tool call has started.
+    ToolStart { name: String, args_preview: String },
+    /// A tool call has completed.
+    ToolEnd {
+        name: String,
+        success: bool,
+        output_preview: String,
+    },
+    /// A fatal agent error.
+    Error(String),
+}
 
 // ── Registry-backed LLM provider adapter ────────────────────────────────────
 
@@ -49,20 +92,32 @@ impl LlmProvider for RegistryProvider {
 
 /// Wraps a `agent_core::tools::AgentTool` (simple interface) into the
 /// `agent_core::types::AgentTool` trait (full interface expected by `Agent`).
+///
+/// Calls `PermissionEngine::check()` before each tool execution, returning a
+/// denial message if the tool is blocked by settings.json permission rules.
+///
+/// Ask rules are treated as deny in all session modes (interactive and print).
+/// An interactive approval channel (TUI modal) is not yet implemented.
+/// Users must add explicit allow rules in settings.json to permit a tool.
 struct ToolAdapter {
     inner: Box<dyn SimpleTool>,
     tool_description: String,
     tool_schema: serde_json::Value,
+    permission_ctx: Arc<Mutex<ToolPermissionContext>>,
 }
 
 impl ToolAdapter {
-    fn new(tool: Box<dyn SimpleTool>) -> Self {
+    fn new(
+        tool: Box<dyn SimpleTool>,
+        permission_ctx: Arc<Mutex<ToolPermissionContext>>,
+    ) -> Self {
         let description = tool.description().to_string();
         let schema = tool.parameters_schema();
         Self {
             inner: tool,
             tool_description: description,
             tool_schema: schema,
+            permission_ctx,
         }
     }
 }
@@ -92,12 +147,218 @@ impl agent_core::types::AgentTool for ToolAdapter {
         _signal: Option<tokio_util::sync::CancellationToken>,
         _on_update: Option<&OnUpdateFn>,
     ) -> AgentToolResult {
+        // Check permission rules from settings.json before executing.
+        let decision = {
+            let ctx = self.permission_ctx.lock().unwrap();
+            check_tool_permission(&ctx, self.inner.name())
+        };
+        match decision {
+            PermissionDecision::Deny { message, .. } => {
+                return AgentToolResult {
+                    content: vec![Content::Text {
+                        text: format!("Permission denied: {message}"),
+                    }],
+                    details: serde_json::Value::Null,
+                    is_error: true,
+                };
+            }
+            PermissionDecision::Ask { message, .. } => {
+                // Interactive approval channel not yet implemented.
+                // Both interactive and non-interactive sessions treat ask as deny.
+                // Users must add an explicit allow rule in settings.json to permit this tool.
+                // TODO: wire TUI approval modal when interactive session is available.
+                return AgentToolResult {
+                    content: vec![Content::Text {
+                        text: format!(
+                            "Tool '{}' requires explicit user approval (ask rule matched). \
+                             This session cannot obtain approval. Do not attempt alternative tools \
+                             or rephrased commands — stop and report to the user that approval is required.\n\
+                             Rule: {message}",
+                            self.inner.name()
+                        ),
+                    }],
+                    details: serde_json::Value::Null,
+                    is_error: true,
+                };
+            }
+            PermissionDecision::Allow { .. } => {}
+        }
+
         let output: ToolOutput = self.inner.execute(args).await;
+        // ToolOutput does not expose a details field; use Null as placeholder.
         AgentToolResult {
             content: output.content,
             details: serde_json::Value::Null,
+            is_error: output.is_error,
         }
     }
+}
+
+// ── Plan-mode tools ──────────────────────────────────────────────────────────
+
+/// Implements the EnterPlanMode tool for the agent loop.
+///
+/// Transitions the shared permission context into `PermissionMode::Plan`,
+/// signalling to the LLM that it should explore and plan without writing files.
+struct EnterPlanModeTool {
+    permission_ctx: Arc<Mutex<ToolPermissionContext>>,
+}
+
+#[async_trait::async_trait]
+impl agent_core::types::AgentTool for EnterPlanModeTool {
+    fn name(&self) -> &str {
+        ENTER_PLAN_MODE_TOOL_NAME
+    }
+
+    fn label(&self) -> &str {
+        ENTER_PLAN_MODE_TOOL_NAME
+    }
+
+    fn description(&self) -> &str {
+        "Switches into plan mode, a read-only exploration and design phase. While in plan \
+         mode you must not create or edit files. Use this to think through an approach \
+         before implementing it. When ready, call ExitPlanMode with your plan."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        })
+    }
+
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        _args: serde_json::Value,
+        _signal: Option<tokio_util::sync::CancellationToken>,
+        _on_update: Option<&OnUpdateFn>,
+    ) -> AgentToolResult {
+        let mut ctx = self.permission_ctx.lock().unwrap();
+        match enter_plan_mode(&mut ctx, false, false) {
+            Ok(output) => AgentToolResult {
+                content: vec![Content::Text { text: output.message }],
+                details: serde_json::Value::Null,
+                is_error: false,
+            },
+            Err(e) => AgentToolResult {
+                content: vec![Content::Text { text: e }],
+                details: serde_json::Value::Null,
+                is_error: true,
+            },
+        }
+    }
+}
+
+/// Implements the ExitPlanMode tool for the agent loop.
+///
+/// Restores the previous permission mode and presents the plan for approval.
+struct ExitPlanModeTool {
+    permission_ctx: Arc<Mutex<ToolPermissionContext>>,
+}
+
+#[async_trait::async_trait]
+impl agent_core::types::AgentTool for ExitPlanModeTool {
+    fn name(&self) -> &str {
+        EXIT_PLAN_MODE_TOOL_NAME
+    }
+
+    fn label(&self) -> &str {
+        EXIT_PLAN_MODE_TOOL_NAME
+    }
+
+    fn description(&self) -> &str {
+        "Exit plan mode and present your implementation plan for approval. \
+         Provide a `plan` parameter with the full plan text. \
+         The agent will not proceed with implementation until the plan is approved."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "plan": {
+                    "type": "string",
+                    "description": "The implementation plan to present for approval"
+                }
+            },
+            "required": ["plan"]
+        })
+    }
+
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        args: serde_json::Value,
+        _signal: Option<tokio_util::sync::CancellationToken>,
+        _on_update: Option<&OnUpdateFn>,
+    ) -> AgentToolResult {
+        let plan = args
+            .get("plan")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let mut ctx = self.permission_ctx.lock().unwrap();
+        let input = ExitPlanModeInput { plan };
+        match exit_plan_mode(&mut ctx, input, PlanExitStrategy::Standard) {
+            Ok(output) => AgentToolResult {
+                content: vec![Content::Text { text: output.message }],
+                details: serde_json::Value::Null,
+                is_error: false,
+            },
+            Err(e) => AgentToolResult {
+                content: vec![Content::Text { text: e }],
+                details: serde_json::Value::Null,
+                is_error: true,
+            },
+        }
+    }
+}
+
+// ── Permission context builder ───────────────────────────────────────────────
+
+/// Load permission rules from a settings file and insert them into `ctx`.
+///
+/// If the file does not exist or cannot be parsed, silently returns without
+/// modifying `ctx`.  All rule behaviours (Allow / Deny / Ask) are supported.
+fn load_rules_into(
+    ctx: &mut ToolPermissionContext,
+    path: &std::path::Path,
+    source: PermissionRuleSource,
+) {
+    let Some(perms) = load_permissions_from_file(path) else {
+        return;
+    };
+    for rule in permissions_json_to_rules(&perms, source) {
+        let s = permission_rule_value_to_string(&rule.rule_value);
+        match rule.rule_behavior {
+            PermissionBehavior::Allow => ctx.add_allow_rule(rule.source, s),
+            PermissionBehavior::Deny => ctx.add_deny_rule(rule.source, s),
+            PermissionBehavior::Ask => ctx.add_ask_rule(rule.source, s),
+        }
+    }
+}
+
+/// Build a `ToolPermissionContext` from the CLI permission mode and settings files.
+///
+/// Loads allow/deny/ask rules from the global settings file (UserSettings source)
+/// and the project settings file (ProjectSettings source), then applies the
+/// requested permission mode.
+fn build_permission_context(
+    permission_mode: &str,
+    cwd: &std::path::Path,
+) -> Arc<Mutex<ToolPermissionContext>> {
+    let mode = PermissionMode::from_str_lossy(permission_mode);
+    let mut ctx = ToolPermissionContext::new(mode);
+
+    let global_settings_path = get_agent_dir().join("settings.json");
+    load_rules_into(&mut ctx, &global_settings_path, PermissionRuleSource::UserSettings);
+
+    let project_settings_path = cwd.join(CONFIG_DIR_NAME).join("settings.json");
+    load_rules_into(&mut ctx, &project_settings_path, PermissionRuleSource::ProjectSettings);
+
+    Arc::new(Mutex::new(ctx))
 }
 
 // ── Model construction ───────────────────────────────────────────────────────
@@ -138,26 +399,276 @@ fn build_model(provider_id: Option<&str>, model_id: Option<&str>) -> anyhow::Res
     })
 }
 
+// ── SpawnSubagentTool ────────────────────────────────────────────────────────
+
+struct SpawnSubagentTool {
+    provider_id: Option<String>,
+    api_key: Option<String>,
+    permission_ctx: Arc<Mutex<ToolPermissionContext>>,
+}
+
+#[async_trait::async_trait]
+impl SimpleTool for SpawnSubagentTool {
+    fn name(&self) -> &str {
+        "spawn_subagent"
+    }
+
+    fn description(&self) -> &str {
+        "Spawn a sub-agent to handle a task asynchronously in the background. \
+         The sub-agent has access to the full set of coding tools and runs \
+         independently. Returns the unique agent ID of the spawned agent. \
+         Use this to parallelise independent sub-tasks or to delegate \
+         specialised work to a background worker."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "The prompt or task description for the sub-agent to execute."
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Optional model ID override (e.g. 'claude-opus-4-5'). Inherits the session default when omitted."
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Optional working directory for the sub-agent. Defaults to the current directory when omitted."
+                }
+            },
+            "required": ["task"]
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> ToolOutput {
+        let task = match args.get("task").and_then(|v| v.as_str()) {
+            Some(t) => t.to_string(),
+            None => {
+                return ToolOutput {
+                    content: vec![Content::Text {
+                        text: "Error: 'task' parameter is required".to_string(),
+                    }],
+                    is_error: true,
+                };
+            }
+        };
+
+        let model_id = args.get("model").and_then(|v| v.as_str()).map(str::to_string);
+        let cwd = args
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .map(std::path::PathBuf::from);
+
+        // Always read the current permission mode from the live context at spawn
+        // time so the sub-agent reflects whatever mode the parent is in right
+        // now (e.g. if the parent has entered plan mode, the sub-agent must
+        // also run in plan mode — it must not be more permissive).
+        let (is_plan_mode, effective_mode) = {
+            let ctx = self.permission_ctx.lock().unwrap();
+            (ctx.mode == PermissionMode::Plan, ctx.mode.to_string())
+        };
+
+        // N4: Refuse to spawn a sub-agent while the parent is in Plan mode.
+        // Plan mode is a read-only exploration phase; spawning sub-agents that
+        // could write files would silently bypass the plan-mode contract.
+        if is_plan_mode {
+            return ToolOutput {
+                content: vec![Content::Text {
+                    text: "Cannot spawn sub-agent while in Plan mode. \
+                           Exit Plan mode first (ExitPlanMode tool), then retry."
+                        .to_string(),
+                }],
+                is_error: true,
+            };
+        }
+
+        match spawn_subagent(
+            task,
+            None,
+            model_id,
+            self.provider_id.clone(),
+            self.api_key.clone(),
+            None,
+            cwd,
+            effective_mode,
+        )
+        .await
+        {
+            Ok(agent_id) => ToolOutput {
+                content: vec![Content::Text {
+                    text: format!("Sub-agent spawned with ID: {agent_id}"),
+                }],
+                is_error: false,
+            },
+            Err(e) => ToolOutput {
+                content: vec![Content::Text {
+                    text: format!("Failed to spawn sub-agent: {e}"),
+                }],
+                is_error: true,
+            },
+        }
+    }
+}
+
 // ── Default tool list ────────────────────────────────────────────────────────
 
-/// Create the default coding-agent tools backed by the local filesystem,
+/// Create the default coding-agent tools backed by the local filesystem.
+///
+/// All standard tools are wrapped in `ToolAdapter` which enforces permission
+/// rules from settings.json before each execution.  `SpawnSubagent` is always
+/// registered.  `EnterPlanMode` and `ExitPlanMode` are only registered for
+/// top-level agents — sub-agents must NOT enter plan mode because they run
+/// inside an isolated `ToolPermissionContext` that the parent cannot observe,
+/// which would silently bypass the parent's permission model.
+fn create_default_tools(
+    backend: Arc<LocalBackend>,
+    permission_ctx: Arc<Mutex<ToolPermissionContext>>,
+    is_subagent: bool,
+    provider_id: Option<String>,
+    api_key: Option<String>,
+) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
+    let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> =
+        ["bash", "read", "write", "edit", "grep", "find", "ls", "web_fetch", "web_search"]
+            .iter()
+            .filter_map(|name| {
+                create_tool(
+                    name,
+                    Arc::clone(&backend) as Arc<dyn agent_core::tools::backend::ToolBackend>,
+                )
+            })
+            .map(|t| -> Arc<dyn agent_core::types::AgentTool> {
+                Arc::new(ToolAdapter::new(t, Arc::clone(&permission_ctx)))
+            })
+            .collect();
+
+    if !is_subagent {
+        tools.push(Arc::new(EnterPlanModeTool {
+            permission_ctx: Arc::clone(&permission_ctx),
+        }));
+        tools.push(Arc::new(ExitPlanModeTool {
+            permission_ctx: Arc::clone(&permission_ctx),
+        }));
+    }
+    tools.push(Arc::new(ToolAdapter::new(
+        Box::new(SpawnSubagentTool {
+            provider_id,
+            api_key,
+            permission_ctx: Arc::clone(&permission_ctx),
+        }),
+        Arc::clone(&permission_ctx),
+    )));
+
+    tools
+}
+
+// ── MCP tool loading ─────────────────────────────────────────────────────────
+
+/// Connect to each configured MCP server, discover its tools, and return them
 /// wrapped as `types::AgentTool` for use with `Agent`.
-fn create_default_tools(backend: Arc<LocalBackend>) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
-    ["bash", "read", "write", "edit", "grep", "find", "ls"]
-        .iter()
-        .filter_map(|name| {
-            create_tool(
-                name,
-                Arc::clone(&backend) as Arc<dyn agent_core::tools::backend::ToolBackend>,
-            )
-        })
-        .map(|t| -> Arc<dyn agent_core::types::AgentTool> { Arc::new(ToolAdapter::new(t)) })
-        .collect()
+///
+/// Servers that fail to connect are skipped with a warning rather than aborting
+/// the entire session — one broken MCP server should not block the agent.
+async fn load_mcp_tools(
+    servers: &[McpServerConfig],
+    permission_ctx: Arc<Mutex<ToolPermissionContext>>,
+) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
+    let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> = Vec::new();
+    for config in servers {
+        match McpClient::connect(config).await {
+            Ok(client) => {
+                let client = Arc::new(tokio::sync::Mutex::new(client));
+                match discover_mcp_tools(&config.name, Arc::clone(&client)).await {
+                    Ok(mcp_tools) => {
+                        for t in mcp_tools {
+                            tools.push(Arc::new(ToolAdapter::new(Box::new(t), Arc::clone(&permission_ctx))));
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("MCP server '{}' tool discovery failed: {e}", config.name);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("MCP server '{}' failed to connect: {e}", config.name);
+            }
+        }
+    }
+    tools
+}
+
+// ── Hook wiring ──────────────────────────────────────────────────────────────
+
+/// Wire hooks from settings into `agent`'s tool lifecycle.
+///
+/// Reads the effective settings, creates a session-scoped `HookExecutor` with
+/// the given `permission_mode`, attaches `BeforeToolCall`/`AfterToolCall` hooks,
+/// and subscribes to `TurnEnd` to fire Stop hooks asynchronously.
+///
+/// Returns the `HookRunner` if hooks were configured, `None` otherwise.
+fn wire_hooks(
+    agent: &mut Agent,
+    cwd: &std::path::Path,
+    permission_mode: &str,
+) -> Option<Arc<HookRunner>> {
+    let agent_dir = get_agent_dir();
+    let settings = SettingsManager::create(cwd, &agent_dir).get_effective_settings();
+    let hooks_settings = settings.hooks?;
+
+    let session_id = ulid::Ulid::new().to_string();
+    let transcript_path = get_sessions_dir()
+        .join(format!("{session_id}.jsonl"))
+        .to_string_lossy()
+        .into_owned();
+    let executor = HookExecutor::new(session_id.clone(), cwd.to_string_lossy().to_string())
+        .with_agent_type("coding-agent")
+        .with_permission_mode(permission_mode)
+        .with_transcript_path(transcript_path);
+    let runner = Arc::new(HookRunner::new(executor, hooks_settings));
+    let lifecycle = Arc::new(HooksLifecycle::new(Arc::clone(&runner)));
+    agent.set_before_tool_call(lifecycle.clone());
+    agent.set_after_tool_call(lifecycle);
+
+    let stop_runner = Arc::clone(&runner);
+    agent.subscribe(move |event| {
+        use agent_core::AgentEvent;
+        if let AgentEvent::TurnEnd { message, .. } = event {
+            let last_msg = message.text();
+            let r = Arc::clone(&stop_runner);
+            tokio::spawn(async move {
+                match r.run_stop(Some(&last_msg), false).await {
+                    Ok(_result) => {
+                        // Stop hook ran successfully.
+                        // Note: blocking outcome is not yet supported in this architecture —
+                        // the agent loop cannot be paused from a TurnEnd callback (fire-and-forget).
+                        // Configure stop behavior via session-level controls instead.
+                        // TODO: surface blocking outcome once a synchronous stop hook path exists.
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Stop hook failed");
+                    }
+                }
+            });
+        }
+    });
+
+    Some(runner)
 }
 
 // ── Public entry point ───────────────────────────────────────────────────────
 
-/// Run an agent session, sending text deltas through `tx` instead of stdout.
+/// Extract a short human-readable summary of tool args for display in the TUI.
+fn args_to_preview(args: &serde_json::Value) -> String {
+    for key in &["command", "file_path", "pattern", "path"] {
+        if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
+            return v.chars().take(80).collect();
+        }
+    }
+    args.to_string().chars().take(80).collect()
+}
+
+/// Run an agent session, sending [`AgentDelta`] events through `tx` instead of stdout.
 ///
 /// Drops `tx` when the agent finishes so the receiver knows the stream ended.
 pub async fn run_agent_session_to_channel(
@@ -165,7 +676,8 @@ pub async fn run_agent_session_to_channel(
     model_id: Option<String>,
     provider_id: Option<String>,
     api_key: Option<String>,
-    tx: tokio::sync::mpsc::UnboundedSender<String>,
+    tx: tokio::sync::mpsc::UnboundedSender<AgentDelta>,
+    permission_mode: String,
 ) -> anyhow::Result<()> {
     if message.trim().is_empty() {
         return Ok(());
@@ -175,8 +687,18 @@ pub async fn run_agent_session_to_channel(
     let registry = Arc::new(ApiProviderRegistry::new());
     ai::register_builtin_into(&registry);
 
-    let options = StreamOptions { api_key, ..StreamOptions::default() };
-    let provider: Arc<dyn LlmProvider> = Arc::new(RegistryProvider { registry: Arc::clone(&registry), options });
+    // Clone before move into StreamOptions so we can pass to SpawnSubagentTool.
+    let provider_id_for_subagent = provider_id.clone();
+    let api_key_for_subagent = api_key.clone();
+
+    let options = StreamOptions {
+        api_key,
+        ..StreamOptions::default()
+    };
+    let provider: Arc<dyn LlmProvider> = Arc::new(RegistryProvider {
+        registry: Arc::clone(&registry),
+        options,
+    });
 
     let mut agent = Agent::new(AgentOptions::new(
         model,
@@ -184,19 +706,176 @@ pub async fn run_agent_session_to_channel(
         provider,
     ));
 
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let permission_ctx = build_permission_context(&permission_mode, &cwd);
+
     let backend = LocalBackend::new();
-    let tools = create_default_tools(backend);
+    let mut tools = create_default_tools(
+        backend,
+        Arc::clone(&permission_ctx),
+        false,
+        provider_id_for_subagent,
+        api_key_for_subagent,
+    );
+
+    // Load MCP tools from settings and append to the tool list.
+    let agent_dir = get_agent_dir();
+    let settings = SettingsManager::create(&cwd, &agent_dir).get_effective_settings();
+    if let Some(servers) = &settings.mcp_servers {
+        tools.extend(load_mcp_tools(servers, Arc::clone(&permission_ctx)).await);
+    }
+
     agent.set_tools(tools);
+
+    let hook_runner = wire_hooks(&mut agent, &cwd, &permission_mode);
+
+    // SessionStart hooks fire once before the agent starts its first turn.
+    if let Some(runner) = &hook_runner {
+        if let Err(e) = runner.run_session_start().await {
+            tracing::warn!(error = %e, "SessionStart hook failed — continuing session");
+        }
+    }
 
     agent.subscribe(move |event| {
         use agent_core::AgentEvent;
-        if let AgentEvent::MessageUpdate { delta, .. } = event {
-            let _ = tx.send(delta.clone());
+        match event {
+            AgentEvent::MessageUpdate { delta, .. } => {
+                let _ = tx.send(AgentDelta::Text(delta.clone()));
+            }
+            AgentEvent::TurnEnd { message, .. } => {
+                let is_fast = message.model.to_ascii_lowercase().contains("fast");
+                let _ = tx.send(AgentDelta::TurnUsage {
+                    usage: message.usage.clone(),
+                    model: message.model.clone(),
+                    is_fast,
+                });
+            }
+            AgentEvent::ToolExecutionStart {
+                tool_name, args, ..
+            } => {
+                let _ = tx.send(AgentDelta::ToolStart {
+                    name: tool_name.clone(),
+                    args_preview: args_to_preview(&args),
+                });
+            }
+            AgentEvent::ToolExecutionEnd {
+                tool_name,
+                result,
+                is_error,
+                ..
+            } => {
+                use agent_core::types::Content;
+                let text = result
+                    .content
+                    .iter()
+                    .find_map(|c| {
+                        if let Content::Text { text } = c {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
+                let first_nonempty = text
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("")
+                    .chars()
+                    .take(100)
+                    .collect::<String>();
+                let _ = tx.send(AgentDelta::ToolEnd {
+                    name: tool_name.clone(),
+                    success: !is_error,
+                    output_preview: first_nonempty,
+                });
+            }
+            AgentEvent::RunError { error } => {
+                let _ = tx.send(AgentDelta::Error(error.clone()));
+            }
+            _ => {}
         }
     });
 
-    agent.prompt_text(message).await.map_err(|e| anyhow::anyhow!(e))?;
-    Ok(())
+    let run_result = agent.prompt_text(message).await.map_err(|e| anyhow::anyhow!(e));
+
+    // SessionEnd hooks fire after the agent finishes (regardless of success).
+    if let Some(runner) = hook_runner {
+        if let Err(e) = runner.run_session_end().await {
+            tracing::warn!(error = %e, "SessionEnd hook failed");
+        }
+    }
+
+    run_result
+}
+
+/// Spawn a sub-agent as a team member, running it asynchronously in the background.
+///
+/// Resolves a model and provider using the same defaults as `run_agent_session`,
+/// creates a `SpawnAgentConfig`, and delegates to `spawn_agent_in_team`.
+/// Returns the spawned agent's unique ID.
+///
+/// This is the primary user-facing entry point for the sub-agent system,
+/// wiring the session's LLM credentials into the team spawning path.
+pub async fn spawn_subagent(
+    prompt: String,
+    agent_type: Option<String>,
+    model_id: Option<String>,
+    provider_id: Option<String>,
+    api_key: Option<String>,
+    team_name: Option<String>,
+    cwd: Option<std::path::PathBuf>,
+    permission_mode: String,
+) -> anyhow::Result<String> {
+    let model = build_model(provider_id.as_deref(), model_id.as_deref())?;
+
+    let registry = Arc::new(ApiProviderRegistry::new());
+    ai::register_builtin_into(&registry);
+
+    // Clone before move into StreamOptions so SpawnSubagentTool can carry them.
+    let provider_id_for_subagent = provider_id.clone();
+    let api_key_for_subagent = api_key.clone();
+
+    let options = StreamOptions {
+        api_key,
+        ..StreamOptions::default()
+    };
+    let provider: Arc<dyn LlmProvider> = Arc::new(RegistryProvider {
+        registry,
+        options,
+    });
+
+    let effective_cwd = cwd
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+    let permission_ctx = build_permission_context(&permission_mode, &effective_cwd);
+
+    let backend = LocalBackend::new();
+    let tools = create_default_tools(
+        backend,
+        permission_ctx,
+        true,
+        provider_id_for_subagent,
+        api_key_for_subagent,
+    );
+
+    let name = agent_type.as_deref().unwrap_or("subagent").to_string();
+    let config = SpawnAgentConfig {
+        name,
+        prompt,
+        team_name,
+        agent_type,
+        model: None,
+        cwd,
+        provider,
+        tools,
+        parent_model: model,
+    };
+
+    // Passes empty existing_members — concurrent spawns may produce duplicate names
+    // until callers thread live team membership into this call site.
+    spawn_agent_in_team(config, &[])
+        .await
+        .map_err(|e: AgentError| anyhow::anyhow!("{e}"))
 }
 
 /// Run a single-shot agent session in print mode.
@@ -208,6 +887,7 @@ pub async fn run_agent_session(
     model_id: Option<String>,
     provider_id: Option<String>,
     api_key: Option<String>,
+    permission_mode: String,
 ) -> anyhow::Result<()> {
     if message.trim().is_empty() {
         return Ok(());
@@ -219,6 +899,10 @@ pub async fn run_agent_session(
     // 2. Register built-in API providers and wrap in our adapter.
     let registry = Arc::new(ApiProviderRegistry::new());
     ai::register_builtin_into(&registry);
+
+    // Clone before move into StreamOptions so SpawnSubagentTool can carry them.
+    let provider_id_for_subagent = provider_id.clone();
+    let api_key_for_subagent = api_key.clone();
 
     let options = StreamOptions {
         api_key,
@@ -237,10 +921,37 @@ pub async fn run_agent_session(
         provider,
     ));
 
-    // 4. Attach default tools (local backend, no workspace root).
+    // 4. Build permission context from settings.json and attach default tools.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let permission_ctx = build_permission_context(&permission_mode, &cwd);
+
     let backend = LocalBackend::new();
-    let tools = create_default_tools(backend);
+    let mut tools = create_default_tools(
+        backend,
+        Arc::clone(&permission_ctx),
+        false,
+        provider_id_for_subagent,
+        api_key_for_subagent,
+    );
+
+    // 4b. Load MCP tools from settings and append to the tool list.
+    let agent_dir = get_agent_dir();
+    let settings = SettingsManager::create(&cwd, &agent_dir).get_effective_settings();
+    if let Some(servers) = &settings.mcp_servers {
+        tools.extend(load_mcp_tools(servers, Arc::clone(&permission_ctx)).await);
+    }
+
     agent.set_tools(tools);
+
+    // 4c. Wire hooks from settings into the agent tool lifecycle.
+    let hook_runner = wire_hooks(&mut agent, &cwd, &permission_mode);
+
+    // 4d. SessionStart hooks fire once before the agent starts its first turn.
+    if let Some(runner) = &hook_runner {
+        if let Err(e) = runner.run_session_start().await {
+            tracing::warn!(error = %e, "SessionStart hook failed — continuing session");
+        }
+    }
 
     // 5. Subscribe to events: stream text deltas to stdout.
     let stdout = std::io::stdout();
@@ -273,10 +984,14 @@ pub async fn run_agent_session(
     });
 
     // 6. Send the message and wait.
-    agent
-        .prompt_text(message)
-        .await
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let run_result = agent.prompt_text(message).await.map_err(|e| anyhow::anyhow!(e));
 
-    Ok(())
+    // 7. SessionEnd hooks fire after the agent finishes (regardless of success).
+    if let Some(runner) = hook_runner {
+        if let Err(e) = runner.run_session_end().await {
+            tracing::warn!(error = %e, "SessionEnd hook failed");
+        }
+    }
+
+    run_result
 }

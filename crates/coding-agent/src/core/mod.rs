@@ -2,6 +2,7 @@
 //!
 //! Mirrors the structure of pi-mono `packages/coding-agent/src/core/`.
 
+pub mod agent;
 pub mod agent_session;
 pub mod auth_storage;
 pub mod bash_executor;
@@ -13,6 +14,8 @@ pub mod exec;
 pub mod export_html;
 pub mod extensions;
 pub mod footer_data_provider;
+pub mod hooks;
+pub mod keybinding_watcher;
 pub mod keybindings;
 pub mod messages;
 pub mod model_registry;
@@ -29,5 +32,6 @@ pub mod skills;
 pub mod slash_commands;
 pub mod source_info;
 pub mod system_prompt;
+pub mod team;
 pub mod timings;
 pub mod tools;

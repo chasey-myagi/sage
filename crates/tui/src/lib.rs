@@ -8,6 +8,7 @@ pub mod fuzzy;
 pub mod keybindings;
 pub mod keys;
 pub mod kill_ring;
+pub mod resolver;
 pub mod stdin_buffer;
 pub mod terminal;
 pub mod terminal_image;
