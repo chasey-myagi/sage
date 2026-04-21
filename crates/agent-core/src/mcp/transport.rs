@@ -146,12 +146,7 @@ impl StdioTransport {
             };
 
             // JSON-RPC allows string or number IDs; compare by value to avoid silent coercion.
-            let matches = match id_val {
-                serde_json::Value::Number(n) => n.as_u64() == Some(expected_id),
-                serde_json::Value::String(s) => s.parse::<u64>().ok() == Some(expected_id),
-                _ => false,
-            };
-            if !matches {
+            if !id_matches(id_val, expected_id) {
                 // Response for a different in-flight request — skip and keep reading.
                 continue;
             }
@@ -173,12 +168,21 @@ impl StdioTransport {
     }
 }
 
+fn id_matches(id_val: &serde_json::Value, expected: u64) -> bool {
+    match id_val {
+        serde_json::Value::Number(n) => n.as_u64() == Some(expected),
+        serde_json::Value::String(s) => s.parse::<u64>().ok() == Some(expected),
+        _ => false,
+    }
+}
+
 // Expose error type publicly for consumers.
 pub use TransportError as McpTransportError;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn next_id_increments() {
@@ -187,5 +191,25 @@ mod tests {
         let b = counter.fetch_add(1, Ordering::SeqCst);
         assert_eq!(a, 1);
         assert_eq!(b, 2);
+    }
+
+    #[test]
+    fn id_matches_number_equal() {
+        assert!(id_matches(&json!(123), 123));
+    }
+
+    #[test]
+    fn id_matches_string_equal() {
+        assert!(id_matches(&json!("123"), 123));
+    }
+
+    #[test]
+    fn id_matches_string_not_equal() {
+        assert!(!id_matches(&json!("456"), 123));
+    }
+
+    #[test]
+    fn id_matches_invalid_type_returns_false() {
+        assert!(!id_matches(&json!(true), 123));
     }
 }

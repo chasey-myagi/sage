@@ -31,16 +31,6 @@ impl AgentTool for WebSearchTool {
                 "query": {
                     "type": "string",
                     "description": "The search query to use"
-                },
-                "allowed_domains": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Only include search results from these domains (optional)"
-                },
-                "blocked_domains": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Never include search results from these domains (optional)"
                 }
             },
             "required": ["query"]
@@ -79,14 +69,6 @@ mod tests {
         assert!(required.iter().any(|v| v.as_str() == Some("query")));
     }
 
-    #[test]
-    fn schema_has_optional_domain_filters() {
-        let tool = WebSearchTool;
-        let schema = tool.parameters_schema();
-        assert!(schema["properties"]["allowed_domains"].is_object());
-        assert!(schema["properties"]["blocked_domains"].is_object());
-    }
-
     #[tokio::test]
     async fn missing_query_returns_error() {
         let tool = WebSearchTool;
@@ -113,19 +95,6 @@ mod tests {
             _ => panic!("expected Text content"),
         };
         assert!(text.contains("not yet implemented"));
-    }
-
-    #[tokio::test]
-    async fn both_domain_filters_returns_error() {
-        let tool = WebSearchTool;
-        let output = tool
-            .execute(serde_json::json!({
-                "query": "test",
-                "allowed_domains": ["example.com"],
-                "blocked_domains": ["bad.com"]
-            }))
-            .await;
-        assert!(output.is_error);
     }
 
     #[tokio::test]
