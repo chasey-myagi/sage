@@ -39,9 +39,11 @@ impl HookExecutor {
                 command,
                 timeout,
                 async_,
+                shell,
                 ..
             } => {
                 let is_async = async_.unwrap_or(false);
+                let shell_prog = shell.as_deref().unwrap_or("bash").to_string();
                 if is_async {
                     // Async hooks run in background — fire and forget (no asyncRewake support yet).
                     let command = command.clone();
@@ -49,14 +51,23 @@ impl HookExecutor {
                     let input_json = serde_json::to_string(input).unwrap_or_default();
                     let hook_event = input.hook_event_name.clone();
                     tokio::spawn(async move {
-                        let _ = spawn_command(&command, &cwd, &input_json, &hook_event, None).await;
+                        let _ = spawn_command(
+                            &command,
+                            &shell_prog,
+                            &cwd,
+                            &input_json,
+                            &hook_event,
+                            None,
+                        )
+                        .await;
                     });
                     return Ok(HookResult {
                         outcome: HookOutcome::Success,
                         ..Default::default()
                     });
                 }
-                self.execute_command_hook(command, *timeout, input).await
+                self.execute_command_hook(command, *timeout, &shell_prog, input)
+                    .await
             }
             // Prompt / Http / Agent hooks are not yet implemented.
             HookCommand::Prompt { .. } | HookCommand::Http { .. } | HookCommand::Agent { .. } => {
@@ -72,14 +83,24 @@ impl HookExecutor {
         &self,
         command: &str,
         timeout_secs: Option<u64>,
+        shell: &str,
         input: &HookInput,
     ) -> Result<HookResult> {
         let input_json = serde_json::to_string(input).context("serialize hook input")?;
         let timeout = Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TOOL_HOOK_TIMEOUT_SECS));
 
-        let result =
-            tokio::time::timeout(timeout, spawn_command(command, &self.cwd, &input_json, &input.hook_event_name, None))
-                .await;
+        let result = tokio::time::timeout(
+            timeout,
+            spawn_command(
+                command,
+                shell,
+                &self.cwd,
+                &input_json,
+                &input.hook_event_name,
+                None,
+            ),
+        )
+        .await;
 
         match result {
             Ok(Ok((stdout, stderr, exit_code))) => {
@@ -105,16 +126,16 @@ impl HookExecutor {
 /// Spawn a shell command, capture stdout/stderr, and return exit code.
 async fn spawn_command(
     command: &str,
+    shell: &str,
     cwd: &str,
     input_json: &str,
     hook_event: &str,
     hook_id: Option<&str>,
 ) -> Result<(String, String, i32)> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let generated_id = ulid::Ulid::new().to_string();
     let id = hook_id.unwrap_or(&generated_id);
 
-    let output = tokio::process::Command::new(&shell)
+    let output = tokio::process::Command::new(shell)
         .arg("-c")
         .arg(command)
         .env("HOOK_INPUT_JSON", input_json)
@@ -252,7 +273,12 @@ fn process_json_output(
 
 fn extract_hook_specific(
     specific: Option<&serde_json::Value>,
-) -> (Option<String>, Option<serde_json::Value>, Option<String>, Option<String>) {
+) -> (
+    Option<String>,
+    Option<serde_json::Value>,
+    Option<String>,
+    Option<String>,
+) {
     let Some(obj) = specific else {
         return (None, None, None, None);
     };
@@ -344,7 +370,10 @@ mod tests {
         let stdout = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"verified"}}"#;
         let result = parse_hook_output(stdout, "", 0, "cmd");
         assert_eq!(result.permission_decision.as_deref(), Some("allow"));
-        assert_eq!(result.permission_decision_reason.as_deref(), Some("verified"));
+        assert_eq!(
+            result.permission_decision_reason.as_deref(),
+            Some("verified")
+        );
     }
 
     #[test]
@@ -367,7 +396,10 @@ mod tests {
     fn parse_exit_0_json_system_message() {
         let stdout = r#"{"systemMessage":"Warning: deprecated tool"}"#;
         let result = parse_hook_output(stdout, "", 0, "cmd");
-        assert_eq!(result.system_message.as_deref(), Some("Warning: deprecated tool"));
+        assert_eq!(
+            result.system_message.as_deref(),
+            Some("Warning: deprecated tool")
+        );
     }
 
     #[test]

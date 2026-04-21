@@ -48,7 +48,8 @@ impl HookRunner {
                 "tool_use_id": tool_use_id,
             }),
         };
-        self.run_for_event("PreToolUse", Some(tool_name), &input).await
+        self.run_for_event("PreToolUse", Some(tool_name), &input)
+            .await
     }
 
     /// Run all `PostToolUse` hooks after a tool executes successfully.
@@ -74,11 +75,19 @@ impl HookRunner {
                 "tool_use_id": tool_use_id,
             }),
         };
-        self.run_for_event("PostToolUse", Some(tool_name), &input).await
+        self.run_for_event("PostToolUse", Some(tool_name), &input)
+            .await
     }
 
     /// Run all `Stop` hooks when the session finishes a turn.
-    pub async fn run_stop(&self, last_message: Option<&str>) -> Result<AggregatedHookResult> {
+    ///
+    /// `stop_hook_active` should be `false` on the initial call; pass `true` only
+    /// when a stop hook itself triggers another stop hook (prevents infinite loops).
+    pub async fn run_stop(
+        &self,
+        last_message: Option<&str>,
+        stop_hook_active: bool,
+    ) -> Result<AggregatedHookResult> {
         let input = HookInput {
             session_id: self.executor.session_id.clone(),
             transcript_path: self.executor.transcript_path.clone(),
@@ -88,7 +97,7 @@ impl HookRunner {
             agent_type: None,
             hook_event_name: "Stop".to_string(),
             event_specific: serde_json::json!({
-                "stop_hook_active": true,
+                "stop_hook_active": stop_hook_active,
                 "last_assistant_message": last_message,
             }),
         };
@@ -144,6 +153,10 @@ impl HookRunner {
                 continue;
             }
             for hook_cmd in &matcher.hooks {
+                if hook_cmd.if_condition().is_some() {
+                    tracing::warn!("hook if-condition not evaluated in v0.2.0 — skipping hook");
+                    continue;
+                }
                 let result = self.executor.execute(hook_cmd, input).await?;
                 let is_blocking = result.outcome == super::types::HookOutcome::Blocking;
                 results.push(result);
@@ -206,6 +219,37 @@ mod tests {
     #[test]
     fn matcher_tool_name_required_for_specific_pattern() {
         assert!(!matcher_matches(Some("Write"), None));
+    }
+
+    #[tokio::test]
+    async fn hook_with_if_condition_is_skipped() {
+        use super::super::types::{HookCommand, HookMatcher};
+
+        let mut settings = HooksSettings::default();
+        settings.insert(
+            "PreToolUse".to_string(),
+            vec![HookMatcher {
+                matcher: None,
+                hooks: vec![HookCommand::Command {
+                    command: "exit 2".to_string(),
+                    if_condition: Some("$SOME_VAR == 'value'".to_string()),
+                    shell: None,
+                    timeout: None,
+                    status_message: None,
+                    once: None,
+                    async_: None,
+                    async_rewake: None,
+                }],
+            }],
+        );
+        let runner = HookRunner::new(HookExecutor::new("session-1", "/tmp"), settings);
+        let result = runner
+            .run_pre_tool_use("Write", &serde_json::json!({}), "tool-use-1")
+            .await
+            .unwrap();
+        // Hook with if_condition must be skipped, not executed (would have blocked with exit 2).
+        assert!(!result.is_blocked());
+        assert!(result.blocking_error.is_none());
     }
 
     #[test]
