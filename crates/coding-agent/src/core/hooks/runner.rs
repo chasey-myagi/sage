@@ -271,7 +271,13 @@ where
     Fut: std::future::Future<Output = Result<HookResult>>,
 {
     if let Some(key) = once_key(hook_cmd) {
-        if !once_executed.lock().unwrap().insert(key.clone()) {
+        // The Mutex guard is dropped at the end of this block — it MUST NOT be held across the
+        // `.await` below, because `std::sync::Mutex` is not safe to hold across async yield points.
+        let already_ran = {
+            let mut guard = once_executed.lock().unwrap();
+            !guard.insert(key.clone())
+        };
+        if already_ran {
             tracing::debug!(key, "skipping once: true hook — already ran this session");
             return Ok(false);
         }
@@ -679,7 +685,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn once_true_hook_runs_only_once() {
+    async fn once_true_hook_deduplicates_serial_calls() {
         let tmp = std::env::temp_dir();
         let counter_file = tmp.join(format!("once_hook_{}.txt", ulid::Ulid::new()));
         let counter_path = counter_file.to_str().unwrap().to_string();
@@ -711,6 +717,53 @@ mod tests {
         let content = std::fs::read_to_string(&counter_file).unwrap_or_default();
         let run_count = content.lines().count();
         assert_eq!(run_count, 1, "once:true hook should run exactly once, ran {run_count} times");
+        let _ = std::fs::remove_file(&counter_file);
+    }
+
+    #[tokio::test]
+    async fn once_true_hook_toctou_concurrent_only_runs_once() {
+        // Exercises the TOCTOU fix: two tasks race to run the same once:true hook.
+        // The `HashSet::insert` is atomic under the Mutex, so exactly one task wins.
+        use std::sync::Arc;
+        let tmp = std::env::temp_dir();
+        let counter_file = tmp.join(format!("once_concurrent_{}.txt", ulid::Ulid::new()));
+        let counter_path = counter_file.to_str().unwrap().to_string();
+
+        let mut settings = HooksSettings::default();
+        settings.insert(
+            "PreToolUse".to_string(),
+            vec![HookMatcher {
+                matcher: None,
+                hooks: vec![HookCommand::Command {
+                    // append one line; sleep briefly so the two tasks genuinely race.
+                    command: format!("sleep 0.05; echo ran >> {counter_path}"),
+                    if_condition: None,
+                    shell: None,
+                    timeout: Some(10),
+                    status_message: None,
+                    once: Some(true),
+                    async_: None,
+                    async_rewake: None,
+                }],
+            }],
+        );
+
+        let executor = HookExecutor::new("test-session", tmp.to_str().unwrap());
+        let runner = Arc::new(HookRunner::new(executor, settings));
+
+        let r1 = tokio::spawn({
+            let r = Arc::clone(&runner);
+            async move { r.run_pre_tool_use("Write", &serde_json::json!({}), "tc-1").await }
+        });
+        let r2 = tokio::spawn({
+            let r = Arc::clone(&runner);
+            async move { r.run_pre_tool_use("Write", &serde_json::json!({}), "tc-2").await }
+        });
+        let _ = tokio::join!(r1, r2);
+
+        let content = std::fs::read_to_string(&counter_file).unwrap_or_default();
+        let run_count = content.lines().count();
+        assert_eq!(run_count, 1, "concurrent once:true hook should run exactly once, ran {run_count} times");
         let _ = std::fs::remove_file(&counter_file);
     }
 

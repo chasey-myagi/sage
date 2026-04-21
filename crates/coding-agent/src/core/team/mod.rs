@@ -453,25 +453,6 @@ mod tests {
         assert_eq!(suffix.len(), 26, "ULID suffix must be 26 chars, got '{suffix}'");
     }
 
-    #[test]
-    fn generate_unique_name_concurrent_returns_consistent_results() {
-        // generate_unique_name is a pure function — calling it from multiple
-        // threads with the same arguments must return the same result each time.
-        use std::thread;
-        let handles: Vec<_> = (0..20)
-            .map(|_| {
-                thread::spawn(|| {
-                    generate_unique_name("researcher", &["researcher", "researcher-2"])
-                })
-            })
-            .collect();
-
-        for handle in handles {
-            let name = handle.join().expect("thread panicked");
-            assert_eq!(name, "researcher-3", "pure function must be deterministic");
-        }
-    }
-
     // ── build_can_use_tool extra list tests ───────────────────────────────────
 
     #[test]

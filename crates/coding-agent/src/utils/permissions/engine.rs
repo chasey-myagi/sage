@@ -708,4 +708,16 @@ mod tests {
         assert!(find_allow_rule_for_tool(&ctx, "mcp__myserver__write").is_some());
         assert!(find_allow_rule_for_tool(&ctx, "mcp__other__read").is_none());
     }
+
+    #[test]
+    fn mcp_exact_rule_does_not_wildcard_other_tools() {
+        // An exact rule "mcp__myserver__read" must NOT match "mcp__myserver__write".
+        let mut ctx = ToolPermissionContext::default();
+        ctx.add_allow_rule(PermissionRuleSource::Session, "mcp__myserver__read".to_owned());
+        assert!(find_allow_rule_for_tool(&ctx, "mcp__myserver__read").is_some());
+        assert!(
+            find_allow_rule_for_tool(&ctx, "mcp__myserver__write").is_none(),
+            "exact tool rule must not match sibling tools"
+        );
+    }
 }
