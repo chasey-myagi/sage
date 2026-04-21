@@ -420,14 +420,14 @@ fn global_keybindings_cell() -> &'static Mutex<Option<KeybindingsManager>> {
 
 /// Set the global keybindings manager.
 pub fn set_keybindings(manager: KeybindingsManager) {
-    let mut lock = global_keybindings_cell().lock().unwrap();
+    let mut lock = global_keybindings_cell().lock().unwrap_or_else(|e| e.into_inner());
     *lock = Some(manager);
 }
 
 /// Get the global keybindings manager, creating a default one if not set.
 pub fn get_keybindings() -> GlobalKeybindingsGuard {
     // Ensure global manager exists, then return a guard that proxies calls.
-    let mut lock = global_keybindings_cell().lock().unwrap();
+    let mut lock = global_keybindings_cell().lock().unwrap_or_else(|e| e.into_inner());
     if lock.is_none() {
         *lock = Some(KeybindingsManager::new(
             default_tui_keybindings(),
@@ -440,7 +440,7 @@ pub fn get_keybindings() -> GlobalKeybindingsGuard {
 
 /// Helper to check a keybinding without holding a lock reference.
 pub fn check_keybinding(data: &str, keybinding: &str) -> bool {
-    let mut lock = global_keybindings_cell().lock().unwrap();
+    let mut lock = global_keybindings_cell().lock().unwrap_or_else(|e| e.into_inner());
     if lock.is_none() {
         *lock = Some(KeybindingsManager::new(
             default_tui_keybindings(),
@@ -461,7 +461,7 @@ impl GlobalKeybindingsGuard {
     }
 
     pub fn get_keys(&self, keybinding: &str) -> Vec<KeyId> {
-        let lock = global_keybindings_cell().lock().unwrap();
+        let lock = global_keybindings_cell().lock().unwrap_or_else(|e| e.into_inner());
         lock.as_ref()
             .map(|m| m.get_keys(keybinding))
             .unwrap_or_default()
