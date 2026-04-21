@@ -290,6 +290,7 @@ async fn main() {
             effective_model,
             effective_provider,
             parsed.api_key.clone(),
+            "default".to_string(),
         )
         .await
         {

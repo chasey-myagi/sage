@@ -89,8 +89,16 @@ impl HookExecutor {
                 timeout,
                 async_,
                 shell,
+                once,
                 ..
             } => {
+                if once == &Some(true) {
+                    tracing::warn!(
+                        command,
+                        "hook has once: true but per-session deduplication is not yet \
+                         implemented — the hook will run on every invocation"
+                    );
+                }
                 let is_async = async_.unwrap_or(false);
                 let shell_prog = shell.as_deref().unwrap_or("bash").to_string();
                 if is_async {

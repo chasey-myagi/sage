@@ -238,6 +238,7 @@ impl InteractiveMode {
                 provider_id,
                 None,
                 tx,
+                "default".to_string(),
             )
             .await;
         });

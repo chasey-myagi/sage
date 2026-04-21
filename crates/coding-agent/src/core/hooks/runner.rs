@@ -190,6 +190,13 @@ impl HookRunner {
             }
             for hook_cmd in &matcher.hooks {
                 if let Some(condition) = hook_cmd.if_condition() {
+                    if condition.contains("{{") {
+                        tracing::warn!(
+                            condition,
+                            "if-condition looks like a template expression ({{...}}); \
+                             only exact tool-name matching is supported in this implementation"
+                        );
+                    }
                     match tool_name {
                         Some(name) => {
                             // For tool events: treat condition as a case-insensitive tool name pattern.

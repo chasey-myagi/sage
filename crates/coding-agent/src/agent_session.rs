@@ -174,6 +174,53 @@ fn create_default_tools(backend: Arc<LocalBackend>) -> Vec<Arc<dyn agent_core::t
         .collect()
 }
 
+// ── Hook wiring ──────────────────────────────────────────────────────────────
+
+/// Wire hooks from settings into `agent`'s tool lifecycle.
+///
+/// Reads the effective settings, creates a session-scoped `HookExecutor` with
+/// the given `permission_mode`, attaches `BeforeToolCall`/`AfterToolCall` hooks,
+/// and subscribes to `TurnEnd` to fire Stop hooks asynchronously.
+///
+/// Returns the `HookRunner` if hooks were configured, `None` otherwise.
+fn wire_hooks(
+    agent: &mut Agent,
+    cwd: &std::path::Path,
+    permission_mode: &str,
+) -> Option<Arc<HookRunner>> {
+    let agent_dir = get_agent_dir();
+    let settings = SettingsManager::create(cwd, &agent_dir).get_effective_settings();
+    let hooks_settings = settings.hooks?;
+
+    let session_id = ulid::Ulid::new().to_string();
+    let transcript_path = get_sessions_dir()
+        .join(format!("{session_id}.jsonl"))
+        .to_string_lossy()
+        .into_owned();
+    let executor = HookExecutor::new(session_id.clone(), cwd.to_string_lossy().to_string())
+        .with_agent_type("coding-agent")
+        .with_permission_mode(permission_mode)
+        .with_transcript_path(transcript_path);
+    let runner = Arc::new(HookRunner::new(executor, hooks_settings));
+    let lifecycle = Arc::new(HooksLifecycle::new(Arc::clone(&runner)));
+    agent.set_before_tool_call(lifecycle.clone());
+    agent.set_after_tool_call(lifecycle);
+
+    let stop_runner = Arc::clone(&runner);
+    agent.subscribe(move |event| {
+        use agent_core::AgentEvent;
+        if let AgentEvent::TurnEnd { message, .. } = event {
+            let last_msg = message.text();
+            let r = Arc::clone(&stop_runner);
+            tokio::spawn(async move {
+                let _ = r.run_stop(Some(&last_msg), false).await;
+            });
+        }
+    });
+
+    Some(runner)
+}
+
 // ── Public entry point ───────────────────────────────────────────────────────
 
 /// Run an agent session, sending [`AgentDelta`] events through `tx` instead of stdout.
@@ -185,6 +232,7 @@ pub async fn run_agent_session_to_channel(
     provider_id: Option<String>,
     api_key: Option<String>,
     tx: tokio::sync::mpsc::UnboundedSender<AgentDelta>,
+    permission_mode: String,
 ) -> anyhow::Result<()> {
     if message.trim().is_empty() {
         return Ok(());
@@ -213,40 +261,8 @@ pub async fn run_agent_session_to_channel(
     let tools = create_default_tools(backend);
     agent.set_tools(tools);
 
-    // Wire hooks from settings into the agent tool lifecycle.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let agent_dir = get_agent_dir();
-    let settings = SettingsManager::create(&cwd, &agent_dir).get_effective_settings();
-    let hook_runner: Option<Arc<HookRunner>> = if let Some(hooks_settings) = settings.hooks {
-        let session_id = ulid::Ulid::new().to_string();
-        let transcript_path = get_sessions_dir()
-            .join(format!("{session_id}.jsonl"))
-            .to_string_lossy()
-            .into_owned();
-        let executor = HookExecutor::new(session_id.clone(), cwd.to_string_lossy().to_string())
-            .with_agent_type("coding-agent")
-            .with_permission_mode("default")
-            .with_transcript_path(transcript_path);
-        let runner = Arc::new(HookRunner::new(executor, hooks_settings));
-        let lifecycle = Arc::new(HooksLifecycle::new(Arc::clone(&runner)));
-        agent.set_before_tool_call(lifecycle.clone());
-        agent.set_after_tool_call(lifecycle);
-        // Fire Stop hooks at the end of each turn (fire-and-forget; cannot block the loop).
-        let stop_runner = Arc::clone(&runner);
-        agent.subscribe(move |event| {
-            use agent_core::AgentEvent;
-            if let AgentEvent::TurnEnd { message, .. } = event {
-                let last_msg = message.text();
-                let r = Arc::clone(&stop_runner);
-                tokio::spawn(async move {
-                    let _ = r.run_stop(Some(&last_msg), false).await;
-                });
-            }
-        });
-        Some(runner)
-    } else {
-        None
-    };
+    let hook_runner = wire_hooks(&mut agent, &cwd, &permission_mode);
 
     // SessionStart hooks fire once before the agent starts its first turn.
     if let Some(runner) = &hook_runner {
@@ -290,6 +306,7 @@ pub async fn run_agent_session(
     model_id: Option<String>,
     provider_id: Option<String>,
     api_key: Option<String>,
+    permission_mode: String,
 ) -> anyhow::Result<()> {
     if message.trim().is_empty() {
         return Ok(());
@@ -326,38 +343,7 @@ pub async fn run_agent_session(
 
     // 4b. Wire hooks from settings into the agent tool lifecycle.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let agent_dir = get_agent_dir();
-    let settings = SettingsManager::create(&cwd, &agent_dir).get_effective_settings();
-    let hook_runner: Option<Arc<HookRunner>> = if let Some(hooks_settings) = settings.hooks {
-        let session_id = ulid::Ulid::new().to_string();
-        let transcript_path = get_sessions_dir()
-            .join(format!("{session_id}.jsonl"))
-            .to_string_lossy()
-            .into_owned();
-        let executor = HookExecutor::new(session_id.clone(), cwd.to_string_lossy().to_string())
-            .with_agent_type("coding-agent")
-            .with_permission_mode("default")
-            .with_transcript_path(transcript_path);
-        let runner = Arc::new(HookRunner::new(executor, hooks_settings));
-        let lifecycle = Arc::new(HooksLifecycle::new(Arc::clone(&runner)));
-        agent.set_before_tool_call(lifecycle.clone());
-        agent.set_after_tool_call(lifecycle);
-        // Fire Stop hooks at the end of each turn (fire-and-forget; cannot block the loop).
-        let stop_runner = Arc::clone(&runner);
-        agent.subscribe(move |event| {
-            use agent_core::AgentEvent;
-            if let AgentEvent::TurnEnd { message, .. } = event {
-                let last_msg = message.text();
-                let r = Arc::clone(&stop_runner);
-                tokio::spawn(async move {
-                    let _ = r.run_stop(Some(&last_msg), false).await;
-                });
-            }
-        });
-        Some(runner)
-    } else {
-        None
-    };
+    let hook_runner = wire_hooks(&mut agent, &cwd, &permission_mode);
 
     // 4c. SessionStart hooks fire once before the agent starts its first turn.
     if let Some(runner) = &hook_runner {
