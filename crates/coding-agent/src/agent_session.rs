@@ -155,6 +155,8 @@ impl agent_core::types::AgentTool for ToolAdapter {
                 };
             }
             PermissionDecision::Ask { message, .. } => {
+                // TODO: when TUI interactive approval channel is wired up, surface this as a
+                // real approval request instead of a conservative deny.
                 // Non-interactive session — treat ask as deny (conservative fallback).
                 // Users must add an explicit allow rule to permit this tool.
                 return AgentToolResult {
@@ -386,7 +388,6 @@ fn build_model(provider_id: Option<&str>, model_id: Option<&str>) -> anyhow::Res
 // ── SpawnSubagentTool ────────────────────────────────────────────────────────
 
 struct SpawnSubagentTool {
-    permission_mode: String,
     provider_id: Option<String>,
     api_key: Option<String>,
     permission_ctx: Arc<Mutex<ToolPermissionContext>>,
@@ -446,17 +447,13 @@ impl SimpleTool for SpawnSubagentTool {
             .and_then(|v| v.as_str())
             .map(std::path::PathBuf::from);
 
-        // C4: read the current permission mode at spawn time so the sub-agent
-        // always respects the parent's *live* mode.  If the parent has entered
-        // plan mode, the sub-agent must also run in plan mode — it must not be
-        // more permissive than the parent.
+        // Always read the current permission mode from the live context at spawn
+        // time so the sub-agent reflects whatever mode the parent is in right
+        // now (e.g. if the parent has entered plan mode, the sub-agent must
+        // also run in plan mode — it must not be more permissive).
         let effective_mode = {
             let ctx = self.permission_ctx.lock().unwrap();
-            if ctx.mode == PermissionMode::Plan {
-                "plan".to_string()
-            } else {
-                self.permission_mode.clone()
-            }
+            ctx.mode.to_string()
         };
 
         match spawn_subagent(
@@ -500,7 +497,6 @@ impl SimpleTool for SpawnSubagentTool {
 fn create_default_tools(
     backend: Arc<LocalBackend>,
     permission_ctx: Arc<Mutex<ToolPermissionContext>>,
-    permission_mode: &str,
     is_subagent: bool,
     provider_id: Option<String>,
     api_key: Option<String>,
@@ -529,7 +525,6 @@ fn create_default_tools(
     }
     tools.push(Arc::new(ToolAdapter::new(
         Box::new(SpawnSubagentTool {
-            permission_mode: permission_mode.to_string(),
             provider_id,
             api_key,
             permission_ctx: Arc::clone(&permission_ctx),
@@ -681,7 +676,6 @@ pub async fn run_agent_session_to_channel(
     let mut tools = create_default_tools(
         backend,
         Arc::clone(&permission_ctx),
-        &permission_mode,
         false,
         provider_id_for_subagent,
         api_key_for_subagent,
@@ -822,7 +816,6 @@ pub async fn spawn_subagent(
     let tools = create_default_tools(
         backend,
         permission_ctx,
-        &permission_mode,
         true,
         provider_id_for_subagent,
         api_key_for_subagent,
@@ -899,7 +892,6 @@ pub async fn run_agent_session(
     let mut tools = create_default_tools(
         backend,
         Arc::clone(&permission_ctx),
-        &permission_mode,
         false,
         provider_id_for_subagent,
         api_key_for_subagent,

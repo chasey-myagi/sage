@@ -192,13 +192,14 @@ pub async fn spawn_agent_in_team(
     };
 
     let id_for_task = agent_id.clone();
+    let id_for_watchdog = agent_id.clone();
     let name_for_task = unique_name.clone();
     let team_name_for_log = config.team_name.clone().unwrap_or_default();
 
     // Fire-and-forget: the team member runs independently.
-    // We explicitly drop the JoinHandle (tokio does not cancel on drop, so
-    // the task keeps running).  Any panic inside the task will be surfaced as
-    // a tracing::error rather than being silently swallowed.
+    // A watchdog task awaits the JoinHandle so that any panic inside the
+    // sub-agent task surfaces as a tracing::error rather than being silently
+    // swallowed by tokio's default panic hook (which only writes to stderr).
     let handle = tokio::spawn(async move {
         use futures::StreamExt;
         let mut stream = run_agent(params);
@@ -220,7 +221,19 @@ pub async fn spawn_agent_in_team(
             "team member finished",
         );
     });
-    drop(handle);
+    // Spawn a non-blocking watchdog that captures JoinError (including panics)
+    // and routes them through tracing::error so they appear in structured logs.
+    tokio::spawn(async move {
+        if let Err(join_err) = handle.await {
+            if join_err.is_panic() {
+                tracing::error!(
+                    agent_id = %id_for_watchdog,
+                    "sub-agent task panicked",
+                );
+            }
+            // Cancellation is not an error (task was intentionally aborted).
+        }
+    });
 
     Ok(agent_id)
 }

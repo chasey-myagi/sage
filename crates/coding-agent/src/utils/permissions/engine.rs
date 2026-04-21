@@ -225,20 +225,32 @@ pub fn get_ask_rules(ctx: &ToolPermissionContext) -> Vec<PermissionRule> {
 // Rule matching
 // ============================================================================
 
-/// Check if a tool matches a rule exactly (no content filter required).
+/// Check if a tool matches a rule by name.
 ///
-/// Matches when the rule has no `rule_content` and the tool name equals the
-/// rule's tool name. Also handles MCP server-level permissions (`mcp__server`).
-fn tool_matches_rule(tool_name: &str, rule: &PermissionRule) -> bool {
+/// - `skip_if_has_content`: when `true` (used for Allow rules), a rule that
+///   carries argument-level `rule_content` is skipped entirely — the caller
+///   must use `get_allow_rule_contents_for_tool` for content-level matching.
+///   This prevents `Allow("Bash(git status)")` from silently expanding into a
+///   blanket `Allow("Bash")`.
+/// - When `false` (used for Deny/Ask rules), a rule with `rule_content` still
+///   matches on tool name with a warning — conservative behaviour (better to
+///   over-deny than to silently ignore a deny rule).
+///
+/// Also handles MCP server-level permissions (`mcp__server`).
+fn tool_matches_rule(tool_name: &str, rule: &PermissionRule, skip_if_has_content: bool) -> bool {
     if rule.rule_value.tool_name == tool_name {
-        // If the rule has argument-level content, we cannot enforce it without
-        // access to the actual call args.  Warn and fall through (tool-name-level
-        // match only — more conservative than silently skipping the rule).
         if rule.rule_value.rule_content.is_some() {
+            if skip_if_has_content {
+                // Allow rules with content: skip in tool-name-only matching.
+                // The caller must use get_allow_rule_contents_for_tool instead.
+                return false;
+            }
+            // Deny/Ask rules with content: warn but still match on tool name
+            // (conservative: better to over-deny than to silently drop a deny rule).
             tracing::warn!(
                 tool = tool_name,
                 "permission rule with argument-level content is not yet enforced; \
-                 matching on tool name only (conservative: treat as tool-level match)"
+                 matching on tool name only (deny/ask rules treated as tool-level match)"
             );
         }
         return true;
@@ -282,33 +294,41 @@ fn mcp_info_from_name(name: &str) -> Option<McpInfo> {
 }
 
 /// Find an allow rule that matches the given tool name.
+///
+/// Rules that carry argument-level `rule_content` are intentionally skipped here:
+/// `Allow("Bash(git status)")` must NOT expand into a blanket tool-level allow.
+/// Use `get_allow_rule_contents_for_tool` for content-level matching instead.
 pub fn find_allow_rule_for_tool(
     ctx: &ToolPermissionContext,
     tool_name: &str,
 ) -> Option<PermissionRule> {
     get_allow_rules(ctx)
         .into_iter()
-        .find(|rule| tool_matches_rule(tool_name, rule))
+        .find(|rule| tool_matches_rule(tool_name, rule, true))
 }
 
 /// Find a deny rule that matches the given tool name.
+///
+/// Rules with `rule_content` still match on tool name (conservative: warn but deny).
 pub fn find_deny_rule_for_tool(
     ctx: &ToolPermissionContext,
     tool_name: &str,
 ) -> Option<PermissionRule> {
     get_deny_rules(ctx)
         .into_iter()
-        .find(|rule| tool_matches_rule(tool_name, rule))
+        .find(|rule| tool_matches_rule(tool_name, rule, false))
 }
 
 /// Find an ask rule that matches the given tool name.
+///
+/// Rules with `rule_content` still match on tool name (conservative: warn but ask).
 pub fn find_ask_rule_for_tool(
     ctx: &ToolPermissionContext,
     tool_name: &str,
 ) -> Option<PermissionRule> {
     get_ask_rules(ctx)
         .into_iter()
-        .find(|rule| tool_matches_rule(tool_name, rule))
+        .find(|rule| tool_matches_rule(tool_name, rule, false))
 }
 
 /// Build a map of `rule_content → PermissionRule` for all allow rules targeting
