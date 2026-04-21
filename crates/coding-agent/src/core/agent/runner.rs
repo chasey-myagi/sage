@@ -195,14 +195,17 @@ pub fn run_agent(params: RunAgentParams) -> BoxStream<'static, Result<AgentMessa
         .unwrap_or(200);
 
     // Resolve the system prompt: explicit override → fn_name lookup.
-    let system_prompt = params.system_prompt.unwrap_or_else(|| {
-        resolve_system_prompt(&params.agent_def.system_prompt_fn, None)
-    });
+    let system_prompt = params
+        .system_prompt
+        .unwrap_or_else(|| resolve_system_prompt(&params.agent_def.system_prompt_fn, None));
 
     // Resolve model: model_override > agent_def.model > params.model.
     // For Inherit we keep the parent model unchanged.
     let model = resolve_model_override(
-        params.model_override.as_ref().or(params.agent_def.model.as_ref()),
+        params
+            .model_override
+            .as_ref()
+            .or(params.agent_def.model.as_ref()),
         &params.model,
     );
 
@@ -479,7 +482,9 @@ mod tests {
 
         let messages: Vec<_> = run_agent(params).collect().await;
         assert!(
-            messages.iter().any(|m| matches!(m, Ok(AgentMessage::Assistant(_)))),
+            messages
+                .iter()
+                .any(|m| matches!(m, Ok(AgentMessage::Assistant(_)))),
             "expected at least one assistant message"
         );
     }

@@ -7,6 +7,24 @@
 use std::io::Write as _;
 use std::sync::{Arc, Mutex};
 
+use crate::config::{CONFIG_DIR_NAME, get_agent_dir, get_sessions_dir};
+use crate::core::agent::runner::AgentError;
+use crate::core::hooks::HooksLifecycle;
+use crate::core::hooks::executor::HookExecutor;
+use crate::core::hooks::runner::HookRunner;
+use crate::core::settings_manager::SettingsManager;
+use crate::core::team::{SpawnAgentConfig, spawn_agent_in_team};
+use crate::core::tools::plan_mode::{
+    ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ExitPlanModeInput, PlanExitStrategy,
+    enter_plan_mode, exit_plan_mode,
+};
+use crate::utils::permissions::engine::check_tool_permission;
+use crate::utils::permissions::loader::{load_permissions_from_file, permissions_json_to_rules};
+use crate::utils::permissions::parser::permission_rule_value_to_string;
+use crate::utils::permissions::{
+    PermissionBehavior, PermissionDecision, PermissionMode, PermissionRuleSource,
+    ToolPermissionContext,
+};
 use agent_core::agent::{Agent, AgentOptions};
 use agent_core::agent_loop::LlmProvider;
 use agent_core::mcp::{McpClient, McpServerConfig};
@@ -16,24 +34,6 @@ use agent_core::tools::{AgentTool as SimpleTool, ToolOutput, create_tool};
 use agent_core::types::{AgentToolResult, Content, OnUpdateFn};
 use ai::registry::{ApiProviderRegistry, StreamOptions};
 use ai::types::{AssistantMessageEvent, InputType, Model, ModelCost, Usage};
-use crate::config::{CONFIG_DIR_NAME, get_agent_dir, get_sessions_dir};
-use crate::core::agent::runner::AgentError;
-use crate::core::hooks::executor::HookExecutor;
-use crate::core::hooks::runner::HookRunner;
-use crate::core::hooks::HooksLifecycle;
-use crate::core::settings_manager::SettingsManager;
-use crate::core::team::{SpawnAgentConfig, spawn_agent_in_team};
-use crate::core::tools::plan_mode::{
-    ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ExitPlanModeInput, PlanExitStrategy,
-    enter_plan_mode, exit_plan_mode,
-};
-use crate::utils::permissions::{
-    PermissionBehavior, PermissionDecision, PermissionMode, PermissionRuleSource,
-    ToolPermissionContext,
-};
-use crate::utils::permissions::engine::check_tool_permission;
-use crate::utils::permissions::loader::{load_permissions_from_file, permissions_json_to_rules};
-use crate::utils::permissions::parser::permission_rule_value_to_string;
 
 /// Events sent through the interactive-mode channel.
 #[derive(Debug, Clone)]
@@ -107,10 +107,7 @@ struct ToolAdapter {
 }
 
 impl ToolAdapter {
-    fn new(
-        tool: Box<dyn SimpleTool>,
-        permission_ctx: Arc<Mutex<ToolPermissionContext>>,
-    ) -> Self {
+    fn new(tool: Box<dyn SimpleTool>, permission_ctx: Arc<Mutex<ToolPermissionContext>>) -> Self {
         let description = tool.description().to_string();
         let schema = tool.parameters_schema();
         Self {
@@ -238,7 +235,9 @@ impl agent_core::types::AgentTool for EnterPlanModeTool {
         let mut ctx = self.permission_ctx.lock().unwrap();
         match enter_plan_mode(&mut ctx, false, false) {
             Ok(output) => AgentToolResult {
-                content: vec![Content::Text { text: output.message }],
+                content: vec![Content::Text {
+                    text: output.message,
+                }],
                 details: serde_json::Value::Null,
                 is_error: false,
             },
@@ -303,7 +302,9 @@ impl agent_core::types::AgentTool for ExitPlanModeTool {
         let input = ExitPlanModeInput { plan };
         match exit_plan_mode(&mut ctx, input, PlanExitStrategy::Standard) {
             Ok(output) => AgentToolResult {
-                content: vec![Content::Text { text: output.message }],
+                content: vec![Content::Text {
+                    text: output.message,
+                }],
                 details: serde_json::Value::Null,
                 is_error: false,
             },
@@ -353,10 +354,18 @@ fn build_permission_context(
     let mut ctx = ToolPermissionContext::new(mode);
 
     let global_settings_path = get_agent_dir().join("settings.json");
-    load_rules_into(&mut ctx, &global_settings_path, PermissionRuleSource::UserSettings);
+    load_rules_into(
+        &mut ctx,
+        &global_settings_path,
+        PermissionRuleSource::UserSettings,
+    );
 
     let project_settings_path = cwd.join(CONFIG_DIR_NAME).join("settings.json");
-    load_rules_into(&mut ctx, &project_settings_path, PermissionRuleSource::ProjectSettings);
+    load_rules_into(
+        &mut ctx,
+        &project_settings_path,
+        PermissionRuleSource::ProjectSettings,
+    );
 
     Arc::new(Mutex::new(ctx))
 }
@@ -455,7 +464,10 @@ impl SimpleTool for SpawnSubagentTool {
             }
         };
 
-        let model_id = args.get("model").and_then(|v| v.as_str()).map(str::to_string);
+        let model_id = args
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         let cwd = args
             .get("cwd")
             .and_then(|v| v.as_str())
@@ -529,19 +541,28 @@ fn create_default_tools(
     provider_id: Option<String>,
     api_key: Option<String>,
 ) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
-    let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> =
-        ["bash", "read", "write", "edit", "grep", "find", "ls", "web_fetch", "web_search"]
-            .iter()
-            .filter_map(|name| {
-                create_tool(
-                    name,
-                    Arc::clone(&backend) as Arc<dyn agent_core::tools::backend::ToolBackend>,
-                )
-            })
-            .map(|t| -> Arc<dyn agent_core::types::AgentTool> {
-                Arc::new(ToolAdapter::new(t, Arc::clone(&permission_ctx)))
-            })
-            .collect();
+    let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> = [
+        "bash",
+        "read",
+        "write",
+        "edit",
+        "grep",
+        "find",
+        "ls",
+        "web_fetch",
+        "web_search",
+    ]
+    .iter()
+    .filter_map(|name| {
+        create_tool(
+            name,
+            Arc::clone(&backend) as Arc<dyn agent_core::tools::backend::ToolBackend>,
+        )
+    })
+    .map(|t| -> Arc<dyn agent_core::types::AgentTool> {
+        Arc::new(ToolAdapter::new(t, Arc::clone(&permission_ctx)))
+    })
+    .collect();
 
     if !is_subagent {
         tools.push(Arc::new(EnterPlanModeTool {
@@ -582,7 +603,10 @@ async fn load_mcp_tools(
                 match discover_mcp_tools(&config.name, Arc::clone(&client)).await {
                     Ok(mcp_tools) => {
                         for t in mcp_tools {
-                            tools.push(Arc::new(ToolAdapter::new(Box::new(t), Arc::clone(&permission_ctx))));
+                            tools.push(Arc::new(ToolAdapter::new(
+                                Box::new(t),
+                                Arc::clone(&permission_ctx),
+                            )));
                         }
                     }
                     Err(e) => {
@@ -796,7 +820,10 @@ pub async fn run_agent_session_to_channel(
         }
     });
 
-    let run_result = agent.prompt_text(message).await.map_err(|e| anyhow::anyhow!(e));
+    let run_result = agent
+        .prompt_text(message)
+        .await
+        .map_err(|e| anyhow::anyhow!(e));
 
     // SessionEnd hooks fire after the agent finishes (regardless of success).
     if let Some(runner) = hook_runner {
@@ -839,14 +866,11 @@ pub async fn spawn_subagent(
         api_key,
         ..StreamOptions::default()
     };
-    let provider: Arc<dyn LlmProvider> = Arc::new(RegistryProvider {
-        registry,
-        options,
-    });
+    let provider: Arc<dyn LlmProvider> = Arc::new(RegistryProvider { registry, options });
 
-    let effective_cwd = cwd
-        .clone()
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+    let effective_cwd = cwd.clone().unwrap_or_else(|| {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    });
     let permission_ctx = build_permission_context(&permission_mode, &effective_cwd);
 
     let backend = LocalBackend::new();
@@ -984,7 +1008,10 @@ pub async fn run_agent_session(
     });
 
     // 6. Send the message and wait.
-    let run_result = agent.prompt_text(message).await.map_err(|e| anyhow::anyhow!(e));
+    let run_result = agent
+        .prompt_text(message)
+        .await
+        .map_err(|e| anyhow::anyhow!(e));
 
     // 7. SessionEnd hooks fire after the agent finishes (regardless of success).
     if let Some(runner) = hook_runner {

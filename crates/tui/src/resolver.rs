@@ -443,12 +443,18 @@ mod tests {
 
         // Step 1: ctrl+x → chord started (1 step pending)
         let r1 = resolve_key_with_chord_state("\x18", &["Global"], &b, &mut pending);
-        assert!(matches!(r1, ResolveResult::ChordStarted(_)), "step 1 should start chord");
+        assert!(
+            matches!(r1, ResolveResult::ChordStarted(_)),
+            "step 1 should start chord"
+        );
         assert_eq!(pending.as_ref().map(|p| p.len()), Some(1));
 
         // Step 2: ctrl+a → chord extended (2 steps pending)
         let r2 = resolve_key_with_chord_state("\x01", &["Global"], &b, &mut pending);
-        assert!(matches!(r2, ResolveResult::ChordStarted(_)), "step 2 should extend chord");
+        assert!(
+            matches!(r2, ResolveResult::ChordStarted(_)),
+            "step 2 should extend chord"
+        );
         assert_eq!(pending.as_ref().map(|p| p.len()), Some(2));
 
         // Step 3: ctrl+z → final match

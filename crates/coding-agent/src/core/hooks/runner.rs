@@ -10,7 +10,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use super::executor::HookExecutor;
-use super::types::{AggregatedHookResult, HookCommand, HookInput, HookOutcome, HookResult, HooksSettings};
+use super::types::{
+    AggregatedHookResult, HookCommand, HookInput, HookOutcome, HookResult, HooksSettings,
+};
 
 /// Fires hooks from a loaded `HooksSettings` for lifecycle events.
 pub struct HookRunner {
@@ -37,7 +39,11 @@ impl HookRunner {
                 }
             }
         }
-        Self { executor, hooks, once_executed: Mutex::new(HashSet::new()) }
+        Self {
+            executor,
+            hooks,
+            once_executed: Mutex::new(HashSet::new()),
+        }
     }
 
     /// Returns true if any hooks are configured for the given event.
@@ -177,12 +183,9 @@ impl HookRunner {
                     );
                     continue;
                 }
-                if run_once_guarded(
-                    &self.once_executed,
-                    hook_cmd,
-                    &mut results,
-                    || self.executor.execute_session_end(hook_cmd, &input),
-                )
+                if run_once_guarded(&self.once_executed, hook_cmd, &mut results, || {
+                    self.executor.execute_session_end(hook_cmd, &input)
+                })
                 .await?
                 {
                     return Ok(AggregatedHookResult::from_results(results));
@@ -236,12 +239,9 @@ impl HookRunner {
                         }
                     }
                 }
-                if run_once_guarded(
-                    &self.once_executed,
-                    hook_cmd,
-                    &mut results,
-                    || self.executor.execute(hook_cmd, input),
-                )
+                if run_once_guarded(&self.once_executed, hook_cmd, &mut results, || {
+                    self.executor.execute(hook_cmd, input)
+                })
                 .await?
                 {
                     return Ok(AggregatedHookResult::from_results(results));
@@ -296,18 +296,26 @@ where
 /// event type triggers it. This matches CC's original `once` semantics.
 fn once_key(hook_cmd: &HookCommand) -> Option<String> {
     match hook_cmd {
-        HookCommand::Command { command, once: Some(true), .. } => {
-            Some(format!("command:{command}"))
-        }
-        HookCommand::Prompt { prompt, once: Some(true), .. } => {
-            Some(format!("prompt:{prompt}"))
-        }
-        HookCommand::Http { url, once: Some(true), .. } => {
-            Some(format!("http:{url}"))
-        }
-        HookCommand::Agent { prompt, once: Some(true), .. } => {
-            Some(format!("agent:{prompt}"))
-        }
+        HookCommand::Command {
+            command,
+            once: Some(true),
+            ..
+        } => Some(format!("command:{command}")),
+        HookCommand::Prompt {
+            prompt,
+            once: Some(true),
+            ..
+        } => Some(format!("prompt:{prompt}")),
+        HookCommand::Http {
+            url,
+            once: Some(true),
+            ..
+        } => Some(format!("http:{url}")),
+        HookCommand::Agent {
+            prompt,
+            once: Some(true),
+            ..
+        } => Some(format!("agent:{prompt}")),
         _ => None,
     }
 }
@@ -393,9 +401,9 @@ impl agent_core::agent::AfterToolCallHook for HooksLifecycle {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::executor::DEFAULT_SESSION_END_TIMEOUT_SECS;
     use super::super::types::{HookCommand, HookMatcher};
+    use super::*;
 
     #[test]
     fn matcher_none_matches_all() {
@@ -481,7 +489,10 @@ mod tests {
             .run_pre_tool_use("Write", &serde_json::json!({}), "tool-use-1")
             .await
             .unwrap();
-        assert!(result.is_blocked(), "matching if_condition should allow hook to run");
+        assert!(
+            result.is_blocked(),
+            "matching if_condition should allow hook to run"
+        );
     }
 
     #[tokio::test]
@@ -570,7 +581,10 @@ mod tests {
             .unwrap();
 
         assert!(!result.is_blocked());
-        assert!(flag_file.exists(), "hook command must have created the flag file");
+        assert!(
+            flag_file.exists(),
+            "hook command must have created the flag file"
+        );
 
         // cleanup
         let _ = std::fs::remove_file(&flag_file);
@@ -614,7 +628,10 @@ mod tests {
             .unwrap();
 
         assert!(!result.is_blocked());
-        assert!(flag_file.exists(), "PostToolUse hook must have created the flag file");
+        assert!(
+            flag_file.exists(),
+            "PostToolUse hook must have created the flag file"
+        );
 
         let _ = std::fs::remove_file(&flag_file);
     }
@@ -711,12 +728,21 @@ mod tests {
         let executor = HookExecutor::new("test-session", tmp.to_str().unwrap());
         let runner = HookRunner::new(executor, settings);
 
-        runner.run_pre_tool_use("Write", &serde_json::json!({}), "tc-1").await.unwrap();
-        runner.run_pre_tool_use("Write", &serde_json::json!({}), "tc-2").await.unwrap();
+        runner
+            .run_pre_tool_use("Write", &serde_json::json!({}), "tc-1")
+            .await
+            .unwrap();
+        runner
+            .run_pre_tool_use("Write", &serde_json::json!({}), "tc-2")
+            .await
+            .unwrap();
 
         let content = std::fs::read_to_string(&counter_file).unwrap_or_default();
         let run_count = content.lines().count();
-        assert_eq!(run_count, 1, "once:true hook should run exactly once, ran {run_count} times");
+        assert_eq!(
+            run_count, 1,
+            "once:true hook should run exactly once, ran {run_count} times"
+        );
         let _ = std::fs::remove_file(&counter_file);
     }
 
@@ -753,17 +779,26 @@ mod tests {
 
         let r1 = tokio::spawn({
             let r = Arc::clone(&runner);
-            async move { r.run_pre_tool_use("Write", &serde_json::json!({}), "tc-1").await }
+            async move {
+                r.run_pre_tool_use("Write", &serde_json::json!({}), "tc-1")
+                    .await
+            }
         });
         let r2 = tokio::spawn({
             let r = Arc::clone(&runner);
-            async move { r.run_pre_tool_use("Write", &serde_json::json!({}), "tc-2").await }
+            async move {
+                r.run_pre_tool_use("Write", &serde_json::json!({}), "tc-2")
+                    .await
+            }
         });
         let _ = tokio::join!(r1, r2);
 
         let content = std::fs::read_to_string(&counter_file).unwrap_or_default();
         let run_count = content.lines().count();
-        assert_eq!(run_count, 1, "concurrent once:true hook should run exactly once, ran {run_count} times");
+        assert_eq!(
+            run_count, 1,
+            "concurrent once:true hook should run exactly once, ran {run_count} times"
+        );
         let _ = std::fs::remove_file(&counter_file);
     }
 
@@ -794,12 +829,21 @@ mod tests {
         let executor = HookExecutor::new("test-session", tmp.to_str().unwrap());
         let runner = HookRunner::new(executor, settings);
 
-        runner.run_pre_tool_use("Write", &serde_json::json!({}), "tc-1").await.unwrap();
-        runner.run_pre_tool_use("Write", &serde_json::json!({}), "tc-2").await.unwrap();
+        runner
+            .run_pre_tool_use("Write", &serde_json::json!({}), "tc-1")
+            .await
+            .unwrap();
+        runner
+            .run_pre_tool_use("Write", &serde_json::json!({}), "tc-2")
+            .await
+            .unwrap();
 
         let content = std::fs::read_to_string(&counter_file).unwrap_or_default();
         let run_count = content.lines().count();
-        assert_eq!(run_count, 2, "hook without once:true should run every call, ran {run_count} times");
+        assert_eq!(
+            run_count, 2,
+            "hook without once:true should run every call, ran {run_count} times"
+        );
         let _ = std::fs::remove_file(&counter_file);
     }
 
@@ -849,7 +893,10 @@ mod tests {
         let runner = HookRunner::new(executor, settings);
         runner.run_session_start().await.unwrap();
 
-        assert!(flag_file.exists(), "SessionStart hook must have created the flag file");
+        assert!(
+            flag_file.exists(),
+            "SessionStart hook must have created the flag file"
+        );
         let _ = std::fs::remove_file(&flag_file);
     }
 
@@ -881,7 +928,10 @@ mod tests {
         let runner = HookRunner::new(executor, settings);
         runner.run_stop(Some("last message"), false).await.unwrap();
 
-        assert!(flag_file.exists(), "Stop hook must have created the flag file");
+        assert!(
+            flag_file.exists(),
+            "Stop hook must have created the flag file"
+        );
         let _ = std::fs::remove_file(&flag_file);
     }
 
@@ -913,7 +963,10 @@ mod tests {
         let runner = HookRunner::new(executor, settings);
         runner.run_session_end().await.unwrap();
 
-        assert!(flag_file.exists(), "SessionEnd hook must have created the flag file");
+        assert!(
+            flag_file.exists(),
+            "SessionEnd hook must have created the flag file"
+        );
         let _ = std::fs::remove_file(&flag_file);
     }
 
@@ -1085,7 +1138,10 @@ assert d.get('agent_type')=='coding-agent', f'wrong agent_type: {{d.get(\"agent_
             status_message: None,
             once: Some(true),
         };
-        assert_eq!(once_key(&cmd), Some("http:http://localhost/hook".to_string()));
+        assert_eq!(
+            once_key(&cmd),
+            Some("http:http://localhost/hook".to_string())
+        );
     }
 
     #[test]
@@ -1164,7 +1220,10 @@ assert d.get('agent_type')=='coding-agent', f'wrong agent_type: {{d.get(\"agent_
 
         let content = std::fs::read_to_string(&flag_file).unwrap_or_default();
         let line_count = content.lines().count();
-        assert_eq!(line_count, 1, "once:true hook ran {line_count} times; expected exactly 1");
+        assert_eq!(
+            line_count, 1,
+            "once:true hook ran {line_count} times; expected exactly 1"
+        );
 
         let _ = std::fs::remove_file(&flag_file);
     }

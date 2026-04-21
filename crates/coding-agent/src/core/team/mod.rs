@@ -107,7 +107,11 @@ fn build_can_use_tool(
     // Auto / AcceptEdits / Bubble: pass everything through.
     let mode_allows_all = matches!(
         permission_mode,
-        Some(AgentPermissionMode::Auto | AgentPermissionMode::AcceptEdits | AgentPermissionMode::Bubble)
+        Some(
+            AgentPermissionMode::Auto
+                | AgentPermissionMode::AcceptEdits
+                | AgentPermissionMode::Bubble
+        )
     );
 
     if mode_allows_all || agent_tools.iter().any(|t| t == "*") {
@@ -125,7 +129,9 @@ fn build_can_use_tool(
                 return Ok(());
             }
         }
-        Err(format!("tool '{tool}' is not in the agent's allowed tool list"))
+        Err(format!(
+            "tool '{tool}' is not in the agent's allowed tool list"
+        ))
     })
 }
 
@@ -160,16 +166,10 @@ pub async fn spawn_agent_in_team(
 
     // Resolve the system prompt from the agent def's function name, passing
     // cwd so the prompt is scoped to the correct working directory.
-    let system_prompt = resolve_system_prompt(
-        &agent_def.system_prompt_fn,
-        config.cwd.as_deref(),
-    );
+    let system_prompt = resolve_system_prompt(&agent_def.system_prompt_fn, config.cwd.as_deref());
 
     // Build permission-aware can_use_tool closure.
-    let can_use_tool = build_can_use_tool(
-        &agent_def.tools,
-        agent_def.permission_mode.as_ref(),
-    );
+    let can_use_tool = build_can_use_tool(&agent_def.tools, agent_def.permission_mode.as_ref());
 
     let initial_message = AgentMessage::User(UserMessage {
         content: vec![Content::Text {
@@ -445,7 +445,10 @@ mod tests {
         let explore = agents.get("explore").unwrap();
         let f = build_can_use_tool(&explore.tools, explore.permission_mode.as_ref());
         assert!(f("read", None).is_ok());
-        assert!(f("bash", None).is_err(), "bash should be blocked for explore");
+        assert!(
+            f("bash", None).is_err(),
+            "bash should be blocked for explore"
+        );
     }
 
     // ── generate_unique_name boundary and concurrency tests ──────────────────
@@ -470,9 +473,16 @@ mod tests {
         let existing_refs: Vec<&str> = existing.iter().map(|s| s.as_str()).collect();
         let name = generate_unique_name("bot", &existing_refs);
         // Must start with "bot-" and have a ULID suffix (26 uppercase base-32 chars).
-        assert!(name.starts_with("bot-"), "fallback name must start with 'bot-'");
+        assert!(
+            name.starts_with("bot-"),
+            "fallback name must start with 'bot-'"
+        );
         let suffix = &name["bot-".len()..];
-        assert_eq!(suffix.len(), 26, "ULID suffix must be 26 chars, got '{suffix}'");
+        assert_eq!(
+            suffix.len(),
+            26,
+            "ULID suffix must be 26 chars, got '{suffix}'"
+        );
     }
 
     // ── build_can_use_tool extra list tests ───────────────────────────────────
@@ -480,12 +490,12 @@ mod tests {
     #[test]
     fn build_can_use_tool_extra_list_allows_tool_not_in_primary() {
         // Primary list doesn't include "glob", but extra list does.
-        let f = build_can_use_tool(
-            &["read".to_string()],
-            Some(&AgentPermissionMode::Default),
-        );
+        let f = build_can_use_tool(&["read".to_string()], Some(&AgentPermissionMode::Default));
         assert!(f("read", None).is_ok());
-        assert!(f("glob", None).is_err(), "glob not in primary list should fail without extra");
+        assert!(
+            f("glob", None).is_err(),
+            "glob not in primary list should fail without extra"
+        );
         assert!(
             f("glob", Some(&["glob".to_string()])).is_ok(),
             "glob in extra list should be allowed"
@@ -494,11 +504,11 @@ mod tests {
 
     #[test]
     fn build_can_use_tool_extra_list_empty_does_not_affect_primary() {
-        let f = build_can_use_tool(
-            &["read".to_string()],
-            Some(&AgentPermissionMode::Default),
+        let f = build_can_use_tool(&["read".to_string()], Some(&AgentPermissionMode::Default));
+        assert!(
+            f("bash", Some(&[])).is_err(),
+            "empty extra list should not allow bash"
         );
-        assert!(f("bash", Some(&[])).is_err(), "empty extra list should not allow bash");
     }
 
     #[test]
@@ -507,7 +517,10 @@ mod tests {
             &["read".to_string()], // would block bash in Default mode
             Some(&AgentPermissionMode::AcceptEdits),
         );
-        assert!(f("bash", None).is_ok(), "AcceptEdits mode should allow all tools");
+        assert!(
+            f("bash", None).is_ok(),
+            "AcceptEdits mode should allow all tools"
+        );
         assert!(f("write", None).is_ok());
     }
 }

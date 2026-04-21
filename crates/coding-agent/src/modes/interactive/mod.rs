@@ -259,8 +259,7 @@ impl InteractiveMode {
             // Sticky scroll: pin to bottom as new content arrives.
             // Must be computed before terminal.draw() so render() is side-effect-free.
             if self.is_sticky {
-                let total =
-                    Self::total_content_lines(&self.messages, self.last_terminal_width);
+                let total = Self::total_content_lines(&self.messages, self.last_terminal_width);
                 self.scroll_top = total.saturating_sub(self.last_viewport_height);
             }
             terminal.draw(|f| self.render(f))?;

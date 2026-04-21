@@ -538,7 +538,11 @@ mod tests {
             timestamp: 0,
         })];
         let filtered = filter_incomplete_tool_calls(&messages);
-        assert_eq!(filtered.len(), 1, "empty-content assistant should be preserved");
+        assert_eq!(
+            filtered.len(),
+            1,
+            "empty-content assistant should be preserved"
+        );
     }
 
     #[test]
@@ -556,7 +560,9 @@ mod tests {
         assert_eq!(filtered.len(), 1);
         assert!(matches!(filtered[0], AgentMessage::User(_)));
         assert!(
-            !filtered.iter().any(|m| matches!(m, AgentMessage::ToolResult(_))),
+            !filtered
+                .iter()
+                .any(|m| matches!(m, AgentMessage::ToolResult(_))),
             "ToolResult for tc-a must not survive when its parent assistant was dropped"
         );
     }

@@ -162,8 +162,7 @@ mod tests {
     use std::sync::Mutex;
 
     use ai::types::{
-        AssistantMessageEvent, InputType, LlmContext, LlmTool, Model, ModelCost, StopReason,
-        api,
+        AssistantMessageEvent, InputType, LlmContext, LlmTool, Model, ModelCost, StopReason, api,
     };
     use futures::StreamExt;
 
@@ -236,10 +235,7 @@ mod tests {
         ]
     }
 
-    fn make_params(
-        provider: Arc<dyn LlmProvider>,
-        messages: Vec<AgentMessage>,
-    ) -> QueryLoopParams {
+    fn make_params(provider: Arc<dyn LlmProvider>, messages: Vec<AgentMessage>) -> QueryLoopParams {
         QueryLoopParams {
             system_prompt: "system".to_string(),
             messages,
@@ -278,14 +274,19 @@ mod tests {
             }],
             timestamp: 0,
         });
-        let params = make_params(Arc::clone(&provider) as Arc<dyn LlmProvider>, vec![user_msg]);
+        let params = make_params(
+            Arc::clone(&provider) as Arc<dyn LlmProvider>,
+            vec![user_msg],
+        );
         let messages: Vec<_> = run_query_loop(params).collect().await;
         assert!(
             !messages.is_empty(),
             "expected at least one message from the loop"
         );
         assert!(
-            messages.iter().any(|m| matches!(m, Ok(AgentMessage::Assistant(_)))),
+            messages
+                .iter()
+                .any(|m| matches!(m, Ok(AgentMessage::Assistant(_)))),
             "expected an assistant message"
         );
     }
@@ -319,7 +320,10 @@ mod tests {
         });
         let params = QueryLoopParams {
             can_use_tool: deny_all(),
-            ..make_params(Arc::clone(&provider) as Arc<dyn LlmProvider>, vec![user_msg])
+            ..make_params(
+                Arc::clone(&provider) as Arc<dyn LlmProvider>,
+                vec![user_msg],
+            )
         };
         // Should still run (deny_all blocks tool calls at runtime, doesn't abort the loop).
         let messages: Vec<_> = run_query_loop(params).collect().await;

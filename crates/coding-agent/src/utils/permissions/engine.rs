@@ -733,7 +733,14 @@ mod tests {
     fn plan_mode_whitelist_exhaustive() {
         // All 6 whitelisted tools must be allowed; everything else must be denied.
         let allowed = ["read", "grep", "find", "ls", "web_fetch", "web_search"];
-        let denied = ["bash", "write", "edit", "glob", "notebook_edit", "mcp__server__tool"];
+        let denied = [
+            "bash",
+            "write",
+            "edit",
+            "glob",
+            "notebook_edit",
+            "mcp__server__tool",
+        ];
 
         let mut ctx = ToolPermissionContext::default();
         ctx.mode = PermissionMode::Plan;
@@ -754,8 +761,14 @@ mod tests {
 
     #[test]
     fn permission_rule_source_display() {
-        assert_eq!(PermissionRuleSource::UserSettings.to_string(), "user settings");
-        assert_eq!(PermissionRuleSource::ProjectSettings.to_string(), "project settings");
+        assert_eq!(
+            PermissionRuleSource::UserSettings.to_string(),
+            "user settings"
+        );
+        assert_eq!(
+            PermissionRuleSource::ProjectSettings.to_string(),
+            "project settings"
+        );
         assert_eq!(PermissionRuleSource::CliArg.to_string(), "CLI argument");
         assert_eq!(PermissionRuleSource::Session.to_string(), "session");
     }
@@ -774,7 +787,10 @@ mod tests {
     fn mcp_exact_rule_does_not_wildcard_other_tools() {
         // An exact rule "mcp__myserver__read" must NOT match "mcp__myserver__write".
         let mut ctx = ToolPermissionContext::default();
-        ctx.add_allow_rule(PermissionRuleSource::Session, "mcp__myserver__read".to_owned());
+        ctx.add_allow_rule(
+            PermissionRuleSource::Session,
+            "mcp__myserver__read".to_owned(),
+        );
         assert!(find_allow_rule_for_tool(&ctx, "mcp__myserver__read").is_some());
         assert!(
             find_allow_rule_for_tool(&ctx, "mcp__myserver__write").is_none(),

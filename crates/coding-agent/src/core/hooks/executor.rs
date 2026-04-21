@@ -115,8 +115,14 @@ impl HookExecutor {
                         ..Default::default()
                     });
                 }
-                self.execute_command_hook(command, *timeout, &shell_prog, input, default_timeout_secs)
-                    .await
+                self.execute_command_hook(
+                    command,
+                    *timeout,
+                    &shell_prog,
+                    input,
+                    default_timeout_secs,
+                )
+                .await
             }
             HookCommand::Prompt { .. } | HookCommand::Http { .. } | HookCommand::Agent { .. } => {
                 let kind = match hook {
@@ -490,11 +496,13 @@ mod tests {
         };
         let result = executor.execute(&hook, &input).await.unwrap();
         assert_eq!(result.outcome, HookOutcome::NonBlockingError);
-        assert!(result
-            .stderr
-            .as_deref()
-            .unwrap_or("")
-            .contains("not supported"));
+        assert!(
+            result
+                .stderr
+                .as_deref()
+                .unwrap_or("")
+                .contains("not supported")
+        );
     }
 
     #[tokio::test]
@@ -521,11 +529,13 @@ mod tests {
         };
         let result = executor.execute(&hook, &input).await.unwrap();
         assert_eq!(result.outcome, HookOutcome::NonBlockingError);
-        assert!(result
-            .stderr
-            .as_deref()
-            .unwrap_or("")
-            .contains("not supported"));
+        assert!(
+            result
+                .stderr
+                .as_deref()
+                .unwrap_or("")
+                .contains("not supported")
+        );
     }
 
     #[tokio::test]
