@@ -361,7 +361,9 @@ fn build_model(provider_id: Option<&str>, model_id: Option<&str>) -> anyhow::Res
 
 // ── SpawnSubagentTool ────────────────────────────────────────────────────────
 
-struct SpawnSubagentTool;
+struct SpawnSubagentTool {
+    permission_mode: String,
+}
 
 #[async_trait::async_trait]
 impl SimpleTool for SpawnSubagentTool {
@@ -417,7 +419,7 @@ impl SimpleTool for SpawnSubagentTool {
             .and_then(|v| v.as_str())
             .map(std::path::PathBuf::from);
 
-        match spawn_subagent(task, None, model_id, None, None, None, cwd).await {
+        match spawn_subagent(task, None, model_id, None, None, None, cwd, self.permission_mode.clone()).await {
             Ok(agent_id) => ToolOutput {
                 content: vec![Content::Text {
                     text: format!("Sub-agent spawned with ID: {agent_id}"),
@@ -445,6 +447,7 @@ impl SimpleTool for SpawnSubagentTool {
 fn create_default_tools(
     backend: Arc<LocalBackend>,
     permission_ctx: Arc<Mutex<ToolPermissionContext>>,
+    permission_mode: &str,
 ) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
     let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> =
         ["bash", "read", "write", "edit", "grep", "find", "ls", "web_fetch", "web_search"]
@@ -467,7 +470,7 @@ fn create_default_tools(
         permission_ctx: Arc::clone(&permission_ctx),
     }));
     tools.push(Arc::new(ToolAdapter::new(
-        Box::new(SpawnSubagentTool),
+        Box::new(SpawnSubagentTool { permission_mode: permission_mode.to_string() }),
         Arc::clone(&permission_ctx),
     )));
 
@@ -606,7 +609,7 @@ pub async fn run_agent_session_to_channel(
     let permission_ctx = build_permission_context(&permission_mode, &cwd);
 
     let backend = LocalBackend::new();
-    let mut tools = create_default_tools(backend, Arc::clone(&permission_ctx));
+    let mut tools = create_default_tools(backend, Arc::clone(&permission_ctx), &permission_mode);
 
     // Load MCP tools from settings and append to the tool list.
     let agent_dir = get_agent_dir();
@@ -710,6 +713,7 @@ pub async fn spawn_subagent(
     api_key: Option<String>,
     team_name: Option<String>,
     cwd: Option<std::path::PathBuf>,
+    permission_mode: String,
 ) -> anyhow::Result<String> {
     let model = build_model(provider_id.as_deref(), model_id.as_deref())?;
 
@@ -728,12 +732,10 @@ pub async fn spawn_subagent(
     let effective_cwd = cwd
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
-    // Sub-agents run inside a sandboxed VM; host-level enforcement is at the sandbox
-    // boundary, so bypassPermissions is intentional here rather than inherited.
-    let permission_ctx = build_permission_context("bypassPermissions", &effective_cwd);
+    let permission_ctx = build_permission_context(&permission_mode, &effective_cwd);
 
     let backend = LocalBackend::new();
-    let tools = create_default_tools(backend, permission_ctx);
+    let tools = create_default_tools(backend, permission_ctx, &permission_mode);
 
     let name = agent_type.as_deref().unwrap_or("subagent").to_string();
     let config = SpawnAgentConfig {
@@ -799,7 +801,7 @@ pub async fn run_agent_session(
     let permission_ctx = build_permission_context(&permission_mode, &cwd);
 
     let backend = LocalBackend::new();
-    let mut tools = create_default_tools(backend, Arc::clone(&permission_ctx));
+    let mut tools = create_default_tools(backend, Arc::clone(&permission_ctx), &permission_mode);
 
     // 4b. Load MCP tools from settings and append to the tool list.
     let agent_dir = get_agent_dir();
