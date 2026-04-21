@@ -19,6 +19,29 @@ pub struct HookRunner {
 
 impl HookRunner {
     pub fn new(executor: HookExecutor, hooks: HooksSettings) -> Self {
+        // Warn once at construction time (settings load) rather than on every hook invocation.
+        for matchers in hooks.values() {
+            for matcher in matchers {
+                for hook_cmd in &matcher.hooks {
+                    if let super::types::HookCommand::Command { command, once: Some(true), .. } = hook_cmd {
+                        tracing::warn!(
+                            command,
+                            "hook has once: true but per-session deduplication is not yet \
+                             implemented — the hook will run on every invocation"
+                        );
+                    }
+                    if let Some(condition) = hook_cmd.if_condition() {
+                        if condition.contains("{{") {
+                            tracing::warn!(
+                                condition,
+                                "if-condition looks like a template expression ({{...}}); \
+                                 only exact tool-name matching is supported in this implementation"
+                            );
+                        }
+                    }
+                }
+            }
+        }
         Self { executor, hooks }
     }
 
@@ -190,13 +213,6 @@ impl HookRunner {
             }
             for hook_cmd in &matcher.hooks {
                 if let Some(condition) = hook_cmd.if_condition() {
-                    if condition.contains("{{") {
-                        tracing::warn!(
-                            condition,
-                            "if-condition looks like a template expression ({{...}}); \
-                             only exact tool-name matching is supported in this implementation"
-                        );
-                    }
                     match tool_name {
                         Some(name) => {
                             // For tool events: treat condition as a case-insensitive tool name pattern.
