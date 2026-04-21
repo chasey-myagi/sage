@@ -441,13 +441,16 @@ impl SimpleTool for SpawnSubagentTool {
 /// Create the default coding-agent tools backed by the local filesystem.
 ///
 /// All standard tools are wrapped in `ToolAdapter` which enforces permission
-/// rules from settings.json before each execution.  `EnterPlanMode`,
-/// `ExitPlanMode`, and `SpawnSubagent` are also registered so the LLM can use
-/// plan mode and delegate sub-tasks.
+/// rules from settings.json before each execution.  `SpawnSubagent` is always
+/// registered.  `EnterPlanMode` and `ExitPlanMode` are only registered for
+/// top-level agents — sub-agents must NOT enter plan mode because they run
+/// inside an isolated `ToolPermissionContext` that the parent cannot observe,
+/// which would silently bypass the parent's permission model.
 fn create_default_tools(
     backend: Arc<LocalBackend>,
     permission_ctx: Arc<Mutex<ToolPermissionContext>>,
     permission_mode: &str,
+    is_subagent: bool,
 ) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
     let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> =
         ["bash", "read", "write", "edit", "grep", "find", "ls", "web_fetch", "web_search"]
@@ -463,12 +466,14 @@ fn create_default_tools(
             })
             .collect();
 
-    tools.push(Arc::new(EnterPlanModeTool {
-        permission_ctx: Arc::clone(&permission_ctx),
-    }));
-    tools.push(Arc::new(ExitPlanModeTool {
-        permission_ctx: Arc::clone(&permission_ctx),
-    }));
+    if !is_subagent {
+        tools.push(Arc::new(EnterPlanModeTool {
+            permission_ctx: Arc::clone(&permission_ctx),
+        }));
+        tools.push(Arc::new(ExitPlanModeTool {
+            permission_ctx: Arc::clone(&permission_ctx),
+        }));
+    }
     tools.push(Arc::new(ToolAdapter::new(
         Box::new(SpawnSubagentTool { permission_mode: permission_mode.to_string() }),
         Arc::clone(&permission_ctx),
@@ -609,7 +614,7 @@ pub async fn run_agent_session_to_channel(
     let permission_ctx = build_permission_context(&permission_mode, &cwd);
 
     let backend = LocalBackend::new();
-    let mut tools = create_default_tools(backend, Arc::clone(&permission_ctx), &permission_mode);
+    let mut tools = create_default_tools(backend, Arc::clone(&permission_ctx), &permission_mode, false);
 
     // Load MCP tools from settings and append to the tool list.
     let agent_dir = get_agent_dir();
@@ -735,7 +740,7 @@ pub async fn spawn_subagent(
     let permission_ctx = build_permission_context(&permission_mode, &effective_cwd);
 
     let backend = LocalBackend::new();
-    let tools = create_default_tools(backend, permission_ctx, &permission_mode);
+    let tools = create_default_tools(backend, permission_ctx, &permission_mode, true);
 
     let name = agent_type.as_deref().unwrap_or("subagent").to_string();
     let config = SpawnAgentConfig {
@@ -801,7 +806,7 @@ pub async fn run_agent_session(
     let permission_ctx = build_permission_context(&permission_mode, &cwd);
 
     let backend = LocalBackend::new();
-    let mut tools = create_default_tools(backend, Arc::clone(&permission_ctx), &permission_mode);
+    let mut tools = create_default_tools(backend, Arc::clone(&permission_ctx), &permission_mode, false);
 
     // 4b. Load MCP tools from settings and append to the tool list.
     let agent_dir = get_agent_dir();
