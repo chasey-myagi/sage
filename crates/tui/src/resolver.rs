@@ -194,7 +194,7 @@ pub fn resolve_key_with_chord_state(
 
     // Longer chords take priority over exact matches (CC semantics).
     if has_longer_chord {
-        let ks = next_keystroke.unwrap();
+        let ks = next_keystroke.expect("invariant: set when has_longer_chord is true");
         let mut new_state = pending.clone().unwrap_or_default();
         new_state.push(ks);
         *pending = Some(new_state.clone());

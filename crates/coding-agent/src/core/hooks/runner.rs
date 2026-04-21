@@ -3,33 +3,28 @@
 //! Implements PreToolUse / PostToolUse / Stop event triggers.
 //! Translated from CC `src/utils/hooks.ts` (runHooks / runPreToolUseHooks, etc.)
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
 
 use super::executor::HookExecutor;
-use super::types::{AggregatedHookResult, HookInput, HookOutcome, HookResult, HooksSettings};
+use super::types::{AggregatedHookResult, HookCommand, HookInput, HookOutcome, HookResult, HooksSettings};
 
 /// Fires hooks from a loaded `HooksSettings` for lifecycle events.
 pub struct HookRunner {
     executor: HookExecutor,
     hooks: HooksSettings,
+    /// Tracks command keys for hooks with `once: true` that have already run this session.
+    once_executed: Mutex<HashSet<String>>,
 }
 
 impl HookRunner {
     pub fn new(executor: HookExecutor, hooks: HooksSettings) -> Self {
-        // Warn once at construction time (settings load) rather than on every hook invocation.
         for matchers in hooks.values() {
             for matcher in matchers {
                 for hook_cmd in &matcher.hooks {
-                    if let super::types::HookCommand::Command { command, once: Some(true), .. } = hook_cmd {
-                        tracing::warn!(
-                            command,
-                            "hook has once: true but per-session deduplication is not yet \
-                             implemented — the hook will run on every invocation"
-                        );
-                    }
                     if let Some(condition) = hook_cmd.if_condition() {
                         if condition.contains("{{") {
                             tracing::warn!(
@@ -42,7 +37,7 @@ impl HookRunner {
                 }
             }
         }
-        Self { executor, hooks }
+        Self { executor, hooks, once_executed: Mutex::new(HashSet::new()) }
     }
 
     /// Returns true if any hooks are configured for the given event.
@@ -182,11 +177,26 @@ impl HookRunner {
                     );
                     continue;
                 }
-                let result = self.executor.execute_session_end(hook_cmd, &input).await?;
-                let is_blocking = result.outcome == HookOutcome::Blocking;
-                results.push(result);
-                if is_blocking {
-                    return Ok(AggregatedHookResult::from_results(results));
+                if let Some(key) = once_key(hook_cmd) {
+                    let already_ran = self.once_executed.lock().unwrap().contains(&key);
+                    if already_ran {
+                        tracing::debug!(key, "skipping once: true hook — already ran this session");
+                        continue;
+                    }
+                    let result = self.executor.execute_session_end(hook_cmd, &input).await?;
+                    self.once_executed.lock().unwrap().insert(key);
+                    let is_blocking = result.outcome == HookOutcome::Blocking;
+                    results.push(result);
+                    if is_blocking {
+                        return Ok(AggregatedHookResult::from_results(results));
+                    }
+                } else {
+                    let result = self.executor.execute_session_end(hook_cmd, &input).await?;
+                    let is_blocking = result.outcome == HookOutcome::Blocking;
+                    results.push(result);
+                    if is_blocking {
+                        return Ok(AggregatedHookResult::from_results(results));
+                    }
                 }
             }
         }
@@ -237,17 +247,53 @@ impl HookRunner {
                         }
                     }
                 }
-                let result = self.executor.execute(hook_cmd, input).await?;
-                let is_blocking = result.outcome == HookOutcome::Blocking;
-                results.push(result);
-                // Stop executing further hooks if one blocked.
-                if is_blocking {
-                    return Ok(AggregatedHookResult::from_results(results));
+                if let Some(key) = once_key(hook_cmd) {
+                    let already_ran = self.once_executed.lock().unwrap().contains(&key);
+                    if already_ran {
+                        tracing::debug!(key, "skipping once: true hook — already ran this session");
+                        continue;
+                    }
+                    let result = self.executor.execute(hook_cmd, input).await?;
+                    self.once_executed.lock().unwrap().insert(key);
+                    let is_blocking = result.outcome == HookOutcome::Blocking;
+                    results.push(result);
+                    if is_blocking {
+                        return Ok(AggregatedHookResult::from_results(results));
+                    }
+                } else {
+                    let result = self.executor.execute(hook_cmd, input).await?;
+                    let is_blocking = result.outcome == HookOutcome::Blocking;
+                    results.push(result);
+                    // Stop executing further hooks if one blocked.
+                    if is_blocking {
+                        return Ok(AggregatedHookResult::from_results(results));
+                    }
                 }
             }
         }
 
         Ok(AggregatedHookResult::from_results(results))
+    }
+}
+
+/// Returns a stable deduplication key for hooks with `once: true`, or `None` if the hook
+/// does not have `once` set. The key is prefixed by type to avoid accidental collisions
+/// between e.g. a `command` and a `prompt` that share the same content string.
+fn once_key(hook_cmd: &HookCommand) -> Option<String> {
+    match hook_cmd {
+        HookCommand::Command { command, once: Some(true), .. } => {
+            Some(format!("command:{command}"))
+        }
+        HookCommand::Prompt { prompt, once: Some(true), .. } => {
+            Some(format!("prompt:{prompt}"))
+        }
+        HookCommand::Http { url, once: Some(true), .. } => {
+            Some(format!("http:{url}"))
+        }
+        HookCommand::Agent { prompt, once: Some(true), .. } => {
+            Some(format!("agent:{prompt}"))
+        }
+        _ => None,
     }
 }
 

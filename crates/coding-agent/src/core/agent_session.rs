@@ -802,24 +802,21 @@ impl AgentSession {
     ///
     /// Mirrors pi-mono's `setSessionName(name)`.
     pub fn set_session_name(&mut self, _name: &str) {
-        // Stub: delegate to session manager when available.
-        todo!("session manager not yet wired in")
+        // no-op until session manager is wired
     }
 
     /// Switch to a different session file.
     ///
     /// Mirrors pi-mono's `switchSession(sessionPath)`.
     pub async fn switch_session(&mut self, _session_path: &str) -> bool {
-        // Stub: delegate to session manager when available.
-        todo!("session manager not yet wired in")
+        false
     }
 
     /// Create a fork from a specific entry.
     ///
     /// Mirrors pi-mono's `fork(entryId)`.
     pub async fn fork(&mut self, _entry_id: &str) -> Result<ForkResult, String> {
-        // Stub: delegate to session manager when available.
-        todo!("session manager not yet wired in")
+        Err("not yet implemented".to_string())
     }
 
     /// Navigate to a different node in the session tree.
@@ -830,8 +827,7 @@ impl AgentSession {
         _target_id: &str,
         _options: NavigateTreeOptions,
     ) -> Result<NavigateTreeResult, String> {
-        // Stub: delegate to session manager when available.
-        todo!("session manager not yet wired in")
+        Err("not yet implemented".to_string())
     }
 
     /// Get all user messages from session for fork selector.
