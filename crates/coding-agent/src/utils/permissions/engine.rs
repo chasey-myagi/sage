@@ -392,11 +392,12 @@ pub fn check_tool_permission(ctx: &ToolPermissionContext, tool_name: &str) -> Pe
     }
 
     // Plan mode: only read-only tools are allowed.
+    // Note: EnterPlanMode / ExitPlanMode are handled directly by the harness and never
+    // reach ToolAdapter, so they must not appear here.
     if ctx.mode == PermissionMode::Plan {
         let read_only = matches!(
             tool_name,
             "read" | "grep" | "find" | "ls" | "web_fetch" | "web_search"
-                | "EnterPlanMode" | "ExitPlanMode"
         );
         if !read_only {
             return PermissionDecision::Deny {
@@ -555,14 +556,6 @@ mod tests {
         let mut ctx = ToolPermissionContext::default();
         ctx.mode = PermissionMode::Plan;
         assert!(check_tool_permission(&ctx, "grep").is_allow());
-    }
-
-    #[test]
-    fn plan_mode_allows_enter_exit_plan_mode() {
-        let mut ctx = ToolPermissionContext::default();
-        ctx.mode = PermissionMode::Plan;
-        assert!(check_tool_permission(&ctx, "EnterPlanMode").is_allow());
-        assert!(check_tool_permission(&ctx, "ExitPlanMode").is_allow());
     }
 
     #[test]
