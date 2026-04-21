@@ -67,12 +67,12 @@ fn project_config_path(cwd: &Path) -> PathBuf {
     cwd.join(".sage").join("project.json")
 }
 
-pub fn get_project_config(cwd: &Path) -> ProjectConfig {
+pub fn get_project_config(cwd: &Path) -> Result<ProjectConfig, ConfigError> {
     let path = project_config_path(cwd);
     let Ok(data) = fs::read_to_string(&path) else {
-        return ProjectConfig::default();
+        return Ok(ProjectConfig::default());
     };
-    serde_json::from_str(&data).unwrap_or_default()
+    Ok(serde_json::from_str(&data)?)
 }
 
 pub fn save_project_config(
@@ -83,7 +83,7 @@ pub fn save_project_config(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let updated = updater(get_project_config(cwd));
+    let updated = updater(get_project_config(cwd)?);
     let json = serde_json::to_string_pretty(&updated)?;
     fs::write(&path, json)?;
     Ok(())
@@ -110,6 +110,10 @@ pub fn get_steps(cwd: &Path) -> Vec<Step> {
         Step {
             key: StepKey::Workspace,
             text: "Ask Claude to create a new app or clone a repository".to_string(),
+            // Always false: once the user creates/clones anything the workspace
+            // becomes non-empty, disabling this step entirely. The step never
+            // needs is_complete=true because is_project_onboarding_complete
+            // only evaluates enabled steps. Matches TS source (getSteps ln 29).
             is_complete: false,
             is_completable: true,
             is_enabled: is_workspace_empty,
@@ -137,7 +141,7 @@ pub fn is_project_onboarding_complete(cwd: &Path) -> bool {
 /// Short-circuits if `has_completed_project_onboarding` is already set,
 /// to avoid unnecessary filesystem reads from `is_project_onboarding_complete`.
 pub fn maybe_mark_project_onboarding_complete(cwd: &Path) -> Result<(), ConfigError> {
-    if get_project_config(cwd).has_completed_project_onboarding {
+    if get_project_config(cwd)?.has_completed_project_onboarding {
         return Ok(());
     }
     if is_project_onboarding_complete(cwd) {
@@ -153,15 +157,15 @@ pub fn maybe_mark_project_onboarding_complete(cwd: &Path) -> Result<(), ConfigEr
 ///
 /// Not memoized — evaluated fresh each call so the result stays correct
 /// after CLAUDE.md is created or the seen count changes mid-session.
-pub fn should_show_project_onboarding(cwd: &Path) -> bool {
-    let config = get_project_config(cwd);
+pub fn should_show_project_onboarding(cwd: &Path) -> Result<bool, ConfigError> {
+    let config = get_project_config(cwd)?;
     if config.has_completed_project_onboarding
         || config.project_onboarding_seen_count >= 4
         || std::env::var("IS_DEMO").is_ok()
     {
-        return false;
+        return Ok(false);
     }
-    !is_project_onboarding_complete(cwd)
+    Ok(!is_project_onboarding_complete(cwd))
 }
 
 /// Increment the number of times onboarding has been shown this project.
@@ -227,7 +231,7 @@ mod tests {
     #[test]
     fn default_config_returns_zeros() {
         let dir = make_cwd();
-        let config = get_project_config(dir.path());
+        let config = get_project_config(dir.path()).unwrap();
         assert!(!config.has_completed_project_onboarding);
         assert_eq!(config.project_onboarding_seen_count, 0);
     }
@@ -237,7 +241,7 @@ mod tests {
         let dir = make_cwd();
         increment_project_onboarding_seen_count(dir.path()).unwrap();
         increment_project_onboarding_seen_count(dir.path()).unwrap();
-        let config = get_project_config(dir.path());
+        let config = get_project_config(dir.path()).unwrap();
         assert_eq!(config.project_onboarding_seen_count, 2);
     }
 
@@ -247,7 +251,7 @@ mod tests {
         for _ in 0..4 {
             increment_project_onboarding_seen_count(dir.path()).unwrap();
         }
-        assert!(!should_show_project_onboarding(dir.path()));
+        assert!(!should_show_project_onboarding(dir.path()).unwrap());
     }
 
     #[test]
@@ -256,7 +260,7 @@ mod tests {
         fs::write(dir.path().join("file.txt"), "x").unwrap();
         fs::write(dir.path().join("CLAUDE.md"), "# guide").unwrap();
         maybe_mark_project_onboarding_complete(dir.path()).unwrap();
-        let config = get_project_config(dir.path());
+        let config = get_project_config(dir.path()).unwrap();
         assert!(config.has_completed_project_onboarding);
     }
 
@@ -269,7 +273,7 @@ mod tests {
         })
         .unwrap();
         maybe_mark_project_onboarding_complete(dir.path()).unwrap();
-        let config = get_project_config(dir.path());
+        let config = get_project_config(dir.path()).unwrap();
         assert!(config.has_completed_project_onboarding);
     }
 
@@ -277,7 +281,7 @@ mod tests {
     fn should_show_when_not_complete_and_unseen() {
         let dir = make_cwd();
         fs::write(dir.path().join("file.txt"), "x").unwrap();
-        assert!(should_show_project_onboarding(dir.path()));
+        assert!(should_show_project_onboarding(dir.path()).unwrap());
     }
 
     #[test]
@@ -286,6 +290,6 @@ mod tests {
         fs::write(dir.path().join("file.txt"), "x").unwrap();
         fs::write(dir.path().join("CLAUDE.md"), "# guide").unwrap();
         maybe_mark_project_onboarding_complete(dir.path()).unwrap();
-        assert!(!should_show_project_onboarding(dir.path()));
+        assert!(!should_show_project_onboarding(dir.path()).unwrap());
     }
 }

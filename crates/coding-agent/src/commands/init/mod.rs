@@ -58,11 +58,7 @@ impl InitCommand {
     pub const NAME: &'static str = "init";
 
     pub fn description() -> &'static str {
-        if should_use_new_init_workflow() {
-            "Initialize new CLAUDE.md file(s) and optional skills/hooks with codebase documentation"
-        } else {
-            "Initialize a new CLAUDE.md file with codebase documentation"
-        }
+        "Initialize a new CLAUDE.md file with codebase documentation"
     }
 
     pub fn source() -> CommandSource {
@@ -81,6 +77,9 @@ impl InitCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn name_is_init() {
@@ -119,6 +118,7 @@ mod tests {
 
     #[test]
     fn new_workflow_via_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // CLAUDE_CODE_NEW_INIT=1 should enable new workflow
         unsafe { std::env::set_var("CLAUDE_CODE_NEW_INIT", "1") };
         let result = should_use_new_init_workflow();
@@ -128,6 +128,7 @@ mod tests {
 
     #[test]
     fn new_workflow_ant_user_type() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // USER_TYPE=ant should enable new workflow
         unsafe { std::env::set_var("USER_TYPE", "ant") };
         let result = should_use_new_init_workflow();
