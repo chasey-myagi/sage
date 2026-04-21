@@ -109,6 +109,18 @@ impl StdioTransport {
         &mut self,
         expected_id: u64,
     ) -> Result<serde_json::Value, TransportError> {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            self.read_response_inner(expected_id),
+        )
+        .await
+        .map_err(|_| TransportError::Timeout)?
+    }
+
+    async fn read_response_inner(
+        &mut self,
+        expected_id: u64,
+    ) -> Result<serde_json::Value, TransportError> {
         loop {
             let mut line = String::new();
             let n = self
@@ -133,8 +145,13 @@ impl StdioTransport {
                 Some(v) => v,
             };
 
-            let got_id = id_val.as_u64().unwrap_or(u64::MAX);
-            if got_id != expected_id {
+            // JSON-RPC allows string or number IDs; compare by value to avoid silent coercion.
+            let matches = match id_val {
+                serde_json::Value::Number(n) => n.as_u64() == Some(expected_id),
+                serde_json::Value::String(s) => s.parse::<u64>().ok() == Some(expected_id),
+                _ => false,
+            };
+            if !matches {
                 // Response for a different in-flight request — skip and keep reading.
                 continue;
             }

@@ -1,7 +1,4 @@
-// WebSearch tool — search the web for information.
-//
-// Phase 1 MVP: mock implementation that returns placeholder results.
-// Phase 2: integrate with Claude API web_search tool or a search provider.
+// WebSearch tool — not yet implemented; returns an error for all queries.
 
 use crate::types::Content;
 
@@ -23,8 +20,8 @@ impl AgentTool for WebSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search the web for current information. Returns a list of relevant URLs and titles. \
-         Use this when you need up-to-date information that may not be in your training data."
+        "Search the web for current information. Not yet implemented: no search provider is \
+         configured. Use web_fetch to retrieve a specific URL instead."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -56,30 +53,6 @@ impl AgentTool for WebSearchTool {
             Some(_) => return error_output("query is empty"),
             None => return error_output("missing required parameter: query"),
         };
-
-        let allowed_domains: Option<Vec<String>> = args
-            .get("allowed_domains")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            });
-
-        let blocked_domains: Option<Vec<String>> = args
-            .get("blocked_domains")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            });
-
-        if allowed_domains.is_some() && blocked_domains.is_some() {
-            return error_output(
-                "cannot specify both allowed_domains and blocked_domains in the same request",
-            );
-        }
 
         error_output(
             "web_search is not yet implemented: no search provider is configured. \
