@@ -51,8 +51,8 @@ impl AgentTool for WebSearchTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> ToolOutput {
-        let query = match args.get("query").and_then(|v| v.as_str()) {
-            Some(q) if !q.is_empty() => q.to_string(),
+        match args.get("query").and_then(|v| v.as_str()) {
+            Some(q) if !q.is_empty() => {}
             Some(_) => return error_output("query is empty"),
             None => return error_output("missing required parameter: query"),
         };
@@ -81,29 +81,10 @@ impl AgentTool for WebSearchTool {
             );
         }
 
-        // Phase 1: mock implementation — returns placeholder results.
-        // Phase 2: integrate with a real search provider or Claude API web_search.
-        let results = serde_json::json!([
-            {
-                "title": format!("Search results for: {}", query),
-                "url": "https://example.com",
-                "snippet": "Web search integration is in Phase 2. This is a placeholder result."
-            }
-        ]);
-
-        let output = serde_json::json!({
-            "query": query,
-            "results": results,
-            "durationSeconds": 0.0,
-            "note": "Phase 1 mock implementation. Real search integration coming in Phase 2."
-        });
-
-        ToolOutput {
-            content: vec![Content::Text {
-                text: output.to_string(),
-            }],
-            is_error: false,
-        }
+        error_output(
+            "web_search is not yet implemented: no search provider is configured. \
+             Use web_fetch to retrieve a specific URL instead.",
+        )
     }
 }
 
@@ -148,19 +129,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn valid_query_returns_results() {
+    async fn valid_query_returns_not_implemented_error() {
         let tool = WebSearchTool;
         let output = tool
             .execute(serde_json::json!({"query": "Rust programming"}))
             .await;
-        assert!(!output.is_error);
+        assert!(output.is_error);
         let text = match &output.content[0] {
             crate::types::Content::Text { text } => text.clone(),
             _ => panic!("expected Text content"),
         };
-        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(json["query"], "Rust programming");
-        assert!(json["results"].is_array());
+        assert!(text.contains("not yet implemented"));
     }
 
     #[tokio::test]
@@ -177,7 +156,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn allowed_domains_filter_accepted() {
+    async fn allowed_domains_filter_returns_not_implemented_error() {
         let tool = WebSearchTool;
         let output = tool
             .execute(serde_json::json!({
@@ -185,6 +164,6 @@ mod tests {
                 "allowed_domains": ["doc.rust-lang.org"]
             }))
             .await;
-        assert!(!output.is_error);
+        assert!(output.is_error);
     }
 }

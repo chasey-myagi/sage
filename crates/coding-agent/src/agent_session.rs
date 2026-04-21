@@ -156,7 +156,7 @@ fn build_model(provider_id: Option<&str>, model_id: Option<&str>) -> anyhow::Res
 /// Create the default coding-agent tools backed by the local filesystem,
 /// wrapped as `types::AgentTool` for use with `Agent`.
 fn create_default_tools(backend: Arc<LocalBackend>) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
-    ["bash", "read", "write", "edit", "grep", "find", "ls"]
+    ["bash", "read", "write", "edit", "grep", "find", "ls", "web_fetch", "web_search"]
         .iter()
         .filter_map(|name| {
             create_tool(

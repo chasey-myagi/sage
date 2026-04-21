@@ -18,8 +18,6 @@ pub enum TransportError {
     Closed,
     #[error("RPC error {code}: {message}")]
     Rpc { code: i64, message: String },
-    #[error("response id mismatch: expected {expected}, got {got}")]
-    IdMismatch { expected: u64, got: String },
     #[error("timeout")]
     Timeout,
 }
@@ -33,9 +31,14 @@ pub struct StdioTransport {
 }
 
 impl StdioTransport {
-    pub async fn spawn(command: &str, args: &[String]) -> Result<Self, TransportError> {
+    pub async fn spawn(
+        command: &str,
+        args: &[String],
+        env: &std::collections::HashMap<String, String>,
+    ) -> Result<Self, TransportError> {
         let mut child = tokio::process::Command::new(command)
             .args(args)
+            .envs(env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
@@ -106,38 +109,50 @@ impl StdioTransport {
         &mut self,
         expected_id: u64,
     ) -> Result<serde_json::Value, TransportError> {
-        let mut line = String::new();
-        let n = self
-            .stdout
-            .read_line(&mut line)
-            .await
-            .map_err(|_| TransportError::Closed)?;
-        if n == 0 {
-            return Err(TransportError::Closed);
-        }
+        loop {
+            let mut line = String::new();
+            let n = self
+                .stdout
+                .read_line(&mut line)
+                .await
+                .map_err(|_| TransportError::Closed)?;
+            if n == 0 {
+                return Err(TransportError::Closed);
+            }
 
-        let response: JsonRpcResponse = serde_json::from_str(line.trim())?;
+            let msg: serde_json::Value = serde_json::from_str(line.trim())?;
 
-        // Validate id matches.
-        let got_id = response.id.as_u64().unwrap_or(u64::MAX);
-        if got_id != expected_id {
-            return Err(TransportError::IdMismatch {
-                expected: expected_id,
-                got: response.id.to_string(),
+            // Batch arrays are not part of our request/response flow; skip them.
+            if msg.is_array() {
+                continue;
+            }
+
+            // Messages without an `id` (or with null `id`) are notifications; skip them.
+            let id_val = match msg.get("id") {
+                None | Some(serde_json::Value::Null) => continue,
+                Some(v) => v,
+            };
+
+            let got_id = id_val.as_u64().unwrap_or(u64::MAX);
+            if got_id != expected_id {
+                // Response for a different in-flight request — skip and keep reading.
+                continue;
+            }
+
+            let response: JsonRpcResponse = serde_json::from_value(msg)?;
+
+            if let Some(error) = response.error {
+                return Err(TransportError::Rpc {
+                    code: error.code,
+                    message: error.message,
+                });
+            }
+
+            return response.result.ok_or(TransportError::Rpc {
+                code: -32603,
+                message: "response has no result".to_string(),
             });
         }
-
-        if let Some(error) = response.error {
-            return Err(TransportError::Rpc {
-                code: error.code,
-                message: error.message,
-            });
-        }
-
-        response.result.ok_or(TransportError::Rpc {
-            code: -32603,
-            message: "response has no result".to_string(),
-        })
     }
 }
 

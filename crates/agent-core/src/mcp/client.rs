@@ -19,7 +19,7 @@ pub struct McpClient {
 impl McpClient {
     /// Spawn the MCP server and perform the initialize handshake.
     pub async fn connect(config: &McpServerConfig) -> Result<Self, McpError> {
-        let transport = StdioTransport::spawn(&config.command, &config.args).await?;
+        let transport = StdioTransport::spawn(&config.command, &config.args, &config.env).await?;
         let mut client = Self {
             transport,
             server_info: None,
