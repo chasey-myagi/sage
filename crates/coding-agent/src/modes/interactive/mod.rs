@@ -24,9 +24,9 @@ use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
 };
 use tokio::sync::mpsc;
 
@@ -66,10 +66,12 @@ pub struct InteractiveMode {
     scroll_top: u16,
     /// When true, scroll_top tracks the bottom of content as it grows.
     is_sticky: bool,
-    /// Viewport height cached from last render (lines, excluding borders).
+    /// Viewport height cached from last render (lines, no border).
     last_viewport_height: u16,
-    /// Terminal width cached from last render (columns, including borders).
+    /// Terminal width cached from last render (columns).
     last_terminal_width: u16,
+    /// Tick counter for spinner animation (incremented every ~50 ms).
+    tick: u64,
 }
 
 /// A single chat turn in the history display.
@@ -106,6 +108,7 @@ impl InteractiveMode {
             is_sticky: true,
             last_viewport_height: 0,
             last_terminal_width: 80,
+            tick: 0,
         }
     }
 
@@ -289,7 +292,9 @@ impl InteractiveMode {
                         _ => {}
                     }
                 }
-                _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
+                _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
+                    self.tick = self.tick.wrapping_add(1);
+                }
             }
         }
 
@@ -328,15 +333,10 @@ impl InteractiveMode {
 
     /// Estimate display height of one message in terminal rows.
     ///
-    /// Mirrors what ratatui's Paragraph+Wrap would produce: each content line
-    /// is divided into chunks of `effective_width` columns. We count prefix
-    /// characters as part of the first content line's width budget.
+    /// Each content line is divided into chunks of `effective_width` columns.
+    /// The prefix (`  ❯ ` or `  ◆ `, 4 cols) is part of the first line's budget.
     fn compute_message_height(msg: &ChatMessage, inner_width: u16) -> u16 {
-        let prefix_len: u16 = match msg.role {
-            MessageRole::User => 5,      // "You: "
-            MessageRole::Assistant => 6, // "Sage: "
-            MessageRole::System => 8,    // "System: "
-        };
+        let prefix_len: u16 = 4; // "  ❯ " / "  ◆ " / "  ◆ " — all 4 display cols
         let effective = inner_width.saturating_sub(prefix_len).max(1);
         let count: u16 = msg
             .content
@@ -358,20 +358,21 @@ impl InteractiveMode {
 
     /// Convert a `ChatMessage` to ratatui `Line`s, handling embedded newlines.
     ///
-    /// The first content line is prefixed with the role label; subsequent lines
-    /// are indented by the same width so wrapped text aligns visually.
+    /// First content line: `  ❯ {text}` (user) or `  ◆ {text}` (assistant).
+    /// Subsequent lines: indented by 4 spaces to align under the text.
     fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
-        let (prefix, style) = match msg.role {
-            MessageRole::User => ("You: ", Style::default().fg(Color::Cyan)),
-            MessageRole::Assistant => ("Sage: ", Style::default().fg(Color::Green)),
-            MessageRole::System => ("System: ", Style::default().fg(Color::Yellow)),
+        let (indicator, style) = match msg.role {
+            MessageRole::User => ("❯", Style::default().fg(Color::Cyan)),
+            MessageRole::Assistant => ("◆", Style::default().fg(Color::Green)),
+            MessageRole::System => ("◆", Style::default().fg(Color::Yellow)),
         };
-        let indent = " ".repeat(prefix.len());
+        let prefix = format!("  {indicator} ");
+        let indent = "    ".to_string(); // 4 spaces — matches prefix display width
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         for (i, text_line) in msg.content.lines().enumerate() {
             let lead = if i == 0 {
-                Span::styled(prefix.to_string(), style)
+                Span::styled(prefix.clone(), style)
             } else {
                 Span::raw(indent.clone())
             };
@@ -379,7 +380,7 @@ impl InteractiveMode {
         }
 
         if lines.is_empty() {
-            lines.push(Line::from(vec![Span::styled(prefix.to_string(), style)]));
+            lines.push(Line::from(vec![Span::styled(prefix, style)]));
         }
 
         lines
@@ -387,7 +388,7 @@ impl InteractiveMode {
 
     /// Clamp `scroll_top` so we never scroll past the last line of content.
     fn clamp_scroll(&mut self) {
-        let inner_width = self.last_terminal_width.saturating_sub(2);
+        let inner_width = self.last_terminal_width; // borderless — full width
         let total = Self::total_content_lines(&self.messages, inner_width);
         let max = total.saturating_sub(self.last_viewport_height);
         self.scroll_top = self.scroll_top.min(max);
@@ -415,87 +416,97 @@ impl InteractiveMode {
 
     // ── Render ──────────────────────────────────────────────────────────────
 
-    /// Render the TUI frame. Updates cached dimensions and applies sticky scroll.
+    /// Render the TUI frame — CC-style borderless layout.
+    ///
+    /// ```
+    /// ┌ header: model name ────────────────── ↑Xk ↓Xk  $X.XXXX ┐
+    /// │ messages area (no border)                                 │
+    /// │   ❯  user input                                           │
+    /// │   ◆  assistant response                                   │
+    /// ├ ─────────────────────────────────────────────────────── ─ ┤
+    /// └   ❯  input buffer  (or  ⠋  Thinking…)                   ┘
+    /// ```
     fn render(&mut self, f: &mut ratatui::Frame) {
         let size = f.area();
-        let inner_width = size.width.saturating_sub(2); // inside borders
+        let width = size.width;
 
-        // Three sections: messages | statusbar | input
+        // Layout: header(1) | messages(∞) | divider(1) | input(1)
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(1), Constraint::Length(3)])
+            .constraints([
+                Constraint::Length(1), // header
+                Constraint::Min(0),    // messages
+                Constraint::Length(1), // divider
+                Constraint::Length(1), // input prompt
+            ])
             .split(size);
 
-        let viewport_height = chunks[0].height.saturating_sub(2);
+        let viewport_height = chunks[1].height;
 
         // Cache dimensions used by key/mouse handlers between frames.
-        self.last_terminal_width = size.width;
+        self.last_terminal_width = width;
         self.last_viewport_height = viewport_height;
 
-        // Sticky scroll: always show the bottom of content when new text arrives.
+        // Sticky scroll: pin to bottom as new content arrives.
         if self.is_sticky {
-            let total = Self::total_content_lines(&self.messages, inner_width);
+            let total = Self::total_content_lines(&self.messages, width);
             self.scroll_top = total.saturating_sub(viewport_height);
         }
 
-        // Build multi-line-aware flat line list from all messages.
+        // ── Header ────────────────────────────────────────────────────────
+        let model_label = self.model_id.as_deref().unwrap_or("claude");
+        let header_left = format!("  {model_label}");
+        let stats = format!(
+            "↑{}  ↓{}  {}  ",
+            Self::format_tokens(self.session_input_tokens),
+            Self::format_tokens(self.session_output_tokens),
+            Self::format_cost(self.session_cost_usd),
+        );
+        // Right-align stats; pad between left label and right stats.
+        let left_len = header_left.chars().count() as u16;
+        let stats_len = stats.chars().count() as u16;
+        let gap = width.saturating_sub(left_len + stats_len);
+        let header_line = Line::from(vec![
+            Span::styled(
+                header_left,
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" ".repeat(gap as usize)),
+            Span::styled(stats, Style::default().fg(Color::DarkGray)),
+        ]);
+        f.render_widget(Paragraph::new(vec![header_line]), chunks[0]);
+
+        // ── Messages ──────────────────────────────────────────────────────
         let message_lines: Vec<Line> = self
             .messages
             .iter()
             .flat_map(|m| Self::message_to_lines(m))
             .collect();
-
-        // Scroll-position indicator shown in the message panel title.
-        let total_lines = Self::total_content_lines(&self.messages, inner_width);
-        let title = if self.is_sticky {
-            " Sage [↓] ".to_string()
-        } else if total_lines > viewport_height {
-            let denom = total_lines.saturating_sub(viewport_height);
-            let pct = if denom > 0 {
-                ((self.scroll_top as f32 / denom as f32) * 100.0).min(100.0) as u8
-            } else {
-                100
-            };
-            format!(" Sage [{pct}%] ")
-        } else {
-            " Sage ".to_string()
-        };
-
         let messages_widget = Paragraph::new(message_lines)
-            .block(Block::default().borders(Borders::ALL).title(title))
             .wrap(Wrap { trim: false })
             .scroll((self.scroll_top, 0));
-        f.render_widget(messages_widget, chunks[0]);
+        f.render_widget(messages_widget, chunks[1]);
 
-        // Status bar: token counts and cost
-        let status_text = if self.session_input_tokens == 0 && self.session_output_tokens == 0 {
-            " ↑0 ↓0 tokens | $0.0000".to_string()
-        } else {
-            format!(
-                " ↑{} ↓{} tokens | {}",
-                Self::format_tokens(self.session_input_tokens),
-                Self::format_tokens(self.session_output_tokens),
-                Self::format_cost(self.session_cost_usd),
-            )
-        };
-        let status_widget =
-            Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray));
-        f.render_widget(status_widget, chunks[1]);
+        // ── Divider ───────────────────────────────────────────────────────
+        let divider_line =
+            Line::from(Span::styled("─".repeat(width as usize), Style::default().fg(Color::DarkGray)));
+        f.render_widget(Paragraph::new(vec![divider_line]), chunks[2]);
 
-        // Input box with context-sensitive hints.
-        let scroll_hint = if self.input_buffer.is_empty() {
-            "j/k·PageUp/Dn·G=bottom · "
+        // ── Input / spinner ───────────────────────────────────────────────
+        const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let input_line = if self.is_thinking {
+            let frame = SPINNER[(self.tick as usize) % SPINNER.len()];
+            Line::from(vec![
+                Span::styled(format!("  {frame} "), Style::default().fg(Color::Green)),
+                Span::styled("Thinking…", Style::default().fg(Color::DarkGray)),
+            ])
         } else {
-            ""
+            Line::from(vec![
+                Span::styled("  ❯ ", Style::default().fg(Color::Green)),
+                Span::raw(self.input_buffer.clone()),
+            ])
         };
-        let input_title = if self.is_thinking {
-            format!(" Thinking… ({scroll_hint}Ctrl+C quit) ")
-        } else {
-            format!(" Input ({scroll_hint}Enter send · Ctrl+C quit) ")
-        };
-        let input_widget = Paragraph::new(self.input_buffer.as_str())
-            .block(Block::default().borders(Borders::ALL).title(input_title));
-        f.render_widget(input_widget, chunks[2]);
+        f.render_widget(Paragraph::new(vec![input_line]), chunks[3]);
     }
 }
 
@@ -576,7 +587,7 @@ mod tests {
             role: MessageRole::User,
             content: "short".to_string(),
         };
-        // "You: short" fits in 80 cols → 1 row
+        // "  ❯ short" fits in 80 cols → 1 row
         assert_eq!(InteractiveMode::compute_message_height(&msg, 80), 1);
     }
 
@@ -596,9 +607,9 @@ mod tests {
             role: MessageRole::User,
             content: "a".repeat(100),
         };
-        // prefix = 5, effective = 20-5 = 15 cols; 100 chars / 15 = 7 rows
+        // prefix = 4, effective = 20-4 = 16 cols; ceil(100/16) = 7
         let h = InteractiveMode::compute_message_height(&msg, 20);
-        assert_eq!(h, 7); // ceil(100/15) = 7
+        assert_eq!(h, 7);
     }
 
     #[test]
