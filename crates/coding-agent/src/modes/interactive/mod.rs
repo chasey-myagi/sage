@@ -88,7 +88,11 @@ pub enum MessageRole {
     Assistant,
     System,
     /// A tool invocation — pending while `pending == true`.
-    Tool { name: String, pending: bool, success: bool },
+    Tool {
+        name: String,
+        pending: bool,
+        success: bool,
+    },
     /// A fatal agent error shown inline.
     Error,
 }
@@ -181,7 +185,11 @@ impl InteractiveMode {
                                 }
                             }
                         }
-                        Ok(AgentDelta::TurnUsage { usage, model, is_fast }) => {
+                        Ok(AgentDelta::TurnUsage {
+                            usage,
+                            model,
+                            is_fast,
+                        }) => {
                             self.session_input_tokens += usage.input;
                             self.session_output_tokens += usage.output;
                             let cost =
@@ -203,18 +211,27 @@ impl InteractiveMode {
                                 content,
                             });
                         }
-                        Ok(AgentDelta::ToolEnd { name, success, output_preview }) => {
+                        Ok(AgentDelta::ToolEnd {
+                            name,
+                            success,
+                            output_preview,
+                        }) => {
                             let pos = self.messages.iter().rposition(|m| {
                                 matches!(&m.role, MessageRole::Tool { name: n, pending: true, .. } if n == &name)
                             });
                             if let Some(idx) = pos {
                                 if !output_preview.is_empty() {
                                     let existing = self.messages[idx].content.clone();
-                                    self.messages[idx].content =
-                                        format!("{existing} · {}", output_preview.chars().take(80).collect::<String>());
+                                    self.messages[idx].content = format!(
+                                        "{existing} · {}",
+                                        output_preview.chars().take(80).collect::<String>()
+                                    );
                                 }
-                                self.messages[idx].role =
-                                    MessageRole::Tool { name, pending: false, success };
+                                self.messages[idx].role = MessageRole::Tool {
+                                    name,
+                                    pending: false,
+                                    success,
+                                };
                             }
                         }
                         Ok(AgentDelta::Error(err)) => {
@@ -339,7 +356,11 @@ impl InteractiveMode {
         }
 
         disable_raw_mode()?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+        execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        )?;
         terminal.show_cursor()?;
         Ok(())
     }
@@ -376,14 +397,19 @@ impl InteractiveMode {
     /// Each content line is divided into chunks of `effective_width` columns.
     /// The prefix (`  ❯ ` or `  ◆ `, 4 cols) is part of the first line's budget.
     fn compute_message_height(msg: &ChatMessage, inner_width: u16) -> u16 {
-        let prefix_len: u16 = 4; // "  ❯ " / "  ◆ " / "  ◆ " — all 4 display cols
-        let effective = inner_width.saturating_sub(prefix_len).max(1);
+        // prefix occupies the first ratatui row only; subsequent wrapped rows use full width.
+        let prefix_len: u16 = 4; // "  ❯ " / "  ◆ " / etc. — all 4 display cols
+        let first_capacity = inner_width.saturating_sub(prefix_len).max(1);
         let count: u16 = msg
             .content
             .lines()
             .map(|line| {
                 let n = line.chars().count() as u16;
-                if n == 0 { 1 } else { n.div_ceil(effective) }
+                if n == 0 || n <= first_capacity {
+                    1
+                } else {
+                    1 + (n - first_capacity).div_ceil(inner_width.max(1))
+                }
             })
             .sum();
         count.max(1)
@@ -405,12 +431,8 @@ impl InteractiveMode {
             MessageRole::User => ("❯", Style::default().fg(Color::Cyan)),
             MessageRole::Assistant => ("◆", Style::default().fg(Color::Green)),
             MessageRole::System => ("◆", Style::default().fg(Color::Yellow)),
-            MessageRole::Tool { pending: true, .. } => {
-                ("⏺", Style::default().fg(Color::Yellow))
-            }
-            MessageRole::Tool { success: true, .. } => {
-                ("✓", Style::default().fg(Color::DarkGray))
-            }
+            MessageRole::Tool { pending: true, .. } => ("⏺", Style::default().fg(Color::Yellow)),
+            MessageRole::Tool { success: true, .. } => ("✓", Style::default().fg(Color::DarkGray)),
             MessageRole::Tool { .. } => ("✘", Style::default().fg(Color::Red)),
             MessageRole::Error => ("✘", Style::default().fg(Color::Red)),
         };
@@ -517,7 +539,9 @@ impl InteractiveMode {
         let header_line = Line::from(vec![
             Span::styled(
                 header_left,
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw(" ".repeat(gap as usize)),
             Span::styled(stats, Style::default().fg(Color::DarkGray)),
@@ -686,16 +710,22 @@ mod tests {
             role: MessageRole::User,
             content: "a".repeat(100),
         };
-        // prefix = 4, effective = 20-4 = 16 cols; ceil(100/16) = 7
+        // first_capacity=16, overflow=84 chars at full width 20: 1+ceil(84/20)=6
         let h = InteractiveMode::compute_message_height(&msg, 20);
-        assert_eq!(h, 7);
+        assert_eq!(h, 6);
     }
 
     #[test]
     fn total_content_lines_sums_messages() {
         let msgs = vec![
-            ChatMessage { role: MessageRole::User, content: "hi".to_string() },
-            ChatMessage { role: MessageRole::Assistant, content: "hello".to_string() },
+            ChatMessage {
+                role: MessageRole::User,
+                content: "hi".to_string(),
+            },
+            ChatMessage {
+                role: MessageRole::Assistant,
+                content: "hello".to_string(),
+            },
         ];
         let total = InteractiveMode::total_content_lines(&msgs, 80);
         assert_eq!(total, 2);
@@ -703,7 +733,10 @@ mod tests {
 
     #[test]
     fn message_to_lines_empty_content() {
-        let msg = ChatMessage { role: MessageRole::User, content: String::new() };
+        let msg = ChatMessage {
+            role: MessageRole::User,
+            content: String::new(),
+        };
         let lines = InteractiveMode::message_to_lines(&msg);
         assert_eq!(lines.len(), 1);
     }

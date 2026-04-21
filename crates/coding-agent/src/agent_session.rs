@@ -21,11 +21,19 @@ pub enum AgentDelta {
     /// A streaming text fragment.
     Text(String),
     /// Token usage snapshot after a turn completes.
-    TurnUsage { usage: Usage, model: String, is_fast: bool },
+    TurnUsage {
+        usage: Usage,
+        model: String,
+        is_fast: bool,
+    },
     /// A tool call has started.
     ToolStart { name: String, args_preview: String },
     /// A tool call has completed.
-    ToolEnd { name: String, success: bool, output_preview: String },
+    ToolEnd {
+        name: String,
+        success: bool,
+        output_preview: String,
+    },
     /// A fatal agent error.
     Error(String),
 }
@@ -200,8 +208,14 @@ pub async fn run_agent_session_to_channel(
     let registry = Arc::new(ApiProviderRegistry::new());
     ai::register_builtin_into(&registry);
 
-    let options = StreamOptions { api_key, ..StreamOptions::default() };
-    let provider: Arc<dyn LlmProvider> = Arc::new(RegistryProvider { registry: Arc::clone(&registry), options });
+    let options = StreamOptions {
+        api_key,
+        ..StreamOptions::default()
+    };
+    let provider: Arc<dyn LlmProvider> = Arc::new(RegistryProvider {
+        registry: Arc::clone(&registry),
+        options,
+    });
 
     let mut agent = Agent::new(AgentOptions::new(
         model,
@@ -227,17 +241,32 @@ pub async fn run_agent_session_to_channel(
                     is_fast,
                 });
             }
-            AgentEvent::ToolExecutionStart { tool_name, args, .. } => {
+            AgentEvent::ToolExecutionStart {
+                tool_name, args, ..
+            } => {
                 let _ = tx.send(AgentDelta::ToolStart {
                     name: tool_name.clone(),
                     args_preview: args_to_preview(&args),
                 });
             }
-            AgentEvent::ToolExecutionEnd { tool_name, result, is_error, .. } => {
+            AgentEvent::ToolExecutionEnd {
+                tool_name,
+                result,
+                is_error,
+                ..
+            } => {
                 use agent_core::types::Content;
-                let text = result.content.iter().find_map(|c| {
-                    if let Content::Text { text } = c { Some(text.as_str()) } else { None }
-                }).unwrap_or("");
+                let text = result
+                    .content
+                    .iter()
+                    .find_map(|c| {
+                        if let Content::Text { text } = c {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
                 let first_nonempty = text
                     .lines()
                     .find(|l| !l.trim().is_empty())
@@ -258,7 +287,10 @@ pub async fn run_agent_session_to_channel(
         }
     });
 
-    agent.prompt_text(message).await.map_err(|e| anyhow::anyhow!(e))?;
+    agent
+        .prompt_text(message)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
     Ok(())
 }
 
