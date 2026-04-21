@@ -126,7 +126,7 @@ jobs:
             -e "s|@@SHA256_LINUX_ARM64@@|${SHA_LINUX_ARM64}|g" \
             Formula/sage.rb
 
-          # If it's not the first release, update existing version/sha fields
+          # If it's not the first release, update existing version/url/sha fields
           sed -i \
             -e "s|version \"[0-9.]*\"|version \"${VERSION_NUM}\"|g" \
             -e "s|/releases/download/v[0-9.]*/sage-v[0-9.]*-darwin-arm64|/releases/download/${VERSION}/sage-${VERSION}-darwin-arm64|g" \
@@ -134,6 +134,12 @@ jobs:
             -e "s|/releases/download/v[0-9.]*/sage-v[0-9.]*-linux-x86_64|/releases/download/${VERSION}/sage-${VERSION}-linux-x86_64|g" \
             -e "s|/releases/download/v[0-9.]*/sage-v[0-9.]*-linux-arm64|/releases/download/${VERSION}/sage-${VERSION}-linux-arm64|g" \
             Formula/sage.rb
+
+          # Update sha256 hashes (multi-line: match url line then immediately following sha256 line)
+          perl -i -0pe "s|(url \"[^\"]*darwin-arm64[^\"]*\"\n\s+sha256 \")[a-f0-9]+(\")|\\1${SHA_DARWIN_ARM64}\\2|g" Formula/sage.rb
+          perl -i -0pe "s|(url \"[^\"]*darwin-x86_64[^\"]*\"\n\s+sha256 \")[a-f0-9]+(\")|\\1${SHA_DARWIN_X86_64}\\2|g" Formula/sage.rb
+          perl -i -0pe "s|(url \"[^\"]*linux-x86_64[^\"]*\"\n\s+sha256 \")[a-f0-9]+(\")|\\1${SHA_LINUX_X86_64}\\2|g" Formula/sage.rb
+          perl -i -0pe "s|(url \"[^\"]*linux-arm64[^\"]*\"\n\s+sha256 \")[a-f0-9]+(\")|\\1${SHA_LINUX_ARM64}\\2|g" Formula/sage.rb
 
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
