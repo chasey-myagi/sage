@@ -382,9 +382,10 @@ impl InteractiveMode {
 
         let provider_id = self.provider_id.clone();
         let model_id = self.model_id.clone();
+        let error_tx = tx.clone();
 
         tokio::spawn(async move {
-            let _ = crate::agent_session::run_agent_session_to_channel(
+            if let Err(e) = crate::agent_session::run_agent_session_to_channel(
                 message,
                 model_id,
                 provider_id,
@@ -392,7 +393,10 @@ impl InteractiveMode {
                 tx,
                 "default".to_string(), // TODO(permission_mode): read from settings when implemented
             )
-            .await;
+            .await
+            {
+                let _ = error_tx.send(AgentDelta::Error(e.to_string()));
+            }
         });
     }
 
