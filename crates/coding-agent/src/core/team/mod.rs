@@ -425,4 +425,86 @@ mod tests {
         assert!(f("read", None).is_ok());
         assert!(f("bash", None).is_err(), "bash should be blocked for explore");
     }
+
+    // ── generate_unique_name boundary and concurrency tests ──────────────────
+
+    #[test]
+    fn generate_unique_name_suffix_at_upper_boundary() {
+        // Fill suffixes 2..=99, so the next one should be 100.
+        let existing: Vec<String> = std::iter::once("worker".to_string())
+            .chain((2u32..100).map(|i| format!("worker-{i}")))
+            .collect();
+        let existing_refs: Vec<&str> = existing.iter().map(|s| s.as_str()).collect();
+        let name = generate_unique_name("worker", &existing_refs);
+        assert_eq!(name, "worker-100");
+    }
+
+    #[test]
+    fn generate_unique_name_ulid_fallback_when_all_suffixes_taken() {
+        // Fill the base name and all suffixes 2..=100, forcing the ULID fallback.
+        let existing: Vec<String> = std::iter::once("bot".to_string())
+            .chain((2u32..=100).map(|i| format!("bot-{i}")))
+            .collect();
+        let existing_refs: Vec<&str> = existing.iter().map(|s| s.as_str()).collect();
+        let name = generate_unique_name("bot", &existing_refs);
+        // Must start with "bot-" and have a ULID suffix (26 uppercase base-32 chars).
+        assert!(name.starts_with("bot-"), "fallback name must start with 'bot-'");
+        let suffix = &name["bot-".len()..];
+        assert_eq!(suffix.len(), 26, "ULID suffix must be 26 chars, got '{suffix}'");
+    }
+
+    #[test]
+    fn generate_unique_name_concurrent_returns_consistent_results() {
+        // generate_unique_name is a pure function — calling it from multiple
+        // threads with the same arguments must return the same result each time.
+        use std::thread;
+        let handles: Vec<_> = (0..20)
+            .map(|_| {
+                thread::spawn(|| {
+                    generate_unique_name("researcher", &["researcher", "researcher-2"])
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            let name = handle.join().expect("thread panicked");
+            assert_eq!(name, "researcher-3", "pure function must be deterministic");
+        }
+    }
+
+    // ── build_can_use_tool extra list tests ───────────────────────────────────
+
+    #[test]
+    fn build_can_use_tool_extra_list_allows_tool_not_in_primary() {
+        // Primary list doesn't include "glob", but extra list does.
+        let f = build_can_use_tool(
+            &["read".to_string()],
+            Some(&PermissionMode::Default),
+        );
+        assert!(f("read", None).is_ok());
+        assert!(f("glob", None).is_err(), "glob not in primary list should fail without extra");
+        assert!(
+            f("glob", Some(&["glob".to_string()])).is_ok(),
+            "glob in extra list should be allowed"
+        );
+    }
+
+    #[test]
+    fn build_can_use_tool_extra_list_empty_does_not_affect_primary() {
+        let f = build_can_use_tool(
+            &["read".to_string()],
+            Some(&PermissionMode::Default),
+        );
+        assert!(f("bash", Some(&[])).is_err(), "empty extra list should not allow bash");
+    }
+
+    #[test]
+    fn build_can_use_tool_accept_edits_mode_allows_all() {
+        let f = build_can_use_tool(
+            &["read".to_string()], // would block bash in Default mode
+            Some(&PermissionMode::AcceptEdits),
+        );
+        assert!(f("bash", None).is_ok(), "AcceptEdits mode should allow all tools");
+        assert!(f("write", None).is_ok());
+    }
 }

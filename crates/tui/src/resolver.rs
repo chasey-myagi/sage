@@ -376,4 +376,113 @@ mod tests {
             "longer chord should win over single key match, got {r:?}"
         );
     }
+
+    // -- parse_keystroke modifier combinations --
+
+    #[test]
+    fn parse_keystroke_ctrl_shift_combination() {
+        let ks = parse_keystroke("ctrl+shift+k");
+        assert_eq!(ks.key, "k");
+        assert!(ks.ctrl);
+        assert!(ks.shift);
+        assert!(!ks.alt);
+        assert!(!ks.meta);
+    }
+
+    #[test]
+    fn parse_keystroke_ctrl_alt_combination() {
+        let ks = parse_keystroke("ctrl+alt+x");
+        assert_eq!(ks.key, "x");
+        assert!(ks.ctrl);
+        assert!(ks.alt);
+        assert!(!ks.shift);
+    }
+
+    #[test]
+    fn parse_keystroke_meta_flag_set() {
+        let ks = parse_keystroke("meta+enter");
+        assert_eq!(ks.key, "enter");
+        assert!(ks.meta);
+        assert!(!ks.ctrl);
+    }
+
+    // -- keystrokes_equal: alt/meta interchangeability --
+
+    #[test]
+    fn keystrokes_equal_alt_and_meta_are_interchangeable() {
+        // alt+x and meta+x are logically the same keystroke (terminal limitation).
+        let alt_x = parse_keystroke("alt+x");
+        let meta_x = parse_keystroke("meta+x");
+        assert!(
+            keystrokes_equal(&alt_x, &meta_x),
+            "alt+x and meta+x should be treated as equal"
+        );
+    }
+
+    #[test]
+    fn keystrokes_equal_different_keys_not_equal() {
+        let a = parse_keystroke("ctrl+x");
+        let b = parse_keystroke("ctrl+k");
+        assert!(!keystrokes_equal(&a, &b));
+    }
+
+    #[test]
+    fn keystrokes_equal_ctrl_differs_from_no_ctrl() {
+        let a = parse_keystroke("ctrl+x");
+        let b = parse_keystroke("x");
+        assert!(!keystrokes_equal(&a, &b));
+    }
+
+    // -- 3-step chord --
+
+    #[test]
+    fn chord_three_step_match() {
+        // ctrl+x ctrl+a ctrl+z → action.deep
+        let b = bindings(&[("action.deep", &["ctrl+x ctrl+a ctrl+z"])]);
+        let mut pending: Option<ChordState> = None;
+
+        // Step 1: ctrl+x → chord started (1 step pending)
+        let r1 = resolve_key_with_chord_state("\x18", &["Global"], &b, &mut pending);
+        assert!(matches!(r1, ResolveResult::ChordStarted(_)), "step 1 should start chord");
+        assert_eq!(pending.as_ref().map(|p| p.len()), Some(1));
+
+        // Step 2: ctrl+a → chord extended (2 steps pending)
+        let r2 = resolve_key_with_chord_state("\x01", &["Global"], &b, &mut pending);
+        assert!(matches!(r2, ResolveResult::ChordStarted(_)), "step 2 should extend chord");
+        assert_eq!(pending.as_ref().map(|p| p.len()), Some(2));
+
+        // Step 3: ctrl+z → final match
+        let r3 = resolve_key_with_chord_state("\x1a", &["Global"], &b, &mut pending);
+        assert_eq!(r3, ResolveResult::Match("action.deep".to_string()));
+        assert!(pending.is_none(), "pending should be cleared after match");
+    }
+
+    #[test]
+    fn chord_three_step_cancelled_at_second_step() {
+        let b = bindings(&[("action.deep", &["ctrl+x ctrl+a ctrl+z"])]);
+        let mut pending: Option<ChordState> = None;
+
+        // Step 1: ctrl+x
+        resolve_key_with_chord_state("\x18", &["Global"], &b, &mut pending);
+        // Step 2: wrong key (ctrl+k instead of ctrl+a)
+        let r = resolve_key_with_chord_state("\x0b", &["Global"], &b, &mut pending);
+        assert_eq!(r, ResolveResult::ChordCancelled);
+        assert!(pending.is_none());
+    }
+
+    // -- empty bindings edge case --
+
+    #[test]
+    fn resolve_key_empty_bindings_returns_none() {
+        let b: KeybindingsConfig = IndexMap::new();
+        assert_eq!(resolve_key("\r", &["Global"], &b), ResolveResult::None);
+    }
+
+    #[test]
+    fn resolve_key_with_chord_state_empty_bindings_returns_none() {
+        let b: KeybindingsConfig = IndexMap::new();
+        let mut pending: Option<ChordState> = None;
+        let r = resolve_key_with_chord_state("\r", &["Global"], &b, &mut pending);
+        assert_eq!(r, ResolveResult::None);
+    }
 }
