@@ -194,16 +194,14 @@ fn rules_from_source_map(map: &RulesBySource, behavior: PermissionBehavior) -> V
     PERMISSION_RULE_SOURCES
         .iter()
         .flat_map(|source| {
-            let behavior = behavior.clone();
             map.get(source)
                 .into_iter()
                 .flatten()
                 .map(move |rule_str| PermissionRule {
                     source: source.clone(),
-                    rule_behavior: behavior.clone(),
+                    rule_behavior: behavior,
                     rule_value: permission_rule_value_from_str(rule_str),
                 })
-                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -378,7 +376,7 @@ pub fn create_permission_request_message(
 
 /// Perform a basic rule-based permission check for a tool.
 ///
-/// Checks deny rules first, then allow rules, then ask rules.
+/// Checks deny rules first, then ask rules, then allow rules.
 /// Returns `Ask` if no rule matches (prompts user by default).
 ///
 /// This is a simplified version of the full `getUserPermission` flow from TS,

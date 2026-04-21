@@ -141,22 +141,8 @@ pub fn exit_plan_mode(
 }
 
 /// Check whether the ExitPlanMode tool is enabled.
-///
-/// It is disabled when KAIROS_CHANNELS are active (the approval dialog
-/// requires terminal access which channels don't support).
 pub fn is_exit_plan_mode_enabled() -> bool {
-    // Feature gate: disabled when kairos_channels are active.
-    // In external builds (no kairos feature) this is always true.
-    #[cfg(any(feature = "kairos", feature = "kairos_channels"))]
-    {
-        // In kairos builds the runtime channel check would go here.
-        // For now treat as enabled when no channels are configured.
-        true
-    }
-    #[cfg(not(any(feature = "kairos", feature = "kairos_channels")))]
-    {
-        true
-    }
+    true // TODO: check kairos channel availability when feature is implemented
 }
 
 /// Check whether the EnterPlanMode tool is enabled.
@@ -164,7 +150,7 @@ pub fn is_exit_plan_mode_enabled() -> bool {
 /// Mirrors `isEnabled()` from `EnterPlanModeTool.ts` — disabled when
 /// `ExitPlanMode` is disabled (so the user cannot enter a mode they cannot leave).
 pub fn is_enter_plan_mode_enabled() -> bool {
-    is_exit_plan_mode_enabled()
+    true // TODO: check kairos channel availability when feature is implemented
 }
 
 /// Permission check for plan-mode tools.
@@ -247,10 +233,10 @@ mod tests {
 
     #[test]
     fn enter_plan_mode_interview_phase_different_instructions() {
-        let mut ctx = ToolPermissionContext::default();
-        let standard = enter_plan_mode(&mut ctx, false, false).unwrap().message;
-        ctx.mode = PermissionMode::Default;
-        let interview = enter_plan_mode(&mut ctx, false, true).unwrap().message;
+        let standard_ctx = &mut ToolPermissionContext::default();
+        let standard = enter_plan_mode(standard_ctx, false, false).unwrap().message;
+        let interview_ctx = &mut ToolPermissionContext::default();
+        let interview = enter_plan_mode(interview_ctx, false, true).unwrap().message;
         assert_ne!(standard, interview);
         assert!(interview.contains("plan file"));
     }

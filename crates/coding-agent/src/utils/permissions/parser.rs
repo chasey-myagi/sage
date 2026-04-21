@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 // ============================================================================
 
 /// Whether a rule allows, denies, or asks for confirmation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PermissionBehavior {
     Allow,
@@ -121,40 +121,45 @@ pub fn unescape_rule_content(content: &str) -> String {
 
 /// Find the byte index of the first unescaped occurrence of `target` in `s`.
 ///
-/// A character is escaped if preceded by an odd number of backslashes.
+/// Scans bytes directly: `\X` pairs are skipped as escape sequences.
+/// Safe for UTF-8 because `(` and `)` are single-byte ASCII values that
+/// never appear inside multi-byte sequences.
 fn find_first_unescaped(s: &str, target: char) -> Option<usize> {
-    let indexed: Vec<(usize, char)> = s.char_indices().collect();
-    for (ci, (byte_idx, ch)) in indexed.iter().enumerate() {
-        if *ch == target {
-            let backslash_count = indexed[..ci]
-                .iter()
-                .rev()
-                .take_while(|(_, c)| *c == '\\')
-                .count();
-            if backslash_count % 2 == 0 {
-                return Some(*byte_idx);
-            }
+    let target_byte = target as u8;
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            i += 2;
+            continue;
         }
+        if bytes[i] == target_byte {
+            return Some(i);
+        }
+        i += 1;
     }
     None
 }
 
 /// Find the byte index of the last unescaped occurrence of `target` in `s`.
+///
+/// Scans bytes directly: `\X` pairs are skipped as escape sequences.
 fn find_last_unescaped(s: &str, target: char) -> Option<usize> {
-    let indexed: Vec<(usize, char)> = s.char_indices().collect();
-    for (ci, (byte_idx, ch)) in indexed.iter().enumerate().rev() {
-        if *ch == target {
-            let backslash_count = indexed[..ci]
-                .iter()
-                .rev()
-                .take_while(|(_, c)| *c == '\\')
-                .count();
-            if backslash_count % 2 == 0 {
-                return Some(*byte_idx);
-            }
+    let target_byte = target as u8;
+    let bytes = s.as_bytes();
+    let mut result = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            i += 2;
+            continue;
         }
+        if bytes[i] == target_byte {
+            result = Some(i);
+        }
+        i += 1;
     }
-    None
+    result
 }
 
 // ============================================================================

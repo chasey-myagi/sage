@@ -11,13 +11,10 @@ pub mod mode;
 pub mod parser;
 
 // Re-export most-used types for convenience.
-// These items are public API and may not be used within this crate itself.
-#[allow(unused_imports)]
+// TODO(CHA-xx): wire into tool dispatch once permission engine is integrated
 pub use engine::{
     PermissionDecision, PermissionDecisionReason, PermissionRule, PermissionRuleSource,
     ToolPermissionContext,
 };
-#[allow(unused_imports)]
 pub use mode::PermissionMode;
-#[allow(unused_imports)]
 pub use parser::{PermissionBehavior, PermissionRuleValue};

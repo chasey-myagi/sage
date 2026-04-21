@@ -100,8 +100,12 @@ pub fn load_permissions_from_file(path: &Path) -> Option<PermissionsJson> {
 ///
 /// Returns `false` if the file could not be read or written.
 pub fn save_permissions_to_file(path: &Path, permissions: &PermissionsJson) -> bool {
-    // Read existing content (or start with an empty object).
-    let existing_content = std::fs::read_to_string(path).unwrap_or_else(|_| "{}".to_string());
+    // Read existing content (or start with an empty object for new files).
+    let existing_content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) if path.exists() => return false,
+        Err(_) => "{}".to_string(),
+    };
     let mut obj: serde_json::Map<String, serde_json::Value> =
         serde_json::from_str(&existing_content)
             .ok()
