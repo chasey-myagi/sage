@@ -96,22 +96,20 @@ impl LlmProvider for RegistryProvider {
 /// Calls `PermissionEngine::check()` before each tool execution, returning a
 /// denial message if the tool is blocked by settings.json permission rules.
 ///
-/// `interactive` distinguishes TUI sessions (ask rules treated as allow+warn)
-/// from print/non-interactive sessions (ask rules treated as deny).
+/// Ask rules are treated as deny in all session modes (interactive and print).
+/// An interactive approval channel (TUI modal) is not yet implemented.
+/// Users must add explicit allow rules in settings.json to permit a tool.
 struct ToolAdapter {
     inner: Box<dyn SimpleTool>,
     tool_description: String,
     tool_schema: serde_json::Value,
     permission_ctx: Arc<Mutex<ToolPermissionContext>>,
-    /// Whether the session is running in interactive (TUI) mode.
-    interactive: bool,
 }
 
 impl ToolAdapter {
     fn new(
         tool: Box<dyn SimpleTool>,
         permission_ctx: Arc<Mutex<ToolPermissionContext>>,
-        interactive: bool,
     ) -> Self {
         let description = tool.description().to_string();
         let schema = tool.parameters_schema();
@@ -120,7 +118,6 @@ impl ToolAdapter {
             tool_description: description,
             tool_schema: schema,
             permission_ctx,
-            interactive,
         }
     }
 }
@@ -166,29 +163,23 @@ impl agent_core::types::AgentTool for ToolAdapter {
                 };
             }
             PermissionDecision::Ask { message, .. } => {
-                if self.interactive {
-                    // TUI mode: ask rules not yet implemented interactively.
-                    // Treat as allow (optimistic) and log a warning.
-                    // TODO: wire up approval channel to surface modal in TUI.
-                    tracing::warn!(
-                        tool = self.inner.name(),
-                        "ask rule matched in interactive mode — treating as allow pending TUI approval channel"
-                    );
-                    // fall through to execute
-                } else {
-                    // Print/non-interactive mode: conservative deny.
-                    return AgentToolResult {
-                        content: vec![Content::Text {
-                            text: format!(
-                                "Tool '{}' requires approval (ask rule). Non-interactive mode: denied.\n\
-                                 Rule: {message}",
-                                self.inner.name()
-                            ),
-                        }],
-                        details: serde_json::Value::Null,
-                        is_error: true,
-                    };
-                }
+                // Interactive approval channel not yet implemented.
+                // Both interactive and non-interactive sessions treat ask as deny.
+                // Users must add an explicit allow rule in settings.json to permit this tool.
+                // TODO: wire TUI approval modal when interactive session is available.
+                return AgentToolResult {
+                    content: vec![Content::Text {
+                        text: format!(
+                            "Tool '{}' requires approval (ask rule matched). \
+                             Interactive approval is not yet implemented — \
+                             add an allow rule in settings.json to permit this tool.\n\
+                             Rule: {message}",
+                            self.inner.name()
+                        ),
+                    }],
+                    details: serde_json::Value::Null,
+                    is_error: true,
+                };
             }
             PermissionDecision::Allow { .. } => {}
         }
@@ -537,7 +528,6 @@ fn create_default_tools(
     is_subagent: bool,
     provider_id: Option<String>,
     api_key: Option<String>,
-    interactive: bool,
 ) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
     let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> =
         ["bash", "read", "write", "edit", "grep", "find", "ls", "web_fetch", "web_search"]
@@ -549,7 +539,7 @@ fn create_default_tools(
                 )
             })
             .map(|t| -> Arc<dyn agent_core::types::AgentTool> {
-                Arc::new(ToolAdapter::new(t, Arc::clone(&permission_ctx), interactive))
+                Arc::new(ToolAdapter::new(t, Arc::clone(&permission_ctx)))
             })
             .collect();
 
@@ -568,7 +558,6 @@ fn create_default_tools(
             permission_ctx: Arc::clone(&permission_ctx),
         }),
         Arc::clone(&permission_ctx),
-        interactive,
     )));
 
     tools
@@ -584,7 +573,6 @@ fn create_default_tools(
 async fn load_mcp_tools(
     servers: &[McpServerConfig],
     permission_ctx: Arc<Mutex<ToolPermissionContext>>,
-    interactive: bool,
 ) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
     let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> = Vec::new();
     for config in servers {
@@ -594,7 +582,7 @@ async fn load_mcp_tools(
                 match discover_mcp_tools(&config.name, Arc::clone(&client)).await {
                     Ok(mcp_tools) => {
                         for t in mcp_tools {
-                            tools.push(Arc::new(ToolAdapter::new(Box::new(t), Arc::clone(&permission_ctx), interactive)));
+                            tools.push(Arc::new(ToolAdapter::new(Box::new(t), Arc::clone(&permission_ctx))));
                         }
                     }
                     Err(e) => {
@@ -650,12 +638,12 @@ fn wire_hooks(
             let r = Arc::clone(&stop_runner);
             tokio::spawn(async move {
                 match r.run_stop(Some(&last_msg), false).await {
-                    Ok(result) => {
-                        if result.is_blocked() {
-                            tracing::warn!(
-                                "Stop hook requested blocking but non-blocking mode is not yet supported"
-                            );
-                        }
+                    Ok(_result) => {
+                        // Stop hook ran successfully.
+                        // Note: blocking outcome is not yet supported in this architecture —
+                        // the agent loop cannot be paused from a TurnEnd callback (fire-and-forget).
+                        // Configure stop behavior via session-level controls instead.
+                        // TODO: surface blocking outcome once a synchronous stop hook path exists.
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, "Stop hook failed");
@@ -728,14 +716,13 @@ pub async fn run_agent_session_to_channel(
         false,
         provider_id_for_subagent,
         api_key_for_subagent,
-        true, // interactive: TUI mode
     );
 
     // Load MCP tools from settings and append to the tool list.
     let agent_dir = get_agent_dir();
     let settings = SettingsManager::create(&cwd, &agent_dir).get_effective_settings();
     if let Some(servers) = &settings.mcp_servers {
-        tools.extend(load_mcp_tools(servers, Arc::clone(&permission_ctx), true).await);
+        tools.extend(load_mcp_tools(servers, Arc::clone(&permission_ctx)).await);
     }
 
     agent.set_tools(tools);
@@ -869,7 +856,6 @@ pub async fn spawn_subagent(
         true,
         provider_id_for_subagent,
         api_key_for_subagent,
-        false, // interactive: sub-agents are non-interactive
     );
 
     let name = agent_type.as_deref().unwrap_or("subagent").to_string();
@@ -946,14 +932,13 @@ pub async fn run_agent_session(
         false,
         provider_id_for_subagent,
         api_key_for_subagent,
-        false, // interactive: print mode is non-interactive
     );
 
     // 4b. Load MCP tools from settings and append to the tool list.
     let agent_dir = get_agent_dir();
     let settings = SettingsManager::create(&cwd, &agent_dir).get_effective_settings();
     if let Some(servers) = &settings.mcp_servers {
-        tools.extend(load_mcp_tools(servers, Arc::clone(&permission_ctx), false).await);
+        tools.extend(load_mcp_tools(servers, Arc::clone(&permission_ctx)).await);
     }
 
     agent.set_tools(tools);

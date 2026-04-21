@@ -407,7 +407,16 @@ pub fn create_permission_request_message(
 /// This is a simplified version of the full `getUserPermission` flow from TS,
 /// which also handles classifiers, hooks, and async approval flows.
 pub fn check_tool_permission(ctx: &ToolPermissionContext, tool_name: &str) -> PermissionDecision {
-    // dontAsk mode denies instead of asking.
+    // Priority order mirrors CC:
+    //   1. dontAsk mode → deny (never prompt)
+    //   2. Deny rules   → deny (highest rule priority, beats bypass and plan)
+    //   3. bypassPermissions → allow (skip remaining checks)
+    //   4. Plan mode whitelist → allow read-only / deny everything else
+    //   5. Ask rules    → ask
+    //   6. Allow rules  → allow
+    //   7. Default      → ask
+
+    // Step 1: dontAsk mode denies instead of asking.
     if ctx.mode == PermissionMode::DontAsk {
         let message = format!("Permission denied: {tool_name} (dontAsk mode)");
         return PermissionDecision::Deny {
@@ -416,9 +425,29 @@ pub fn check_tool_permission(ctx: &ToolPermissionContext, tool_name: &str) -> Pe
         };
     }
 
-    // Plan mode: only read-only tools are allowed.
+    // Step 2: Deny rules win over everything else, including bypassPermissions and plan mode.
+    // This matches CC's priority: deny > bypassPermissions > all other checks.
+    if let Some(rule) = find_deny_rule_for_tool(ctx, tool_name) {
+        let message = create_permission_request_message(
+            tool_name,
+            Some(&PermissionDecisionReason::Rule(rule.clone())),
+        );
+        return PermissionDecision::Deny {
+            reason: Some(PermissionDecisionReason::Rule(rule)),
+            message,
+        };
+    }
+
+    // Step 3: bypassPermissions skips all remaining checks (CC step 2a).
+    if ctx.mode == PermissionMode::BypassPermissions {
+        return PermissionDecision::Allow { reason: None };
+    }
+
+    // Step 4: Plan mode — only read-only tools are allowed.
     // Note: EnterPlanMode / ExitPlanMode are handled directly by the harness and never
     // reach ToolAdapter, so they must not appear here.
+    // Deny rules (step 2) have already been checked above, so a deny rule on a read-only
+    // tool is still respected even in plan mode.
     if ctx.mode == PermissionMode::Plan {
         let read_only = matches!(
             tool_name,
@@ -433,24 +462,7 @@ pub fn check_tool_permission(ctx: &ToolPermissionContext, tool_name: &str) -> Pe
         return PermissionDecision::Allow { reason: None };
     }
 
-    // Deny rules win even over bypassPermissions (CC step 1a).
-    if let Some(rule) = find_deny_rule_for_tool(ctx, tool_name) {
-        let message = create_permission_request_message(
-            tool_name,
-            Some(&PermissionDecisionReason::Rule(rule.clone())),
-        );
-        return PermissionDecision::Deny {
-            reason: Some(PermissionDecisionReason::Rule(rule)),
-            message,
-        };
-    }
-
-    // bypassPermissions skips all remaining checks (CC step 2a).
-    if ctx.mode == PermissionMode::BypassPermissions {
-        return PermissionDecision::Allow { reason: None };
-    }
-
-    // Ask rules have higher priority than allow rules (CC step 1b before step 2b).
+    // Step 5: Ask rules have higher priority than allow rules (CC step 1b before step 2b).
     if let Some(rule) = find_ask_rule_for_tool(ctx, tool_name) {
         let message = create_permission_request_message(
             tool_name,
@@ -462,14 +474,14 @@ pub fn check_tool_permission(ctx: &ToolPermissionContext, tool_name: &str) -> Pe
         };
     }
 
-    // Explicit allow rule.
+    // Step 6: Explicit allow rule.
     if let Some(rule) = find_allow_rule_for_tool(ctx, tool_name) {
         return PermissionDecision::Allow {
             reason: Some(PermissionDecisionReason::Rule(rule)),
         };
     }
 
-    // Default: ask the user.
+    // Step 7: Default — ask the user.
     let message = create_permission_request_message(tool_name, None);
     PermissionDecision::Ask {
         reason: None,
@@ -691,6 +703,20 @@ mod tests {
         let mut ctx = ToolPermissionContext::default();
         ctx.mode = PermissionMode::Plan;
         assert!(check_tool_permission(&ctx, "glob").is_deny());
+    }
+
+    #[test]
+    fn deny_rule_takes_priority_over_plan_mode_whitelist() {
+        // A deny rule on a normally-whitelisted read-only tool must still be honoured
+        // in plan mode.  deny > plan is part of the CC priority contract.
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        ctx.add_deny_rule(PermissionRuleSource::Session, "read".to_owned());
+        // "read" is in the plan-mode whitelist, but the deny rule must win.
+        assert!(
+            check_tool_permission(&ctx, "read").is_deny(),
+            "explicit deny rule must override plan-mode whitelist"
+        );
     }
 
     #[test]
