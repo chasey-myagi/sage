@@ -2,7 +2,5 @@
 
 ## Files
 
-- [ ] `utils/modelCost.ts` — Model pricing data + calculateUSDCost core logic — complexity: medium
-- [ ] `cost-tracker.ts` — Session cost tracking, state management, formatting — complexity: high
-- [ ] `costHook.ts` — React hook wrapper for cost summary on exit — complexity: low
-- [ ] `context/stats.tsx` — Generic stats store with histogram/percentile logic — complexity: high
+- [ ] `commands/init.ts` — Defines /init command with OLD_INIT_PROMPT (legacy) and NEW_INIT_PROMPT (8-phase workflow for CLAUDE.md/skills/hooks setup); ~256 lines — complexity: high
+- [ ] `projectOnboardingState.ts` — Onboarding state tracking with step definitions, completion detection, and memoized visibility logic; ~84 lines — complexity: medium
