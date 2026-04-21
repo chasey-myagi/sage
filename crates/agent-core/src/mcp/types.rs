@@ -4,6 +4,25 @@ use serde::{Deserialize, Serialize};
 
 // ─── JSON-RPC 2.0 ─────────────────────────────────────────────────────────────
 
+/// JSON-RPC 2.0 notification — like a request but with no `id`, so the server
+/// must not send a response (MCP spec §3.2).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcNotification {
+    pub jsonrpc: String,
+    pub method: String,
+    pub params: serde_json::Value,
+}
+
+impl JsonRpcNotification {
+    pub fn new(method: impl Into<String>, params: serde_json::Value) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            method: method.into(),
+            params,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,

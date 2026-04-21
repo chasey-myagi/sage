@@ -40,10 +40,7 @@ impl McpClient {
             }
         });
 
-        let result = self
-            .transport
-            .send_request("initialize", params)
-            .await?;
+        let result = self.transport.send_request("initialize", params).await?;
 
         if let Ok(info) = serde_json::from_value::<McpServerInfo>(result) {
             self.server_info = Some(info);
@@ -64,9 +61,7 @@ impl McpClient {
         method: &str,
         params: serde_json::Value,
     ) -> Result<(), McpError> {
-        // Reuse send_request and ignore any response error — the server may
-        // not send a response for notifications.
-        let _ = self.transport.send_request(method, params).await;
+        self.transport.send_notification(method, params).await?;
         Ok(())
     }
 
@@ -96,10 +91,7 @@ impl McpClient {
             "arguments": arguments,
         });
 
-        let result = self
-            .transport
-            .send_request("tools/call", params)
-            .await?;
+        let result = self.transport.send_request("tools/call", params).await?;
 
         serde_json::from_value::<McpToolResult>(result)
             .map_err(|e| McpError::Protocol(format!("invalid tool result: {e}")))

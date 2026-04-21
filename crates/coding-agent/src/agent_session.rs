@@ -21,7 +21,11 @@ pub enum AgentDelta {
     /// A streaming text fragment.
     Text(String),
     /// Token usage snapshot after a turn completes.
-    TurnUsage { usage: Usage, model: String, is_fast: bool },
+    TurnUsage {
+        usage: Usage,
+        model: String,
+        is_fast: bool,
+    },
 }
 
 // ── Registry-backed LLM provider adapter ────────────────────────────────────
@@ -184,8 +188,14 @@ pub async fn run_agent_session_to_channel(
     let registry = Arc::new(ApiProviderRegistry::new());
     ai::register_builtin_into(&registry);
 
-    let options = StreamOptions { api_key, ..StreamOptions::default() };
-    let provider: Arc<dyn LlmProvider> = Arc::new(RegistryProvider { registry: Arc::clone(&registry), options });
+    let options = StreamOptions {
+        api_key,
+        ..StreamOptions::default()
+    };
+    let provider: Arc<dyn LlmProvider> = Arc::new(RegistryProvider {
+        registry: Arc::clone(&registry),
+        options,
+    });
 
     let mut agent = Agent::new(AgentOptions::new(
         model,
@@ -215,7 +225,10 @@ pub async fn run_agent_session_to_channel(
         }
     });
 
-    agent.prompt_text(message).await.map_err(|e| anyhow::anyhow!(e))?;
+    agent
+        .prompt_text(message)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
     Ok(())
 }
 

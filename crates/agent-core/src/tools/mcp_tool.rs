@@ -38,11 +38,7 @@ pub struct McpTool {
 }
 
 impl McpTool {
-    pub fn new(
-        server_name: &str,
-        info: &McpToolInfo,
-        client: Arc<Mutex<McpClient>>,
-    ) -> Self {
+    pub fn new(server_name: &str, info: &McpToolInfo, client: Arc<Mutex<McpClient>>) -> Self {
         Self {
             full_name: build_mcp_tool_name(server_name, &info.name),
             original_name: info.name.clone(),

@@ -1,12 +1,12 @@
 // MCP Stdio transport — spawns a child process and communicates over stdin/stdout.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{ChildStdin, ChildStdout};
 
-use super::types::{JsonRpcRequest, JsonRpcResponse};
+use super::types::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
@@ -72,12 +72,40 @@ impl StdioTransport {
             .write_all(line.as_bytes())
             .await
             .map_err(|_| TransportError::Closed)?;
-        self.stdin.flush().await.map_err(|_| TransportError::Closed)?;
+        self.stdin
+            .flush()
+            .await
+            .map_err(|_| TransportError::Closed)?;
 
         self.read_response(id).await
     }
 
-    async fn read_response(&mut self, expected_id: u64) -> Result<serde_json::Value, TransportError> {
+    /// Send a JSON-RPC notification (no `id`, no response expected).
+    pub async fn send_notification(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<(), TransportError> {
+        let notification = JsonRpcNotification::new(method, params);
+        let mut line = serde_json::to_string(&notification)?;
+        line.push('\n');
+
+        self.stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|_| TransportError::Closed)?;
+        self.stdin
+            .flush()
+            .await
+            .map_err(|_| TransportError::Closed)?;
+
+        Ok(())
+    }
+
+    async fn read_response(
+        &mut self,
+        expected_id: u64,
+    ) -> Result<serde_json::Value, TransportError> {
         let mut line = String::new();
         let n = self
             .stdout

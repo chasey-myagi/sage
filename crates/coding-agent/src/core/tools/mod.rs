@@ -84,7 +84,15 @@ impl std::fmt::Display for ToolName {
 
 /// All valid tool name strings.
 pub const ALL_TOOL_NAMES: &[&str] = &[
-    "read", "bash", "edit", "write", "grep", "find", "ls", "web_fetch", "web_search",
+    "read",
+    "bash",
+    "edit",
+    "write",
+    "grep",
+    "find",
+    "ls",
+    "web_fetch",
+    "web_search",
 ];
 
 /// Default tools used when no `--tools` flag is provided.
@@ -492,7 +500,11 @@ mod tests {
     #[test]
     fn all_tool_descriptors_count() {
         let descs = all_tool_descriptors();
-        assert_eq!(descs.len(), ALL_TOOL_NAMES.len(), "descriptor count must match ALL_TOOL_NAMES");
+        assert_eq!(
+            descs.len(),
+            ALL_TOOL_NAMES.len(),
+            "descriptor count must match ALL_TOOL_NAMES"
+        );
     }
 
     #[test]

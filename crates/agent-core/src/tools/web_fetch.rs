@@ -80,16 +80,13 @@ impl AgentTool for WebFetchTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
+        // prompt field deferred to Phase 2
         serde_json::json!({
             "type": "object",
             "properties": {
                 "url": {
                     "type": "string",
                     "description": "The URL to fetch content from"
-                },
-                "prompt": {
-                    "type": "string",
-                    "description": "Optional instruction for how to process the fetched content"
                 }
             },
             "required": ["url"]
@@ -138,15 +135,19 @@ impl AgentTool for WebFetchTool {
         let duration_ms = start.elapsed().as_millis() as u64;
         let bytes = body_bytes.len();
 
-        let result = if content_type.contains("text/html") || content_type.contains("application/xhtml") {
-            let html = String::from_utf8_lossy(&body_bytes);
-            extract_text_from_html(&html)
-        } else {
-            match String::from_utf8(body_bytes.to_vec()) {
-                Ok(s) => s,
-                Err(_) => format!("[binary content, {} bytes, content-type: {}]", bytes, content_type),
-            }
-        };
+        let result =
+            if content_type.contains("text/html") || content_type.contains("application/xhtml") {
+                let html = String::from_utf8_lossy(&body_bytes);
+                extract_text_from_html(&html)
+            } else {
+                match String::from_utf8(body_bytes.to_vec()) {
+                    Ok(s) => s,
+                    Err(_) => format!(
+                        "[binary content, {} bytes, content-type: {}]",
+                        bytes, content_type
+                    ),
+                }
+            };
 
         let output = serde_json::json!({
             "bytes": bytes,
@@ -220,7 +221,8 @@ mod tests {
 
     #[test]
     fn extract_text_removes_style_blocks() {
-        let html = "<html><head><style>.foo { color: red }</style></head><body><p>Text</p></body></html>";
+        let html =
+            "<html><head><style>.foo { color: red }</style></head><body><p>Text</p></body></html>";
         let text = extract_text_from_html(html);
         assert!(text.contains("Text"));
         assert!(!text.contains(".foo"));

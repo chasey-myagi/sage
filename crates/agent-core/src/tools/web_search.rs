@@ -150,7 +150,9 @@ mod tests {
     #[tokio::test]
     async fn valid_query_returns_results() {
         let tool = WebSearchTool;
-        let output = tool.execute(serde_json::json!({"query": "Rust programming"})).await;
+        let output = tool
+            .execute(serde_json::json!({"query": "Rust programming"}))
+            .await;
         assert!(!output.is_error);
         let text = match &output.content[0] {
             crate::types::Content::Text { text } => text.clone(),
