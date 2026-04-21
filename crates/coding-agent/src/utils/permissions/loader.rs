@@ -149,9 +149,7 @@ pub fn add_permission_rules_to_file(
     // Normalize existing entries to their canonical form so legacy names match.
     let existing_set: std::collections::HashSet<String> = existing_rules
         .iter()
-        .map(|raw| {
-            permission_rule_value_to_string(&permission_rule_value_from_str(raw))
-        })
+        .map(|raw| permission_rule_value_to_string(&permission_rule_value_from_str(raw)))
         .collect();
 
     let new_rules: Vec<String> = rule_values
@@ -164,9 +162,7 @@ pub fn add_permission_rules_to_file(
         return true;
     }
 
-    permissions
-        .rules_for_mut(behavior)
-        .extend(new_rules);
+    permissions.rules_for_mut(behavior).extend(new_rules);
 
     save_permissions_to_file(path, &permissions)
 }
@@ -191,8 +187,7 @@ pub fn delete_permission_rule_from_file(
     let new_rules: Vec<String> = rules
         .iter()
         .filter(|raw| {
-            let normalized =
-                permission_rule_value_to_string(&permission_rule_value_from_str(raw));
+            let normalized = permission_rule_value_to_string(&permission_rule_value_from_str(raw));
             normalized != target
         })
         .cloned()
@@ -245,7 +240,9 @@ mod tests {
 
     #[test]
     fn load_permissions_missing_file_returns_none() {
-        assert!(load_permissions_from_file(std::path::Path::new("/nonexistent/path.json")).is_none());
+        assert!(
+            load_permissions_from_file(std::path::Path::new("/nonexistent/path.json")).is_none()
+        );
     }
 
     #[test]
@@ -255,8 +252,7 @@ mod tests {
             deny: Some(vec!["Write".to_string()]),
             ask: Some(vec!["Edit".to_string()]),
         };
-        let rules =
-            permissions_json_to_rules(&perms, PermissionRuleSource::ProjectSettings);
+        let rules = permissions_json_to_rules(&perms, PermissionRuleSource::ProjectSettings);
         assert_eq!(rules.len(), 3);
         let behaviors: Vec<_> = rules.iter().map(|r| r.rule_behavior.clone()).collect();
         assert!(behaviors.contains(&PermissionBehavior::Allow));
@@ -274,7 +270,11 @@ mod tests {
             tool_name: "Bash".to_string(),
             rule_content: None,
         }];
-        assert!(add_permission_rules_to_file(&path, &values, PermissionBehavior::Allow));
+        assert!(add_permission_rules_to_file(
+            &path,
+            &values,
+            PermissionBehavior::Allow
+        ));
 
         let perms = load_permissions_from_file(&path).unwrap();
         assert_eq!(perms.allow.as_deref().unwrap(), &["Bash"]);
@@ -292,7 +292,11 @@ mod tests {
             tool_name: "Bash".to_string(),
             rule_content: None,
         }];
-        assert!(add_permission_rules_to_file(&path, &values, PermissionBehavior::Allow));
+        assert!(add_permission_rules_to_file(
+            &path,
+            &values,
+            PermissionBehavior::Allow
+        ));
 
         let perms = load_permissions_from_file(&path).unwrap();
         // Should still only have one "Bash" entry.
@@ -311,7 +315,11 @@ mod tests {
             tool_name: "Bash".to_string(),
             rule_content: None,
         };
-        assert!(delete_permission_rule_from_file(&path, &rv, PermissionBehavior::Allow));
+        assert!(delete_permission_rule_from_file(
+            &path,
+            &rv,
+            PermissionBehavior::Allow
+        ));
 
         let perms = load_permissions_from_file(&path).unwrap();
         assert_eq!(perms.allow.as_deref().unwrap(), &["Read"]);
@@ -329,7 +337,11 @@ mod tests {
             tool_name: "Bash".to_string(),
             rule_content: None,
         };
-        assert!(!delete_permission_rule_from_file(&path, &rv, PermissionBehavior::Allow));
+        assert!(!delete_permission_rule_from_file(
+            &path,
+            &rv,
+            PermissionBehavior::Allow
+        ));
     }
 
     #[test]

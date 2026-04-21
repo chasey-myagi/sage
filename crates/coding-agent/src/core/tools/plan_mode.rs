@@ -46,8 +46,7 @@ pub const ENTER_PLAN_MODE_STANDARD_INSTRUCTIONS: &str = "\n\nIn plan mode, you s
 Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase.";
 
 /// Instructions used when the interview phase is enabled.
-pub const ENTER_PLAN_MODE_INTERVIEW_INSTRUCTIONS: &str =
-    "\n\nDO NOT write or edit any files except the plan file. \
+pub const ENTER_PLAN_MODE_INTERVIEW_INSTRUCTIONS: &str = "\n\nDO NOT write or edit any files except the plan file. \
 Detailed workflow instructions will follow.";
 
 /// Check whether plan mode can be entered and build the output.
@@ -125,10 +124,7 @@ pub fn exit_plan_mode(
     // Restore the mode that was active before plan mode.
     let restored = match strategy {
         PlanExitStrategy::WithBypassPermissions => PermissionMode::BypassPermissions,
-        PlanExitStrategy::Standard => ctx
-            .pre_plan_mode
-            .take()
-            .unwrap_or(PermissionMode::Default),
+        PlanExitStrategy::Standard => ctx.pre_plan_mode.take().unwrap_or(PermissionMode::Default),
     };
     ctx.mode = restored.clone();
 

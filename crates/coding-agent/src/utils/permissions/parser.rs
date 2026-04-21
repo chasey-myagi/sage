@@ -187,11 +187,7 @@ pub fn permission_rule_value_from_str(rule_str: &str) -> PermissionRuleValue {
     }
 
     // Closing paren must be the last character in the string.
-    let last_char_byte = rule_str
-        .char_indices()
-        .last()
-        .map(|(i, _)| i)
-        .unwrap_or(0);
+    let last_char_byte = rule_str.char_indices().last().map(|(i, _)| i).unwrap_or(0);
     if close_byte != last_char_byte {
         return fallback();
     }
@@ -238,22 +234,34 @@ mod tests {
 
     #[test]
     fn escape_parens() {
-        assert_eq!(escape_rule_content("psycopg2.connect()"), "psycopg2.connect\\(\\)");
+        assert_eq!(
+            escape_rule_content("psycopg2.connect()"),
+            "psycopg2.connect\\(\\)"
+        );
     }
 
     #[test]
     fn escape_backslash() {
-        assert_eq!(escape_rule_content("echo \"test\\nvalue\""), "echo \"test\\\\nvalue\"");
+        assert_eq!(
+            escape_rule_content("echo \"test\\nvalue\""),
+            "echo \"test\\\\nvalue\""
+        );
     }
 
     #[test]
     fn unescape_parens() {
-        assert_eq!(unescape_rule_content("psycopg2.connect\\(\\)"), "psycopg2.connect()");
+        assert_eq!(
+            unescape_rule_content("psycopg2.connect\\(\\)"),
+            "psycopg2.connect()"
+        );
     }
 
     #[test]
     fn unescape_backslash() {
-        assert_eq!(unescape_rule_content("echo \"test\\\\nvalue\""), "echo \"test\\nvalue\"");
+        assert_eq!(
+            unescape_rule_content("echo \"test\\\\nvalue\""),
+            "echo \"test\\nvalue\""
+        );
     }
 
     // ─── from_str ────────────────────────────────────────────────────────────

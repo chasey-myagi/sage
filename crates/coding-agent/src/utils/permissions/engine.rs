@@ -73,7 +73,10 @@ pub enum PermissionDecisionReason {
     /// Matched an explicit rule.
     Rule(PermissionRule),
     /// Triggered by a hook.
-    Hook { hook_name: String, reason: Option<String> },
+    Hook {
+        hook_name: String,
+        reason: Option<String>,
+    },
     /// Determined by the current permission mode.
     Mode(PermissionMode),
     /// Blocked by a safety check.
@@ -86,7 +89,9 @@ pub enum PermissionDecisionReason {
 #[derive(Debug, Clone)]
 pub enum PermissionDecision {
     /// Tool call is allowed without user interaction.
-    Allow { reason: Option<PermissionDecisionReason> },
+    Allow {
+        reason: Option<PermissionDecisionReason>,
+    },
     /// Tool call is denied without offering the user a choice.
     Deny {
         reason: Option<PermissionDecisionReason>,
@@ -152,7 +157,10 @@ impl ToolPermissionContext {
 
     /// Add an allow rule for a given source.
     pub fn add_allow_rule(&mut self, source: PermissionRuleSource, rule: String) {
-        self.always_allow_rules.entry(source).or_default().push(rule);
+        self.always_allow_rules
+            .entry(source)
+            .or_default()
+            .push(rule);
     }
 
     /// Add a deny rule for a given source.
@@ -182,10 +190,7 @@ pub const PERMISSION_RULE_SOURCES: &[PermissionRuleSource] = &[
     PermissionRuleSource::Session,
 ];
 
-fn rules_from_source_map(
-    map: &RulesBySource,
-    behavior: PermissionBehavior,
-) -> Vec<PermissionRule> {
+fn rules_from_source_map(map: &RulesBySource, behavior: PermissionBehavior) -> Vec<PermissionRule> {
     PERMISSION_RULE_SOURCES
         .iter()
         .flat_map(|source| {
@@ -273,21 +278,7 @@ fn mcp_info_from_name(name: &str) -> Option<McpInfo> {
     }
 }
 
-/// Find the first allow rule that matches the given tool name.
-pub fn tool_always_allowed_rule<'a>(
-    ctx: &'a ToolPermissionContext,
-    tool_name: &str,
-) -> Option<&'a PermissionRule> {
-    // Eagerly collect once to avoid returning a reference into a temporary.
-    // The returned reference lifetime is tied to `ctx` via the pre-collected rules.
-    // We instead return by value.
-    let _ = (ctx, tool_name);
-    // NOTE: We return `Option<PermissionRule>` (owned) since rules are constructed
-    // from strings stored in `ctx` — no long-lived reference to return.
-    None // placeholder signature; see owned variant below.
-}
-
-/// Find an allow rule that matches the given tool name (owned version).
+/// Find an allow rule that matches the given tool name.
 pub fn find_allow_rule_for_tool(
     ctx: &ToolPermissionContext,
     tool_name: &str,
@@ -393,24 +384,39 @@ pub fn create_permission_request_message(
 /// This is a simplified version of the full `getUserPermission` flow from TS,
 /// which also handles classifiers, hooks, and async approval flows.
 pub fn check_tool_permission(ctx: &ToolPermissionContext, tool_name: &str) -> PermissionDecision {
-    // bypassPermissions mode skips all checks.
-    if ctx.mode == PermissionMode::BypassPermissions {
-        return PermissionDecision::Allow { reason: None };
-    }
-
     // dontAsk mode denies instead of asking.
     if ctx.mode == PermissionMode::DontAsk {
         let message = format!("Permission denied: {tool_name} (dontAsk mode)");
-        return PermissionDecision::Deny { reason: None, message };
+        return PermissionDecision::Deny {
+            reason: None,
+            message,
+        };
     }
 
-    // Explicit deny rule wins over everything.
+    // Deny rules win even over bypassPermissions (CC step 1a).
     if let Some(rule) = find_deny_rule_for_tool(ctx, tool_name) {
         let message = create_permission_request_message(
             tool_name,
             Some(&PermissionDecisionReason::Rule(rule.clone())),
         );
         return PermissionDecision::Deny {
+            reason: Some(PermissionDecisionReason::Rule(rule)),
+            message,
+        };
+    }
+
+    // bypassPermissions skips all remaining checks (CC step 2a).
+    if ctx.mode == PermissionMode::BypassPermissions {
+        return PermissionDecision::Allow { reason: None };
+    }
+
+    // Ask rules have higher priority than allow rules (CC step 1b before step 2b).
+    if let Some(rule) = find_ask_rule_for_tool(ctx, tool_name) {
+        let message = create_permission_request_message(
+            tool_name,
+            Some(&PermissionDecisionReason::Rule(rule.clone())),
+        );
+        return PermissionDecision::Ask {
             reason: Some(PermissionDecisionReason::Rule(rule)),
             message,
         };
@@ -423,21 +429,12 @@ pub fn check_tool_permission(ctx: &ToolPermissionContext, tool_name: &str) -> Pe
         };
     }
 
-    // Explicit ask rule.
-    if let Some(rule) = find_ask_rule_for_tool(ctx, tool_name) {
-        let message = create_permission_request_message(
-            tool_name,
-            Some(&PermissionDecisionReason::Rule(rule.clone())),
-        );
-        return PermissionDecision::Ask {
-            reason: Some(PermissionDecisionReason::Rule(rule)),
-            message,
-        };
-    }
-
     // Default: ask the user.
     let message = create_permission_request_message(tool_name, None);
-    PermissionDecision::Ask { reason: None, message }
+    PermissionDecision::Ask {
+        reason: None,
+        message,
+    }
 }
 
 // ============================================================================
@@ -504,6 +501,25 @@ mod tests {
     }
 
     #[test]
+    fn deny_rule_blocks_even_in_bypass_mode() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::BypassPermissions;
+        ctx.add_deny_rule(PermissionRuleSource::Session, "Bash".to_owned());
+        assert!(check_tool_permission(&ctx, "Bash").is_deny());
+    }
+
+    #[test]
+    fn ask_rule_takes_priority_over_allow_rule() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.add_allow_rule(PermissionRuleSource::Session, "Bash".to_owned());
+        ctx.add_ask_rule(PermissionRuleSource::Session, "Bash".to_owned());
+        assert!(matches!(
+            check_tool_permission(&ctx, "Bash"),
+            PermissionDecision::Ask { .. }
+        ));
+    }
+
+    #[test]
     fn get_allow_rules_collects_all_sources() {
         let mut ctx = ToolPermissionContext::default();
         ctx.add_allow_rule(PermissionRuleSource::UserSettings, "Read".to_owned());
@@ -515,10 +531,7 @@ mod tests {
     #[test]
     fn mcp_server_rule_matches_tool() {
         let mut ctx = ToolPermissionContext::default();
-        ctx.add_allow_rule(
-            PermissionRuleSource::Session,
-            "mcp__server1".to_owned(),
-        );
+        ctx.add_allow_rule(PermissionRuleSource::Session, "mcp__server1".to_owned());
         // "mcp__server1" should match "mcp__server1__write"
         assert!(find_allow_rule_for_tool(&ctx, "mcp__server1__write").is_some());
     }
