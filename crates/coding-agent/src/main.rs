@@ -17,6 +17,8 @@ mod bun;
 #[allow(dead_code)]
 mod cli;
 #[allow(dead_code)]
+mod commands;
+#[allow(dead_code)]
 mod config;
 #[allow(dead_code)]
 mod core;
@@ -24,6 +26,8 @@ mod core;
 mod migrations;
 #[allow(dead_code)]
 mod modes;
+#[allow(dead_code)]
+mod project_onboarding;
 #[allow(dead_code)]
 mod utils;
 
