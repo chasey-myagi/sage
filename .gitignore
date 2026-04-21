@@ -24,3 +24,5 @@ Thumbs.db
 **/check-list.md
 **/issue-found*.md
 **/optimization-found*.md
+.analysis/
+review.md

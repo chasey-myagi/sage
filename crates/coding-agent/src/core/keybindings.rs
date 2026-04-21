@@ -126,7 +126,9 @@ fn global_app_keybindings_cell() -> &'static Mutex<Option<KeybindingsManager>> {
 /// Call this at startup after loading `keybindings.json` so that user
 /// overrides are respected by `check_app_keybinding`.
 pub fn set_app_keybindings(manager: KeybindingsManager) {
-    *global_app_keybindings_cell().lock().unwrap() = Some(manager);
+    *global_app_keybindings_cell()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(manager);
 }
 
 /// Check whether `data` matches any key bound to `action`.
@@ -136,7 +138,11 @@ pub fn set_app_keybindings(manager: KeybindingsManager) {
 /// IDs) are skipped — they require stateful chord tracking via the resolver.
 pub fn check_app_keybinding(data: &str, action: &str) -> bool {
     // Prefer user config when installed.
-    if let Some(mgr) = global_app_keybindings_cell().lock().unwrap().as_ref() {
+    if let Some(mgr) = global_app_keybindings_cell()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+    {
         if let Some(binding) = mgr.get_binding(action) {
             return binding
                 .as_keys()
@@ -345,11 +351,10 @@ pub fn load_keybindings_from_file(path: &Path) -> KeybindingsConfig {
         .iter()
         .chain(check_duplicates(&migrated).iter())
     {
-        let level = match w.severity {
-            WarningSeverity::Error => "error",
-            WarningSeverity::Warning => "warning",
+        match w.severity {
+            WarningSeverity::Error => tracing::error!("keybinding config error: {}", w.message),
+            WarningSeverity::Warning => tracing::warn!("keybinding config warning: {}", w.message),
         };
-        tracing::warn!("keybinding config {level}: {}", w.message);
     }
 
     migrated

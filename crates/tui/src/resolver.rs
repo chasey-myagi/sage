@@ -29,8 +29,6 @@ pub enum ResolveResult {
     Match(String),
     /// No binding found for this input.
     None,
-    /// Key is explicitly unbound.
-    Unbound,
     /// Partial chord match; more keystrokes expected.
     ChordStarted(ChordState),
     /// An in-progress chord was cancelled (e.g., by escape or an unrecognized key).
@@ -226,7 +224,7 @@ pub fn resolve_key_with_chord_state(
 mod tests {
     use super::*;
     use crate::keys::KeyId;
-    use std::collections::HashMap;
+    use indexmap::IndexMap;
 
     fn bindings(pairs: &[(&str, &[&str])]) -> KeybindingsConfig {
         pairs
@@ -293,13 +291,12 @@ mod tests {
 
     #[test]
     fn resolve_key_last_match_wins() {
-        let mut b: KeybindingsConfig = HashMap::new();
+        let mut b: KeybindingsConfig = IndexMap::new();
         b.insert("action.a".to_string(), vec![KeyId::from("ctrl+k")]);
         b.insert("action.b".to_string(), vec![KeyId::from("ctrl+k")]);
-        // Both match ctrl+k; the result is one of them (order is HashMap-dependent,
-        // but only one should be returned).
+        // Both bind ctrl+k; IndexMap preserves insertion order so action.b wins.
         let result = resolve_key("\x0b", &["Global"], &b);
-        assert!(matches!(result, ResolveResult::Match(_)));
+        assert_eq!(result, ResolveResult::Match("action.b".to_string()));
     }
 
     // -- resolve_key_with_chord_state --
@@ -364,7 +361,7 @@ mod tests {
     #[test]
     fn longer_chord_preferred_over_single_match() {
         // Both a single-key binding and a two-step chord share the same first key.
-        let mut b: KeybindingsConfig = HashMap::new();
+        let mut b: KeybindingsConfig = IndexMap::new();
         b.insert("action.single".to_string(), vec![KeyId::from("ctrl+x")]);
         b.insert(
             "action.chord".to_string(),

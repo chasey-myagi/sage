@@ -2,6 +2,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
+use indexmap::IndexMap;
+
 use crate::keys::matches_key;
 
 // =============================================================================
@@ -114,7 +116,7 @@ fn normalize_key(key: &str) -> String {
 
 pub type Keybinding = String;
 pub use crate::keys::KeyId;
-pub type KeybindingsConfig = HashMap<String, Vec<KeyId>>;
+pub type KeybindingsConfig = IndexMap<String, Vec<KeyId>>;
 
 #[derive(Debug, Clone)]
 pub struct KeybindingDefinition {
@@ -390,7 +392,7 @@ impl KeybindingsManager {
 
     /// Get the resolved bindings (user overrides or defaults).
     pub fn get_resolved_bindings(&self) -> KeybindingsConfig {
-        let mut resolved = HashMap::new();
+        let mut resolved = IndexMap::new();
         for id in self.definitions.keys() {
             let keys = self.keys_by_id.get(id).cloned().unwrap_or_default();
             resolved.insert(id.clone(), keys);
@@ -429,7 +431,7 @@ pub fn get_keybindings() -> GlobalKeybindingsGuard {
     if lock.is_none() {
         *lock = Some(KeybindingsManager::new(
             default_tui_keybindings(),
-            HashMap::new(),
+            IndexMap::new(),
         ));
     }
     drop(lock);
@@ -442,7 +444,7 @@ pub fn check_keybinding(data: &str, keybinding: &str) -> bool {
     if lock.is_none() {
         *lock = Some(KeybindingsManager::new(
             default_tui_keybindings(),
-            HashMap::new(),
+            IndexMap::new(),
         ));
     }
     lock.as_ref().unwrap().matches(data, keybinding)
@@ -469,9 +471,10 @@ impl GlobalKeybindingsGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indexmap::IndexMap;
 
     fn make_mgr() -> KeybindingsManager {
-        KeybindingsManager::new(default_tui_keybindings(), HashMap::new())
+        KeybindingsManager::new(default_tui_keybindings(), IndexMap::new())
     }
 
     #[test]
@@ -516,7 +519,7 @@ mod tests {
 
     #[test]
     fn test_user_override() {
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert("tui.input.submit".to_string(), vec![KeyId::from("ctrl+s")]);
         let mgr = KeybindingsManager::new(default_tui_keybindings(), user);
         // Now ctrl+s should match submit
@@ -542,7 +545,7 @@ mod tests {
 
     #[test]
     fn test_user_conflict_detection() {
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert(
             "tui.editor.cursorUp".to_string(),
             vec![KeyId::from("ctrl+x")],
@@ -565,7 +568,7 @@ mod tests {
         // "does not evict selector confirm when input submit is rebound"
         // When user rebinds tui.input.submit to ["enter", "ctrl+enter"],
         // tui.select.confirm should still keep its default ["enter"] key.
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert(
             "tui.input.submit".to_string(),
             vec![KeyId::from("enter"), KeyId::from("ctrl+enter")],
@@ -594,7 +597,7 @@ mod tests {
         // "does not evict cursor bindings when another action reuses the same key"
         // When user rebinds tui.select.up to ["up", "ctrl+p"],
         // tui.editor.cursorUp should still keep its default ["up"] key.
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert(
             "tui.select.up".to_string(),
             vec![KeyId::from("up"), KeyId::from("ctrl+p")],
@@ -624,7 +627,7 @@ mod tests {
         // When user explicitly assigns ctrl+x to BOTH tui.input.submit and tui.select.confirm,
         // those should be reported as conflicts, but other defaults (like tui.editor.cursorLeft)
         // should remain unaffected.
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert("tui.input.submit".to_string(), vec![KeyId::from("ctrl+x")]);
         user.insert(
             "tui.select.confirm".to_string(),
@@ -718,7 +721,7 @@ mod tests {
         let keys_before = mgr.get_keys("tui.input.submit");
         assert!(keys_before.iter().any(|k| k == "enter"));
 
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert("tui.input.submit".to_string(), vec![KeyId::from("ctrl+s")]);
         mgr.set_user_bindings(user);
 
@@ -735,7 +738,7 @@ mod tests {
 
     #[test]
     fn test_keybindings_manager_deduplicates_keys() {
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert(
             "tui.input.submit".to_string(),
             vec![KeyId::from("enter"), KeyId::from("enter")],
@@ -753,7 +756,7 @@ mod tests {
 
     #[test]
     fn test_check_reserved_ctrl_c_conflict() {
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert("tui.input.submit".to_string(), vec![KeyId::from("ctrl+c")]);
         let conflicts = check_reserved_conflicts(&user);
         assert!(!conflicts.is_empty(), "ctrl+c should trigger a conflict");
@@ -763,7 +766,7 @@ mod tests {
 
     #[test]
     fn test_check_reserved_ctrl_z_warning() {
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert(
             "tui.editor.cursorUp".to_string(),
             vec![KeyId::from("ctrl+z")],
@@ -775,7 +778,7 @@ mod tests {
 
     #[test]
     fn test_check_reserved_no_conflict_for_normal_key() {
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert(
             "tui.editor.cursorUp".to_string(),
             vec![KeyId::from("ctrl+p")],

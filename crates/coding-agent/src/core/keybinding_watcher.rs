@@ -13,6 +13,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::broadcast;
+use tracing::warn;
 
 use super::keybindings::{KeybindingsConfig, load_keybindings_from_file};
 
@@ -97,6 +98,9 @@ pub async fn start_keybinding_watcher(path: PathBuf) -> Result<Option<Keybinding
                                 // Reset the debounce timer on each new event.
                                 deadline = tokio::time::Instant::now() + debounce;
                             }
+                            Some(Err(e)) => {
+                                warn!("keybinding watcher error: {e}");
+                            }
                             None => break, // sender dropped — watcher is gone
                             _ => {}
                         }
@@ -113,6 +117,9 @@ pub async fn start_keybinding_watcher(path: PathBuf) -> Result<Option<Keybinding
                     Some(Ok(event)) if is_relevant(&event, &watcher_path) => {
                         pending = true;
                         deadline = tokio::time::Instant::now() + debounce;
+                    }
+                    Some(Err(e)) => {
+                        warn!("keybinding watcher error: {e}");
                     }
                     None => break,
                     _ => {}
