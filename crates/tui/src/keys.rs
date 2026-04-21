@@ -1,9 +1,9 @@
+use std::sync::OnceLock;
 /// Keyboard input handling for terminal applications.
 ///
 /// Supports both legacy terminal sequences and Kitty keyboard protocol.
 /// See: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
 
 // =============================================================================
 // Global Kitty Protocol State
@@ -568,8 +568,8 @@ fn matches_kitty_sequence(data: &str, expected_codepoint: i32, expected_modifier
 }
 
 fn parse_modify_other_keys_sequence(data: &str) -> Option<ParsedModifyOtherKeysSequence> {
-    let re = RE_MODIFY_OTHER_KEYS
-        .get_or_init(|| regex::Regex::new(r"^\x1b\[27;(\d+);(\d+)~$").unwrap());
+    let re =
+        RE_MODIFY_OTHER_KEYS.get_or_init(|| regex::Regex::new(r"^\x1b\[27;(\d+);(\d+)~$").unwrap());
     let caps = re.captures(data)?;
     let mod_value = caps[1].parse::<u32>().ok()?;
     let codepoint = caps[2].parse::<i32>().ok()?;
@@ -1229,8 +1229,9 @@ const KITTY_PRINTABLE_ALLOWED_MODIFIERS: u32 = MOD_SHIFT | LOCK_MASK;
 /// When Kitty keyboard protocol flag 1 is active, terminals send CSI-u sequences
 /// for all keys, including plain printable characters.
 pub fn decode_kitty_printable(data: &str) -> Option<char> {
-    let re =
-        regex::Regex::new(r"^\x1b\[(\d+)(?::(\d*))?(?::(\d+))?(?:;(\d+))?(?::(\d+))?u$").unwrap();
+    let re = RE_KITTY_CSI_U.get_or_init(|| {
+        regex::Regex::new(r"^\x1b\[(\d+)(?::(\d*))?(?::(\d+))?(?:;(\d+))?(?::(\d+))?u$").unwrap()
+    });
     let caps = re.captures(data)?;
 
     let codepoint = caps[1].parse::<u32>().ok()?;

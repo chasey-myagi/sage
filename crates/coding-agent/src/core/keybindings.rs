@@ -92,8 +92,7 @@ pub const ALL_KEYBINDING_IDS: &[&str] = &[
 // Default app keybinding keys
 // ============================================================================
 
-static DEFAULT_APP_KEYS: OnceLock<HashMap<&'static str, &'static [&'static str]>> =
-    OnceLock::new();
+static DEFAULT_APP_KEYS: OnceLock<HashMap<&'static str, &'static [&'static str]>> = OnceLock::new();
 
 fn default_app_keys() -> &'static HashMap<&'static str, &'static [&'static str]> {
     DEFAULT_APP_KEYS.get_or_init(|| {
@@ -139,9 +138,10 @@ pub fn check_app_keybinding(data: &str, action: &str) -> bool {
     // Prefer user config when installed.
     if let Some(mgr) = global_app_keybindings_cell().lock().unwrap().as_ref() {
         if let Some(binding) = mgr.get_binding(action) {
-            return binding.as_keys().iter().any(|k| {
-                !k.contains(' ') && tui::keys::matches_key(data, k)
-            });
+            return binding
+                .as_keys()
+                .iter()
+                .any(|k| !k.contains(' ') && tui::keys::matches_key(data, k));
         }
     }
     // Fall back to built-in defaults.
