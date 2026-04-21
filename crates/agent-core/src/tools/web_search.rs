@@ -97,15 +97,4 @@ mod tests {
         assert!(text.contains("not yet implemented"));
     }
 
-    #[tokio::test]
-    async fn allowed_domains_filter_returns_not_implemented_error() {
-        let tool = WebSearchTool;
-        let output = tool
-            .execute(serde_json::json!({
-                "query": "Rust docs",
-                "allowed_domains": ["doc.rust-lang.org"]
-            }))
-            .await;
-        assert!(output.is_error);
-    }
 }

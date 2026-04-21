@@ -212,4 +212,9 @@ mod tests {
     fn id_matches_invalid_type_returns_false() {
         assert!(!id_matches(&json!(true), 123));
     }
+
+    #[test]
+    fn id_matches_number_not_equal() {
+        assert!(!id_matches(&json!(456), 123));
+    }
 }
