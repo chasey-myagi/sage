@@ -38,6 +38,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
+async-stream = { workspace = true }
 chrono = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
