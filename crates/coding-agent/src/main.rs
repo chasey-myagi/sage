@@ -294,6 +294,7 @@ async fn main() {
             effective_model,
             effective_provider,
             parsed.api_key.clone(),
+            "default".to_string(), // TODO(permission_mode): read from settings when implemented
         )
         .await
         {

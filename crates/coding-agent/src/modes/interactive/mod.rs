@@ -390,6 +390,7 @@ impl InteractiveMode {
                 provider_id,
                 None,
                 tx,
+                "default".to_string(), // TODO(permission_mode): read from settings when implemented
             )
             .await;
         });
