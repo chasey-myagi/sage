@@ -391,6 +391,22 @@ pub fn check_tool_permission(ctx: &ToolPermissionContext, tool_name: &str) -> Pe
         };
     }
 
+    // Plan mode: only read-only tools are allowed.
+    if ctx.mode == PermissionMode::Plan {
+        let read_only = matches!(
+            tool_name,
+            "read" | "grep" | "find" | "ls" | "web_fetch" | "web_search"
+                | "EnterPlanMode" | "ExitPlanMode"
+        );
+        if !read_only {
+            return PermissionDecision::Deny {
+                reason: Some(PermissionDecisionReason::Mode(PermissionMode::Plan)),
+                message: format!("{tool_name} is not allowed in plan mode"),
+            };
+        }
+        return PermissionDecision::Allow { reason: None };
+    }
+
     // Deny rules win even over bypassPermissions (CC step 1a).
     if let Some(rule) = find_deny_rule_for_tool(ctx, tool_name) {
         let message = create_permission_request_message(
@@ -504,6 +520,63 @@ mod tests {
         ctx.mode = PermissionMode::BypassPermissions;
         ctx.add_deny_rule(PermissionRuleSource::Session, "Bash".to_owned());
         assert!(check_tool_permission(&ctx, "Bash").is_deny());
+    }
+
+    #[test]
+    fn plan_mode_denies_bash() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        assert!(check_tool_permission(&ctx, "Bash").is_deny());
+    }
+
+    #[test]
+    fn plan_mode_denies_write() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        assert!(check_tool_permission(&ctx, "write").is_deny());
+    }
+
+    #[test]
+    fn plan_mode_denies_edit() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        assert!(check_tool_permission(&ctx, "edit").is_deny());
+    }
+
+    #[test]
+    fn plan_mode_allows_read() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        assert!(check_tool_permission(&ctx, "read").is_allow());
+    }
+
+    #[test]
+    fn plan_mode_allows_grep() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        assert!(check_tool_permission(&ctx, "grep").is_allow());
+    }
+
+    #[test]
+    fn plan_mode_allows_enter_exit_plan_mode() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        assert!(check_tool_permission(&ctx, "EnterPlanMode").is_allow());
+        assert!(check_tool_permission(&ctx, "ExitPlanMode").is_allow());
+    }
+
+    #[test]
+    fn plan_mode_deny_has_mode_reason() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        let decision = check_tool_permission(&ctx, "Bash");
+        assert!(matches!(
+            decision,
+            PermissionDecision::Deny {
+                reason: Some(PermissionDecisionReason::Mode(PermissionMode::Plan)),
+                ..
+            }
+        ));
     }
 
     #[test]
