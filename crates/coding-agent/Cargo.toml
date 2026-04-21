@@ -45,6 +45,7 @@ unicode-normalization = { workspace = true }
 base64 = { workspace = true }
 reqwest = { workspace = true }
 dirs = "5"
+notify = { workspace = true }
 url = "2"
 pathdiff = "0.2"
 arboard = { version = "3", optional = true }

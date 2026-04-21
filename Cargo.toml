@@ -54,6 +54,7 @@ tokio-util = "0.7"
 pulldown-cmark = "0.12"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 unicode-normalization = "0.1"
+notify = "6"
 
 # Internal crates
 ai = { path = "crates/ai" }
