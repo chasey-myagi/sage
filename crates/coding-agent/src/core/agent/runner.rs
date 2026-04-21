@@ -56,6 +56,7 @@ pub struct RunAgentParams {
     // TODO: wire when fork context sharing is implemented
     pub user_context: HashMap<String, String>,
     /// System context key-value pairs appended to the system prompt.
+    // TODO: wire when fork context sharing is implemented
     pub system_context: HashMap<String, String>,
     /// Permission check: returns `Ok(())` if the tool is allowed, `Err` otherwise.
     pub can_use_tool: Arc<dyn Fn(&str, Option<&[String]>) -> Result<(), String> + Send + Sync>,
@@ -410,6 +411,24 @@ mod tests {
         assert_eq!(result.id, OPUS_MODEL_ID);
         assert_eq!(result.name, OPUS_MODEL_ID);
         // Provider credentials are preserved.
+        assert_eq!(result.api_key_env, parent.api_key_env);
+    }
+
+    #[test]
+    fn resolve_model_override_sonnet_changes_id() {
+        let parent = test_model();
+        let result = resolve_model_override(Some(&AgentModel::Sonnet), &parent);
+        assert_eq!(result.id, SONNET_MODEL_ID);
+        assert_eq!(result.name, SONNET_MODEL_ID);
+        assert_eq!(result.api_key_env, parent.api_key_env);
+    }
+
+    #[test]
+    fn resolve_model_override_haiku_changes_id() {
+        let parent = test_model();
+        let result = resolve_model_override(Some(&AgentModel::Haiku), &parent);
+        assert_eq!(result.id, HAIKU_MODEL_ID);
+        assert_eq!(result.name, HAIKU_MODEL_ID);
         assert_eq!(result.api_key_env, parent.api_key_env);
     }
 
