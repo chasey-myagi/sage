@@ -11,10 +11,6 @@ pub mod mode;
 pub mod parser;
 
 // Re-export most-used types for convenience.
-// TODO(CHA-xx): wire into tool dispatch once permission engine is integrated
-pub use engine::{
-    PermissionDecision, PermissionDecisionReason, PermissionRule, PermissionRuleSource,
-    ToolPermissionContext,
-};
+pub use engine::{PermissionDecision, PermissionRuleSource, ToolPermissionContext};
 pub use mode::PermissionMode;
-pub use parser::{PermissionBehavior, PermissionRuleValue};
+pub use parser::PermissionBehavior;
