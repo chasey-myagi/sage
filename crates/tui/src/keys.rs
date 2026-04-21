@@ -3,6 +3,7 @@
 /// Supports both legacy terminal sequences and Kitty keyboard protocol.
 /// See: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 // =============================================================================
 // Global Kitty Protocol State
@@ -434,10 +435,17 @@ fn parse_event_type(s: Option<&str>) -> KeyEventType {
     }
 }
 
+static RE_KITTY_CSI_U: OnceLock<regex::Regex> = OnceLock::new();
+static RE_KITTY_ARROW: OnceLock<regex::Regex> = OnceLock::new();
+static RE_KITTY_FUNC: OnceLock<regex::Regex> = OnceLock::new();
+static RE_KITTY_HOME_END: OnceLock<regex::Regex> = OnceLock::new();
+static RE_MODIFY_OTHER_KEYS: OnceLock<regex::Regex> = OnceLock::new();
+
 fn parse_kitty_sequence(data: &str) -> Option<ParsedKittySequence> {
     // CSI u format: \x1b[<cp>[:<shifted>[:<base>]][;<mod>[:<event>]]u
-    let re_csi_u =
-        regex::Regex::new(r"^\x1b\[(\d+)(?::(\d*))?(?::(\d+))?(?:;(\d+))?(?::(\d+))?u$").unwrap();
+    let re_csi_u = RE_KITTY_CSI_U.get_or_init(|| {
+        regex::Regex::new(r"^\x1b\[(\d+)(?::(\d*))?(?::(\d+))?(?:;(\d+))?(?::(\d+))?u$").unwrap()
+    });
     if let Some(caps) = re_csi_u.captures(data) {
         let codepoint = caps[1].parse::<i32>().ok()?;
         let shifted_key = caps.get(2).and_then(|m| {
@@ -463,7 +471,8 @@ fn parse_kitty_sequence(data: &str) -> Option<ParsedKittySequence> {
     }
 
     // Arrow keys with modifier: \x1b[1;<mod>[:<event>][ABCD]
-    let re_arrow = regex::Regex::new(r"^\x1b\[1;(\d+)(?::(\d+))?([ABCD])$").unwrap();
+    let re_arrow = RE_KITTY_ARROW
+        .get_or_init(|| regex::Regex::new(r"^\x1b\[1;(\d+)(?::(\d+))?([ABCD])$").unwrap());
     if let Some(caps) = re_arrow.captures(data) {
         let mod_value = caps[1].parse::<u32>().ok()?;
         let event_type = parse_event_type(caps.get(2).map(|m| m.as_str()));
@@ -484,7 +493,8 @@ fn parse_kitty_sequence(data: &str) -> Option<ParsedKittySequence> {
     }
 
     // Functional keys: \x1b[<num>[;<mod>[:<event>]]~
-    let re_func = regex::Regex::new(r"^\x1b\[(\d+)(?:;(\d+))?(?::(\d+))?~$").unwrap();
+    let re_func = RE_KITTY_FUNC
+        .get_or_init(|| regex::Regex::new(r"^\x1b\[(\d+)(?:;(\d+))?(?::(\d+))?~$").unwrap());
     if let Some(caps) = re_func.captures(data) {
         let key_num = caps[1].parse::<u32>().ok()?;
         let mod_value = caps
@@ -511,7 +521,8 @@ fn parse_kitty_sequence(data: &str) -> Option<ParsedKittySequence> {
     }
 
     // Home/End with modifier: \x1b[1;<mod>[:<event>][HF]
-    let re_home_end = regex::Regex::new(r"^\x1b\[1;(\d+)(?::(\d+))?([HF])$").unwrap();
+    let re_home_end = RE_KITTY_HOME_END
+        .get_or_init(|| regex::Regex::new(r"^\x1b\[1;(\d+)(?::(\d+))?([HF])$").unwrap());
     if let Some(caps) = re_home_end.captures(data) {
         let mod_value = caps[1].parse::<u32>().ok()?;
         let event_type = parse_event_type(caps.get(2).map(|m| m.as_str()));
@@ -557,7 +568,8 @@ fn matches_kitty_sequence(data: &str, expected_codepoint: i32, expected_modifier
 }
 
 fn parse_modify_other_keys_sequence(data: &str) -> Option<ParsedModifyOtherKeysSequence> {
-    let re = regex::Regex::new(r"^\x1b\[27;(\d+);(\d+)~$").unwrap();
+    let re = RE_MODIFY_OTHER_KEYS
+        .get_or_init(|| regex::Regex::new(r"^\x1b\[27;(\d+);(\d+)~$").unwrap());
     let caps = re.captures(data)?;
     let mod_value = caps[1].parse::<u32>().ok()?;
     let codepoint = caps[2].parse::<i32>().ok()?;
@@ -610,11 +622,6 @@ fn raw_ctrl_char(key: &str) -> Option<String> {
         return Some(char::from_u32(31)?.to_string()); // same as ctrl+_
     }
     None
-}
-
-#[allow(dead_code)]
-fn is_digit_key(key: &str) -> bool {
-    key.len() == 1 && key.chars().next().is_some_and(|c| c.is_ascii_digit())
 }
 
 fn matches_printable_modify_other_keys(

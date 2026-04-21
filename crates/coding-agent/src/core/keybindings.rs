@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -86,6 +87,155 @@ pub const ALL_KEYBINDING_IDS: &[&str] = &[
     "app.session.delete",
     "app.session.deleteNoninvasive",
 ];
+
+// ============================================================================
+// Default app keybinding keys
+// ============================================================================
+
+static DEFAULT_APP_KEYS: OnceLock<HashMap<&'static str, &'static [&'static str]>> =
+    OnceLock::new();
+
+fn default_app_keys() -> &'static HashMap<&'static str, &'static [&'static str]> {
+    DEFAULT_APP_KEYS.get_or_init(|| {
+        let entries: &[(&str, &[&str])] = &[
+            ("app.interrupt", &["ctrl+c", "escape"]),
+            ("app.clear", &["ctrl+l"]),
+            ("app.exit", &["ctrl+d"]),
+            ("app.thinking.toggle", &["alt+t"]),
+            ("app.model.select", &["alt+p"]),
+            ("app.clipboard.pasteImage", &["ctrl+v"]),
+            // ctrl+x ctrl+e is a chord — handled by the resolver, not here
+            ("app.editor.external", &["ctrl+g"]),
+            ("app.session.tree", &["ctrl+o"]),
+            ("app.thinking.cycle", &["shift+tab"]),
+            ("app.tree.foldOrUp", &["alt+left", "ctrl+left"]),
+            ("app.tree.unfoldOrDown", &["alt+right", "ctrl+right"]),
+        ];
+        entries.iter().copied().collect()
+    })
+}
+
+// Global app keybindings manager (set at startup to include user overrides).
+static GLOBAL_APP_KEYBINDINGS: OnceLock<Mutex<Option<KeybindingsManager>>> = OnceLock::new();
+
+fn global_app_keybindings_cell() -> &'static Mutex<Option<KeybindingsManager>> {
+    GLOBAL_APP_KEYBINDINGS.get_or_init(|| Mutex::new(None))
+}
+
+/// Install a `KeybindingsManager` as the global app keybinding authority.
+///
+/// Call this at startup after loading `keybindings.json` so that user
+/// overrides are respected by `check_app_keybinding`.
+pub fn set_app_keybindings(manager: KeybindingsManager) {
+    *global_app_keybindings_cell().lock().unwrap() = Some(manager);
+}
+
+/// Check whether `data` matches any key bound to `action`.
+///
+/// Consults the global app keybindings manager first (user overrides), then
+/// falls back to the built-in defaults.  Chord bindings (space-separated key
+/// IDs) are skipped — they require stateful chord tracking via the resolver.
+pub fn check_app_keybinding(data: &str, action: &str) -> bool {
+    // Prefer user config when installed.
+    if let Some(mgr) = global_app_keybindings_cell().lock().unwrap().as_ref() {
+        if let Some(binding) = mgr.get_binding(action) {
+            return binding.as_keys().iter().any(|k| {
+                !k.contains(' ') && tui::keys::matches_key(data, k)
+            });
+        }
+    }
+    // Fall back to built-in defaults.
+    if let Some(keys) = default_app_keys().get(action) {
+        return keys.iter().any(|&k| tui::keys::matches_key(data, k));
+    }
+    false
+}
+
+// ============================================================================
+// Validation
+// ============================================================================
+
+/// Category of a keybinding configuration warning.
+#[derive(Debug, Clone, PartialEq)]
+pub enum KeybindingWarningType {
+    ParseError,
+    Duplicate,
+    InvalidAction,
+}
+
+/// Severity of a keybinding configuration warning.
+#[derive(Debug, Clone, PartialEq)]
+pub enum WarningSeverity {
+    Error,
+    Warning,
+}
+
+/// A warning about a keybinding configuration issue.
+#[derive(Debug, Clone)]
+pub struct KeybindingWarning {
+    pub warning_type: KeybindingWarningType,
+    pub severity: WarningSeverity,
+    pub message: String,
+    pub key: Option<String>,
+}
+
+/// Validate user keybinding config structure and return any warnings.
+///
+/// Mirrors the structural checks from CC `keybindings/validate.ts::validateUserConfig`.
+pub fn validate_user_config(config: &KeybindingsConfig) -> Vec<KeybindingWarning> {
+    let mut warnings = Vec::new();
+    for (action, binding) in config {
+        if !ALL_KEYBINDING_IDS.contains(&action.as_str()) {
+            warnings.push(KeybindingWarning {
+                warning_type: KeybindingWarningType::InvalidAction,
+                severity: WarningSeverity::Warning,
+                message: format!("Unknown keybinding action \"{action}\""),
+                key: None,
+            });
+        }
+        for key in binding.as_keys() {
+            if key.is_empty() {
+                warnings.push(KeybindingWarning {
+                    warning_type: KeybindingWarningType::ParseError,
+                    severity: WarningSeverity::Error,
+                    message: format!("Empty key string for action \"{action}\""),
+                    key: Some(String::new()),
+                });
+            }
+        }
+    }
+    warnings
+}
+
+/// Check for duplicate key assignments across different actions.
+///
+/// Mirrors CC `keybindings/validate.ts::checkDuplicates`.
+pub fn check_duplicates(config: &KeybindingsConfig) -> Vec<KeybindingWarning> {
+    let mut key_to_actions: HashMap<String, Vec<String>> = HashMap::new();
+    for (action, binding) in config {
+        for key in binding.as_keys() {
+            key_to_actions
+                .entry(key.to_lowercase())
+                .or_default()
+                .push(action.clone());
+        }
+    }
+    let mut warnings = Vec::new();
+    for (key, actions) in &key_to_actions {
+        if actions.len() > 1 {
+            warnings.push(KeybindingWarning {
+                warning_type: KeybindingWarningType::Duplicate,
+                severity: WarningSeverity::Warning,
+                message: format!(
+                    "Key \"{key}\" is bound to multiple actions: {}",
+                    actions.join(", ")
+                ),
+                key: Some(key.clone()),
+            });
+        }
+    }
+    warnings
+}
 
 /// Legacy keybinding name → new name migration map.
 ///
@@ -189,6 +339,19 @@ pub fn load_keybindings_from_file(path: &Path) -> KeybindingsConfig {
     }
 
     let (migrated, _) = migrate_keybinding_names(config);
+
+    // Validate and log any config warnings.
+    for w in validate_user_config(&migrated)
+        .iter()
+        .chain(check_duplicates(&migrated).iter())
+    {
+        let level = match w.severity {
+            WarningSeverity::Error => "error",
+            WarningSeverity::Warning => "warning",
+        };
+        tracing::warn!("keybinding config {level}: {}", w.message);
+    }
+
     migrated
 }
 
