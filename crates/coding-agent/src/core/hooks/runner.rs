@@ -177,26 +177,15 @@ impl HookRunner {
                     );
                     continue;
                 }
-                if let Some(key) = once_key(hook_cmd) {
-                    let already_ran = self.once_executed.lock().unwrap().contains(&key);
-                    if already_ran {
-                        tracing::debug!(key, "skipping once: true hook — already ran this session");
-                        continue;
-                    }
-                    let result = self.executor.execute_session_end(hook_cmd, &input).await?;
-                    self.once_executed.lock().unwrap().insert(key);
-                    let is_blocking = result.outcome == HookOutcome::Blocking;
-                    results.push(result);
-                    if is_blocking {
-                        return Ok(AggregatedHookResult::from_results(results));
-                    }
-                } else {
-                    let result = self.executor.execute_session_end(hook_cmd, &input).await?;
-                    let is_blocking = result.outcome == HookOutcome::Blocking;
-                    results.push(result);
-                    if is_blocking {
-                        return Ok(AggregatedHookResult::from_results(results));
-                    }
+                if run_once_guarded(
+                    &self.once_executed,
+                    hook_cmd,
+                    &mut results,
+                    || self.executor.execute_session_end(hook_cmd, &input),
+                )
+                .await?
+                {
+                    return Ok(AggregatedHookResult::from_results(results));
                 }
             }
         }
@@ -247,27 +236,15 @@ impl HookRunner {
                         }
                     }
                 }
-                if let Some(key) = once_key(hook_cmd) {
-                    let already_ran = self.once_executed.lock().unwrap().contains(&key);
-                    if already_ran {
-                        tracing::debug!(key, "skipping once: true hook — already ran this session");
-                        continue;
-                    }
-                    let result = self.executor.execute(hook_cmd, input).await?;
-                    self.once_executed.lock().unwrap().insert(key);
-                    let is_blocking = result.outcome == HookOutcome::Blocking;
-                    results.push(result);
-                    if is_blocking {
-                        return Ok(AggregatedHookResult::from_results(results));
-                    }
-                } else {
-                    let result = self.executor.execute(hook_cmd, input).await?;
-                    let is_blocking = result.outcome == HookOutcome::Blocking;
-                    results.push(result);
-                    // Stop executing further hooks if one blocked.
-                    if is_blocking {
-                        return Ok(AggregatedHookResult::from_results(results));
-                    }
+                if run_once_guarded(
+                    &self.once_executed,
+                    hook_cmd,
+                    &mut results,
+                    || self.executor.execute(hook_cmd, input),
+                )
+                .await?
+                {
+                    return Ok(AggregatedHookResult::from_results(results));
                 }
             }
         }
@@ -276,9 +253,41 @@ impl HookRunner {
     }
 }
 
+/// Executes `hook_cmd` via `execute`, enforcing `once: true` deduplication.
+///
+/// Inserts the once-key *before* awaiting to close the check-then-act TOCTOU window: if two
+/// concurrent tasks both reach this point, only the first `insert` returns `true`; the second
+/// sees `false` and skips without executing.
+///
+/// Returns `true` if the calling loop should stop (blocking outcome), `false` to continue.
+async fn run_once_guarded<F, Fut>(
+    once_executed: &Mutex<HashSet<String>>,
+    hook_cmd: &HookCommand,
+    results: &mut Vec<HookResult>,
+    execute: F,
+) -> Result<bool>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<HookResult>>,
+{
+    if let Some(key) = once_key(hook_cmd) {
+        if !once_executed.lock().unwrap().insert(key.clone()) {
+            tracing::debug!(key, "skipping once: true hook — already ran this session");
+            return Ok(false);
+        }
+    }
+    let result = execute().await?;
+    let is_blocking = result.outcome == HookOutcome::Blocking;
+    results.push(result);
+    Ok(is_blocking)
+}
+
 /// Returns a stable deduplication key for hooks with `once: true`, or `None` if the hook
 /// does not have `once` set. The key is prefixed by type to avoid accidental collisions
 /// between e.g. a `command` and a `prompt` that share the same content string.
+///
+/// Deduplication is **session-global**: the same hook command is skipped regardless of which
+/// event type triggers it. This matches CC's original `once` semantics.
 fn once_key(hook_cmd: &HookCommand) -> Option<String> {
     match hook_cmd {
         HookCommand::Command { command, once: Some(true), .. } => {
@@ -667,6 +676,78 @@ mod tests {
         let runner = HookRunner::new(HookExecutor::new("session-1", "/tmp"), settings);
         assert!(runner.has_hooks_for("PreToolUse"));
         assert!(!runner.has_hooks_for("Stop"));
+    }
+
+    #[tokio::test]
+    async fn once_true_hook_runs_only_once() {
+        let tmp = std::env::temp_dir();
+        let counter_file = tmp.join(format!("once_hook_{}.txt", ulid::Ulid::new()));
+        let counter_path = counter_file.to_str().unwrap().to_string();
+
+        let mut settings = HooksSettings::default();
+        settings.insert(
+            "PreToolUse".to_string(),
+            vec![HookMatcher {
+                matcher: None,
+                hooks: vec![HookCommand::Command {
+                    command: format!("echo ran >> {counter_path}"),
+                    if_condition: None,
+                    shell: None,
+                    timeout: Some(5),
+                    status_message: None,
+                    once: Some(true),
+                    async_: None,
+                    async_rewake: None,
+                }],
+            }],
+        );
+
+        let executor = HookExecutor::new("test-session", tmp.to_str().unwrap());
+        let runner = HookRunner::new(executor, settings);
+
+        runner.run_pre_tool_use("Write", &serde_json::json!({}), "tc-1").await.unwrap();
+        runner.run_pre_tool_use("Write", &serde_json::json!({}), "tc-2").await.unwrap();
+
+        let content = std::fs::read_to_string(&counter_file).unwrap_or_default();
+        let run_count = content.lines().count();
+        assert_eq!(run_count, 1, "once:true hook should run exactly once, ran {run_count} times");
+        let _ = std::fs::remove_file(&counter_file);
+    }
+
+    #[tokio::test]
+    async fn once_false_hook_runs_every_call() {
+        let tmp = std::env::temp_dir();
+        let counter_file = tmp.join(format!("no_once_hook_{}.txt", ulid::Ulid::new()));
+        let counter_path = counter_file.to_str().unwrap().to_string();
+
+        let mut settings = HooksSettings::default();
+        settings.insert(
+            "PreToolUse".to_string(),
+            vec![HookMatcher {
+                matcher: None,
+                hooks: vec![HookCommand::Command {
+                    command: format!("echo ran >> {counter_path}"),
+                    if_condition: None,
+                    shell: None,
+                    timeout: Some(5),
+                    status_message: None,
+                    once: None,
+                    async_: None,
+                    async_rewake: None,
+                }],
+            }],
+        );
+
+        let executor = HookExecutor::new("test-session", tmp.to_str().unwrap());
+        let runner = HookRunner::new(executor, settings);
+
+        runner.run_pre_tool_use("Write", &serde_json::json!({}), "tc-1").await.unwrap();
+        runner.run_pre_tool_use("Write", &serde_json::json!({}), "tc-2").await.unwrap();
+
+        let content = std::fs::read_to_string(&counter_file).unwrap_or_default();
+        let run_count = content.lines().count();
+        assert_eq!(run_count, 2, "hook without once:true should run every call, ran {run_count} times");
+        let _ = std::fs::remove_file(&counter_file);
     }
 
     #[test]
