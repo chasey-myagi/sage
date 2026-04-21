@@ -15,6 +15,9 @@ use agent_core::types::{AgentToolResult, OnUpdateFn};
 use ai::registry::{ApiProviderRegistry, StreamOptions};
 use ai::types::{AssistantMessageEvent, InputType, Model, ModelCost, Usage};
 
+use crate::core::agent::runner::AgentError;
+use crate::core::team::{SpawnAgentConfig, spawn_agent_in_team};
+
 /// Events sent through the interactive-mode channel.
 #[derive(Debug, Clone)]
 pub enum AgentDelta {
@@ -230,6 +233,58 @@ pub async fn run_agent_session_to_channel(
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
     Ok(())
+}
+
+/// Spawn a sub-agent as a team member, running it asynchronously in the background.
+///
+/// Resolves a model and provider using the same defaults as `run_agent_session`,
+/// creates a `SpawnAgentConfig`, and delegates to `spawn_agent_in_team`.
+/// Returns the spawned agent's unique ID.
+///
+/// This is the primary user-facing entry point for the sub-agent system,
+/// wiring the session's LLM credentials into the team spawning path.
+pub async fn spawn_subagent(
+    prompt: String,
+    agent_type: Option<String>,
+    model_id: Option<String>,
+    provider_id: Option<String>,
+    api_key: Option<String>,
+    team_name: Option<String>,
+    cwd: Option<std::path::PathBuf>,
+) -> anyhow::Result<String> {
+    let model = build_model(provider_id.as_deref(), model_id.as_deref())?;
+
+    let registry = Arc::new(ApiProviderRegistry::new());
+    ai::register_builtin_into(&registry);
+
+    let options = StreamOptions {
+        api_key,
+        ..StreamOptions::default()
+    };
+    let provider: Arc<dyn LlmProvider> = Arc::new(RegistryProvider {
+        registry,
+        options,
+    });
+
+    let backend = LocalBackend::new();
+    let tools = create_default_tools(backend);
+
+    let name = agent_type.as_deref().unwrap_or("subagent").to_string();
+    let config = SpawnAgentConfig {
+        name,
+        prompt,
+        team_name,
+        agent_type,
+        model: None,
+        cwd,
+        provider,
+        tools,
+        parent_model: model,
+    };
+
+    spawn_agent_in_team(config, &[])
+        .await
+        .map_err(|e: AgentError| anyhow::anyhow!("{e}"))
 }
 
 /// Run a single-shot agent session in print mode.
