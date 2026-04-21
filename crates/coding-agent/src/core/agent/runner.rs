@@ -53,6 +53,7 @@ pub struct RunAgentParams {
     /// When `None`, the system prompt is resolved from `agent_def.system_prompt_fn`.
     pub system_prompt: Option<String>,
     /// User context key-value pairs prepended to messages.
+    // TODO: wire when fork context sharing is implemented
     pub user_context: HashMap<String, String>,
     /// System context key-value pairs appended to the system prompt.
     pub system_context: HashMap<String, String>,
@@ -406,7 +407,8 @@ mod tests {
     fn resolve_model_override_opus_changes_id() {
         let parent = test_model();
         let result = resolve_model_override(Some(&AgentModel::Opus), &parent);
-        assert!(result.id.contains("opus"));
+        assert_eq!(result.id, OPUS_MODEL_ID);
+        assert_eq!(result.name, OPUS_MODEL_ID);
         // Provider credentials are preserved.
         assert_eq!(result.api_key_env, parent.api_key_env);
     }
