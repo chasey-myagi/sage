@@ -41,11 +41,22 @@ impl StdioTransport {
             .envs(env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .spawn()?;
 
         let stdin = child.stdin.take().expect("stdin must be piped");
         let stdout = child.stdout.take().expect("stdout must be piped");
+
+        // Forward MCP server stderr to tracing so operator logs capture it.
+        if let Some(stderr) = child.stderr.take() {
+            let server_cmd = command.to_string();
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    tracing::warn!(server = %server_cmd, "[mcp stderr] {}", line);
+                }
+            });
+        }
 
         Ok(Self {
             stdin: BufWriter::new(stdin),

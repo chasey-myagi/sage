@@ -145,16 +145,36 @@ impl agent_core::types::AgentTool for ToolAdapter {
             let ctx = self.permission_ctx.lock().unwrap();
             check_tool_permission(&ctx, self.inner.name())
         };
-        if let PermissionDecision::Deny { message, .. } = decision {
-            return AgentToolResult {
-                content: vec![Content::Text {
-                    text: format!("Permission denied: {message}"),
-                }],
-                details: serde_json::Value::Null,
-            };
+        match decision {
+            PermissionDecision::Deny { message, .. } => {
+                return AgentToolResult {
+                    content: vec![Content::Text {
+                        text: format!("Permission denied: {message}"),
+                    }],
+                    details: serde_json::Value::Null,
+                };
+            }
+            PermissionDecision::Ask { message, .. } => {
+                // Non-interactive session — treat ask as deny (conservative fallback).
+                // Users must add an explicit allow rule to permit this tool.
+                return AgentToolResult {
+                    content: vec![Content::Text {
+                        text: format!(
+                            "Tool '{}' requires approval (ask rule matched). \
+                             In non-interactive mode ask rules are treated as deny. \
+                             Add an explicit allow rule in settings.json to permit this tool.\n\
+                             Rule message: {message}",
+                            self.inner.name()
+                        ),
+                    }],
+                    details: serde_json::Value::Null,
+                };
+            }
+            PermissionDecision::Allow { .. } => {}
         }
 
         let output: ToolOutput = self.inner.execute(args).await;
+        // ToolOutput does not expose a details field; use Null as placeholder.
         AgentToolResult {
             content: output.content,
             details: serde_json::Value::Null,
@@ -282,6 +302,28 @@ impl agent_core::types::AgentTool for ExitPlanModeTool {
 
 // ── Permission context builder ───────────────────────────────────────────────
 
+/// Load permission rules from a settings file and insert them into `ctx`.
+///
+/// If the file does not exist or cannot be parsed, silently returns without
+/// modifying `ctx`.  All rule behaviours (Allow / Deny / Ask) are supported.
+fn load_rules_into(
+    ctx: &mut ToolPermissionContext,
+    path: &std::path::Path,
+    source: PermissionRuleSource,
+) {
+    let Some(perms) = load_permissions_from_file(path) else {
+        return;
+    };
+    for rule in permissions_json_to_rules(&perms, source) {
+        let s = permission_rule_value_to_string(&rule.rule_value);
+        match rule.rule_behavior {
+            PermissionBehavior::Allow => ctx.add_allow_rule(rule.source, s),
+            PermissionBehavior::Deny => ctx.add_deny_rule(rule.source, s),
+            PermissionBehavior::Ask => ctx.add_ask_rule(rule.source, s),
+        }
+    }
+}
+
 /// Build a `ToolPermissionContext` from the CLI permission mode and settings files.
 ///
 /// Loads allow/deny/ask rules from the global settings file (UserSettings source)
@@ -295,28 +337,10 @@ fn build_permission_context(
     let mut ctx = ToolPermissionContext::new(mode);
 
     let global_settings_path = get_agent_dir().join("settings.json");
-    if let Some(perms) = load_permissions_from_file(&global_settings_path) {
-        for rule in permissions_json_to_rules(&perms, PermissionRuleSource::UserSettings) {
-            let rule_str = permission_rule_value_to_string(&rule.rule_value);
-            match rule.rule_behavior {
-                PermissionBehavior::Allow => ctx.add_allow_rule(rule.source, rule_str),
-                PermissionBehavior::Deny => ctx.add_deny_rule(rule.source, rule_str),
-                PermissionBehavior::Ask => ctx.add_ask_rule(rule.source, rule_str),
-            }
-        }
-    }
+    load_rules_into(&mut ctx, &global_settings_path, PermissionRuleSource::UserSettings);
 
     let project_settings_path = cwd.join(CONFIG_DIR_NAME).join("settings.json");
-    if let Some(perms) = load_permissions_from_file(&project_settings_path) {
-        for rule in permissions_json_to_rules(&perms, PermissionRuleSource::ProjectSettings) {
-            let rule_str = permission_rule_value_to_string(&rule.rule_value);
-            match rule.rule_behavior {
-                PermissionBehavior::Allow => ctx.add_allow_rule(rule.source, rule_str),
-                PermissionBehavior::Deny => ctx.add_deny_rule(rule.source, rule_str),
-                PermissionBehavior::Ask => ctx.add_ask_rule(rule.source, rule_str),
-            }
-        }
-    }
+    load_rules_into(&mut ctx, &project_settings_path, PermissionRuleSource::ProjectSettings);
 
     Arc::new(Mutex::new(ctx))
 }
@@ -363,6 +387,9 @@ fn build_model(provider_id: Option<&str>, model_id: Option<&str>) -> anyhow::Res
 
 struct SpawnSubagentTool {
     permission_mode: String,
+    provider_id: Option<String>,
+    api_key: Option<String>,
+    permission_ctx: Arc<Mutex<ToolPermissionContext>>,
 }
 
 #[async_trait::async_trait]
@@ -419,7 +446,31 @@ impl SimpleTool for SpawnSubagentTool {
             .and_then(|v| v.as_str())
             .map(std::path::PathBuf::from);
 
-        match spawn_subagent(task, None, model_id, None, None, None, cwd, self.permission_mode.clone()).await {
+        // C4: read the current permission mode at spawn time so the sub-agent
+        // always respects the parent's *live* mode.  If the parent has entered
+        // plan mode, the sub-agent must also run in plan mode — it must not be
+        // more permissive than the parent.
+        let effective_mode = {
+            let ctx = self.permission_ctx.lock().unwrap();
+            if ctx.mode == PermissionMode::Plan {
+                "plan".to_string()
+            } else {
+                self.permission_mode.clone()
+            }
+        };
+
+        match spawn_subagent(
+            task,
+            None,
+            model_id,
+            self.provider_id.clone(),
+            self.api_key.clone(),
+            None,
+            cwd,
+            effective_mode,
+        )
+        .await
+        {
             Ok(agent_id) => ToolOutput {
                 content: vec![Content::Text {
                     text: format!("Sub-agent spawned with ID: {agent_id}"),
@@ -451,6 +502,8 @@ fn create_default_tools(
     permission_ctx: Arc<Mutex<ToolPermissionContext>>,
     permission_mode: &str,
     is_subagent: bool,
+    provider_id: Option<String>,
+    api_key: Option<String>,
 ) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
     let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> =
         ["bash", "read", "write", "edit", "grep", "find", "ls", "web_fetch", "web_search"]
@@ -475,7 +528,12 @@ fn create_default_tools(
         }));
     }
     tools.push(Arc::new(ToolAdapter::new(
-        Box::new(SpawnSubagentTool { permission_mode: permission_mode.to_string() }),
+        Box::new(SpawnSubagentTool {
+            permission_mode: permission_mode.to_string(),
+            provider_id,
+            api_key,
+            permission_ctx: Arc::clone(&permission_ctx),
+        }),
         Arc::clone(&permission_ctx),
     )));
 
@@ -556,7 +614,9 @@ fn wire_hooks(
             let last_msg = message.text();
             let r = Arc::clone(&stop_runner);
             tokio::spawn(async move {
-                let _ = r.run_stop(Some(&last_msg), false).await;
+                if let Err(e) = r.run_stop(Some(&last_msg), false).await {
+                    tracing::warn!(error = %e, "Stop hook failed");
+                }
             });
         }
     });
@@ -595,6 +655,10 @@ pub async fn run_agent_session_to_channel(
     let registry = Arc::new(ApiProviderRegistry::new());
     ai::register_builtin_into(&registry);
 
+    // Clone before move into StreamOptions so we can pass to SpawnSubagentTool.
+    let provider_id_for_subagent = provider_id.clone();
+    let api_key_for_subagent = api_key.clone();
+
     let options = StreamOptions {
         api_key,
         ..StreamOptions::default()
@@ -614,7 +678,14 @@ pub async fn run_agent_session_to_channel(
     let permission_ctx = build_permission_context(&permission_mode, &cwd);
 
     let backend = LocalBackend::new();
-    let mut tools = create_default_tools(backend, Arc::clone(&permission_ctx), &permission_mode, false);
+    let mut tools = create_default_tools(
+        backend,
+        Arc::clone(&permission_ctx),
+        &permission_mode,
+        false,
+        provider_id_for_subagent,
+        api_key_for_subagent,
+    );
 
     // Load MCP tools from settings and append to the tool list.
     let agent_dir = get_agent_dir();
@@ -629,7 +700,9 @@ pub async fn run_agent_session_to_channel(
 
     // SessionStart hooks fire once before the agent starts its first turn.
     if let Some(runner) = &hook_runner {
-        let _ = runner.run_session_start().await;
+        if let Err(e) = runner.run_session_start().await {
+            tracing::warn!(error = %e, "SessionStart hook failed — continuing session");
+        }
     }
 
     agent.subscribe(move |event| {
@@ -696,7 +769,9 @@ pub async fn run_agent_session_to_channel(
 
     // SessionEnd hooks fire after the agent finishes (regardless of success).
     if let Some(runner) = hook_runner {
-        let _ = runner.run_session_end().await;
+        if let Err(e) = runner.run_session_end().await {
+            tracing::warn!(error = %e, "SessionEnd hook failed");
+        }
     }
 
     run_result
@@ -725,6 +800,10 @@ pub async fn spawn_subagent(
     let registry = Arc::new(ApiProviderRegistry::new());
     ai::register_builtin_into(&registry);
 
+    // Clone before move into StreamOptions so SpawnSubagentTool can carry them.
+    let provider_id_for_subagent = provider_id.clone();
+    let api_key_for_subagent = api_key.clone();
+
     let options = StreamOptions {
         api_key,
         ..StreamOptions::default()
@@ -740,7 +819,14 @@ pub async fn spawn_subagent(
     let permission_ctx = build_permission_context(&permission_mode, &effective_cwd);
 
     let backend = LocalBackend::new();
-    let tools = create_default_tools(backend, permission_ctx, &permission_mode, true);
+    let tools = create_default_tools(
+        backend,
+        permission_ctx,
+        &permission_mode,
+        true,
+        provider_id_for_subagent,
+        api_key_for_subagent,
+    );
 
     let name = agent_type.as_deref().unwrap_or("subagent").to_string();
     let config = SpawnAgentConfig {
@@ -784,6 +870,10 @@ pub async fn run_agent_session(
     let registry = Arc::new(ApiProviderRegistry::new());
     ai::register_builtin_into(&registry);
 
+    // Clone before move into StreamOptions so SpawnSubagentTool can carry them.
+    let provider_id_for_subagent = provider_id.clone();
+    let api_key_for_subagent = api_key.clone();
+
     let options = StreamOptions {
         api_key,
         ..StreamOptions::default()
@@ -806,7 +896,14 @@ pub async fn run_agent_session(
     let permission_ctx = build_permission_context(&permission_mode, &cwd);
 
     let backend = LocalBackend::new();
-    let mut tools = create_default_tools(backend, Arc::clone(&permission_ctx), &permission_mode, false);
+    let mut tools = create_default_tools(
+        backend,
+        Arc::clone(&permission_ctx),
+        &permission_mode,
+        false,
+        provider_id_for_subagent,
+        api_key_for_subagent,
+    );
 
     // 4b. Load MCP tools from settings and append to the tool list.
     let agent_dir = get_agent_dir();
@@ -822,7 +919,9 @@ pub async fn run_agent_session(
 
     // 4d. SessionStart hooks fire once before the agent starts its first turn.
     if let Some(runner) = &hook_runner {
-        let _ = runner.run_session_start().await;
+        if let Err(e) = runner.run_session_start().await {
+            tracing::warn!(error = %e, "SessionStart hook failed — continuing session");
+        }
     }
 
     // 5. Subscribe to events: stream text deltas to stdout.
@@ -860,7 +959,9 @@ pub async fn run_agent_session(
 
     // 7. SessionEnd hooks fire after the agent finishes (regardless of success).
     if let Some(runner) = hook_runner {
-        let _ = runner.run_session_end().await;
+        if let Err(e) = runner.run_session_end().await {
+            tracing::warn!(error = %e, "SessionEnd hook failed");
+        }
     }
 
     run_result

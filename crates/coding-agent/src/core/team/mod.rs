@@ -195,17 +195,21 @@ pub async fn spawn_agent_in_team(
     let name_for_task = unique_name.clone();
     let team_name_for_log = config.team_name.clone().unwrap_or_default();
 
-    tokio::spawn(async move {
+    // Fire-and-forget: the team member runs independently.
+    // We explicitly drop the JoinHandle (tokio does not cancel on drop, so
+    // the task keeps running).  Any panic inside the task will be surfaced as
+    // a tracing::error rather than being silently swallowed.
+    let handle = tokio::spawn(async move {
         use futures::StreamExt;
         let mut stream = run_agent(params);
         while let Some(result) = stream.next().await {
             if let Err(e) = result {
-                tracing::warn!(
+                tracing::error!(
                     agent_id = %id_for_task,
                     name = %name_for_task,
                     team = %team_name_for_log,
                     error = %e,
-                    "team member failed",
+                    "sub-agent exited with error",
                 );
                 break;
             }
@@ -216,6 +220,7 @@ pub async fn spawn_agent_in_team(
             "team member finished",
         );
     });
+    drop(handle);
 
     Ok(agent_id)
 }

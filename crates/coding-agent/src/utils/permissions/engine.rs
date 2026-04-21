@@ -230,12 +230,17 @@ pub fn get_ask_rules(ctx: &ToolPermissionContext) -> Vec<PermissionRule> {
 /// Matches when the rule has no `rule_content` and the tool name equals the
 /// rule's tool name. Also handles MCP server-level permissions (`mcp__server`).
 fn tool_matches_rule(tool_name: &str, rule: &PermissionRule) -> bool {
-    // Rule must have no content to match an entire tool.
-    if rule.rule_value.rule_content.is_some() {
-        return false;
-    }
-
     if rule.rule_value.tool_name == tool_name {
+        // If the rule has argument-level content, we cannot enforce it without
+        // access to the actual call args.  Warn and fall through (tool-name-level
+        // match only — more conservative than silently skipping the rule).
+        if rule.rule_value.rule_content.is_some() {
+            tracing::warn!(
+                tool = tool_name,
+                "permission rule with argument-level content is not yet enforced; \
+                 matching on tool name only (conservative: treat as tool-level match)"
+            );
+        }
         return true;
     }
 
