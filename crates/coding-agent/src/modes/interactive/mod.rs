@@ -12,7 +12,10 @@ pub mod theme;
 use std::io;
 
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyModifiers},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyModifiers,
+        MouseEventKind,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -59,6 +62,14 @@ pub struct InteractiveMode {
     session_input_tokens: u64,
     session_output_tokens: u64,
     session_cost_usd: f64,
+    /// Current scroll offset in display lines.
+    scroll_top: u16,
+    /// When true, scroll_top tracks the bottom of content as it grows.
+    is_sticky: bool,
+    /// Viewport height cached from last render (lines, excluding borders).
+    last_viewport_height: u16,
+    /// Terminal width cached from last render (columns, including borders).
+    last_terminal_width: u16,
 }
 
 /// A single chat turn in the history display.
@@ -91,6 +102,10 @@ impl InteractiveMode {
             session_input_tokens: 0,
             session_output_tokens: 0,
             session_cost_usd: 0.0,
+            scroll_top: 0,
+            is_sticky: true,
+            last_viewport_height: 0,
+            last_terminal_width: 80,
         }
     }
 
@@ -132,13 +147,18 @@ impl InteractiveMode {
                 role: MessageRole::User,
                 content: msg.clone(),
             });
+            self.messages.push(ChatMessage {
+                role: MessageRole::Assistant,
+                content: String::new(),
+            });
             self.spawn_agent(msg);
         }
 
         let mut event_stream = EventStream::new();
 
         loop {
-            // Drain agent response deltas
+            // Drain agent response deltas (disjoint field borrows allow updates inside)
+            let mut disconnected = false;
             if let Some(rx) = &mut self.agent_rx {
                 loop {
                     match rx.try_recv() {
@@ -157,50 +177,115 @@ impl InteractiveMode {
                         Ok(AgentDelta::TurnUsage { usage, model, is_fast }) => {
                             self.session_input_tokens += usage.input;
                             self.session_output_tokens += usage.output;
-                            let cost = ai::model_pricing::calculate_usd_cost(&usage, &model, is_fast);
+                            let cost =
+                                ai::model_pricing::calculate_usd_cost(&usage, &model, is_fast);
                             self.session_cost_usd += cost.total;
                         }
                         Err(mpsc::error::TryRecvError::Empty) => break,
                         Err(mpsc::error::TryRecvError::Disconnected) => {
-                            self.agent_rx = None;
-                            self.is_thinking = false;
+                            disconnected = true;
                             break;
                         }
                     }
                 }
             }
+            if disconnected {
+                self.agent_rx = None;
+                self.is_thinking = false;
+            }
 
+            // sticky scroll is applied inside render with fresh dimensions
             terminal.draw(|f| self.render(f))?;
 
             tokio::select! {
                 maybe_event = event_stream.next() => {
-                    let Some(Ok(Event::Key(key))) = maybe_event else { continue };
-                    match (key.code, key.modifiers) {
-                        (KeyCode::Char('c'), KeyModifiers::CONTROL)
-                        | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-                            self.running = false;
-                            break;
-                        }
-                        (KeyCode::Enter, _) if !self.is_thinking => {
-                            let input = std::mem::take(&mut self.input_buffer);
-                            if !input.trim().is_empty() {
-                                self.messages.push(ChatMessage {
-                                    role: MessageRole::User,
-                                    content: input.clone(),
-                                });
-                                self.messages.push(ChatMessage {
-                                    role: MessageRole::Assistant,
-                                    content: String::new(),
-                                });
-                                self.spawn_agent(input);
+                    let Some(Ok(event)) = maybe_event else { continue };
+                    match event {
+                        Event::Key(key) => {
+                            match (key.code, key.modifiers) {
+                                (KeyCode::Char('c'), KeyModifiers::CONTROL)
+                                | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                                    self.running = false;
+                                    break;
+                                }
+                                // Scroll shortcuts — active only when input buffer is empty
+                                // so j/k/g/G are available for typing when composing a message.
+                                (KeyCode::Char('j'), KeyModifiers::NONE)
+                                    if self.input_buffer.is_empty() =>
+                                {
+                                    self.is_sticky = false;
+                                    self.scroll_top = self.scroll_top.saturating_add(1);
+                                    self.clamp_scroll();
+                                }
+                                (KeyCode::Char('k'), KeyModifiers::NONE)
+                                    if self.input_buffer.is_empty() =>
+                                {
+                                    self.is_sticky = false;
+                                    self.scroll_top = self.scroll_top.saturating_sub(1);
+                                }
+                                (KeyCode::Char('g'), KeyModifiers::NONE)
+                                    if self.input_buffer.is_empty() =>
+                                {
+                                    self.is_sticky = false;
+                                    self.scroll_top = 0;
+                                }
+                                (KeyCode::Char('G'), KeyModifiers::NONE)
+                                    if self.input_buffer.is_empty() =>
+                                {
+                                    self.is_sticky = true;
+                                }
+                                // PageUp/PageDown always scroll regardless of input state
+                                (KeyCode::PageDown, _) => {
+                                    self.is_sticky = false;
+                                    self.scroll_top = self
+                                        .scroll_top
+                                        .saturating_add(self.last_viewport_height);
+                                    self.clamp_scroll();
+                                }
+                                (KeyCode::PageUp, _) => {
+                                    self.is_sticky = false;
+                                    self.scroll_top = self
+                                        .scroll_top
+                                        .saturating_sub(self.last_viewport_height);
+                                }
+                                // Input handling
+                                (KeyCode::Enter, _) if !self.is_thinking => {
+                                    let input = std::mem::take(&mut self.input_buffer);
+                                    if !input.trim().is_empty() {
+                                        self.messages.push(ChatMessage {
+                                            role: MessageRole::User,
+                                            content: input.clone(),
+                                        });
+                                        self.messages.push(ChatMessage {
+                                            role: MessageRole::Assistant,
+                                            content: String::new(),
+                                        });
+                                        // Re-enable sticky so new response is always visible.
+                                        self.is_sticky = true;
+                                        self.spawn_agent(input);
+                                    }
+                                }
+                                (KeyCode::Backspace, _) => {
+                                    self.input_buffer.pop();
+                                }
+                                (KeyCode::Char(c), _) => {
+                                    self.input_buffer.push(c);
+                                }
+                                _ => {}
                             }
                         }
-                        (KeyCode::Backspace, _) => {
-                            self.input_buffer.pop();
-                        }
-                        (KeyCode::Char(c), _) => {
-                            self.input_buffer.push(c);
-                        }
+                        Event::Mouse(mouse) => match mouse.kind {
+                            MouseEventKind::ScrollDown => {
+                                self.is_sticky = false;
+                                self.scroll_top = self.scroll_top.saturating_add(3);
+                                self.clamp_scroll();
+                            }
+                            MouseEventKind::ScrollUp => {
+                                self.is_sticky = false;
+                                self.scroll_top = self.scroll_top.saturating_sub(3);
+                            }
+                            _ => {}
+                        },
                         _ => {}
                     }
                 }
@@ -239,6 +324,77 @@ impl InteractiveMode {
         self.running = false;
     }
 
+    // ── Scroll helpers ──────────────────────────────────────────────────────
+
+    /// Estimate display height of one message in terminal rows.
+    ///
+    /// Mirrors what ratatui's Paragraph+Wrap would produce: each content line
+    /// is divided into chunks of `effective_width` columns. We count prefix
+    /// characters as part of the first content line's width budget.
+    fn compute_message_height(msg: &ChatMessage, inner_width: u16) -> u16 {
+        let prefix_len: u16 = match msg.role {
+            MessageRole::User => 5,      // "You: "
+            MessageRole::Assistant => 6, // "Sage: "
+            MessageRole::System => 8,    // "System: "
+        };
+        let effective = inner_width.saturating_sub(prefix_len).max(1);
+        let count: u16 = msg
+            .content
+            .lines()
+            .map(|line| {
+                let n = line.chars().count() as u16;
+                if n == 0 { 1 } else { n.div_ceil(effective) }
+            })
+            .sum();
+        count.max(1)
+    }
+
+    fn total_content_lines(messages: &[ChatMessage], inner_width: u16) -> u16 {
+        messages
+            .iter()
+            .map(|m| Self::compute_message_height(m, inner_width))
+            .sum()
+    }
+
+    /// Convert a `ChatMessage` to ratatui `Line`s, handling embedded newlines.
+    ///
+    /// The first content line is prefixed with the role label; subsequent lines
+    /// are indented by the same width so wrapped text aligns visually.
+    fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
+        let (prefix, style) = match msg.role {
+            MessageRole::User => ("You: ", Style::default().fg(Color::Cyan)),
+            MessageRole::Assistant => ("Sage: ", Style::default().fg(Color::Green)),
+            MessageRole::System => ("System: ", Style::default().fg(Color::Yellow)),
+        };
+        let indent = " ".repeat(prefix.len());
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        for (i, text_line) in msg.content.lines().enumerate() {
+            let lead = if i == 0 {
+                Span::styled(prefix.to_string(), style)
+            } else {
+                Span::raw(indent.clone())
+            };
+            lines.push(Line::from(vec![lead, Span::raw(text_line.to_string())]));
+        }
+
+        if lines.is_empty() {
+            lines.push(Line::from(vec![Span::styled(prefix.to_string(), style)]));
+        }
+
+        lines
+    }
+
+    /// Clamp `scroll_top` so we never scroll past the last line of content.
+    fn clamp_scroll(&mut self) {
+        let inner_width = self.last_terminal_width.saturating_sub(2);
+        let total = Self::total_content_lines(&self.messages, inner_width);
+        let max = total.saturating_sub(self.last_viewport_height);
+        self.scroll_top = self.scroll_top.min(max);
+    }
+
+    // ── Format helpers ──────────────────────────────────────────────────────
+
     fn format_tokens(n: u64) -> String {
         if n >= 1_000_000 {
             format!("{:.1}M", n as f64 / 1_000_000.0)
@@ -257,9 +413,12 @@ impl InteractiveMode {
         }
     }
 
-    /// Render the TUI frame.
-    fn render(&self, f: &mut ratatui::Frame) {
+    // ── Render ──────────────────────────────────────────────────────────────
+
+    /// Render the TUI frame. Updates cached dimensions and applies sticky scroll.
+    fn render(&mut self, f: &mut ratatui::Frame) {
         let size = f.area();
+        let inner_width = size.width.saturating_sub(2); // inside borders
 
         // Three sections: messages | statusbar | input
         let chunks = Layout::default()
@@ -267,27 +426,45 @@ impl InteractiveMode {
             .constraints([Constraint::Min(0), Constraint::Length(1), Constraint::Length(3)])
             .split(size);
 
-        // Message history
-        let messages: Vec<Line> = self
+        let viewport_height = chunks[0].height.saturating_sub(2);
+
+        // Cache dimensions used by key/mouse handlers between frames.
+        self.last_terminal_width = size.width;
+        self.last_viewport_height = viewport_height;
+
+        // Sticky scroll: always show the bottom of content when new text arrives.
+        if self.is_sticky {
+            let total = Self::total_content_lines(&self.messages, inner_width);
+            self.scroll_top = total.saturating_sub(viewport_height);
+        }
+
+        // Build multi-line-aware flat line list from all messages.
+        let message_lines: Vec<Line> = self
             .messages
             .iter()
-            .map(|m| {
-                let prefix = match m.role {
-                    MessageRole::User => Span::styled("You: ", Style::default().fg(Color::Cyan)),
-                    MessageRole::Assistant => {
-                        Span::styled("Sage: ", Style::default().fg(Color::Green))
-                    }
-                    MessageRole::System => {
-                        Span::styled("System: ", Style::default().fg(Color::Yellow))
-                    }
-                };
-                Line::from(vec![prefix, Span::raw(m.content.clone())])
-            })
+            .flat_map(|m| Self::message_to_lines(m))
             .collect();
 
-        let messages_widget = Paragraph::new(messages)
-            .block(Block::default().borders(Borders::ALL).title(" Sage "))
-            .wrap(Wrap { trim: false });
+        // Scroll-position indicator shown in the message panel title.
+        let total_lines = Self::total_content_lines(&self.messages, inner_width);
+        let title = if self.is_sticky {
+            " Sage [↓] ".to_string()
+        } else if total_lines > viewport_height {
+            let denom = total_lines.saturating_sub(viewport_height);
+            let pct = if denom > 0 {
+                ((self.scroll_top as f32 / denom as f32) * 100.0).min(100.0) as u8
+            } else {
+                100
+            };
+            format!(" Sage [{pct}%] ")
+        } else {
+            " Sage ".to_string()
+        };
+
+        let messages_widget = Paragraph::new(message_lines)
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .wrap(Wrap { trim: false })
+            .scroll((self.scroll_top, 0));
         f.render_widget(messages_widget, chunks[0]);
 
         // Status bar: token counts and cost
@@ -301,14 +478,20 @@ impl InteractiveMode {
                 Self::format_cost(self.session_cost_usd),
             )
         };
-        let status_widget = Paragraph::new(status_text)
-            .style(Style::default().fg(Color::DarkGray));
+        let status_widget =
+            Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray));
         f.render_widget(status_widget, chunks[1]);
 
-        let input_title = if self.is_thinking {
-            " Thinking… (Ctrl+C to quit) "
+        // Input box with context-sensitive hints.
+        let scroll_hint = if self.input_buffer.is_empty() {
+            "j/k·PageUp/Dn·G=bottom · "
         } else {
-            " Input (Enter to send, Ctrl+C to quit) "
+            ""
+        };
+        let input_title = if self.is_thinking {
+            format!(" Thinking… ({scroll_hint}Ctrl+C quit) ")
+        } else {
+            format!(" Input ({scroll_hint}Enter send · Ctrl+C quit) ")
         };
         let input_widget = Paragraph::new(self.input_buffer.as_str())
             .block(Block::default().borders(Borders::ALL).title(input_title));
@@ -378,5 +561,85 @@ mod tests {
         assert!(!opts.verbose);
         assert!(opts.model_fallback_message.is_none());
         assert!(opts.migrated_providers.is_empty());
+    }
+
+    #[test]
+    fn scroll_state_defaults() {
+        let mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert_eq!(mode.scroll_top, 0);
+        assert!(mode.is_sticky);
+    }
+
+    #[test]
+    fn compute_message_height_single_line() {
+        let msg = ChatMessage {
+            role: MessageRole::User,
+            content: "short".to_string(),
+        };
+        // "You: short" fits in 80 cols → 1 row
+        assert_eq!(InteractiveMode::compute_message_height(&msg, 80), 1);
+    }
+
+    #[test]
+    fn compute_message_height_multiline_content() {
+        let msg = ChatMessage {
+            role: MessageRole::Assistant,
+            content: "line one\nline two\nline three".to_string(),
+        };
+        // 3 content lines → 3 display rows (each fits in wide terminal)
+        assert_eq!(InteractiveMode::compute_message_height(&msg, 80), 3);
+    }
+
+    #[test]
+    fn compute_message_height_wrapping() {
+        let msg = ChatMessage {
+            role: MessageRole::User,
+            content: "a".repeat(100),
+        };
+        // prefix = 5, effective = 20-5 = 15 cols; 100 chars / 15 = 7 rows
+        let h = InteractiveMode::compute_message_height(&msg, 20);
+        assert_eq!(h, 7); // ceil(100/15) = 7
+    }
+
+    #[test]
+    fn total_content_lines_sums_messages() {
+        let msgs = vec![
+            ChatMessage { role: MessageRole::User, content: "hi".to_string() },
+            ChatMessage { role: MessageRole::Assistant, content: "hello".to_string() },
+        ];
+        let total = InteractiveMode::total_content_lines(&msgs, 80);
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn message_to_lines_empty_content() {
+        let msg = ChatMessage { role: MessageRole::User, content: String::new() };
+        let lines = InteractiveMode::message_to_lines(&msg);
+        assert_eq!(lines.len(), 1);
+    }
+
+    #[test]
+    fn message_to_lines_multiline() {
+        let msg = ChatMessage {
+            role: MessageRole::Assistant,
+            content: "first\nsecond\nthird".to_string(),
+        };
+        let lines = InteractiveMode::message_to_lines(&msg);
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn clamp_scroll_does_not_exceed_max() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.messages.push(ChatMessage {
+            role: MessageRole::User,
+            content: "hello".to_string(),
+        });
+        mode.last_terminal_width = 80;
+        mode.last_viewport_height = 24;
+        mode.scroll_top = 9999;
+        mode.clamp_scroll();
+        // 1 message = 1 line; max scroll = 1 - 24 = 0 (saturating)
+        assert_eq!(mode.scroll_top, 0);
     }
 }
