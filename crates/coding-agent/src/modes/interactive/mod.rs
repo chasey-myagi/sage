@@ -30,6 +30,8 @@ use ratatui::{
 };
 use tokio::sync::mpsc;
 
+use unicode_width::UnicodeWidthStr as _;
+
 use crate::agent_session::AgentDelta;
 
 // ============================================================================
@@ -254,7 +256,13 @@ impl InteractiveMode {
                 self.is_thinking = false;
             }
 
-            // sticky scroll is applied inside render with fresh dimensions
+            // Sticky scroll: pin to bottom as new content arrives.
+            // Must be computed before terminal.draw() so render() is side-effect-free.
+            if self.is_sticky {
+                let total =
+                    Self::total_content_lines(&self.messages, self.last_terminal_width);
+                self.scroll_top = total.saturating_sub(self.last_viewport_height);
+            }
             terminal.draw(|f| self.render(f))?;
 
             tokio::select! {
@@ -289,8 +297,10 @@ impl InteractiveMode {
                                     self.is_sticky = false;
                                     self.scroll_top = 0;
                                 }
-                                (KeyCode::Char('G'), KeyModifiers::NONE)
-                                    if self.input_buffer.is_empty() =>
+                                (KeyCode::Char('G'), modifiers)
+                                    if self.input_buffer.is_empty()
+                                        && (modifiers.is_empty()
+                                            || modifiers == KeyModifiers::SHIFT) =>
                                 {
                                     self.is_sticky = true;
                                 }
@@ -404,7 +414,7 @@ impl InteractiveMode {
             .content
             .lines()
             .map(|line| {
-                let n = line.chars().count() as u16;
+                let n = line.width() as u16;
                 if n == 0 || n <= first_capacity {
                     1
                 } else {
@@ -516,12 +526,6 @@ impl InteractiveMode {
         // Cache dimensions used by key/mouse handlers between frames.
         self.last_terminal_width = width;
         self.last_viewport_height = viewport_height;
-
-        // Sticky scroll: pin to bottom as new content arrives.
-        if self.is_sticky {
-            let total = Self::total_content_lines(&self.messages, width);
-            self.scroll_top = total.saturating_sub(viewport_height);
-        }
 
         // ── Header ────────────────────────────────────────────────────────
         let model_label = self.model_id.as_deref().unwrap_or("claude");
