@@ -17,6 +17,11 @@ default = []
 clipboard = ["arboard"]
 # Exposes optional `async_reader` tokio-based JSONL reader in modes/rpc/jsonl.rs.
 async = []
+# Auto-mode transcript classifier (ant-internal feature).
+transcript_classifier = []
+# Kairos channel features (ant-internal).
+kairos = []
+kairos_channels = []
 
 [dependencies]
 ai = { path = "../ai" }
