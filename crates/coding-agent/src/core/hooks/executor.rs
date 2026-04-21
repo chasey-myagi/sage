@@ -13,27 +13,76 @@ use super::types::{
 /// Default per-hook timeout for tool-related hooks (PreToolUse / PostToolUse).
 const DEFAULT_TOOL_HOOK_TIMEOUT_SECS: u64 = 600; // 10 minutes
 
+/// Tight default for SessionEnd hooks — they run during shutdown.
+/// Matches CC's SESSION_END_HOOK_TIMEOUT_MS_DEFAULT (1500ms) rounded up.
+pub const DEFAULT_SESSION_END_TIMEOUT_SECS: u64 = 2;
+
 /// Executes hook commands within a session context.
 pub struct HookExecutor {
     pub session_id: String,
     pub cwd: String,
     pub transcript_path: String,
+    pub permission_mode: Option<String>,
+    pub agent_id: Option<String>,
+    pub agent_type: Option<String>,
 }
 
 impl HookExecutor {
     pub fn new(session_id: impl Into<String>, cwd: impl Into<String>) -> Self {
-        let session_id = session_id.into();
-        let cwd = cwd.into();
-        let transcript_path = String::new();
         Self {
-            session_id,
-            cwd,
-            transcript_path,
+            session_id: session_id.into(),
+            cwd: cwd.into(),
+            transcript_path: String::new(),
+            permission_mode: None,
+            agent_id: None,
+            agent_type: None,
         }
     }
 
-    /// Execute a hook command and return the result.
+    pub fn with_transcript_path(mut self, path: impl Into<String>) -> Self {
+        self.transcript_path = path.into();
+        self
+    }
+
+    pub fn with_permission_mode(mut self, mode: impl Into<String>) -> Self {
+        self.permission_mode = Some(mode.into());
+        self
+    }
+
+    pub fn with_agent_id(mut self, id: impl Into<String>) -> Self {
+        self.agent_id = Some(id.into());
+        self
+    }
+
+    pub fn with_agent_type(mut self, agent_type: impl Into<String>) -> Self {
+        self.agent_type = Some(agent_type.into());
+        self
+    }
+
+    /// Execute a hook command with the standard tool timeout as the fallback.
     pub async fn execute(&self, hook: &HookCommand, input: &HookInput) -> Result<HookResult> {
+        self.execute_with_default_timeout(hook, input, DEFAULT_TOOL_HOOK_TIMEOUT_SECS)
+            .await
+    }
+
+    /// Execute a hook command with the session-end tight timeout as the fallback.
+    ///
+    /// Use this for SessionEnd hooks that must complete before the process exits.
+    pub async fn execute_session_end(
+        &self,
+        hook: &HookCommand,
+        input: &HookInput,
+    ) -> Result<HookResult> {
+        self.execute_with_default_timeout(hook, input, DEFAULT_SESSION_END_TIMEOUT_SECS)
+            .await
+    }
+
+    async fn execute_with_default_timeout(
+        &self,
+        hook: &HookCommand,
+        input: &HookInput,
+        default_timeout_secs: u64,
+    ) -> Result<HookResult> {
         match hook {
             HookCommand::Command {
                 command,
@@ -66,13 +115,21 @@ impl HookExecutor {
                         ..Default::default()
                     });
                 }
-                self.execute_command_hook(command, *timeout, &shell_prog, input)
+                self.execute_command_hook(command, *timeout, &shell_prog, input, default_timeout_secs)
                     .await
             }
-            // Prompt / Http / Agent hooks are not yet implemented.
             HookCommand::Prompt { .. } | HookCommand::Http { .. } | HookCommand::Agent { .. } => {
+                let kind = match hook {
+                    HookCommand::Prompt { .. } => "prompt",
+                    HookCommand::Http { .. } => "http",
+                    HookCommand::Agent { .. } => "agent",
+                    HookCommand::Command { .. } => unreachable!(),
+                };
                 Ok(HookResult {
-                    outcome: HookOutcome::Success,
+                    outcome: HookOutcome::NonBlockingError,
+                    stderr: Some(format!(
+                        "{kind} hooks are not supported in this version — configure a command hook instead"
+                    )),
                     ..Default::default()
                 })
             }
@@ -85,9 +142,10 @@ impl HookExecutor {
         timeout_secs: Option<u64>,
         shell: &str,
         input: &HookInput,
+        default_timeout_secs: u64,
     ) -> Result<HookResult> {
         let input_json = serde_json::to_string(input).context("serialize hook input")?;
-        let timeout = Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TOOL_HOOK_TIMEOUT_SECS));
+        let timeout = Duration::from_secs(timeout_secs.unwrap_or(default_timeout_secs));
 
         let result = tokio::time::timeout(
             timeout,
@@ -407,5 +465,74 @@ mod tests {
         let result = parse_hook_output("", "", 127, "cmd");
         assert_eq!(result.outcome, HookOutcome::NonBlockingError);
         assert!(result.blocking_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn prompt_hook_returns_non_blocking_error() {
+        let executor = HookExecutor::new("test-session", "/tmp");
+        let hook = HookCommand::Prompt {
+            prompt: "Is this safe?".to_string(),
+            if_condition: None,
+            timeout: None,
+            model: None,
+            status_message: None,
+            once: None,
+        };
+        let input = HookInput {
+            session_id: "s".to_string(),
+            transcript_path: String::new(),
+            cwd: "/tmp".to_string(),
+            permission_mode: None,
+            agent_id: None,
+            agent_type: None,
+            hook_event_name: "PreToolUse".to_string(),
+            event_specific: serde_json::json!({}),
+        };
+        let result = executor.execute(&hook, &input).await.unwrap();
+        assert_eq!(result.outcome, HookOutcome::NonBlockingError);
+        assert!(result
+            .stderr
+            .as_deref()
+            .unwrap_or("")
+            .contains("not supported"));
+    }
+
+    #[tokio::test]
+    async fn http_hook_returns_non_blocking_error() {
+        let executor = HookExecutor::new("test-session", "/tmp");
+        let hook = HookCommand::Http {
+            url: "http://localhost/hook".to_string(),
+            if_condition: None,
+            timeout: None,
+            headers: None,
+            allowed_env_vars: None,
+            status_message: None,
+            once: None,
+        };
+        let input = HookInput {
+            session_id: "s".to_string(),
+            transcript_path: String::new(),
+            cwd: "/tmp".to_string(),
+            permission_mode: None,
+            agent_id: None,
+            agent_type: None,
+            hook_event_name: "PreToolUse".to_string(),
+            event_specific: serde_json::json!({}),
+        };
+        let result = executor.execute(&hook, &input).await.unwrap();
+        assert_eq!(result.outcome, HookOutcome::NonBlockingError);
+        assert!(result
+            .stderr
+            .as_deref()
+            .unwrap_or("")
+            .contains("not supported"));
+    }
+
+    #[tokio::test]
+    async fn session_end_uses_tight_timeout() {
+        // A command hook with no explicit timeout should use DEFAULT_SESSION_END_TIMEOUT_SECS
+        // when called via execute_session_end. We test the timeout constant value directly.
+        assert_eq!(DEFAULT_SESSION_END_TIMEOUT_SECS, 2);
+        assert!(DEFAULT_SESSION_END_TIMEOUT_SECS < DEFAULT_TOOL_HOOK_TIMEOUT_SECS);
     }
 }

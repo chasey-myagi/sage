@@ -11,3 +11,5 @@ pub mod types;
 
 // Re-export the settings type used by settings_manager.
 pub use types::HooksSettings;
+// Re-export the lifecycle bridge used by agent_session.
+pub use runner::HooksLifecycle;

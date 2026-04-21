@@ -71,7 +71,13 @@ pub fn calculate_usd_cost(usage: &Usage, model_id: &str, is_fast: bool) -> Cost 
     let cache_read = (usage.cache_read as f64 / 1_000_000.0) * p.cache_read_per_million;
     let cache_write = (usage.cache_write as f64 / 1_000_000.0) * p.cache_write_per_million;
     let total = input + output + cache_read + cache_write;
-    Cost { input, output, cache_read, cache_write, total }
+    Cost {
+        input,
+        output,
+        cache_read,
+        cache_write,
+        total,
+    }
 }
 
 #[cfg(test)]
@@ -79,7 +85,11 @@ mod tests {
     use super::*;
 
     fn make_usage(input: u64, output: u64) -> Usage {
-        Usage { input, output, ..Usage::default() }
+        Usage {
+            input,
+            output,
+            ..Usage::default()
+        }
     }
 
     #[test]
@@ -143,7 +153,13 @@ mod tests {
 
     #[test]
     fn cache_tokens_included_in_total() {
-        let u = Usage { input: 0, output: 0, cache_read: 1_000_000, cache_write: 0, ..Usage::default() };
+        let u = Usage {
+            input: 0,
+            output: 0,
+            cache_read: 1_000_000,
+            cache_write: 0,
+            ..Usage::default()
+        };
         let cost = calculate_usd_cost(&u, "claude-sonnet-4-5", false);
         assert!((cost.cache_read - 0.5).abs() < 1e-9);
         assert!((cost.total - 0.5).abs() < 1e-9);

@@ -154,10 +154,15 @@ impl InteractiveMode {
                                 }
                             }
                         }
-                        Ok(AgentDelta::TurnUsage { usage, model, is_fast }) => {
+                        Ok(AgentDelta::TurnUsage {
+                            usage,
+                            model,
+                            is_fast,
+                        }) => {
                             self.session_input_tokens += usage.input;
                             self.session_output_tokens += usage.output;
-                            let cost = ai::model_pricing::calculate_usd_cost(&usage, &model, is_fast);
+                            let cost =
+                                ai::model_pricing::calculate_usd_cost(&usage, &model, is_fast);
                             self.session_cost_usd += cost.total;
                         }
                         Err(mpsc::error::TryRecvError::Empty) => break,
@@ -209,7 +214,11 @@ impl InteractiveMode {
         }
 
         disable_raw_mode()?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+        execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        )?;
         terminal.show_cursor()?;
         Ok(())
     }
@@ -264,7 +273,11 @@ impl InteractiveMode {
         // Three sections: messages | statusbar | input
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(1), Constraint::Length(3)])
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(1),
+                Constraint::Length(3),
+            ])
             .split(size);
 
         // Message history
@@ -301,8 +314,7 @@ impl InteractiveMode {
                 Self::format_cost(self.session_cost_usd),
             )
         };
-        let status_widget = Paragraph::new(status_text)
-            .style(Style::default().fg(Color::DarkGray));
+        let status_widget = Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray));
         f.render_widget(status_widget, chunks[1]);
 
         let input_title = if self.is_thinking {
