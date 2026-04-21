@@ -21,7 +21,7 @@ pub enum AgentDelta {
     /// A streaming text fragment.
     Text(String),
     /// Token usage snapshot after a turn completes.
-    TurnUsage { usage: Usage, model: String },
+    TurnUsage { usage: Usage, model: String, is_fast: bool },
 }
 
 // ── Registry-backed LLM provider adapter ────────────────────────────────────
@@ -204,9 +204,11 @@ pub async fn run_agent_session_to_channel(
                 let _ = tx.send(AgentDelta::Text(delta.clone()));
             }
             AgentEvent::TurnEnd { message, .. } => {
+                let is_fast = message.model.to_ascii_lowercase().contains("fast");
                 let _ = tx.send(AgentDelta::TurnUsage {
                     usage: message.usage.clone(),
                     model: message.model.clone(),
+                    is_fast,
                 });
             }
             _ => {}

@@ -154,10 +154,10 @@ impl InteractiveMode {
                                 }
                             }
                         }
-                        Ok(AgentDelta::TurnUsage { usage, model }) => {
+                        Ok(AgentDelta::TurnUsage { usage, model, is_fast }) => {
                             self.session_input_tokens += usage.input;
                             self.session_output_tokens += usage.output;
-                            let cost = ai::model_pricing::calculate_usd_cost(&usage, &model);
+                            let cost = ai::model_pricing::calculate_usd_cost(&usage, &model, is_fast);
                             self.session_cost_usd += cost.total;
                         }
                         Err(mpsc::error::TryRecvError::Empty) => break,
