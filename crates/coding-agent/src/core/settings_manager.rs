@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use crate::config::CONFIG_DIR_NAME;
+use crate::core::hooks::HooksSettings;
+pub use agent_core::mcp::McpServerConfig;
 
 // ============================================================================
 // Settings types
@@ -154,6 +156,12 @@ pub struct Settings {
     pub markdown: Option<MarkdownSettings>,
     /// Custom session storage directory.
     pub session_dir: Option<String>,
+    /// Hooks configuration — keyed by event name (e.g. `"PreToolUse"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hooks: Option<HooksSettings>,
+    /// MCP server configurations to start and register tools from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp_servers: Option<Vec<McpServerConfig>>,
 }
 
 /// Scope for settings (which settings.json file).
@@ -280,6 +288,8 @@ pub fn merge_settings(base: &Settings, overrides: &Settings) -> Settings {
         show_hardware_cursor: pick!(show_hardware_cursor),
         markdown,
         session_dir: pick!(session_dir),
+        hooks: pick!(hooks),
+        mcp_servers: pick!(mcp_servers),
     }
 }
 

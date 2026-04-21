@@ -2,7 +2,113 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
+use indexmap::IndexMap;
+
 use crate::keys::matches_key;
+
+// =============================================================================
+// Reserved shortcuts
+// =============================================================================
+
+/// Severity of a reserved-key conflict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReservedSeverity {
+    Error,
+    Warning,
+}
+
+/// A shortcut that cannot or should not be rebound.
+///
+/// Mirrors `reservedShortcuts.ts` — `NON_REBINDABLE`, `TERMINAL_RESERVED`.
+#[derive(Debug, Clone)]
+pub struct ReservedShortcut {
+    pub key: &'static str,
+    pub reason: &'static str,
+    pub severity: ReservedSeverity,
+}
+
+/// Shortcuts hardcoded in Sage that cannot be rebound.
+pub const NON_REBINDABLE: &[ReservedShortcut] = &[
+    ReservedShortcut {
+        key: "ctrl+c",
+        reason: "used for interrupt/copy (hardcoded)",
+        severity: ReservedSeverity::Error,
+    },
+    ReservedShortcut {
+        key: "ctrl+d",
+        reason: "used for exit / delete-char-forward (hardcoded)",
+        severity: ReservedSeverity::Error,
+    },
+    ReservedShortcut {
+        key: "ctrl+m",
+        reason: "identical to Enter in terminals (both send CR)",
+        severity: ReservedSeverity::Error,
+    },
+];
+
+/// Terminal/OS level shortcuts that will likely never reach the app.
+pub const TERMINAL_RESERVED: &[ReservedShortcut] = &[
+    ReservedShortcut {
+        key: "ctrl+z",
+        reason: "Unix process suspend (SIGTSTP)",
+        severity: ReservedSeverity::Warning,
+    },
+    ReservedShortcut {
+        key: "ctrl+\\",
+        reason: "terminal quit signal (SIGQUIT)",
+        severity: ReservedSeverity::Error,
+    },
+];
+
+/// A conflict between a user-requested key and a reserved shortcut.
+#[derive(Debug, Clone)]
+pub struct ReservedConflict {
+    pub keybinding: String,
+    pub key: String,
+    pub reserved: &'static ReservedShortcut,
+}
+
+/// Check whether any user-supplied keybinding conflicts with reserved shortcuts.
+///
+/// Returns one [`ReservedConflict`] per conflicting (keybinding, key) pair.
+pub fn check_reserved_conflicts(config: &KeybindingsConfig) -> Vec<ReservedConflict> {
+    let all_reserved: Vec<&ReservedShortcut> = NON_REBINDABLE
+        .iter()
+        .chain(TERMINAL_RESERVED.iter())
+        .collect();
+
+    let mut conflicts = Vec::new();
+    for (action, keys) in config {
+        for key_id in keys {
+            let normalized = normalize_key(key_id.as_str());
+            for reserved in &all_reserved {
+                if normalize_key(reserved.key) == normalized {
+                    conflicts.push(ReservedConflict {
+                        keybinding: action.clone(),
+                        key: key_id.to_string(),
+                        reserved,
+                    });
+                }
+            }
+        }
+    }
+    conflicts
+}
+
+/// Normalize a key string for comparison (lowercase, sorted modifiers).
+///
+/// e.g. "Ctrl+Shift+K" → "ctrl+shift+k", "shift+ctrl+k" → "ctrl+shift+k"
+fn normalize_key(key: &str) -> String {
+    let mut parts: Vec<&str> = key.split('+').collect();
+    if parts.len() <= 1 {
+        return key.to_lowercase();
+    }
+    let main = parts.pop().unwrap_or("").to_lowercase();
+    let mut mods: Vec<String> = parts.iter().map(|s| s.to_lowercase()).collect();
+    mods.sort();
+    mods.push(main);
+    mods.join("+")
+}
 
 // =============================================================================
 // Types
@@ -10,7 +116,7 @@ use crate::keys::matches_key;
 
 pub type Keybinding = String;
 pub use crate::keys::KeyId;
-pub type KeybindingsConfig = HashMap<String, Vec<KeyId>>;
+pub type KeybindingsConfig = IndexMap<String, Vec<KeyId>>;
 
 #[derive(Debug, Clone)]
 pub struct KeybindingDefinition {
@@ -286,7 +392,7 @@ impl KeybindingsManager {
 
     /// Get the resolved bindings (user overrides or defaults).
     pub fn get_resolved_bindings(&self) -> KeybindingsConfig {
-        let mut resolved = HashMap::new();
+        let mut resolved = IndexMap::new();
         for id in self.definitions.keys() {
             let keys = self.keys_by_id.get(id).cloned().unwrap_or_default();
             resolved.insert(id.clone(), keys);
@@ -314,18 +420,18 @@ fn global_keybindings_cell() -> &'static Mutex<Option<KeybindingsManager>> {
 
 /// Set the global keybindings manager.
 pub fn set_keybindings(manager: KeybindingsManager) {
-    let mut lock = global_keybindings_cell().lock().unwrap();
+    let mut lock = global_keybindings_cell().lock().unwrap_or_else(|e| e.into_inner());
     *lock = Some(manager);
 }
 
 /// Get the global keybindings manager, creating a default one if not set.
 pub fn get_keybindings() -> GlobalKeybindingsGuard {
     // Ensure global manager exists, then return a guard that proxies calls.
-    let mut lock = global_keybindings_cell().lock().unwrap();
+    let mut lock = global_keybindings_cell().lock().unwrap_or_else(|e| e.into_inner());
     if lock.is_none() {
         *lock = Some(KeybindingsManager::new(
             default_tui_keybindings(),
-            HashMap::new(),
+            IndexMap::new(),
         ));
     }
     drop(lock);
@@ -334,11 +440,11 @@ pub fn get_keybindings() -> GlobalKeybindingsGuard {
 
 /// Helper to check a keybinding without holding a lock reference.
 pub fn check_keybinding(data: &str, keybinding: &str) -> bool {
-    let mut lock = global_keybindings_cell().lock().unwrap();
+    let mut lock = global_keybindings_cell().lock().unwrap_or_else(|e| e.into_inner());
     if lock.is_none() {
         *lock = Some(KeybindingsManager::new(
             default_tui_keybindings(),
-            HashMap::new(),
+            IndexMap::new(),
         ));
     }
     lock.as_ref().unwrap().matches(data, keybinding)
@@ -355,7 +461,7 @@ impl GlobalKeybindingsGuard {
     }
 
     pub fn get_keys(&self, keybinding: &str) -> Vec<KeyId> {
-        let lock = global_keybindings_cell().lock().unwrap();
+        let lock = global_keybindings_cell().lock().unwrap_or_else(|e| e.into_inner());
         lock.as_ref()
             .map(|m| m.get_keys(keybinding))
             .unwrap_or_default()
@@ -365,9 +471,10 @@ impl GlobalKeybindingsGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indexmap::IndexMap;
 
     fn make_mgr() -> KeybindingsManager {
-        KeybindingsManager::new(default_tui_keybindings(), HashMap::new())
+        KeybindingsManager::new(default_tui_keybindings(), IndexMap::new())
     }
 
     #[test]
@@ -412,7 +519,7 @@ mod tests {
 
     #[test]
     fn test_user_override() {
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert("tui.input.submit".to_string(), vec![KeyId::from("ctrl+s")]);
         let mgr = KeybindingsManager::new(default_tui_keybindings(), user);
         // Now ctrl+s should match submit
@@ -438,7 +545,7 @@ mod tests {
 
     #[test]
     fn test_user_conflict_detection() {
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert(
             "tui.editor.cursorUp".to_string(),
             vec![KeyId::from("ctrl+x")],
@@ -461,7 +568,7 @@ mod tests {
         // "does not evict selector confirm when input submit is rebound"
         // When user rebinds tui.input.submit to ["enter", "ctrl+enter"],
         // tui.select.confirm should still keep its default ["enter"] key.
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert(
             "tui.input.submit".to_string(),
             vec![KeyId::from("enter"), KeyId::from("ctrl+enter")],
@@ -490,7 +597,7 @@ mod tests {
         // "does not evict cursor bindings when another action reuses the same key"
         // When user rebinds tui.select.up to ["up", "ctrl+p"],
         // tui.editor.cursorUp should still keep its default ["up"] key.
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert(
             "tui.select.up".to_string(),
             vec![KeyId::from("up"), KeyId::from("ctrl+p")],
@@ -520,7 +627,7 @@ mod tests {
         // When user explicitly assigns ctrl+x to BOTH tui.input.submit and tui.select.confirm,
         // those should be reported as conflicts, but other defaults (like tui.editor.cursorLeft)
         // should remain unaffected.
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert("tui.input.submit".to_string(), vec![KeyId::from("ctrl+x")]);
         user.insert(
             "tui.select.confirm".to_string(),
@@ -614,7 +721,7 @@ mod tests {
         let keys_before = mgr.get_keys("tui.input.submit");
         assert!(keys_before.iter().any(|k| k == "enter"));
 
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert("tui.input.submit".to_string(), vec![KeyId::from("ctrl+s")]);
         mgr.set_user_bindings(user);
 
@@ -631,7 +738,7 @@ mod tests {
 
     #[test]
     fn test_keybindings_manager_deduplicates_keys() {
-        let mut user = HashMap::new();
+        let mut user = IndexMap::new();
         user.insert(
             "tui.input.submit".to_string(),
             vec![KeyId::from("enter"), KeyId::from("enter")],
@@ -641,5 +748,48 @@ mod tests {
         // Should be deduplicated
         assert_eq!(keys.len(), 1, "duplicate keys should be removed");
         assert_eq!(keys[0], "enter");
+    }
+
+    // ==========================================================================
+    // Reserved shortcuts tests
+    // ==========================================================================
+
+    #[test]
+    fn test_check_reserved_ctrl_c_conflict() {
+        let mut user = IndexMap::new();
+        user.insert("tui.input.submit".to_string(), vec![KeyId::from("ctrl+c")]);
+        let conflicts = check_reserved_conflicts(&user);
+        assert!(!conflicts.is_empty(), "ctrl+c should trigger a conflict");
+        assert_eq!(conflicts[0].key, "ctrl+c");
+        assert_eq!(conflicts[0].reserved.severity, ReservedSeverity::Error);
+    }
+
+    #[test]
+    fn test_check_reserved_ctrl_z_warning() {
+        let mut user = IndexMap::new();
+        user.insert(
+            "tui.editor.cursorUp".to_string(),
+            vec![KeyId::from("ctrl+z")],
+        );
+        let conflicts = check_reserved_conflicts(&user);
+        assert!(!conflicts.is_empty(), "ctrl+z should trigger a warning");
+        assert_eq!(conflicts[0].reserved.severity, ReservedSeverity::Warning);
+    }
+
+    #[test]
+    fn test_check_reserved_no_conflict_for_normal_key() {
+        let mut user = IndexMap::new();
+        user.insert(
+            "tui.editor.cursorUp".to_string(),
+            vec![KeyId::from("ctrl+p")],
+        );
+        let conflicts = check_reserved_conflicts(&user);
+        assert!(conflicts.is_empty(), "ctrl+p should have no conflicts");
+    }
+
+    #[test]
+    fn test_normalize_key_sorts_modifiers() {
+        assert_eq!(normalize_key("Shift+Ctrl+k"), normalize_key("ctrl+shift+k"));
+        assert_eq!(normalize_key("alt+ctrl+c"), normalize_key("ctrl+alt+c"));
     }
 }

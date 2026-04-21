@@ -17,6 +17,11 @@ default = []
 clipboard = ["arboard"]
 # Exposes optional `async_reader` tokio-based JSONL reader in modes/rpc/jsonl.rs.
 async = []
+# Auto-mode transcript classifier (ant-internal feature).
+transcript_classifier = []
+# Kairos channel features (ant-internal).
+kairos = []
+kairos_channels = []
 
 [dependencies]
 ai = { path = "../ai" }
@@ -33,6 +38,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
+async-stream = { workspace = true }
 chrono = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
@@ -45,6 +51,7 @@ unicode-normalization = { workspace = true }
 base64 = { workspace = true }
 reqwest = { workspace = true }
 dirs = "5"
+notify = { workspace = true }
 url = "2"
 pathdiff = "0.2"
 arboard = { version = "3", optional = true }

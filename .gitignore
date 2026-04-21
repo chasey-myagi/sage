@@ -24,3 +24,9 @@ Thumbs.db
 **/check-list.md
 **/issue-found*.md
 **/optimization-found*.md
+
+# Research analysis artifacts (branch-local, not merged to dev)
+.analysis/
+research-report.md
+research-report/
+review.md

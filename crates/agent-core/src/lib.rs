@@ -7,6 +7,7 @@ pub mod bedrock_models;
 pub mod compaction;
 pub mod event;
 pub mod hook;
+pub mod mcp;
 pub mod proxy;
 pub mod system_prompt;
 pub mod tools;

@@ -44,6 +44,10 @@ pub struct BuiltinSlashCommand {
 /// All built-in slash commands, mirroring `BUILTIN_SLASH_COMMANDS` in slash-commands.ts.
 pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand {
+        name: "init",
+        description: "Initialize a new CLAUDE.md file with codebase documentation",
+    },
+    BuiltinSlashCommand {
         name: "settings",
         description: "Open settings menu",
     },

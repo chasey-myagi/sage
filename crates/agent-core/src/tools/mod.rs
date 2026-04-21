@@ -8,9 +8,12 @@ pub mod edit;
 pub mod find;
 pub mod grep;
 pub mod ls;
+pub mod mcp_tool;
 pub mod policy;
 pub mod read;
 pub mod truncate;
+pub mod web_fetch;
+pub mod web_search;
 pub mod write;
 
 use crate::types::Content;
@@ -103,6 +106,8 @@ pub fn create_tool(
         "grep" => Some(Box::new(grep::GrepTool(backend))),
         "find" => Some(Box::new(find::FindTool(backend))),
         "ls" => Some(Box::new(ls::LsTool(backend))),
+        "web_fetch" => Some(Box::new(web_fetch::WebFetchTool)),
+        "web_search" => Some(Box::new(web_search::WebSearchTool)),
         _ => None,
     }
 }
