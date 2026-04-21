@@ -59,11 +59,7 @@ pub fn register_builtin_agents() -> HashMap<String, AgentDef> {
                  find files by patterns, search code for keywords, or answer questions about \
                  the codebase."
                     .to_string(),
-            tools: vec![
-                "find".to_string(),
-                "grep".to_string(),
-                "read".to_string(),
-            ],
+            tools: vec!["find".to_string(), "grep".to_string(), "read".to_string()],
             max_turns: Some(30),
             model: Some(AgentModel::Haiku),
             permission_mode: None,
@@ -117,11 +113,10 @@ pub fn register_builtin_agents() -> HashMap<String, AgentDef> {
         "fork".to_string(),
         AgentDef {
             agent_type: "fork".to_string(),
-            when_to_use:
-                "Implicit fork — inherits full conversation context. Not selectable via \
+            when_to_use: "Implicit fork — inherits full conversation context. Not selectable via \
                  subagent_type; triggered by omitting subagent_type when the fork experiment \
                  is active."
-                    .to_string(),
+                .to_string(),
             tools: vec!["*".to_string()],
             max_turns: Some(200),
             model: Some(AgentModel::Inherit),

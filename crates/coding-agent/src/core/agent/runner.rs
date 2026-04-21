@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use agent_core::types::AgentMessage;
 
 use super::definition::{AgentDef, AgentModel};
-use super::forked::CacheSafeParams;
+use super::forked::{CacheSafeParams, filter_incomplete_tool_calls};
 use super::query_loop::{QueryLoopParams, run_query_loop};
 
 /// Errors that can occur while running a sub-agent.
@@ -99,7 +99,7 @@ pub fn run_agent(params: RunAgentParams) -> BoxStream<'static, Result<AgentMessa
             system_prompt: system_prompt.clone(),
             user_context: params.user_context.clone(),
             system_context: params.system_context.clone(),
-            fork_context_messages: params.messages.clone(),
+            fork_context_messages: filter_incomplete_tool_calls(&params.messages),
         });
     }
 
@@ -129,10 +129,16 @@ mod tests {
 
     #[test]
     fn agent_error_display() {
-        assert!(AgentError::ToolNotFound("read".to_string())
-            .to_string()
-            .contains("read"));
-        assert!(AgentError::MaxTurnsReached.to_string().contains("max turns"));
+        assert!(
+            AgentError::ToolNotFound("read".to_string())
+                .to_string()
+                .contains("read")
+        );
+        assert!(
+            AgentError::MaxTurnsReached
+                .to_string()
+                .contains("max turns")
+        );
         assert!(AgentError::Aborted.to_string().contains("aborted"));
     }
 
