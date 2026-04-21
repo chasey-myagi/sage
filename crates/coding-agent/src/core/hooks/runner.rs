@@ -880,6 +880,259 @@ assert d.get('agent_type')=='coding-agent', f'wrong agent_type: {{d.get(\"agent_
         );
     }
 
+    // ── once_key pure-function tests ──────────────────────────────────────────
+
+    #[test]
+    fn once_key_returns_none_without_once_flag() {
+        let cmd = HookCommand::Command {
+            command: "echo hi".to_string(),
+            if_condition: None,
+            shell: None,
+            timeout: None,
+            status_message: None,
+            once: None,
+            async_: None,
+            async_rewake: None,
+        };
+        assert!(once_key(&cmd).is_none());
+    }
+
+    #[test]
+    fn once_key_returns_none_when_once_false() {
+        let cmd = HookCommand::Command {
+            command: "echo hi".to_string(),
+            if_condition: None,
+            shell: None,
+            timeout: None,
+            status_message: None,
+            once: Some(false),
+            async_: None,
+            async_rewake: None,
+        };
+        assert!(once_key(&cmd).is_none());
+    }
+
+    #[test]
+    fn once_key_command_includes_command_prefix() {
+        let cmd = HookCommand::Command {
+            command: "exit 2".to_string(),
+            if_condition: None,
+            shell: None,
+            timeout: None,
+            status_message: None,
+            once: Some(true),
+            async_: None,
+            async_rewake: None,
+        };
+        assert_eq!(once_key(&cmd), Some("command:exit 2".to_string()));
+    }
+
+    #[test]
+    fn once_key_prompt_includes_prompt_prefix() {
+        let cmd = HookCommand::Prompt {
+            prompt: "Is this safe?".to_string(),
+            if_condition: None,
+            timeout: None,
+            model: None,
+            status_message: None,
+            once: Some(true),
+        };
+        assert_eq!(once_key(&cmd), Some("prompt:Is this safe?".to_string()));
+    }
+
+    #[test]
+    fn once_key_http_includes_http_prefix() {
+        let cmd = HookCommand::Http {
+            url: "http://localhost/hook".to_string(),
+            if_condition: None,
+            timeout: None,
+            headers: None,
+            allowed_env_vars: None,
+            status_message: None,
+            once: Some(true),
+        };
+        assert_eq!(once_key(&cmd), Some("http:http://localhost/hook".to_string()));
+    }
+
+    #[test]
+    fn once_key_agent_includes_agent_prefix() {
+        let cmd = HookCommand::Agent {
+            prompt: "Check for issues".to_string(),
+            if_condition: None,
+            timeout: None,
+            model: None,
+            status_message: None,
+            once: Some(true),
+        };
+        assert_eq!(once_key(&cmd), Some("agent:Check for issues".to_string()));
+    }
+
+    #[test]
+    fn once_key_different_types_same_content_no_collision() {
+        // "command:foo" and "prompt:foo" must be distinct keys.
+        let cmd_cmd = HookCommand::Command {
+            command: "foo".to_string(),
+            if_condition: None,
+            shell: None,
+            timeout: None,
+            status_message: None,
+            once: Some(true),
+            async_: None,
+            async_rewake: None,
+        };
+        let cmd_prompt = HookCommand::Prompt {
+            prompt: "foo".to_string(),
+            if_condition: None,
+            timeout: None,
+            model: None,
+            status_message: None,
+            once: Some(true),
+        };
+        assert_ne!(once_key(&cmd_cmd), once_key(&cmd_prompt));
+    }
+
+    // ── once:true integration tests ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn once_true_hook_runs_only_once_across_sequential_calls() {
+        let tmp = std::env::temp_dir();
+        let flag_file = tmp.join(format!("once_seq_{}.txt", ulid::Ulid::new()));
+        let flag_path = flag_file.to_str().unwrap().to_string();
+
+        let mut settings = HooksSettings::default();
+        settings.insert(
+            "PreToolUse".to_string(),
+            vec![HookMatcher {
+                matcher: None,
+                hooks: vec![HookCommand::Command {
+                    command: format!("echo ran >> {flag_path}"),
+                    if_condition: None,
+                    shell: None,
+                    timeout: Some(5),
+                    status_message: None,
+                    once: Some(true),
+                    async_: None,
+                    async_rewake: None,
+                }],
+            }],
+        );
+
+        let executor = HookExecutor::new("test-session", tmp.to_str().unwrap());
+        let runner = HookRunner::new(executor, settings);
+
+        // Three sequential calls — hook should only execute on the first.
+        for i in 0..3u32 {
+            runner
+                .run_pre_tool_use("Write", &serde_json::json!({}), &format!("tc-{i}"))
+                .await
+                .unwrap();
+        }
+
+        let content = std::fs::read_to_string(&flag_file).unwrap_or_default();
+        let line_count = content.lines().count();
+        assert_eq!(line_count, 1, "once:true hook ran {line_count} times; expected exactly 1");
+
+        let _ = std::fs::remove_file(&flag_file);
+    }
+
+    #[tokio::test]
+    async fn once_true_hook_second_call_produces_empty_result() {
+        // Verify that once:true does not add to results on subsequent calls.
+        let mut settings = HooksSettings::default();
+        settings.insert(
+            "PreToolUse".to_string(),
+            vec![HookMatcher {
+                matcher: None,
+                hooks: vec![HookCommand::Command {
+                    command: "echo once".to_string(),
+                    if_condition: None,
+                    shell: None,
+                    timeout: Some(5),
+                    status_message: None,
+                    once: Some(true),
+                    async_: None,
+                    async_rewake: None,
+                }],
+            }],
+        );
+
+        let runner = HookRunner::new(HookExecutor::new("session-once", "/tmp"), settings);
+
+        let _first = runner
+            .run_pre_tool_use("Write", &serde_json::json!({}), "tc-1")
+            .await
+            .unwrap();
+
+        let second = runner
+            .run_pre_tool_use("Write", &serde_json::json!({}), "tc-2")
+            .await
+            .unwrap();
+
+        // Second call should produce an empty aggregated result (no hooks ran).
+        assert!(
+            second.system_messages.is_empty(),
+            "second call after once:true should produce no results"
+        );
+        assert!(!second.is_blocked());
+    }
+
+    #[tokio::test]
+    async fn once_true_hook_different_commands_each_run_once() {
+        // Two separate hooks with once:true should each run exactly once.
+        let tmp = std::env::temp_dir();
+        let flag_a = tmp.join(format!("once_a_{}.txt", ulid::Ulid::new()));
+        let flag_b = tmp.join(format!("once_b_{}.txt", ulid::Ulid::new()));
+        let path_a = flag_a.to_str().unwrap().to_string();
+        let path_b = flag_b.to_str().unwrap().to_string();
+
+        let mut settings = HooksSettings::default();
+        settings.insert(
+            "PreToolUse".to_string(),
+            vec![HookMatcher {
+                matcher: None,
+                hooks: vec![
+                    HookCommand::Command {
+                        command: format!("touch {path_a}"),
+                        if_condition: None,
+                        shell: None,
+                        timeout: Some(5),
+                        status_message: None,
+                        once: Some(true),
+                        async_: None,
+                        async_rewake: None,
+                    },
+                    HookCommand::Command {
+                        command: format!("touch {path_b}"),
+                        if_condition: None,
+                        shell: None,
+                        timeout: Some(5),
+                        status_message: None,
+                        once: Some(true),
+                        async_: None,
+                        async_rewake: None,
+                    },
+                ],
+            }],
+        );
+
+        let executor = HookExecutor::new("test-session", tmp.to_str().unwrap());
+        let runner = HookRunner::new(executor, settings);
+
+        // Run twice; each hook should only fire on first run.
+        for i in 0..2u32 {
+            runner
+                .run_pre_tool_use("Write", &serde_json::json!({}), &format!("tc-{i}"))
+                .await
+                .unwrap();
+        }
+
+        assert!(flag_a.exists(), "hook A must have executed");
+        assert!(flag_b.exists(), "hook B must have executed");
+
+        let _ = std::fs::remove_file(&flag_a);
+        let _ = std::fs::remove_file(&flag_b);
+    }
+
     #[tokio::test]
     async fn session_end_uses_tight_default_timeout_and_executes() {
         // SessionEnd hooks must complete quickly AND actually run.

@@ -622,4 +622,90 @@ mod tests {
         assert!(msg.contains("Bash"));
         assert!(msg.contains("user settings"));
     }
+
+    // ── Plan mode whitelist: exhaustive coverage of all 6 allowed tools ──────
+
+    #[test]
+    fn plan_mode_allows_find() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        assert!(check_tool_permission(&ctx, "find").is_allow());
+    }
+
+    #[test]
+    fn plan_mode_allows_ls() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        assert!(check_tool_permission(&ctx, "ls").is_allow());
+    }
+
+    #[test]
+    fn plan_mode_allows_web_fetch() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        assert!(check_tool_permission(&ctx, "web_fetch").is_allow());
+    }
+
+    #[test]
+    fn plan_mode_allows_web_search() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        assert!(check_tool_permission(&ctx, "web_search").is_allow());
+    }
+
+    #[test]
+    fn plan_mode_denies_notebook_edit() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        assert!(check_tool_permission(&ctx, "notebook_edit").is_deny());
+    }
+
+    #[test]
+    fn plan_mode_denies_glob() {
+        // glob is not in the read-only whitelist even though it is read-only in spirit.
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+        assert!(check_tool_permission(&ctx, "glob").is_deny());
+    }
+
+    #[test]
+    fn plan_mode_whitelist_exhaustive() {
+        // All 6 whitelisted tools must be allowed; everything else must be denied.
+        let allowed = ["read", "grep", "find", "ls", "web_fetch", "web_search"];
+        let denied = ["bash", "write", "edit", "glob", "notebook_edit", "mcp__server__tool"];
+
+        let mut ctx = ToolPermissionContext::default();
+        ctx.mode = PermissionMode::Plan;
+
+        for tool in &allowed {
+            assert!(
+                check_tool_permission(&ctx, tool).is_allow(),
+                "expected {tool} to be allowed in Plan mode"
+            );
+        }
+        for tool in &denied {
+            assert!(
+                check_tool_permission(&ctx, tool).is_deny(),
+                "expected {tool} to be denied in Plan mode"
+            );
+        }
+    }
+
+    #[test]
+    fn permission_rule_source_display() {
+        assert_eq!(PermissionRuleSource::UserSettings.to_string(), "user settings");
+        assert_eq!(PermissionRuleSource::ProjectSettings.to_string(), "project settings");
+        assert_eq!(PermissionRuleSource::CliArg.to_string(), "CLI argument");
+        assert_eq!(PermissionRuleSource::Session.to_string(), "session");
+    }
+
+    #[test]
+    fn mcp_wildcard_prefix_matches_any_subcommand() {
+        // "mcp__myserver" should match "mcp__myserver__anything"
+        let mut ctx = ToolPermissionContext::default();
+        ctx.add_allow_rule(PermissionRuleSource::Session, "mcp__myserver".to_owned());
+        assert!(find_allow_rule_for_tool(&ctx, "mcp__myserver__read").is_some());
+        assert!(find_allow_rule_for_tool(&ctx, "mcp__myserver__write").is_some());
+        assert!(find_allow_rule_for_tool(&ctx, "mcp__other__read").is_none());
+    }
 }
