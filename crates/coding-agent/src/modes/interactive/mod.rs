@@ -87,6 +87,10 @@ pub enum MessageRole {
     User,
     Assistant,
     System,
+    /// A tool invocation — pending while `pending == true`.
+    Tool { name: String, pending: bool, success: bool },
+    /// A fatal agent error shown inline.
+    Error,
 }
 
 impl InteractiveMode {
@@ -183,6 +187,42 @@ impl InteractiveMode {
                             let cost =
                                 ai::model_pricing::calculate_usd_cost(&usage, &model, is_fast);
                             self.session_cost_usd += cost.total;
+                        }
+                        Ok(AgentDelta::ToolStart { name, args_preview }) => {
+                            let content = if args_preview.is_empty() {
+                                name.clone()
+                            } else {
+                                format!("{name}({args_preview})")
+                            };
+                            self.messages.push(ChatMessage {
+                                role: MessageRole::Tool {
+                                    name,
+                                    pending: true,
+                                    success: false,
+                                },
+                                content,
+                            });
+                        }
+                        Ok(AgentDelta::ToolEnd { name, success, output_preview }) => {
+                            let pos = self.messages.iter().rposition(|m| {
+                                matches!(&m.role, MessageRole::Tool { name: n, pending: true, .. } if n == &name)
+                            });
+                            if let Some(idx) = pos {
+                                if !output_preview.is_empty() {
+                                    let existing = self.messages[idx].content.clone();
+                                    self.messages[idx].content =
+                                        format!("{existing} · {}", output_preview.chars().take(80).collect::<String>());
+                                }
+                                self.messages[idx].role =
+                                    MessageRole::Tool { name, pending: false, success };
+                            }
+                        }
+                        Ok(AgentDelta::Error(err)) => {
+                            self.is_thinking = false;
+                            self.messages.push(ChatMessage {
+                                role: MessageRole::Error,
+                                content: err,
+                            });
                         }
                         Err(mpsc::error::TryRecvError::Empty) => break,
                         Err(mpsc::error::TryRecvError::Disconnected) => {
@@ -361,10 +401,18 @@ impl InteractiveMode {
     /// First content line: `  ❯ {text}` (user) or `  ◆ {text}` (assistant).
     /// Subsequent lines: indented by 4 spaces to align under the text.
     fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
-        let (indicator, style) = match msg.role {
+        let (indicator, style) = match &msg.role {
             MessageRole::User => ("❯", Style::default().fg(Color::Cyan)),
             MessageRole::Assistant => ("◆", Style::default().fg(Color::Green)),
             MessageRole::System => ("◆", Style::default().fg(Color::Yellow)),
+            MessageRole::Tool { pending: true, .. } => {
+                ("⏺", Style::default().fg(Color::Yellow))
+            }
+            MessageRole::Tool { success: true, .. } => {
+                ("✓", Style::default().fg(Color::DarkGray))
+            }
+            MessageRole::Tool { .. } => ("✘", Style::default().fg(Color::Red)),
+            MessageRole::Error => ("✘", Style::default().fg(Color::Red)),
         };
         let prefix = format!("  {indicator} ");
         let indent = "    ".to_string(); // 4 spaces — matches prefix display width
@@ -477,19 +525,50 @@ impl InteractiveMode {
         f.render_widget(Paragraph::new(vec![header_line]), chunks[0]);
 
         // ── Messages ──────────────────────────────────────────────────────
-        let message_lines: Vec<Line> = self
+        let mut message_lines: Vec<Line> = self
             .messages
             .iter()
             .flat_map(|m| Self::message_to_lines(m))
             .collect();
+
+        // Empty state: welcome prompt when no conversation has started.
+        if message_lines.is_empty() && !self.is_thinking {
+            message_lines = vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  ◆ ", Style::default().fg(Color::Green)),
+                    Span::styled(
+                        "What can I help you with?",
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]),
+            ];
+        }
+
+        let total_lines = Self::total_content_lines(&self.messages, width);
         let messages_widget = Paragraph::new(message_lines)
             .wrap(Wrap { trim: false })
             .scroll((self.scroll_top, 0));
         f.render_widget(messages_widget, chunks[1]);
 
-        // ── Divider ───────────────────────────────────────────────────────
-        let divider_line =
-            Line::from(Span::styled("─".repeat(width as usize), Style::default().fg(Color::DarkGray)));
+        // ── Divider — with scroll indicator when content overflows ────────
+        let divider_str = if !self.is_sticky
+            && total_lines > viewport_height
+            && self.scroll_top < total_lines.saturating_sub(viewport_height)
+        {
+            let remaining = total_lines
+                .saturating_sub(viewport_height)
+                .saturating_sub(self.scroll_top);
+            let suffix = format!(" ↓{remaining} ");
+            let dash_count = (width as usize).saturating_sub(suffix.len());
+            format!("{}{}", "─".repeat(dash_count), suffix)
+        } else {
+            "─".repeat(width as usize)
+        };
+        let divider_line = Line::from(Span::styled(
+            divider_str,
+            Style::default().fg(Color::DarkGray),
+        ));
         f.render_widget(Paragraph::new(vec![divider_line]), chunks[2]);
 
         // ── Input / spinner ───────────────────────────────────────────────

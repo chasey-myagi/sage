@@ -22,6 +22,12 @@ pub enum AgentDelta {
     Text(String),
     /// Token usage snapshot after a turn completes.
     TurnUsage { usage: Usage, model: String, is_fast: bool },
+    /// A tool call has started.
+    ToolStart { name: String, args_preview: String },
+    /// A tool call has completed.
+    ToolEnd { name: String, success: bool, output_preview: String },
+    /// A fatal agent error.
+    Error(String),
 }
 
 // ── Registry-backed LLM provider adapter ────────────────────────────────────
@@ -166,6 +172,16 @@ fn create_default_tools(backend: Arc<LocalBackend>) -> Vec<Arc<dyn agent_core::t
 
 // ── Public entry point ───────────────────────────────────────────────────────
 
+/// Extract a short human-readable summary of tool args for display in the TUI.
+fn args_to_preview(args: &serde_json::Value) -> String {
+    for key in &["command", "file_path", "pattern", "path"] {
+        if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
+            return v.chars().take(80).collect();
+        }
+    }
+    args.to_string().chars().take(80).collect()
+}
+
 /// Run an agent session, sending [`AgentDelta`] events through `tx` instead of stdout.
 ///
 /// Drops `tx` when the agent finishes so the receiver knows the stream ended.
@@ -210,6 +226,33 @@ pub async fn run_agent_session_to_channel(
                     model: message.model.clone(),
                     is_fast,
                 });
+            }
+            AgentEvent::ToolExecutionStart { tool_name, args, .. } => {
+                let _ = tx.send(AgentDelta::ToolStart {
+                    name: tool_name.clone(),
+                    args_preview: args_to_preview(&args),
+                });
+            }
+            AgentEvent::ToolExecutionEnd { tool_name, result, is_error, .. } => {
+                use agent_core::types::Content;
+                let text = result.content.iter().find_map(|c| {
+                    if let Content::Text { text } = c { Some(text.as_str()) } else { None }
+                }).unwrap_or("");
+                let first_nonempty = text
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("")
+                    .chars()
+                    .take(100)
+                    .collect::<String>();
+                let _ = tx.send(AgentDelta::ToolEnd {
+                    name: tool_name.clone(),
+                    success: !is_error,
+                    output_preview: first_nonempty,
+                });
+            }
+            AgentEvent::RunError { error } => {
+                let _ = tx.send(AgentDelta::Error(error.clone()));
             }
             _ => {}
         }
