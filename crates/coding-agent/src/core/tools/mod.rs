@@ -21,6 +21,8 @@ pub mod read;
 pub mod render_utils;
 pub mod tool_definition_wrapper;
 pub mod truncate;
+pub mod web_fetch;
+pub mod web_search;
 pub mod write;
 
 use std::collections::HashMap;
@@ -41,6 +43,8 @@ pub enum ToolName {
     Grep,
     Find,
     Ls,
+    WebFetch,
+    WebSearch,
 }
 
 impl std::str::FromStr for ToolName {
@@ -54,6 +58,8 @@ impl std::str::FromStr for ToolName {
             "grep" => Ok(ToolName::Grep),
             "find" => Ok(ToolName::Find),
             "ls" => Ok(ToolName::Ls),
+            "web_fetch" => Ok(ToolName::WebFetch),
+            "web_search" => Ok(ToolName::WebSearch),
             other => Err(format!("unknown tool: {other}")),
         }
     }
@@ -69,13 +75,17 @@ impl std::fmt::Display for ToolName {
             ToolName::Grep => "grep",
             ToolName::Find => "find",
             ToolName::Ls => "ls",
+            ToolName::WebFetch => "web_fetch",
+            ToolName::WebSearch => "web_search",
         };
         write!(f, "{s}")
     }
 }
 
 /// All valid tool name strings.
-pub const ALL_TOOL_NAMES: &[&str] = &["read", "bash", "edit", "write", "grep", "find", "ls"];
+pub const ALL_TOOL_NAMES: &[&str] = &[
+    "read", "bash", "edit", "write", "grep", "find", "ls", "web_fetch", "web_search",
+];
 
 /// Default tools used when no `--tools` flag is provided.
 pub const DEFAULT_TOOL_NAMES: &[&str] = &["read", "bash", "edit", "write"];
@@ -313,6 +323,59 @@ fn ls_descriptor() -> ToolDescriptor {
 // Public API
 // ============================================================================
 
+fn web_fetch_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        name: ToolName::WebFetch,
+        description: "Fetch content from a URL and return it as plain text. \
+                      HTML pages are converted to readable text. \
+                      Use this to read documentation, web pages, or any URL-accessible content.",
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to fetch content from"
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Optional instruction for how to process the fetched content"
+                }
+            },
+            "required": ["url"]
+        }),
+        mutating: false,
+    }
+}
+
+fn web_search_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        name: ToolName::WebSearch,
+        description: "Search the web for current information. Returns a list of relevant URLs and titles. \
+                      Use this when you need up-to-date information that may not be in your training data.",
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query to use"
+                },
+                "allowed_domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Only include search results from these domains (optional)"
+                },
+                "blocked_domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Never include search results from these domains (optional)"
+                }
+            },
+            "required": ["query"]
+        }),
+        mutating: false,
+    }
+}
+
 /// All built-in tool descriptors, mirroring `allTools` from `tools/index.ts`.
 ///
 /// Descriptions and parameter schemas are exact translations from pi-mono.
@@ -325,6 +388,8 @@ pub fn all_tool_descriptors() -> HashMap<ToolName, ToolDescriptor> {
         grep_descriptor(),
         find_descriptor(),
         ls_descriptor(),
+        web_fetch_descriptor(),
+        web_search_descriptor(),
     ];
     tools.into_iter().map(|t| (t.name.clone(), t)).collect()
 }
@@ -351,6 +416,8 @@ pub fn all_llm_tools() -> Vec<LlmTool> {
         ToolName::Grep,
         ToolName::Find,
         ToolName::Ls,
+        ToolName::WebFetch,
+        ToolName::WebSearch,
     ])
 }
 
@@ -425,7 +492,7 @@ mod tests {
     #[test]
     fn all_tool_descriptors_count() {
         let descs = all_tool_descriptors();
-        assert_eq!(descs.len(), ALL_TOOL_NAMES.len());
+        assert_eq!(descs.len(), ALL_TOOL_NAMES.len(), "descriptor count must match ALL_TOOL_NAMES");
     }
 
     #[test]
@@ -707,9 +774,9 @@ mod tests {
     }
 
     #[test]
-    fn all_llm_tools_returns_seven() {
+    fn all_llm_tools_returns_nine() {
         let tools = all_llm_tools();
-        assert_eq!(tools.len(), 7);
+        assert_eq!(tools.len(), 9);
     }
 
     #[test]
@@ -1006,10 +1073,10 @@ mod tests {
         assert_eq!(tools.len(), 3);
     }
 
-    /// ALL_TOOL_NAMES constant contains all 7 tool names
+    /// ALL_TOOL_NAMES constant contains all 9 tool names
     #[test]
     fn all_tool_names_constant_has_all_tools() {
-        assert_eq!(ALL_TOOL_NAMES.len(), 7);
+        assert_eq!(ALL_TOOL_NAMES.len(), 9);
         assert!(ALL_TOOL_NAMES.contains(&"read"));
         assert!(ALL_TOOL_NAMES.contains(&"bash"));
         assert!(ALL_TOOL_NAMES.contains(&"edit"));
@@ -1017,6 +1084,8 @@ mod tests {
         assert!(ALL_TOOL_NAMES.contains(&"grep"));
         assert!(ALL_TOOL_NAMES.contains(&"find"));
         assert!(ALL_TOOL_NAMES.contains(&"ls"));
+        assert!(ALL_TOOL_NAMES.contains(&"web_fetch"));
+        assert!(ALL_TOOL_NAMES.contains(&"web_search"));
     }
 
     /// DEFAULT_TOOL_NAMES only includes the 4 coding tools
@@ -1066,6 +1135,8 @@ mod tests {
         assert_eq!(ToolName::Grep.to_string(), "grep");
         assert_eq!(ToolName::Find.to_string(), "find");
         assert_eq!(ToolName::Ls.to_string(), "ls");
+        assert_eq!(ToolName::WebFetch.to_string(), "web_fetch");
+        assert_eq!(ToolName::WebSearch.to_string(), "web_search");
     }
 
     /// LlmTool parameters from to_llm_tool have correct type field

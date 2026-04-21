@@ -1,0 +1,131 @@
+// MCP Stdio transport — spawns a child process and communicates over stdin/stdout.
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::process::{ChildStdin, ChildStdout};
+
+use super::types::{JsonRpcRequest, JsonRpcResponse};
+
+#[derive(Debug, thiserror::Error)]
+pub enum TransportError {
+    #[error("spawn failed: {0}")]
+    Spawn(#[from] std::io::Error),
+    #[error("serialization error: {0}")]
+    Serialize(#[from] serde_json::Error),
+    #[error("connection closed")]
+    Closed,
+    #[error("RPC error {code}: {message}")]
+    Rpc { code: i64, message: String },
+    #[error("response id mismatch: expected {expected}, got {got}")]
+    IdMismatch { expected: u64, got: String },
+    #[error("timeout")]
+    Timeout,
+}
+
+pub struct StdioTransport {
+    stdin: BufWriter<ChildStdin>,
+    stdout: BufReader<ChildStdout>,
+    // child kept alive for the lifetime of this transport.
+    _child: tokio::process::Child,
+    next_id: Arc<AtomicU64>,
+}
+
+impl StdioTransport {
+    pub async fn spawn(command: &str, args: &[String]) -> Result<Self, TransportError> {
+        let mut child = tokio::process::Command::new(command)
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+
+        let stdin = child.stdin.take().expect("stdin must be piped");
+        let stdout = child.stdout.take().expect("stdout must be piped");
+
+        Ok(Self {
+            stdin: BufWriter::new(stdin),
+            stdout: BufReader::new(stdout),
+            _child: child,
+            next_id: Arc::new(AtomicU64::new(1)),
+        })
+    }
+
+    /// Allocate the next request id.
+    pub fn next_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Send a JSON-RPC request and return the raw result value.
+    pub async fn send_request(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, TransportError> {
+        let id = self.next_id();
+        let request = JsonRpcRequest::new(id, method, params);
+        let mut line = serde_json::to_string(&request)?;
+        line.push('\n');
+
+        self.stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|_| TransportError::Closed)?;
+        self.stdin.flush().await.map_err(|_| TransportError::Closed)?;
+
+        self.read_response(id).await
+    }
+
+    async fn read_response(&mut self, expected_id: u64) -> Result<serde_json::Value, TransportError> {
+        let mut line = String::new();
+        let n = self
+            .stdout
+            .read_line(&mut line)
+            .await
+            .map_err(|_| TransportError::Closed)?;
+        if n == 0 {
+            return Err(TransportError::Closed);
+        }
+
+        let response: JsonRpcResponse = serde_json::from_str(line.trim())?;
+
+        // Validate id matches.
+        let got_id = response.id.as_u64().unwrap_or(u64::MAX);
+        if got_id != expected_id {
+            return Err(TransportError::IdMismatch {
+                expected: expected_id,
+                got: response.id.to_string(),
+            });
+        }
+
+        if let Some(error) = response.error {
+            return Err(TransportError::Rpc {
+                code: error.code,
+                message: error.message,
+            });
+        }
+
+        response.result.ok_or(TransportError::Rpc {
+            code: -32603,
+            message: "response has no result".to_string(),
+        })
+    }
+}
+
+// Expose error type publicly for consumers.
+pub use TransportError as McpTransportError;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_id_increments() {
+        let counter = Arc::new(AtomicU64::new(1));
+        let a = counter.fetch_add(1, Ordering::SeqCst);
+        let b = counter.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(a, 1);
+        assert_eq!(b, 2);
+    }
+}
