@@ -84,6 +84,8 @@ pub struct InteractiveMode {
     last_terminal_width: u16,
     /// Tick counter for spinner animation (incremented every ~50 ms).
     tick: u64,
+    /// Name of the tool currently executing, cleared when done.
+    current_tool: Option<String>,
     // ── Approval channel ──────────────────────────────────────────────────
     approval_tx: mpsc::UnboundedSender<ApprovalRequest>,
     approval_rx: mpsc::UnboundedReceiver<ApprovalRequest>,
@@ -142,6 +144,7 @@ impl InteractiveMode {
             last_viewport_height: 0,
             last_terminal_width: 80,
             tick: 0,
+            current_tool: None,
             approval_tx,
             approval_rx,
             pending_approval: None,
@@ -238,6 +241,7 @@ impl InteractiveMode {
                             self.session_cost_usd += cost.total;
                         }
                         Ok(AgentDelta::ToolStart { name, args_preview }) => {
+                            self.current_tool = Some(name.clone());
                             let content = if args_preview.is_empty() {
                                 name.clone()
                             } else {
@@ -274,9 +278,11 @@ impl InteractiveMode {
                                     success,
                                 };
                             }
+                            self.current_tool = None;
                         }
                         Ok(AgentDelta::Error(err)) => {
                             self.is_thinking = false;
+                            self.current_tool = None;
                             self.messages.push(ChatMessage {
                                 role: MessageRole::Error,
                                 content: err,
@@ -294,6 +300,7 @@ impl InteractiveMode {
                 self.agent_rx = None;
                 self.agent_handle = None;
                 self.is_thinking = false;
+                self.current_tool = None;
             }
 
             // Sticky scroll: pin to bottom as new content arrives.
@@ -951,12 +958,25 @@ impl InteractiveMode {
         );
         let left_len = header_left.width() as u16;
         let stats_len = stats.width() as u16;
+        let (tool_span, tool_len) = if let Some(name) = &self.current_tool {
+            let label = format!("⚙ {name}  ");
+            let len = label.width() as u16;
+            (
+                Some(Span::styled(
+                    label,
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Warning)),
+                )),
+                len,
+            )
+        } else {
+            (None, 0u16)
+        };
         let header_line = if self.is_thinking {
             let frame = SPINNER[(self.tick as usize) % SPINNER.len()];
             let thinking_text = format!("{frame} Thinking…  ");
             let thinking_len = thinking_text.width() as u16;
-            let gap = width.saturating_sub(left_len + thinking_len + stats_len);
-            Line::from(vec![
+            let gap = width.saturating_sub(left_len + thinking_len + tool_len + stats_len);
+            let mut spans = vec![
                 Span::styled(
                     "  sage  ".to_string(),
                     Style::default()
@@ -972,14 +992,18 @@ impl InteractiveMode {
                     thinking_text,
                     Style::default().fg(theme.ratatui_fg(ThemeColor::Accent)),
                 ),
-                Span::styled(
-                    stats,
-                    Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
-                ),
-            ])
+            ];
+            if let Some(ts) = tool_span {
+                spans.push(ts);
+            }
+            spans.push(Span::styled(
+                stats,
+                Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+            ));
+            Line::from(spans)
         } else {
-            let gap = width.saturating_sub(left_len + stats_len);
-            Line::from(vec![
+            let gap = width.saturating_sub(left_len + tool_len + stats_len);
+            let mut spans = vec![
                 Span::styled(
                     "  sage  ".to_string(),
                     Style::default()
@@ -991,11 +1015,15 @@ impl InteractiveMode {
                     Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
                 ),
                 Span::raw(" ".repeat(gap as usize)),
-                Span::styled(
-                    stats,
-                    Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
-                ),
-            ])
+            ];
+            if let Some(ts) = tool_span {
+                spans.push(ts);
+            }
+            spans.push(Span::styled(
+                stats,
+                Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+            ));
+            Line::from(spans)
         };
         f.render_widget(Paragraph::new(vec![header_line]), chunks[0]);
 
