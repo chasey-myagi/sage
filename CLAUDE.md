@@ -87,40 +87,17 @@ cargo run -p sage-cli -- serve --runtime localhost:50070
 
 ## 发布 & 本地更新流程
 
-### 发布新版本
+详见 [`docs/release-process.md`](docs/release-process.md)，包含完整流程、已知坑和检查清单。
 
-1. 在 `dev` 分支开发、提交
-2. 升级 `Cargo.toml` workspace 版本号（`version = "x.y.z"`）
-3. 合并到 `main`：
-   ```bash
-   git checkout main && git merge dev && git push origin main
-   ```
-4. 打 tag 触发 GitHub Actions release workflow：
-   ```bash
-   git tag vx.y.z && git push origin vx.y.z
-   ```
-5. Actions 自动完成：4 平台编译 → 创建 GitHub Release → 更新 `chasey-myagi/homebrew-tap` Formula
-
-### 本地更新 Homebrew 安装
-
-等 Actions 跑完（约 5-10 分钟，可在 GitHub Actions 页面确认）后：
+**核心原则**：一个版本号 = 一次构建 = 一个 SHA256。**绝不 force-push 已发布的 tag。**
 
 ```bash
+# 标准发版三步
+git checkout main && git merge dev && git push origin main
+git tag vx.y.z && git push origin vx.y.z
+# 等 Actions 全绿后：
 brew upgrade chasey-myagi/tap/sage
 ```
-
-### 本地测试 dev build（不走 Homebrew）
-
-```bash
-cargo run -p coding-agent          # TUI 交互模式
-echo "hello" | cargo run -p coding-agent -- --print  # print 模式
-```
-
-### 注意事项
-
-- tag 必须与 `Cargo.toml` 版本号一致（`v0.1.4` ↔ `version = "0.1.4"`），否则 `sage --version` 对不上
-- Homebrew formula 的 `version` 字段由 release workflow 的 sed 自动更新，不要手动改
-- 已有 tag 不能复用，版本号只能往前走
 
 ## Agent 模型分工（多 agent 并行开发）
 
