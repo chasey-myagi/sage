@@ -10,6 +10,9 @@ pub mod components;
 pub mod theme;
 
 use std::io;
+use std::sync::OnceLock;
+
+use regex::Regex;
 
 use crossterm::{
     event::{
@@ -81,6 +84,15 @@ pub struct InteractiveMode {
 pub struct ChatMessage {
     pub role: MessageRole,
     pub content: String,
+    /// `@path` file references successfully expanded into this message.
+    pub at_refs: Vec<AtRef>,
+}
+
+/// An `@path` file reference that was expanded before sending to the LLM.
+#[derive(Debug, Clone)]
+pub struct AtRef {
+    pub path: String,
+    pub line_count: usize,
 }
 
 /// Speaker for a chat message.
@@ -134,9 +146,11 @@ impl InteractiveMode {
     /// Sets up the terminal and renders the initial frame.
     pub async fn init(&mut self) -> anyhow::Result<()> {
         if let Some(msg) = &self.options.initial_message.clone() {
+            let (_, at_refs, _) = Self::expand_at_refs(msg);
             self.messages.push(ChatMessage {
                 role: MessageRole::User,
                 content: msg.clone(),
+                at_refs,
             });
         }
         Ok(())
@@ -156,15 +170,25 @@ impl InteractiveMode {
         if let Some(msg) = self.options.initial_message.clone()
             && !msg.is_empty()
         {
+            let (expanded, at_refs, warnings) = Self::expand_at_refs(&msg);
             self.messages.push(ChatMessage {
                 role: MessageRole::User,
                 content: msg.clone(),
+                at_refs,
             });
+            for warn in warnings {
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: warn,
+                    at_refs: Vec::new(),
+                });
+            }
             self.messages.push(ChatMessage {
                 role: MessageRole::Assistant,
                 content: String::new(),
+                at_refs: Vec::new(),
             });
-            self.spawn_agent(msg);
+            self.spawn_agent(expanded);
         }
 
         let mut event_stream = EventStream::new();
@@ -183,6 +207,7 @@ impl InteractiveMode {
                                     self.messages.push(ChatMessage {
                                         role: MessageRole::Assistant,
                                         content: delta,
+                                        at_refs: Vec::new(),
                                     });
                                 }
                             }
@@ -211,6 +236,7 @@ impl InteractiveMode {
                                     success: false,
                                 },
                                 content,
+                                at_refs: Vec::new(),
                             });
                         }
                         Ok(AgentDelta::ToolEnd {
@@ -241,6 +267,7 @@ impl InteractiveMode {
                             self.messages.push(ChatMessage {
                                 role: MessageRole::Error,
                                 content: err,
+                                at_refs: Vec::new(),
                             });
                         }
                         Err(mpsc::error::TryRecvError::Empty) => break,
@@ -321,17 +348,28 @@ impl InteractiveMode {
                                 (KeyCode::Enter, _) if !self.is_thinking => {
                                     let input = std::mem::take(&mut self.input_buffer);
                                     if !input.trim().is_empty() {
+                                        let (expanded, at_refs, warnings) =
+                                            Self::expand_at_refs(&input);
                                         self.messages.push(ChatMessage {
                                             role: MessageRole::User,
                                             content: input.clone(),
+                                            at_refs,
                                         });
+                                        for warn in warnings {
+                                            self.messages.push(ChatMessage {
+                                                role: MessageRole::System,
+                                                content: warn,
+                                                at_refs: Vec::new(),
+                                            });
+                                        }
                                         self.messages.push(ChatMessage {
                                             role: MessageRole::Assistant,
                                             content: String::new(),
+                                            at_refs: Vec::new(),
                                         });
                                         // Re-enable sticky so new response is always visible.
                                         self.is_sticky = true;
-                                        self.spawn_agent(input);
+                                        self.spawn_agent(expanded);
                                     }
                                 }
                                 (KeyCode::Backspace, _) => {
@@ -399,6 +437,64 @@ impl InteractiveMode {
         });
     }
 
+    /// Scan `input` for `@path` tokens, read each file, and inject its content
+    /// as an XML block prefix before the user's message.
+    ///
+    /// Returns `(expanded_message, at_refs, warnings)`:
+    /// - `expanded_message`: the text to send to the LLM (with `<file>` blocks prepended)
+    /// - `at_refs`: successfully loaded references (for TUI annotation display)
+    /// - `warnings`: human-readable error strings for files that could not be read
+    fn expand_at_refs(input: &str) -> (String, Vec<AtRef>, Vec<String>) {
+        static RE: OnceLock<Regex> = OnceLock::new();
+        let re = RE.get_or_init(|| Regex::new(r"@(\S+)").unwrap());
+
+        const MAX_FILE_BYTES: usize = 100 * 1024;
+        const MAX_TRUNCATE_LINES: usize = 200;
+
+        let mut at_refs: Vec<AtRef> = Vec::new();
+        let mut warnings: Vec<String> = Vec::new();
+        let mut file_blocks = String::new();
+        let mut seen = std::collections::HashSet::new();
+
+        for cap in re.captures_iter(input) {
+            let path = cap[1].to_string();
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    let line_count = content.lines().count();
+                    let file_content = if content.len() > MAX_FILE_BYTES {
+                        let head: Vec<&str> =
+                            content.lines().take(MAX_TRUNCATE_LINES).collect();
+                        format!(
+                            "{}\n[... truncated: showing first {} of {} lines]",
+                            head.join("\n"),
+                            MAX_TRUNCATE_LINES,
+                            line_count
+                        )
+                    } else {
+                        content.trim_end().to_string()
+                    };
+                    file_blocks
+                        .push_str(&format!("<file path=\"{path}\">\n{file_content}\n</file>\n"));
+                    at_refs.push(AtRef { path, line_count });
+                }
+                Err(e) => {
+                    warnings.push(format!("@{path}: {e}"));
+                }
+            }
+        }
+
+        let expanded = if file_blocks.is_empty() {
+            input.to_string()
+        } else {
+            format!("{file_blocks}{input}")
+        };
+
+        (expanded, at_refs, warnings)
+    }
+
     /// Stop the interactive mode (e.g., for startup benchmarks).
     pub fn stop(&mut self) {
         self.running = false;
@@ -426,7 +522,8 @@ impl InteractiveMode {
                 }
             })
             .sum();
-        count.max(1)
+        // Each @ref annotation occupies one additional display row.
+        count.max(1) + msg.at_refs.len() as u16
     }
 
     fn total_content_lines(messages: &[ChatMessage], inner_width: u16) -> u16 {
@@ -440,6 +537,8 @@ impl InteractiveMode {
     ///
     /// First content line: `  ❯ {text}` (user) or `  ◆ {text}` (assistant).
     /// Subsequent lines: indented by 4 spaces to align under the text.
+    /// For user messages with `@path` refs, a `📎 path (N lines)` annotation
+    /// line is appended per successfully loaded file.
     fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
         let (indicator, style) = match &msg.role {
             MessageRole::User => ("❯", Style::default().fg(Color::Cyan)),
@@ -465,6 +564,15 @@ impl InteractiveMode {
 
         if lines.is_empty() {
             lines.push(Line::from(vec![Span::styled(prefix, style)]));
+        }
+
+        // Annotation lines for expanded @refs (user messages only).
+        for at_ref in &msg.at_refs {
+            let annotation = format!("📎 {} ({} lines)", at_ref.path, at_ref.line_count);
+            lines.push(Line::from(vec![
+                Span::raw(indent.clone()),
+                Span::styled(annotation, Style::default().fg(Color::DarkGray)),
+            ]));
         }
 
         lines
@@ -671,6 +779,7 @@ mod tests {
         let msg = ChatMessage {
             role: MessageRole::Assistant,
             content: "Hello world".to_string(),
+            at_refs: Vec::new(),
         };
         let cloned = msg.clone();
         assert_eq!(cloned.content, "Hello world");
@@ -697,6 +806,7 @@ mod tests {
         let msg = ChatMessage {
             role: MessageRole::User,
             content: "short".to_string(),
+            at_refs: Vec::new(),
         };
         // "  ❯ short" fits in 80 cols → 1 row
         assert_eq!(InteractiveMode::compute_message_height(&msg, 80), 1);
@@ -707,6 +817,7 @@ mod tests {
         let msg = ChatMessage {
             role: MessageRole::Assistant,
             content: "line one\nline two\nline three".to_string(),
+            at_refs: Vec::new(),
         };
         // 3 content lines → 3 display rows (each fits in wide terminal)
         assert_eq!(InteractiveMode::compute_message_height(&msg, 80), 3);
@@ -717,10 +828,25 @@ mod tests {
         let msg = ChatMessage {
             role: MessageRole::User,
             content: "a".repeat(100),
+            at_refs: Vec::new(),
         };
         // first_capacity=16, overflow=84 chars at full width 20: 1+ceil(84/20)=6
         let h = InteractiveMode::compute_message_height(&msg, 20);
         assert_eq!(h, 6);
+    }
+
+    #[test]
+    fn compute_message_height_with_at_refs() {
+        let msg = ChatMessage {
+            role: MessageRole::User,
+            content: "@Cargo.toml explain this".to_string(),
+            at_refs: vec![AtRef {
+                path: "Cargo.toml".to_string(),
+                line_count: 42,
+            }],
+        };
+        // 1 content line + 1 annotation = 2 rows
+        assert_eq!(InteractiveMode::compute_message_height(&msg, 80), 2);
     }
 
     #[test]
@@ -729,10 +855,12 @@ mod tests {
             ChatMessage {
                 role: MessageRole::User,
                 content: "hi".to_string(),
+                at_refs: Vec::new(),
             },
             ChatMessage {
                 role: MessageRole::Assistant,
                 content: "hello".to_string(),
+                at_refs: Vec::new(),
             },
         ];
         let total = InteractiveMode::total_content_lines(&msgs, 80);
@@ -744,6 +872,7 @@ mod tests {
         let msg = ChatMessage {
             role: MessageRole::User,
             content: String::new(),
+            at_refs: Vec::new(),
         };
         let lines = InteractiveMode::message_to_lines(&msg);
         assert_eq!(lines.len(), 1);
@@ -754,9 +883,29 @@ mod tests {
         let msg = ChatMessage {
             role: MessageRole::Assistant,
             content: "first\nsecond\nthird".to_string(),
+            at_refs: Vec::new(),
         };
         let lines = InteractiveMode::message_to_lines(&msg);
         assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn message_to_lines_with_at_refs_shows_annotations() {
+        let msg = ChatMessage {
+            role: MessageRole::User,
+            content: "@Cargo.toml explain this".to_string(),
+            at_refs: vec![AtRef {
+                path: "Cargo.toml".to_string(),
+                line_count: 42,
+            }],
+        };
+        let lines = InteractiveMode::message_to_lines(&msg);
+        // 1 content line + 1 annotation line
+        assert_eq!(lines.len(), 2);
+        let annotation_text: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(annotation_text.contains("📎"));
+        assert!(annotation_text.contains("Cargo.toml"));
+        assert!(annotation_text.contains("42 lines"));
     }
 
     #[test]
@@ -765,6 +914,7 @@ mod tests {
         mode.messages.push(ChatMessage {
             role: MessageRole::User,
             content: "hello".to_string(),
+            at_refs: Vec::new(),
         });
         mode.last_terminal_width = 80;
         mode.last_viewport_height = 24;
@@ -772,5 +922,55 @@ mod tests {
         mode.clamp_scroll();
         // 1 message = 1 line; max scroll = 1 - 24 = 0 (saturating)
         assert_eq!(mode.scroll_top, 0);
+    }
+
+    #[test]
+    fn expand_at_refs_no_refs() {
+        let (expanded, at_refs, warnings) =
+            InteractiveMode::expand_at_refs("hello world, no refs here");
+        assert_eq!(expanded, "hello world, no refs here");
+        assert!(at_refs.is_empty());
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn expand_at_refs_missing_file_produces_warning() {
+        let (expanded, at_refs, warnings) =
+            InteractiveMode::expand_at_refs("@nonexistent_file_xyz.txt explain");
+        // No file blocks — message unchanged
+        assert_eq!(expanded, "@nonexistent_file_xyz.txt explain");
+        assert!(at_refs.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("nonexistent_file_xyz.txt"));
+    }
+
+    #[test]
+    fn expand_at_refs_deduplicates_same_path() {
+        // Two @refs to the same nonexistent path should produce only one warning.
+        let (_, at_refs, warnings) =
+            InteractiveMode::expand_at_refs("@foo.txt and @foo.txt again");
+        assert!(at_refs.is_empty());
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn expand_at_refs_real_file() {
+        use std::io::Write as _;
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        writeln!(tmp, "line one").unwrap();
+        writeln!(tmp, "line two").unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+
+        let input = format!("@{path} summarize");
+        let (expanded, at_refs, warnings) = InteractiveMode::expand_at_refs(&input);
+
+        assert!(warnings.is_empty());
+        assert_eq!(at_refs.len(), 1);
+        assert_eq!(at_refs[0].path, path);
+        assert_eq!(at_refs[0].line_count, 2);
+        assert!(expanded.contains("<file path="));
+        assert!(expanded.contains("line one"));
+        assert!(expanded.contains("line two"));
+        assert!(expanded.ends_with(&input));
     }
 }
