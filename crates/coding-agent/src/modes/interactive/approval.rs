@@ -17,5 +17,9 @@ pub struct ApprovalRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalResponse {
     Allow,
+    /// Allow this tool for the rest of the session (no further prompts).
+    AllowAlways,
     Deny,
+    /// Deny this tool for the rest of the session (no further prompts).
+    DenyAlways,
 }

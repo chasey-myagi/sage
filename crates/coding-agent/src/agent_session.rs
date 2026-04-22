@@ -105,6 +105,8 @@ struct ToolAdapter {
     tool_schema: serde_json::Value,
     permission_ctx: Arc<Mutex<ToolPermissionContext>>,
     approval_tx: Option<tokio::sync::mpsc::UnboundedSender<ApprovalRequest>>,
+    /// Per-session rules set by AllowAlways/DenyAlways: key=tool_name, true=always allow.
+    session_rules: Arc<Mutex<std::collections::HashMap<String, bool>>>,
 }
 
 impl ToolAdapter {
@@ -112,6 +114,7 @@ impl ToolAdapter {
         tool: Box<dyn SimpleTool>,
         permission_ctx: Arc<Mutex<ToolPermissionContext>>,
         approval_tx: Option<tokio::sync::mpsc::UnboundedSender<ApprovalRequest>>,
+        session_rules: Arc<Mutex<std::collections::HashMap<String, bool>>>,
     ) -> Self {
         let description = tool.description().to_string();
         let schema = tool.parameters_schema();
@@ -121,6 +124,7 @@ impl ToolAdapter {
             tool_schema: schema,
             permission_ctx,
             approval_tx,
+            session_rules,
         }
     }
 }
@@ -166,71 +170,21 @@ impl agent_core::types::AgentTool for ToolAdapter {
                 };
             }
             PermissionDecision::Ask { message, .. } => {
-                if let Some(tx) = &self.approval_tx {
-                    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-                    let req = ApprovalRequest {
-                        tool_name: self.inner.name().to_string(),
-                        message: message.clone(),
-                        response_tx,
-                    };
-                    if tx.send(req).is_ok() {
-                        let result = tokio::time::timeout(
-                            std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS),
-                            response_rx,
-                        )
-                        .await;
-                        match result {
-                            Ok(Ok(ApprovalResponse::Allow)) => {}
-                            Ok(Ok(ApprovalResponse::Deny)) => {
-                                return AgentToolResult {
-                                    content: vec![Content::Text {
-                                        text: format!(
-                                            "The user denied permission to run '{}'. \
-                                             Do not retry — ask the user how they would like to proceed.",
-                                            self.inner.name()
-                                        ),
-                                    }],
-                                    details: serde_json::Value::Null,
-                                    is_error: true,
-                                };
-                            }
-                            Ok(Err(_)) => {
-                                // TUI closed before responding (sender dropped) — abort silently.
-                                return AgentToolResult {
-                                    content: vec![Content::Text {
-                                        text: format!(
-                                            "Approval for '{}' could not be obtained (session closed). \
-                                             Stop and wait for further instructions.",
-                                            self.inner.name()
-                                        ),
-                                    }],
-                                    details: serde_json::Value::Null,
-                                    is_error: true,
-                                };
-                            }
-                            Err(_) => {
-                                // Timeout elapsed — user did not respond in time.
-                                return AgentToolResult {
-                                    content: vec![Content::Text {
-                                        text: format!(
-                                            "Approval for '{}' timed out ({}m{}s). \
-                                             Stop and wait for further instructions.",
-                                            self.inner.name(),
-                                            APPROVAL_TIMEOUT_SECS / 60,
-                                            APPROVAL_TIMEOUT_SECS % 60,
-                                        ),
-                                    }],
-                                    details: serde_json::Value::Null,
-                                    is_error: true,
-                                };
-                            }
-                        }
-                    } else {
+                // Check session-level rules set by AllowAlways/DenyAlways first.
+                let session_rule = {
+                    let rules = self.session_rules.lock().unwrap();
+                    rules.get(self.inner.name()).copied()
+                };
+                match session_rule {
+                    Some(true) => {
+                        // AllowAlways was set earlier — skip dialog.
+                    }
+                    Some(false) => {
                         return AgentToolResult {
                             content: vec![Content::Text {
                                 text: format!(
-                                    "Tool '{}' requires user approval but the approval channel is closed. \
-                                     Stop and report this to the user.",
+                                    "The user denied permission to run '{}'. \
+                                     Do not retry — ask the user how they would like to proceed.",
                                     self.inner.name()
                                 ),
                             }],
@@ -238,20 +192,119 @@ impl agent_core::types::AgentTool for ToolAdapter {
                             is_error: true,
                         };
                     }
-                } else {
-                    return AgentToolResult {
-                        content: vec![Content::Text {
-                            text: format!(
-                                "Tool '{}' requires explicit user approval (ask rule matched). \
-                                 This session cannot prompt for approval. Do not attempt alternative tools \
-                                 or rephrased commands — stop and report to the user that approval is required.\n\
-                                 Rule: {message}",
-                                self.inner.name()
-                            ),
-                        }],
-                        details: serde_json::Value::Null,
-                        is_error: true,
-                    };
+                    None => {
+                        // No cached rule — ask the user via TUI.
+                        if let Some(tx) = &self.approval_tx {
+                            let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                            let req = ApprovalRequest {
+                                tool_name: self.inner.name().to_string(),
+                                message: message.clone(),
+                                response_tx,
+                            };
+                            if tx.send(req).is_ok() {
+                                let result = tokio::time::timeout(
+                                    std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS),
+                                    response_rx,
+                                )
+                                .await;
+                                match result {
+                                    Ok(Ok(ApprovalResponse::Allow)) => {}
+                                    Ok(Ok(ApprovalResponse::AllowAlways)) => {
+                                        self.session_rules
+                                            .lock()
+                                            .unwrap()
+                                            .insert(self.inner.name().to_string(), true);
+                                    }
+                                    Ok(Ok(ApprovalResponse::Deny)) => {
+                                        return AgentToolResult {
+                                            content: vec![Content::Text {
+                                                text: format!(
+                                                    "The user denied permission to run '{}'. \
+                                                     Do not retry — ask the user how they would like to proceed.",
+                                                    self.inner.name()
+                                                ),
+                                            }],
+                                            details: serde_json::Value::Null,
+                                            is_error: true,
+                                        };
+                                    }
+                                    Ok(Ok(ApprovalResponse::DenyAlways)) => {
+                                        self.session_rules
+                                            .lock()
+                                            .unwrap()
+                                            .insert(self.inner.name().to_string(), false);
+                                        return AgentToolResult {
+                                            content: vec![Content::Text {
+                                                text: format!(
+                                                    "The user denied permission to run '{}'. \
+                                                     Do not retry — ask the user how they would like to proceed.",
+                                                    self.inner.name()
+                                                ),
+                                            }],
+                                            details: serde_json::Value::Null,
+                                            is_error: true,
+                                        };
+                                    }
+                                    Ok(Err(_)) => {
+                                        // TUI closed before responding (sender dropped) — abort silently.
+                                        return AgentToolResult {
+                                            content: vec![Content::Text {
+                                                text: format!(
+                                                    "Approval for '{}' could not be obtained (session closed). \
+                                                     Stop and wait for further instructions.",
+                                                    self.inner.name()
+                                                ),
+                                            }],
+                                            details: serde_json::Value::Null,
+                                            is_error: true,
+                                        };
+                                    }
+                                    Err(_) => {
+                                        // Timeout elapsed — user did not respond in time.
+                                        return AgentToolResult {
+                                            content: vec![Content::Text {
+                                                text: format!(
+                                                    "Approval for '{}' timed out ({}m{}s). \
+                                                     Stop and wait for further instructions.",
+                                                    self.inner.name(),
+                                                    APPROVAL_TIMEOUT_SECS / 60,
+                                                    APPROVAL_TIMEOUT_SECS % 60,
+                                                ),
+                                            }],
+                                            details: serde_json::Value::Null,
+                                            is_error: true,
+                                        };
+                                    }
+                                }
+                            } else {
+                                return AgentToolResult {
+                                    content: vec![Content::Text {
+                                        text: format!(
+                                            "Tool '{}' requires user approval but the approval channel is closed. \
+                                             Stop and report this to the user.",
+                                            self.inner.name()
+                                        ),
+                                    }],
+                                    details: serde_json::Value::Null,
+                                    is_error: true,
+                                };
+                            }
+                        } else {
+                            return AgentToolResult {
+                                content: vec![Content::Text {
+                                    text: format!(
+                                        "Tool '{}' requires explicit user approval (ask rule matched). \
+                                         This session cannot prompt for approval. Do not attempt alternative tools \
+                                         or rephrased commands — stop and report to the user that approval is required.\n\
+                                         Rule: {message}",
+                                        self.inner.name()
+                                    ),
+                                }],
+                                details: serde_json::Value::Null,
+                                is_error: true,
+                            };
+                        }
+                    }
                 }
             }
             PermissionDecision::Allow { .. } => {}
@@ -617,6 +670,7 @@ fn create_default_tools(
     provider_id: Option<String>,
     api_key: Option<String>,
     approval_tx: Option<tokio::sync::mpsc::UnboundedSender<ApprovalRequest>>,
+    session_rules: Arc<Mutex<std::collections::HashMap<String, bool>>>,
 ) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
     let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> = [
         "bash",
@@ -637,7 +691,12 @@ fn create_default_tools(
         )
     })
     .map(|t| -> Arc<dyn agent_core::types::AgentTool> {
-        Arc::new(ToolAdapter::new(t, Arc::clone(&permission_ctx), approval_tx.clone()))
+        Arc::new(ToolAdapter::new(
+            t,
+            Arc::clone(&permission_ctx),
+            approval_tx.clone(),
+            Arc::clone(&session_rules),
+        ))
     })
     .collect();
 
@@ -657,6 +716,7 @@ fn create_default_tools(
         }),
         Arc::clone(&permission_ctx),
         None,
+        Arc::new(Mutex::new(std::collections::HashMap::new())),
     )));
 
     tools
@@ -685,6 +745,7 @@ async fn load_mcp_tools(
                                 Box::new(t),
                                 Arc::clone(&permission_ctx),
                                 None,
+                                Arc::new(Mutex::new(std::collections::HashMap::new())),
                             )));
                         }
                     }
@@ -782,6 +843,7 @@ pub async fn run_agent_session_to_channel(
     tx: tokio::sync::mpsc::UnboundedSender<AgentDelta>,
     permission_mode: String,
     approval_tx: Option<tokio::sync::mpsc::UnboundedSender<ApprovalRequest>>,
+    session_rules: Arc<Mutex<std::collections::HashMap<String, bool>>>,
 ) -> anyhow::Result<()> {
     if message.trim().is_empty() {
         return Ok(());
@@ -821,6 +883,7 @@ pub async fn run_agent_session_to_channel(
         provider_id_for_subagent,
         api_key_for_subagent,
         approval_tx,
+        session_rules,
     );
 
     // Load MCP tools from settings and append to the tool list.
@@ -963,6 +1026,7 @@ pub async fn spawn_subagent(
         provider_id_for_subagent,
         api_key_for_subagent,
         None,
+        Arc::new(Mutex::new(std::collections::HashMap::new())),
     );
 
     let name = agent_type.as_deref().unwrap_or("subagent").to_string();
@@ -1040,6 +1104,7 @@ pub async fn run_agent_session(
         provider_id_for_subagent,
         api_key_for_subagent,
         None,
+        Arc::new(Mutex::new(std::collections::HashMap::new())),
     );
 
     // 4b. Load MCP tools from settings and append to the tool list.

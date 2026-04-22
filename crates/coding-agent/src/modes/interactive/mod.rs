@@ -10,7 +10,9 @@ pub mod approval;
 pub mod components;
 pub mod theme;
 
+use std::collections::HashMap;
 use std::io;
+use std::sync::{Arc, Mutex};
 
 use crossterm::{
     event::{
@@ -83,6 +85,8 @@ pub struct InteractiveMode {
     approval_tx: mpsc::UnboundedSender<ApprovalRequest>,
     approval_rx: mpsc::UnboundedReceiver<ApprovalRequest>,
     pending_approval: Option<ApprovalRequest>,
+    /// Per-session tool rules: true=AllowAlways, false=DenyAlways.
+    session_rules: Arc<Mutex<HashMap<String, bool>>>,
     // ── Autocomplete (slash commands + @ file) ────────────────────────────
     completion_matches: Vec<(String, String)>, // (primary, hint)
     completion_selected: usize,
@@ -138,6 +142,7 @@ impl InteractiveMode {
             approval_tx,
             approval_rx,
             pending_approval: None,
+            session_rules: Arc::new(Mutex::new(HashMap::new())),
             completion_matches: Vec::new(),
             completion_selected: 0,
             agent_handle: None,
@@ -311,13 +316,17 @@ impl InteractiveMode {
                                         self.running = false;
                                         break;
                                     }
-                                    (KeyCode::Char('y'), _) | (KeyCode::Char('Y'), _) => {
+                                    (KeyCode::Char('y'), _) => {
                                         self.resolve_approval(ApprovalResponse::Allow);
                                     }
-                                    (KeyCode::Char('n'), _)
-                                    | (KeyCode::Char('N'), _)
-                                    | (KeyCode::Esc, _) => {
+                                    (KeyCode::Char('Y'), _) => {
+                                        self.resolve_approval(ApprovalResponse::AllowAlways);
+                                    }
+                                    (KeyCode::Char('n'), _) | (KeyCode::Esc, _) => {
                                         self.resolve_approval(ApprovalResponse::Deny);
+                                    }
+                                    (KeyCode::Char('N'), _) => {
+                                        self.resolve_approval(ApprovalResponse::DenyAlways);
                                     }
                                     _ => {}
                                 }
@@ -493,6 +502,7 @@ impl InteractiveMode {
         let model_id = self.model_id.clone();
         let error_tx = tx.clone();
         let approval_tx = self.approval_tx.clone();
+        let session_rules = Arc::clone(&self.session_rules);
 
         let handle = tokio::spawn(async move {
             if let Err(e) = crate::agent_session::run_agent_session_to_channel(
@@ -503,6 +513,7 @@ impl InteractiveMode {
                 tx,
                 "default".to_string(), // TODO(permission_mode): read from settings when implemented
                 Some(approval_tx),
+                session_rules,
             )
             .await
             {
@@ -1008,11 +1019,21 @@ impl InteractiveMode {
                 Line::from(""),
                 Line::from(vec![
                     Span::styled(
-                        "  [y] Allow  ",
+                        "  [y] Allow   ",
                         Style::default().fg(theme.ratatui_fg(ThemeColor::Success)),
                     ),
                     Span::styled(
-                        "[n] Deny",
+                        "[Y] Always",
+                        Style::default().fg(theme.ratatui_fg(ThemeColor::Success)),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled(
+                        "  [n] Deny    ",
+                        Style::default().fg(theme.ratatui_fg(ThemeColor::Error)),
+                    ),
+                    Span::styled(
+                        "[N] Never",
                         Style::default().fg(theme.ratatui_fg(ThemeColor::Error)),
                     ),
                 ]),
