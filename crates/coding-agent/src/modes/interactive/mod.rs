@@ -105,6 +105,8 @@ pub struct InteractiveMode {
     history_idx: Option<usize>,
     /// Draft snapshot saved when the user first presses ↑ to browse history.
     history_draft: String,
+    /// Current permission mode: "default" | "bypassPermissions" | "plan".
+    permission_mode: String,
 }
 
 /// A single chat turn in the history display.
@@ -177,6 +179,7 @@ impl InteractiveMode {
             history: Vec::new(),
             history_idx: None,
             history_draft: String::new(),
+            permission_mode: "default".to_string(),
         }
     }
 
@@ -553,29 +556,57 @@ impl InteractiveMode {
                                     self.history_idx = None;
                                     self.history_draft.clear();
                                     if !input.trim().is_empty() {
-                                        self.history.push(input.clone());
-                                        let (expanded, at_refs, warnings) =
-                                            Self::expand_at_refs(&input);
-                                        self.messages.push(ChatMessage {
-                                            role: MessageRole::User,
-                                            content: input.clone(),
-                                            at_refs,
-                                        });
-                                        for warn in warnings {
+                                        if let Some(rest) = input.trim().strip_prefix("/permissions") {
+                                            let sub = rest.trim();
+                                            let (new_mode, msg) = match sub {
+                                                "bypass" => (
+                                                    "bypassPermissions",
+                                                    "⚡ BYPASS mode — all tool approvals skipped".to_string(),
+                                                ),
+                                                "plan" => (
+                                                    "plan",
+                                                    "📋 PLAN mode — read-only tools only".to_string(),
+                                                ),
+                                                "default" | "" => (
+                                                    "default",
+                                                    "Permissions: default mode (Ask)".to_string(),
+                                                ),
+                                                other => (
+                                                    self.permission_mode.as_str(),
+                                                    format!("Unknown permission mode: \"{other}\". Use: default | bypass | plan"),
+                                                ),
+                                            };
+                                            self.permission_mode = new_mode.to_string();
                                             self.messages.push(ChatMessage {
                                                 role: MessageRole::System,
-                                                content: warn,
+                                                content: msg,
                                                 at_refs: Vec::new(),
                                             });
+                                            self.is_sticky = true;
+                                        } else {
+                                            self.history.push(input.clone());
+                                            let (expanded, at_refs, warnings) =
+                                                Self::expand_at_refs(&input);
+                                            self.messages.push(ChatMessage {
+                                                role: MessageRole::User,
+                                                content: input.clone(),
+                                                at_refs,
+                                            });
+                                            for warn in warnings {
+                                                self.messages.push(ChatMessage {
+                                                    role: MessageRole::System,
+                                                    content: warn,
+                                                    at_refs: Vec::new(),
+                                                });
+                                            }
+                                            self.messages.push(ChatMessage {
+                                                role: MessageRole::Assistant,
+                                                content: String::new(),
+                                                at_refs: Vec::new(),
+                                            });
+                                            self.is_sticky = true;
+                                            self.spawn_agent(expanded);
                                         }
-                                        self.messages.push(ChatMessage {
-                                            role: MessageRole::Assistant,
-                                            content: String::new(),
-                                            at_refs: Vec::new(),
-                                        });
-                                        // Re-enable sticky so new response is always visible.
-                                        self.is_sticky = true;
-                                        self.spawn_agent(expanded);
                                     }
                                 }
                                 (KeyCode::Backspace, _) => {
@@ -646,6 +677,7 @@ impl InteractiveMode {
 
         let provider_id = self.provider_id.clone();
         let model_id = self.model_id.clone();
+        let permission_mode = self.permission_mode.clone();
         let error_tx = tx.clone();
         let approval_tx = self.approval_tx.clone();
         let session_rules = Arc::clone(&self.session_rules);
@@ -657,7 +689,7 @@ impl InteractiveMode {
                 provider_id,
                 None,
                 tx,
-                "default".to_string(), // TODO(permission_mode): read from settings when implemented
+                permission_mode,
                 Some(approval_tx),
                 session_rules,
             )
@@ -1247,6 +1279,38 @@ impl InteractiveMode {
         );
         let left_len = header_left.width() as u16;
         let stats_len = stats.width() as u16;
+
+        // Permission mode badge (right of model label)
+        let (mode_badge_span, badge_len) = match self.permission_mode.as_str() {
+            "bypassPermissions" => {
+                let label = "  ⚡ BYPASS".to_string();
+                let len = label.width() as u16;
+                (
+                    Some(Span::styled(
+                        label,
+                        Style::default()
+                            .fg(theme.ratatui_fg(ThemeColor::Error))
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    len,
+                )
+            }
+            "plan" => {
+                let label = "  📋 PLAN".to_string();
+                let len = label.width() as u16;
+                (
+                    Some(Span::styled(
+                        label,
+                        Style::default()
+                            .fg(theme.ratatui_fg(ThemeColor::Accent))
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    len,
+                )
+            }
+            _ => (None, 0u16),
+        };
+
         let (tool_span, tool_len) = if let Some(name) = &self.current_tool {
             let label = format!("⚙ {name}  ");
             let len = label.width() as u16;
@@ -1264,7 +1328,7 @@ impl InteractiveMode {
             let frame = SPINNER[(self.tick as usize) % SPINNER.len()];
             let thinking_text = format!("{frame} Thinking…  ");
             let thinking_len = thinking_text.width() as u16;
-            let gap = width.saturating_sub(left_len + thinking_len + tool_len + stats_len);
+            let gap = width.saturating_sub(left_len + badge_len + thinking_len + tool_len + stats_len);
             let mut spans = vec![
                 Span::styled(
                     "  sage  ".to_string(),
@@ -1276,12 +1340,15 @@ impl InteractiveMode {
                     model_label.to_string(),
                     Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
                 ),
-                Span::raw(" ".repeat(gap as usize)),
-                Span::styled(
-                    thinking_text,
-                    Style::default().fg(theme.ratatui_fg(ThemeColor::Accent)),
-                ),
             ];
+            if let Some(bs) = mode_badge_span {
+                spans.push(bs);
+            }
+            spans.push(Span::raw(" ".repeat(gap as usize)));
+            spans.push(Span::styled(
+                thinking_text,
+                Style::default().fg(theme.ratatui_fg(ThemeColor::Accent)),
+            ));
             if let Some(ts) = tool_span {
                 spans.push(ts);
             }
@@ -1291,7 +1358,7 @@ impl InteractiveMode {
             ));
             Line::from(spans)
         } else {
-            let gap = width.saturating_sub(left_len + tool_len + stats_len);
+            let gap = width.saturating_sub(left_len + badge_len + tool_len + stats_len);
             let mut spans = vec![
                 Span::styled(
                     "  sage  ".to_string(),
@@ -1303,8 +1370,11 @@ impl InteractiveMode {
                     model_label.to_string(),
                     Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
                 ),
-                Span::raw(" ".repeat(gap as usize)),
             ];
+            if let Some(bs) = mode_badge_span {
+                spans.push(bs);
+            }
+            spans.push(Span::raw(" ".repeat(gap as usize)));
             if let Some(ts) = tool_span {
                 spans.push(ts);
             }
@@ -2140,5 +2210,86 @@ mod tests {
         let was_none = mode.history_idx.is_none();
         assert!(was_none);
         assert_eq!(mode.input_buffer, "typing");
+    }
+
+    #[test]
+    fn permission_mode_defaults_to_default() {
+        let mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert_eq!(mode.permission_mode, "default");
+    }
+
+    #[test]
+    fn permission_mode_bypass_sets_field_and_system_message() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.input_buffer = "/permissions bypass".to_string();
+        let input = std::mem::take(&mut mode.input_buffer);
+        if let Some(rest) = input.trim().strip_prefix("/permissions") {
+            let sub = rest.trim();
+            let (new_mode, msg) = match sub {
+                "bypass" => (
+                    "bypassPermissions",
+                    "⚡ BYPASS mode — all tool approvals skipped".to_string(),
+                ),
+                "plan" => ("plan", "📋 PLAN mode — read-only tools only".to_string()),
+                "default" | "" => ("default", "Permissions: default mode (Ask)".to_string()),
+                other => (
+                    mode.permission_mode.as_str(),
+                    format!("Unknown permission mode: \"{other}\". Use: default | bypass | plan"),
+                ),
+            };
+            mode.permission_mode = new_mode.to_string();
+            mode.messages.push(ChatMessage {
+                role: MessageRole::System,
+                content: msg,
+                at_refs: Vec::new(),
+            });
+        }
+        assert_eq!(mode.permission_mode, "bypassPermissions");
+        assert_eq!(mode.messages.len(), 1);
+        assert!(mode.messages[0].content.contains("BYPASS"));
+    }
+
+    #[test]
+    fn permission_mode_plan_sets_field_and_system_message() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.permission_mode = "bypassPermissions".to_string();
+        let input = "/permissions plan".to_string();
+        if let Some(rest) = input.trim().strip_prefix("/permissions") {
+            let sub = rest.trim();
+            let (new_mode, msg) = match sub {
+                "bypass" => (
+                    "bypassPermissions",
+                    "⚡ BYPASS mode — all tool approvals skipped".to_string(),
+                ),
+                "plan" => ("plan", "📋 PLAN mode — read-only tools only".to_string()),
+                "default" | "" => ("default", "Permissions: default mode (Ask)".to_string()),
+                _ => ("default", "fallback".to_string()),
+            };
+            mode.permission_mode = new_mode.to_string();
+            mode.messages.push(ChatMessage {
+                role: MessageRole::System,
+                content: msg,
+                at_refs: Vec::new(),
+            });
+        }
+        assert_eq!(mode.permission_mode, "plan");
+        assert!(mode.messages[0].content.contains("PLAN"));
+    }
+
+    #[test]
+    fn permission_mode_default_restores() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.permission_mode = "bypassPermissions".to_string();
+        let input = "/permissions default".to_string();
+        if let Some(rest) = input.trim().strip_prefix("/permissions") {
+            let sub = rest.trim();
+            let new_mode = match sub {
+                "bypass" => "bypassPermissions",
+                "plan" => "plan",
+                _ => "default",
+            };
+            mode.permission_mode = new_mode.to_string();
+        }
+        assert_eq!(mode.permission_mode, "default");
     }
 }

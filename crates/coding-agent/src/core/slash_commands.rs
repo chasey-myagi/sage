@@ -127,6 +127,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         name: "quit",
         description: "Quit sage",
     },
+    BuiltinSlashCommand {
+        name: "permissions",
+        description: "Switch permission mode: default | bypass | plan",
+    },
 ];
 
 /// Find a built-in slash command by name.
@@ -196,5 +200,12 @@ mod tests {
                 cmd.name
             );
         }
+    }
+
+    #[test]
+    fn find_builtin_permissions() {
+        let cmd = find_builtin("permissions");
+        assert!(cmd.is_some());
+        assert_eq!(cmd.unwrap().name, "permissions");
     }
 }
