@@ -28,13 +28,14 @@ impl HookRunner {
             for matcher in matchers {
                 for hook_cmd in &matcher.hooks {
                     if let Some(condition) = hook_cmd.if_condition()
-                        && condition.contains("{{") {
-                            tracing::warn!(
-                                condition,
-                                "if-condition looks like a template expression ({{...}}); \
+                        && condition.contains("{{")
+                    {
+                        tracing::warn!(
+                            condition,
+                            "if-condition looks like a template expression ({{...}}); \
                                  only exact tool-name matching is supported in this implementation"
-                            );
-                        }
+                        );
+                    }
                 }
             }
         }

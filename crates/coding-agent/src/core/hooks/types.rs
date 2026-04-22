@@ -178,8 +178,7 @@ pub struct HookJsonOutput {
 // ── Hook results ──────────────────────────────────────────────────────────────
 
 /// Outcome of a single hook execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HookOutcome {
     #[default]
     Success,
@@ -210,7 +209,6 @@ pub struct HookResult {
     pub permission_decision_reason: Option<String>,
     pub prevent_continuation: bool,
 }
-
 
 /// Aggregated result from all hooks for one event.
 #[derive(Debug, Default)]

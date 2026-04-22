@@ -126,9 +126,10 @@ fn build_can_use_tool(
             return Ok(());
         }
         if let Some(extra_list) = extra
-            && extra_list.iter().any(|t| t == tool) {
-                return Ok(());
-            }
+            && extra_list.iter().any(|t| t == tool)
+        {
+            return Ok(());
+        }
         Err(format!(
             "tool '{tool}' is not in the agent's allowed tool list"
         ))
@@ -229,13 +230,14 @@ pub async fn spawn_agent_in_team(
     // and routes them through tracing::error so they appear in structured logs.
     tokio::spawn(async move {
         if let Err(join_err) = handle.await
-            && join_err.is_panic() {
-                tracing::error!(
-                    agent_id = %id_for_watchdog,
-                    "sub-agent task panicked",
-                );
-            }
-            // Cancellation is not an error (task was intentionally aborted).
+            && join_err.is_panic()
+        {
+            tracing::error!(
+                agent_id = %id_for_watchdog,
+                "sub-agent task panicked",
+            );
+        }
+        // Cancellation is not an error (task was intentionally aborted).
     });
 
     Ok(agent_id)

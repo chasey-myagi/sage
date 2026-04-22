@@ -755,9 +755,10 @@ pub async fn run_agent_session_to_channel(
 
     // SessionStart hooks fire once before the agent starts its first turn.
     if let Some(runner) = &hook_runner
-        && let Err(e) = runner.run_session_start().await {
-            tracing::warn!(error = %e, "SessionStart hook failed — continuing session");
-        }
+        && let Err(e) = runner.run_session_start().await
+    {
+        tracing::warn!(error = %e, "SessionStart hook failed — continuing session");
+    }
 
     agent.subscribe(move |event| {
         use agent_core::AgentEvent;
@@ -826,9 +827,10 @@ pub async fn run_agent_session_to_channel(
 
     // SessionEnd hooks fire after the agent finishes (regardless of success).
     if let Some(runner) = hook_runner
-        && let Err(e) = runner.run_session_end().await {
-            tracing::warn!(error = %e, "SessionEnd hook failed");
-        }
+        && let Err(e) = runner.run_session_end().await
+    {
+        tracing::warn!(error = %e, "SessionEnd hook failed");
+    }
 
     run_result
 }
@@ -971,9 +973,10 @@ pub async fn run_agent_session(
 
     // 4d. SessionStart hooks fire once before the agent starts its first turn.
     if let Some(runner) = &hook_runner
-        && let Err(e) = runner.run_session_start().await {
-            tracing::warn!(error = %e, "SessionStart hook failed — continuing session");
-        }
+        && let Err(e) = runner.run_session_start().await
+    {
+        tracing::warn!(error = %e, "SessionStart hook failed — continuing session");
+    }
 
     // 5. Subscribe to events: stream text deltas to stdout.
     let stdout = std::io::stdout();
@@ -1013,9 +1016,10 @@ pub async fn run_agent_session(
 
     // 7. SessionEnd hooks fire after the agent finishes (regardless of success).
     if let Some(runner) = hook_runner
-        && let Err(e) = runner.run_session_end().await {
-            tracing::warn!(error = %e, "SessionEnd hook failed");
-        }
+        && let Err(e) = runner.run_session_end().await
+    {
+        tracing::warn!(error = %e, "SessionEnd hook failed");
+    }
 
     run_result
 }
