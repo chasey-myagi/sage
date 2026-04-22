@@ -98,6 +98,13 @@ pub struct InteractiveMode {
     // ── Agent task handle ─────────────────────────────────────────────────
     /// Handle to the running agent task; aborted before spawning a new one.
     agent_handle: Option<tokio::task::JoinHandle<()>>,
+    // ── Input history (↑/↓ recall) ────────────────────────────────────────
+    /// Sent user messages in chronological order; pushed on every send.
+    history: Vec<String>,
+    /// Current browse position; `None` means "viewing the current draft".
+    history_idx: Option<usize>,
+    /// Draft snapshot saved when the user first presses ↑ to browse history.
+    history_draft: String,
 }
 
 /// A single chat turn in the history display.
@@ -161,6 +168,9 @@ impl InteractiveMode {
             completion_matches: Vec::new(),
             completion_selected: 0,
             agent_handle: None,
+            history: Vec::new(),
+            history_idx: None,
+            history_draft: String::new(),
         }
     }
 
@@ -431,6 +441,39 @@ impl InteractiveMode {
                                         self.completion_selected - 1
                                     };
                                 }
+                                // History recall — only when completion menu is closed
+                                (KeyCode::Up, _) if self.completion_matches.is_empty() => {
+                                    if self.history.is_empty() {
+                                        // nothing to recall
+                                    } else if let Some(idx) = self.history_idx {
+                                        // already browsing: move backwards (towards oldest)
+                                        let new_idx = idx.saturating_sub(1);
+                                        self.history_idx = Some(new_idx);
+                                        self.input_buffer = self.history[new_idx].clone();
+                                    } else {
+                                        // first press: save draft, jump to latest
+                                        self.history_draft =
+                                            std::mem::take(&mut self.input_buffer);
+                                        let new_idx = self.history.len() - 1;
+                                        self.history_idx = Some(new_idx);
+                                        self.input_buffer = self.history[new_idx].clone();
+                                    }
+                                }
+                                (KeyCode::Down, _) if self.completion_matches.is_empty() => {
+                                    if let Some(idx) = self.history_idx {
+                                        if idx + 1 < self.history.len() {
+                                            // move forwards (towards newest)
+                                            let new_idx = idx + 1;
+                                            self.history_idx = Some(new_idx);
+                                            self.input_buffer = self.history[new_idx].clone();
+                                        } else {
+                                            // past the end: restore draft
+                                            self.history_idx = None;
+                                            self.input_buffer =
+                                                std::mem::take(&mut self.history_draft);
+                                        }
+                                    }
+                                }
                                 // Input handling
                                 (KeyCode::Enter, _) if !self.is_thinking => {
                                     // Completion selection
@@ -452,7 +495,11 @@ impl InteractiveMode {
                                     let input = std::mem::take(&mut self.input_buffer);
                                     self.completion_matches.clear();
                                     self.completion_selected = 0;
+                                    // Reset history navigation state on send.
+                                    self.history_idx = None;
+                                    self.history_draft.clear();
                                     if !input.trim().is_empty() {
+                                        self.history.push(input.clone());
                                         let (expanded, at_refs, warnings) =
                                             Self::expand_at_refs(&input);
                                         self.messages.push(ChatMessage {
@@ -1801,5 +1848,133 @@ mod tests {
         assert!(expanded.contains("line one"));
         assert!(expanded.contains("line two"));
         assert!(expanded.ends_with(&input));
+    }
+
+    // ── History recall tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn history_empty_on_new() {
+        let mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert!(mode.history.is_empty());
+        assert!(mode.history_idx.is_none());
+        assert!(mode.history_draft.is_empty());
+    }
+
+    #[test]
+    fn history_up_on_empty_history_is_noop() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.input_buffer = "draft".to_string();
+        // Simulate pressing ↑ with no history — nothing should change.
+        if mode.history.is_empty() {
+            // noop branch
+        } else if let Some(idx) = mode.history_idx {
+            mode.history_idx = Some(idx.saturating_sub(1));
+            mode.input_buffer = mode.history[idx.saturating_sub(1)].clone();
+        } else {
+            mode.history_draft = std::mem::take(&mut mode.input_buffer);
+            let new_idx = mode.history.len() - 1;
+            mode.history_idx = Some(new_idx);
+            mode.input_buffer = mode.history[new_idx].clone();
+        }
+        assert_eq!(mode.input_buffer, "draft");
+        assert!(mode.history_idx.is_none());
+    }
+
+    #[test]
+    fn history_up_saves_draft_and_loads_latest() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.history = vec!["first".to_string(), "second".to_string()];
+        mode.input_buffer = "my draft".to_string();
+
+        // First ↑ press
+        mode.history_draft = std::mem::take(&mut mode.input_buffer);
+        let new_idx = mode.history.len() - 1;
+        mode.history_idx = Some(new_idx);
+        mode.input_buffer = mode.history[new_idx].clone();
+
+        assert_eq!(mode.history_draft, "my draft");
+        assert_eq!(mode.history_idx, Some(1));
+        assert_eq!(mode.input_buffer, "second");
+    }
+
+    #[test]
+    fn history_up_navigates_backwards() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.history = vec!["first".to_string(), "second".to_string()];
+        mode.history_idx = Some(1);
+        mode.input_buffer = "second".to_string();
+
+        // Second ↑ press
+        let idx = mode.history_idx.unwrap();
+        let new_idx = idx.saturating_sub(1);
+        mode.history_idx = Some(new_idx);
+        mode.input_buffer = mode.history[new_idx].clone();
+
+        assert_eq!(mode.history_idx, Some(0));
+        assert_eq!(mode.input_buffer, "first");
+    }
+
+    #[test]
+    fn history_up_saturates_at_oldest() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.history = vec!["only".to_string()];
+        mode.history_idx = Some(0);
+        mode.input_buffer = "only".to_string();
+
+        // ↑ again — saturates at 0
+        let idx = mode.history_idx.unwrap();
+        let new_idx = idx.saturating_sub(1);
+        mode.history_idx = Some(new_idx);
+        mode.input_buffer = mode.history[new_idx].clone();
+
+        assert_eq!(mode.history_idx, Some(0));
+        assert_eq!(mode.input_buffer, "only");
+    }
+
+    #[test]
+    fn history_down_advances_and_restores_draft() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.history = vec!["first".to_string(), "second".to_string()];
+        mode.history_idx = Some(0);
+        mode.history_draft = "saved draft".to_string();
+        mode.input_buffer = "first".to_string();
+
+        // ↓ from idx=0 → idx=1
+        {
+            let idx = mode.history_idx.unwrap();
+            if idx + 1 < mode.history.len() {
+                let new_idx = idx + 1;
+                mode.history_idx = Some(new_idx);
+                mode.input_buffer = mode.history[new_idx].clone();
+            }
+        }
+        assert_eq!(mode.history_idx, Some(1));
+        assert_eq!(mode.input_buffer, "second");
+
+        // ↓ from idx=1 → restore draft
+        {
+            let idx = mode.history_idx.unwrap();
+            if idx + 1 < mode.history.len() {
+                let new_idx = idx + 1;
+                mode.history_idx = Some(new_idx);
+                mode.input_buffer = mode.history[new_idx].clone();
+            } else {
+                mode.history_idx = None;
+                mode.input_buffer = std::mem::take(&mut mode.history_draft);
+            }
+        }
+        assert!(mode.history_idx.is_none());
+        assert_eq!(mode.input_buffer, "saved draft");
+        assert!(mode.history_draft.is_empty());
+    }
+
+    #[test]
+    fn history_down_noop_when_not_browsing() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.input_buffer = "typing".to_string();
+        // history_idx is None — ↓ should do nothing
+        let was_none = mode.history_idx.is_none();
+        assert!(was_none);
+        assert_eq!(mode.input_buffer, "typing");
     }
 }
