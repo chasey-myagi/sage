@@ -15,6 +15,7 @@ use std::io;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use regex::Regex;
+use syntect::parsing::{ParseState, ScopeStack, SyntaxReference, SyntaxSet};
 
 use crossterm::{
     event::{
@@ -761,6 +762,9 @@ impl InteractiveMode {
             msg.content.lines().collect()
         };
 
+        let mut in_code_block = false;
+        let mut parse_state_slot: Option<ParseState> = None;
+
         for (i, text_line) in content_lines.iter().enumerate() {
             let lead_text = if i == 0 {
                 prefix.clone()
@@ -779,6 +783,51 @@ impl InteractiveMode {
                 let content_bg = Span::styled(text_line.to_string(), Style::default().bg(bg));
                 lines.push(Line::from(vec![lead_bg, content_bg, padding]));
             } else if matches!(msg.role, MessageRole::Assistant) {
+                // Code fence detection — opening/closing ``` markers.
+                if let Some(rest) = text_line.strip_prefix("```") {
+                    let fence_style =
+                        Style::default().fg(theme.ratatui_fg(ThemeColor::MdCodeBlockBorder));
+                    if in_code_block {
+                        in_code_block = false;
+                        parse_state_slot = None;
+                        lines.push(Line::from(vec![
+                            lead,
+                            Span::styled("```".to_string(), fence_style),
+                        ]));
+                    } else {
+                        in_code_block = true;
+                        let lang_tag = rest.trim();
+                        let ss = syntax_set();
+                        parse_state_slot = find_syntax_for_lang(ss, lang_tag).map(ParseState::new);
+                        let fence_text = if lang_tag.is_empty() {
+                            "```".to_string()
+                        } else {
+                            format!("```{lang_tag}")
+                        };
+                        lines.push(Line::from(vec![
+                            lead,
+                            Span::styled(fence_text, fence_style),
+                        ]));
+                    }
+                    continue;
+                }
+
+                if in_code_block {
+                    let ss = syntax_set();
+                    let code_spans = if let Some(state) = parse_state_slot.as_mut() {
+                        highlight_code_line(text_line, state, ss, theme)
+                    } else {
+                        vec![Span::styled(
+                            text_line.to_string(),
+                            Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+                        )]
+                    };
+                    let mut line_spans = vec![lead];
+                    line_spans.extend(code_spans);
+                    lines.push(Line::from(line_spans));
+                    continue;
+                }
+
                 // Render inline Markdown for assistant messages.
                 // Unordered list markers (`- ` / `* `) are replaced with a styled bullet.
                 let (body, list_bullet) = if let Some(rest) = text_line
@@ -1117,6 +1166,111 @@ impl InteractiveMode {
             f.render_widget(dialog, popup_area);
         }
     }
+}
+
+// ── Syntax highlighting helpers ─────────────────────────────────────────────
+
+fn syntax_set() -> &'static SyntaxSet {
+    static SS: OnceLock<SyntaxSet> = OnceLock::new();
+    SS.get_or_init(SyntaxSet::load_defaults_newlines)
+}
+
+fn find_syntax_for_lang<'a>(ss: &'a SyntaxSet, lang: &str) -> Option<&'a SyntaxReference> {
+    if lang.is_empty() {
+        return None;
+    }
+    ss.find_syntax_by_extension(lang).or_else(|| {
+        let ext = match lang {
+            "rust" => "rs",
+            "python" | "py3" => "py",
+            "javascript" | "node" | "ecmascript" => "js",
+            "typescript" => "ts",
+            "bash" | "shell" | "zsh" => "sh",
+            "cpp" | "c++" => "cpp",
+            "csharp" | "c#" => "cs",
+            "golang" => "go",
+            _ => return ss.find_syntax_by_name(lang),
+        };
+        ss.find_syntax_by_extension(ext)
+    })
+}
+
+fn scope_to_ratatui_color(stack: &ScopeStack, theme: &Theme) -> Color {
+    for scope in stack.as_slice().iter().rev() {
+        let name = scope.build_string();
+        let tc = if name.starts_with("comment") {
+            ThemeColor::SyntaxComment
+        } else if name.starts_with("keyword.operator") {
+            ThemeColor::SyntaxOperator
+        } else if name.starts_with("keyword")
+            || name.starts_with("storage.type")
+            || name.starts_with("storage.modifier")
+        {
+            ThemeColor::SyntaxKeyword
+        } else if name.starts_with("entity.name.function") {
+            ThemeColor::SyntaxFunction
+        } else if name.starts_with("entity.name.type")
+            || name.starts_with("support.type")
+            || name.starts_with("support.class")
+        {
+            ThemeColor::SyntaxType
+        } else if name.starts_with("string") {
+            ThemeColor::SyntaxString
+        } else if name.starts_with("constant.numeric") {
+            ThemeColor::SyntaxNumber
+        } else if name.starts_with("variable") {
+            ThemeColor::SyntaxVariable
+        } else if name.starts_with("punctuation") {
+            ThemeColor::SyntaxPunctuation
+        } else {
+            continue;
+        };
+        return theme.ratatui_fg(tc);
+    }
+    theme.ratatui_fg(ThemeColor::MdCodeBlock)
+}
+
+fn highlight_code_line(
+    line: &str,
+    parse_state: &mut ParseState,
+    ss: &SyntaxSet,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
+    let Ok(ops) = parse_state.parse_line(line, ss) else {
+        return vec![Span::styled(
+            line.to_string(),
+            Style::default().fg(theme.ratatui_fg(ThemeColor::MdCodeBlock)),
+        )];
+    };
+    let mut stack = ScopeStack::new();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut last_pos = 0usize;
+    for (byte_offset, op) in &ops {
+        let byte_offset = *byte_offset;
+        if byte_offset > last_pos {
+            let text = line[last_pos..byte_offset].to_string();
+            if !text.is_empty() {
+                let color = scope_to_ratatui_color(&stack, theme);
+                spans.push(Span::styled(text, Style::default().fg(color)));
+            }
+        }
+        let _ = stack.apply(op);
+        last_pos = byte_offset;
+    }
+    if last_pos < line.len() {
+        let text = line[last_pos..].to_string();
+        if !text.is_empty() {
+            let color = scope_to_ratatui_color(&stack, theme);
+            spans.push(Span::styled(text, Style::default().fg(color)));
+        }
+    }
+    if spans.is_empty() {
+        spans.push(Span::styled(
+            line.to_string(),
+            Style::default().fg(theme.ratatui_fg(ThemeColor::MdCodeBlock)),
+        ));
+    }
+    spans
 }
 
 #[cfg(test)]
