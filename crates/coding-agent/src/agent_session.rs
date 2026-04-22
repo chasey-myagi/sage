@@ -57,6 +57,10 @@ pub enum AgentDelta {
     },
     /// A fatal agent error.
     Error(String),
+    /// A thinking block has started streaming.
+    ThinkingStart,
+    /// A thinking block has finished. Contains accumulated content and duration.
+    ThinkingEnd { duration_ms: u64, content: String },
 }
 
 // ── Registry-backed LLM provider adapter ────────────────────────────────────
@@ -960,6 +964,18 @@ pub async fn run_agent_session_to_channel(
             AgentEvent::RunError { error } => {
                 let _ = tx.send(AgentDelta::Error(error.clone()));
             }
+            AgentEvent::ThinkingStart => {
+                let _ = tx.send(AgentDelta::ThinkingStart);
+            }
+            AgentEvent::ThinkingEnd {
+                duration_ms,
+                content,
+            } => {
+                let _ = tx.send(AgentDelta::ThinkingEnd {
+                    duration_ms,
+                    content,
+                });
+            }
             _ => {}
         }
     });
@@ -1083,9 +1099,14 @@ mod tests {
             }
         });
 
-        let result = adapter.execute("id", serde_json::json!({}), None, None).await;
+        let result = adapter
+            .execute("id", serde_json::json!({}), None, None)
+            .await;
         assert!(!result.is_error, "Allow should not be an error");
-        assert!(executed.load(Ordering::Relaxed), "Allow should execute the tool");
+        assert!(
+            executed.load(Ordering::Relaxed),
+            "Allow should execute the tool"
+        );
     }
 
     #[tokio::test]
@@ -1098,9 +1119,14 @@ mod tests {
             }
         });
 
-        let result = adapter.execute("id", serde_json::json!({}), None, None).await;
+        let result = adapter
+            .execute("id", serde_json::json!({}), None, None)
+            .await;
         assert!(result.is_error, "Deny should be an error");
-        assert!(!executed.load(Ordering::Relaxed), "Deny should not execute the tool");
+        assert!(
+            !executed.load(Ordering::Relaxed),
+            "Deny should not execute the tool"
+        );
         assert!(
             first_text(&result).contains("denied"),
             "Deny message should contain 'denied': {}",
@@ -1116,14 +1142,13 @@ mod tests {
         // after the approval timeout fires.
         tokio::spawn(async move {
             let req = rx.recv().await.unwrap();
-            tokio::time::sleep(std::time::Duration::from_secs(
-                APPROVAL_TIMEOUT_SECS + 60,
-            ))
-            .await;
+            tokio::time::sleep(std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS + 60)).await;
             drop(req);
         });
 
-        let result = adapter.execute("id", serde_json::json!({}), None, None).await;
+        let result = adapter
+            .execute("id", serde_json::json!({}), None, None)
+            .await;
         assert!(result.is_error, "Timeout should be an error");
         assert!(
             !executed.load(Ordering::Relaxed),
@@ -1147,7 +1172,9 @@ mod tests {
             }
         });
 
-        let result = adapter.execute("id", serde_json::json!({}), None, None).await;
+        let result = adapter
+            .execute("id", serde_json::json!({}), None, None)
+            .await;
         assert!(result.is_error, "Session closed should be an error");
         assert!(
             !executed.load(Ordering::Relaxed),

@@ -483,6 +483,7 @@ async fn stream_assistant_response(
 
     let mut accum = MessageAccumulator::new();
     let mut emitted_start = false;
+    let mut thinking_block_start: Option<std::time::Instant> = None;
 
     for event in &events {
         match event {
@@ -505,30 +506,27 @@ async fn stream_assistant_response(
             }
             AssistantMessageEvent::ThinkingDelta(delta) => {
                 accum.current_thinking.push_str(delta);
-                // Emit message_update so UI can show thinking in real-time,
-                // mirroring pi-mono's thinking_start/thinking_delta handling.
-                if emitted_start {
-                    let partial = accum.build_partial(&config.model);
-                    *context.messages.last_mut().unwrap() =
-                        AgentMessage::Assistant(partial.clone());
-                    emit(AgentEvent::MessageUpdate {
-                        message: AgentMessage::Assistant(partial),
-                        delta: delta.clone(),
-                    });
-                }
             }
             AssistantMessageEvent::ThinkingBlockEnd {
                 signature,
                 redacted,
             } => {
-                let thinking = std::mem::take(&mut accum.current_thinking);
+                let duration_ms = thinking_block_start
+                    .take()
+                    .map(|t| t.elapsed().as_millis() as u64)
+                    .unwrap_or(0);
+                let content = std::mem::take(&mut accum.current_thinking);
+                emit(AgentEvent::ThinkingEnd {
+                    duration_ms,
+                    content: content.clone(),
+                });
                 let sig = if signature.is_empty() {
                     None
                 } else {
                     Some(signature.clone())
                 };
                 accum.thinking_blocks.push(ThinkingBlockAccum {
-                    thinking,
+                    thinking: content,
                     signature: sig,
                     redacted: *redacted,
                 });
@@ -558,9 +556,11 @@ async fn stream_assistant_response(
             }
             AssistantMessageEvent::ToolCallEnd { .. } => {}
             // Structural markers — no content to accumulate.
-            AssistantMessageEvent::Start
-            | AssistantMessageEvent::TextStart { .. }
-            | AssistantMessageEvent::ThinkingStart { .. } => {}
+            AssistantMessageEvent::Start | AssistantMessageEvent::TextStart { .. } => {}
+            AssistantMessageEvent::ThinkingStart { .. } => {
+                thinking_block_start = Some(std::time::Instant::now());
+                emit(AgentEvent::ThinkingStart);
+            }
             AssistantMessageEvent::Usage(u) => {
                 accum.usage = u.clone();
             }
