@@ -64,6 +64,13 @@ pub enum AgentEvent {
         result: AgentToolResult,
         is_error: bool,
     },
+    // ── Thinking blocks ──────────────────────────────────────────────
+    /// A reasoning/thinking block has started streaming.
+    ThinkingStart,
+    /// A reasoning/thinking block has finished. `duration_ms` is wall-clock
+    /// time from `ThinkingStart` to `ThinkingEnd` for the same block.
+    /// `content` holds the full accumulated thinking text.
+    ThinkingEnd { duration_ms: u64, content: String },
     // ── Compaction ───────────────────────────────────────────────────
     /// Context compaction has started.
     CompactionStart {
@@ -95,6 +102,7 @@ impl AgentEvent {
             | AgentEvent::ToolExecutionEnd { .. }
             | AgentEvent::MessageStart { .. }
             | AgentEvent::MessageEnd { .. } => Visibility::Developer,
+            AgentEvent::ThinkingStart | AgentEvent::ThinkingEnd { .. } => Visibility::User,
             AgentEvent::AgentStart
             | AgentEvent::AgentEnd { .. }
             | AgentEvent::TurnStart

@@ -130,6 +130,12 @@ pub enum MessageRole {
     },
     /// A fatal agent error shown inline.
     Error,
+    /// A reasoning/thinking block from extended-thinking models.
+    /// Displayed collapsed by default; `t` key toggles `expanded`.
+    Thinking {
+        duration_ms: u64,
+        expanded: bool,
+    },
 }
 
 impl InteractiveMode {
@@ -312,6 +318,36 @@ impl InteractiveMode {
                                 at_refs: Vec::new(),
                             });
                         }
+                        Ok(AgentDelta::ThinkingStart) => {
+                            self.messages.push(ChatMessage {
+                                role: MessageRole::Thinking {
+                                    duration_ms: 0,
+                                    expanded: false,
+                                },
+                                content: String::new(),
+                                at_refs: Vec::new(),
+                            });
+                        }
+                        Ok(AgentDelta::ThinkingEnd {
+                            duration_ms,
+                            content,
+                        }) => {
+                            if let Some(msg) = self
+                                .messages
+                                .iter_mut()
+                                .rev()
+                                .find(|m| matches!(m.role, MessageRole::Thinking { .. }))
+                            {
+                                msg.content = content;
+                                if let MessageRole::Thinking {
+                                    duration_ms: ref mut d,
+                                    ..
+                                } = msg.role
+                                {
+                                    *d = duration_ms;
+                                }
+                            }
+                        }
                         Err(mpsc::error::TryRecvError::Empty) => break,
                         Err(mpsc::error::TryRecvError::Disconnected) => {
                             disconnected = true;
@@ -401,6 +437,21 @@ impl InteractiveMode {
                                             || modifiers == KeyModifiers::SHIFT) =>
                                 {
                                     self.is_sticky = true;
+                                }
+                                // Toggle nearest thinking block expansion
+                                (KeyCode::Char('t'), KeyModifiers::NONE)
+                                    if self.input_buffer.is_empty() =>
+                                {
+                                    if let Some(msg) = self.messages.iter_mut().rev().find(|m| {
+                                        matches!(m.role, MessageRole::Thinking { .. })
+                                    }) {
+                                        if let MessageRole::Thinking {
+                                            ref mut expanded, ..
+                                        } = msg.role
+                                        {
+                                            *expanded = !*expanded;
+                                        }
+                                    }
                                 }
                                 // PageUp/PageDown always scroll regardless of input state
                                 (KeyCode::PageDown, _) => {
@@ -678,8 +729,7 @@ impl InteractiveMode {
                 Ok(content) => {
                     let line_count = content.lines().count();
                     let file_content = if content.len() > MAX_FILE_BYTES {
-                        let head: Vec<&str> =
-                            content.lines().take(MAX_TRUNCATE_LINES).collect();
+                        let head: Vec<&str> = content.lines().take(MAX_TRUNCATE_LINES).collect();
                         format!(
                             "{}\n[... truncated: showing first {} of {} lines]",
                             head.join("\n"),
@@ -689,8 +739,9 @@ impl InteractiveMode {
                     } else {
                         content.trim_end().to_string()
                     };
-                    file_blocks
-                        .push_str(&format!("<file path=\"{path}\">\n{file_content}\n</file>\n"));
+                    file_blocks.push_str(&format!(
+                        "<file path=\"{path}\">\n{file_content}\n</file>\n"
+                    ));
                     at_refs.push(AtRef { path, line_count });
                 }
                 Err(e) => {
@@ -720,6 +771,15 @@ impl InteractiveMode {
     /// Each content line is divided into chunks of `effective_width` columns.
     /// The prefix (`  ❯ ` or `  ◆ `, 4 cols) is part of the first line's budget.
     fn compute_message_height(msg: &ChatMessage, inner_width: u16) -> u16 {
+        // Thinking blocks: collapsed = 1 line; expanded = 1 header + N content lines.
+        if let MessageRole::Thinking { expanded, .. } = msg.role {
+            if !expanded {
+                return 1;
+            }
+            let content_rows = msg.content.lines().count().max(1) as u16;
+            return 1 + content_rows;
+        }
+
         let first_line = msg.content.lines().next().unwrap_or("");
         if first_line.starts_with("diff --git") {
             // Diff branch renders: 1 prefix line + diff lines (each with 4-space indent).
@@ -818,6 +878,15 @@ impl InteractiveMode {
         theme: &Theme,
         terminal_width: u16,
     ) -> Vec<Line<'static>> {
+        // Thinking blocks have their own rendering — collapsed or expanded.
+        if let MessageRole::Thinking {
+            duration_ms,
+            expanded,
+        } = msg.role
+        {
+            return Self::thinking_to_lines(msg, theme, duration_ms, expanded);
+        }
+
         let (indicator, indicator_color, bg_color) = match &msg.role {
             MessageRole::User => (
                 "❯",
@@ -834,6 +903,7 @@ impl InteractiveMode {
             }
             MessageRole::Tool { .. } => ("✘", theme.ratatui_fg(ThemeColor::Error), None),
             MessageRole::Error => ("✘", theme.ratatui_fg(ThemeColor::Error), None),
+            MessageRole::Thinking { .. } => unreachable!("handled above"),
         };
 
         let prefix = format!("  {indicator} ");
@@ -963,6 +1033,59 @@ impl InteractiveMode {
                 Span::raw(indent.clone()),
                 Span::styled(annotation, Style::default().fg(Color::DarkGray)),
             ]));
+        }
+
+        lines
+    }
+
+    /// Render a thinking block as ratatui lines.
+    ///
+    /// Collapsed (default):  `  ◆ ▶ Thinking (1.2s) ···`
+    /// Expanded:             `  ◆ ▼ Thinking`
+    ///                       `    │ content line …`
+    fn thinking_to_lines(
+        msg: &ChatMessage,
+        theme: &Theme,
+        duration_ms: u64,
+        expanded: bool,
+    ) -> Vec<Line<'static>> {
+        let dim_color = theme.ratatui_fg(ThemeColor::Dim);
+        let thinking_color = theme.ratatui_fg(ThemeColor::ThinkingText);
+        let indicator_style = Style::default().fg(dim_color);
+        let text_style = Style::default()
+            .fg(thinking_color)
+            .add_modifier(Modifier::ITALIC);
+
+        let duration_label = if duration_ms > 0 {
+            let secs = duration_ms as f64 / 1000.0;
+            format!(" ({:.1}s)", secs)
+        } else {
+            String::new()
+        };
+
+        if !expanded {
+            // Collapsed: single line showing duration and ellipsis
+            let header = format!("  ◆ ▶ Thinking{duration_label} ···");
+            return vec![Line::from(Span::styled(header, text_style))];
+        }
+
+        // Expanded: header line + content lines with │ prefix
+        let mut lines = Vec::new();
+        let header = format!("  ◆ ▼ Thinking{duration_label}");
+        lines.push(Line::from(Span::styled(header, text_style)));
+
+        if msg.content.is_empty() {
+            lines.push(Line::from(vec![Span::styled(
+                "    │ ".to_string(),
+                indicator_style,
+            )]));
+        } else {
+            for content_line in msg.content.lines() {
+                lines.push(Line::from(vec![
+                    Span::styled("    │ ".to_string(), indicator_style),
+                    Span::styled(content_line.to_string(), text_style),
+                ]));
+            }
         }
 
         lines
@@ -1776,8 +1899,7 @@ mod tests {
 
     #[test]
     fn expand_at_refs_deduplicates_same_path() {
-        let (_, at_refs, warnings) =
-            InteractiveMode::expand_at_refs("@foo.txt and @foo.txt again");
+        let (_, at_refs, warnings) = InteractiveMode::expand_at_refs("@foo.txt and @foo.txt again");
         assert!(at_refs.is_empty());
         assert_eq!(warnings.len(), 1);
     }
