@@ -891,6 +891,7 @@ impl InteractiveMode {
         self.last_viewport_height = viewport_height;
 
         // ── Header ────────────────────────────────────────────────────────
+        const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let model_label = self.model_id.as_deref().unwrap_or("claude");
         let header_left = format!("  sage  {model_label}");
         let stats = format!(
@@ -901,24 +902,52 @@ impl InteractiveMode {
         );
         let left_len = header_left.width() as u16;
         let stats_len = stats.width() as u16;
-        let gap = width.saturating_sub(left_len + stats_len);
-        let header_line = Line::from(vec![
-            Span::styled(
-                "  sage  ".to_string(),
-                Style::default()
-                    .fg(theme.ratatui_fg(ThemeColor::Accent))
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                model_label.to_string(),
-                Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
-            ),
-            Span::raw(" ".repeat(gap as usize)),
-            Span::styled(
-                stats,
-                Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
-            ),
-        ]);
+        let header_line = if self.is_thinking {
+            let frame = SPINNER[(self.tick as usize) % SPINNER.len()];
+            let thinking_text = format!("{frame} Thinking…  ");
+            let thinking_len = thinking_text.width() as u16;
+            let gap = width.saturating_sub(left_len + thinking_len + stats_len);
+            Line::from(vec![
+                Span::styled(
+                    "  sage  ".to_string(),
+                    Style::default()
+                        .fg(theme.ratatui_fg(ThemeColor::Accent))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    model_label.to_string(),
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+                ),
+                Span::raw(" ".repeat(gap as usize)),
+                Span::styled(
+                    thinking_text,
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Accent)),
+                ),
+                Span::styled(
+                    stats,
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+                ),
+            ])
+        } else {
+            let gap = width.saturating_sub(left_len + stats_len);
+            Line::from(vec![
+                Span::styled(
+                    "  sage  ".to_string(),
+                    Style::default()
+                        .fg(theme.ratatui_fg(ThemeColor::Accent))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    model_label.to_string(),
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+                ),
+                Span::raw(" ".repeat(gap as usize)),
+                Span::styled(
+                    stats,
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+                ),
+            ])
+        };
         f.render_widget(Paragraph::new(vec![header_line]), chunks[0]);
 
         // ── Messages ──────────────────────────────────────────────────────
@@ -1013,7 +1042,6 @@ impl InteractiveMode {
         f.render_widget(Paragraph::new(vec![divider_line]), chunks[3]);
 
         // ── Input / spinner ───────────────────────────────────────────────
-        const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let input_line = if self.is_thinking {
             let frame = SPINNER[(self.tick as usize) % SPINNER.len()];
             Line::from(vec![
