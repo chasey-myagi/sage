@@ -6,6 +6,7 @@
 //! `--print` / `--mode json|rpc`. The implementation here is a structural
 //! skeleton; the ratatui rendering details are fleshed out in the `tui` crate.
 
+pub mod approval;
 pub mod components;
 pub mod theme;
 
@@ -23,16 +24,20 @@ use futures::StreamExt as _;
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 use tokio::sync::mpsc;
 
 use unicode_width::UnicodeWidthStr as _;
 
 use crate::agent_session::AgentDelta;
+use crate::core::slash_commands::BUILTIN_SLASH_COMMANDS;
+use crate::modes::interactive::approval::{ApprovalRequest, ApprovalResponse};
+use crate::modes::interactive::components::diff::render_diff_ratatui;
+use crate::modes::interactive::theme::{Theme, ThemeBg, ThemeColor, get_theme};
 
 // ============================================================================
 // InteractiveMode
@@ -74,6 +79,16 @@ pub struct InteractiveMode {
     last_terminal_width: u16,
     /// Tick counter for spinner animation (incremented every ~50 ms).
     tick: u64,
+    // ── Approval channel ──────────────────────────────────────────────────
+    approval_tx: mpsc::UnboundedSender<ApprovalRequest>,
+    approval_rx: mpsc::UnboundedReceiver<ApprovalRequest>,
+    pending_approval: Option<ApprovalRequest>,
+    // ── Autocomplete (slash commands + @ file) ────────────────────────────
+    completion_matches: Vec<(String, String)>, // (primary, hint)
+    completion_selected: usize,
+    // ── Agent task handle ─────────────────────────────────────────────────
+    /// Handle to the running agent task; aborted before spawning a new one.
+    agent_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 /// A single chat turn in the history display.
@@ -102,6 +117,7 @@ pub enum MessageRole {
 impl InteractiveMode {
     /// Create a new InteractiveMode with the given options.
     pub fn new(options: InteractiveModeOptions) -> Self {
+        let (approval_tx, approval_rx) = mpsc::unbounded_channel();
         Self {
             options,
             input_buffer: String::new(),
@@ -119,6 +135,12 @@ impl InteractiveMode {
             last_viewport_height: 0,
             last_terminal_width: 80,
             tick: 0,
+            approval_tx,
+            approval_rx,
+            pending_approval: None,
+            completion_matches: Vec::new(),
+            completion_selected: 0,
+            agent_handle: None,
         }
     }
 
@@ -170,6 +192,15 @@ impl InteractiveMode {
         let mut event_stream = EventStream::new();
 
         loop {
+            // Drain one approval request from agent tasks (show dialog; handle one at a time).
+            // Guard: only accept a new request when none is pending, to prevent overwriting
+            // a live request (which would silently deny it when the sender is dropped).
+            if self.pending_approval.is_none() {
+                if let Ok(req) = self.approval_rx.try_recv() {
+                    self.pending_approval = Some(req);
+                }
+            }
+
             // Drain agent response deltas (disjoint field borrows allow updates inside)
             let mut disconnected = false;
             if let Some(rx) = &mut self.agent_rx {
@@ -253,6 +284,7 @@ impl InteractiveMode {
             }
             if disconnected {
                 self.agent_rx = None;
+                self.agent_handle = None;
                 self.is_thinking = false;
             }
 
@@ -269,9 +301,33 @@ impl InteractiveMode {
                     let Some(Ok(event)) = maybe_event else { continue };
                     match event {
                         Event::Key(key) => {
+                            // Approval dialog intercepts most keys when active.
+                            if self.pending_approval.is_some() {
+                                match (key.code, key.modifiers) {
+                                    // Ctrl+C / Ctrl+D always exits, even from the dialog.
+                                    (KeyCode::Char('c'), KeyModifiers::CONTROL)
+                                    | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                                        self.abort_agent();
+                                        self.running = false;
+                                        break;
+                                    }
+                                    (KeyCode::Char('y'), _) | (KeyCode::Char('Y'), _) => {
+                                        self.resolve_approval(ApprovalResponse::Allow);
+                                    }
+                                    (KeyCode::Char('n'), _)
+                                    | (KeyCode::Char('N'), _)
+                                    | (KeyCode::Esc, _) => {
+                                        self.resolve_approval(ApprovalResponse::Deny);
+                                    }
+                                    _ => {}
+                                }
+                                continue;
+                            }
+
                             match (key.code, key.modifiers) {
                                 (KeyCode::Char('c'), KeyModifiers::CONTROL)
                                 | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                                    self.abort_agent();
                                     self.running = false;
                                     break;
                                 }
@@ -317,9 +373,42 @@ impl InteractiveMode {
                                         .scroll_top
                                         .saturating_sub(self.last_viewport_height);
                                 }
+                                // Slash command navigation
+                                (KeyCode::Tab, _) | (KeyCode::Down, _)
+                                    if !self.completion_matches.is_empty() =>
+                                {
+                                    let n = self.completion_matches.len();
+                                    self.completion_selected = (self.completion_selected + 1) % n;
+                                }
+                                (KeyCode::Up, _) if !self.completion_matches.is_empty() => {
+                                    let n = self.completion_matches.len();
+                                    self.completion_selected = if self.completion_selected == 0 {
+                                        n - 1
+                                    } else {
+                                        self.completion_selected - 1
+                                    };
+                                }
                                 // Input handling
                                 (KeyCode::Enter, _) if !self.is_thinking => {
+                                    // Completion selection
+                                    if !self.completion_matches.is_empty() {
+                                        let selected = self.completion_selected
+                                            .min(self.completion_matches.len() - 1);
+                                        let chosen = self.completion_matches[selected].0.clone();
+                                        if self.input_buffer.starts_with('/') {
+                                            self.input_buffer = format!("/{chosen} ");
+                                        } else if let Some(at_pos) = self.input_buffer.rfind('@') {
+                                            self.input_buffer.truncate(at_pos + 1);
+                                            self.input_buffer.push_str(&chosen);
+                                            self.input_buffer.push(' ');
+                                        }
+                                        self.completion_matches.clear();
+                                        self.completion_selected = 0;
+                                        continue;
+                                    }
                                     let input = std::mem::take(&mut self.input_buffer);
+                                    self.completion_matches.clear();
+                                    self.completion_selected = 0;
                                     if !input.trim().is_empty() {
                                         self.messages.push(ChatMessage {
                                             role: MessageRole::User,
@@ -336,9 +425,15 @@ impl InteractiveMode {
                                 }
                                 (KeyCode::Backspace, _) => {
                                     self.input_buffer.pop();
+                                    self.update_completion_matches();
+                                }
+                                (KeyCode::Esc, _) if !self.completion_matches.is_empty() => {
+                                    self.completion_matches.clear();
+                                    self.completion_selected = 0;
                                 }
                                 (KeyCode::Char(c), _) => {
                                     self.input_buffer.push(c);
+                                    self.update_completion_matches();
                                 }
                                 _ => {}
                             }
@@ -374,7 +469,22 @@ impl InteractiveMode {
         Ok(())
     }
 
+    /// Abort any running agent task and deny its pending approval (if any).
+    fn abort_agent(&mut self) {
+        // Deny pending approval so the agent-side oneshot doesn't hang until timeout.
+        if let Some(req) = self.pending_approval.take() {
+            let _ = req.response_tx.send(ApprovalResponse::Deny);
+        }
+        if let Some(handle) = self.agent_handle.take() {
+            handle.abort();
+        }
+        self.is_thinking = false;
+    }
+
     fn spawn_agent(&mut self, message: String) {
+        // Abort any prior orphan task before starting a new one.
+        self.abort_agent();
+
         let (tx, rx) = mpsc::unbounded_channel::<AgentDelta>();
         self.agent_rx = Some(rx);
         self.is_thinking = true;
@@ -382,8 +492,9 @@ impl InteractiveMode {
         let provider_id = self.provider_id.clone();
         let model_id = self.model_id.clone();
         let error_tx = tx.clone();
+        let approval_tx = self.approval_tx.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             if let Err(e) = crate::agent_session::run_agent_session_to_channel(
                 message,
                 model_id,
@@ -391,12 +502,93 @@ impl InteractiveMode {
                 None,
                 tx,
                 "default".to_string(), // TODO(permission_mode): read from settings when implemented
+                Some(approval_tx),
             )
             .await
             {
                 let _ = error_tx.send(AgentDelta::Error(e.to_string()));
             }
         });
+        self.agent_handle = Some(handle);
+    }
+
+    /// Resolve the current pending approval and send response to agent.
+    fn resolve_approval(&mut self, response: ApprovalResponse) {
+        if let Some(req) = self.pending_approval.take() {
+            let _ = req.response_tx.send(response);
+        }
+    }
+
+    /// Update completion_matches based on current input_buffer.
+    ///
+    /// - `/prefix` → builtin slash commands starting with prefix
+    /// - `…@prefix` → files matching prefix* in the working directory
+    fn update_completion_matches(&mut self) {
+        if self.input_buffer.starts_with('/') {
+            let prefix = &self.input_buffer[1..];
+            self.completion_matches = BUILTIN_SLASH_COMMANDS
+                .iter()
+                .filter(|c| c.name.starts_with(prefix))
+                .map(|c| (c.name.to_string(), c.description.to_string()))
+                .collect();
+        } else if let Some(at_pos) = self.input_buffer.rfind('@') {
+            // Only trigger on `@` that is preceded by whitespace (or at start).
+            // `at_pos` from `rfind('@')` is always a valid char boundary (@ is ASCII).
+            // `map_or(true, …)` handles the start-of-string case (empty slice → None → true).
+            let preceded_by_space = self.input_buffer[..at_pos]
+                .chars()
+                .next_back()
+                .map_or(true, |c| c.is_whitespace());
+            if preceded_by_space {
+                let file_prefix = &self.input_buffer[at_pos + 1..];
+                self.completion_matches = Self::file_completions_for(file_prefix);
+            } else {
+                self.completion_matches.clear();
+            }
+        } else {
+            self.completion_matches.clear();
+        }
+        // Always reset selection so the list doesn't "jump" when items change.
+        self.completion_selected = 0;
+    }
+
+    /// List files/dirs that start with `prefix` (up to MAX_COMPLETIONS results).
+    ///
+    /// Escapes glob metacharacters in the prefix and restricts results to paths
+    /// that are inside (or equal to) the current working directory.
+    fn file_completions_for(prefix: &str) -> Vec<(String, String)> {
+        const MAX_COMPLETIONS: usize = 5;
+        let escaped = glob::Pattern::escape(prefix);
+        let pattern = format!("{escaped}*");
+        // Canonicalize cwd so that symlink paths (e.g. macOS /tmp → /private/tmp)
+        // are resolved before prefix-checking canonicalized child paths.
+        let cwd = std::env::current_dir().and_then(|c| c.canonicalize()).ok();
+        match glob::glob(&pattern) {
+            Ok(paths) => {
+                let mut results: Vec<(String, String)> = paths
+                    .filter_map(|e| e.ok())
+                    .filter(|p| {
+                        // Reject paths that escape the working directory.
+                        if let Some(cwd) = &cwd {
+                            p.canonicalize()
+                                .map(|c| c.starts_with(cwd))
+                                .unwrap_or(false)
+                        } else {
+                            true
+                        }
+                    })
+                    .take(MAX_COMPLETIONS)
+                    .map(|p| {
+                        let hint =
+                            if p.is_dir() { "dir".to_string() } else { "file".to_string() };
+                        (p.display().to_string(), hint)
+                    })
+                    .collect();
+                results.sort_by(|a, b| a.0.cmp(&b.0));
+                results
+            }
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Stop the interactive mode (e.g., for startup benchmarks).
@@ -411,6 +603,21 @@ impl InteractiveMode {
     /// Each content line is divided into chunks of `effective_width` columns.
     /// The prefix (`  ❯ ` or `  ◆ `, 4 cols) is part of the first line's budget.
     fn compute_message_height(msg: &ChatMessage, inner_width: u16) -> u16 {
+        let first_line = msg.content.lines().next().unwrap_or("");
+        if first_line.starts_with("diff --git") {
+            // Diff branch renders: 1 prefix line + diff lines (each with 4-space indent).
+            // Accumulate as usize to avoid u16 overflow on large diffs.
+            let diff_rows: usize = msg
+                .content
+                .lines()
+                .map(|l| {
+                    let cols = l.width().saturating_add(4); // 4 = indent prefix
+                    let w = (inner_width.max(1)) as usize;
+                    cols.div_ceil(w).max(1)
+                })
+                .sum();
+            return 1 + u16::try_from(diff_rows).unwrap_or(u16::MAX);
+        }
         // prefix occupies the first ratatui row only; subsequent wrapped rows use full width.
         let prefix_len: u16 = 4; // "  ❯ " / "  ◆ " / etc. — all 4 display cols
         let first_capacity = inner_width.saturating_sub(prefix_len).max(1);
@@ -440,31 +647,81 @@ impl InteractiveMode {
     ///
     /// First content line: `  ❯ {text}` (user) or `  ◆ {text}` (assistant).
     /// Subsequent lines: indented by 4 spaces to align under the text.
-    fn message_to_lines(msg: &ChatMessage) -> Vec<Line<'static>> {
-        let (indicator, style) = match &msg.role {
-            MessageRole::User => ("❯", Style::default().fg(Color::Cyan)),
-            MessageRole::Assistant => ("◆", Style::default().fg(Color::Green)),
-            MessageRole::System => ("◆", Style::default().fg(Color::Yellow)),
-            MessageRole::Tool { pending: true, .. } => ("⏺", Style::default().fg(Color::Yellow)),
-            MessageRole::Tool { success: true, .. } => ("✓", Style::default().fg(Color::DarkGray)),
-            MessageRole::Tool { .. } => ("✘", Style::default().fg(Color::Red)),
-            MessageRole::Error => ("✘", Style::default().fg(Color::Red)),
+    /// Diff content (detected by leading `diff --git` header) is rendered
+    /// with ANSI color codes via `render_diff()`.
+    fn message_to_lines(msg: &ChatMessage, theme: &Theme, terminal_width: u16) -> Vec<Line<'static>> {
+        let (indicator, indicator_color, bg_color) = match &msg.role {
+            MessageRole::User => (
+                "❯",
+                theme.ratatui_fg(ThemeColor::Accent),
+                Some(theme.ratatui_bg(ThemeBg::UserMessageBg)),
+            ),
+            MessageRole::Assistant => ("◆", theme.ratatui_fg(ThemeColor::Accent), None),
+            MessageRole::System => ("◆", theme.ratatui_fg(ThemeColor::Warning), None),
+            MessageRole::Tool { pending: true, .. } => {
+                ("⏺", theme.ratatui_fg(ThemeColor::Warning), None)
+            }
+            MessageRole::Tool { success: true, .. } => {
+                ("✓", theme.ratatui_fg(ThemeColor::Muted), None)
+            }
+            MessageRole::Tool { .. } => ("✘", theme.ratatui_fg(ThemeColor::Error), None),
+            MessageRole::Error => ("✘", theme.ratatui_fg(ThemeColor::Error), None),
         };
+
         let prefix = format!("  {indicator} ");
-        let indent = "    ".to_string(); // 4 spaces — matches prefix display width
+        let indent = "    ".to_string();
         let mut lines: Vec<Line<'static>> = Vec::new();
 
-        for (i, text_line) in msg.content.lines().enumerate() {
-            let lead = if i == 0 {
-                Span::styled(prefix.clone(), style)
-            } else {
-                Span::raw(indent.clone())
-            };
-            lines.push(Line::from(vec![lead, Span::raw(text_line.to_string())]));
+        // Detect unified diff content (requires the canonical `diff --git` header).
+        let first_line = msg.content.lines().next().unwrap_or("");
+        let looks_like_diff = first_line.starts_with("diff --git");
+
+        if looks_like_diff && bg_color.is_none() {
+            // Render prefix on its own line, then diff lines with ratatui-native colors
+            // (no ANSI escape strings — ratatui uses Style/Span, not raw escape codes).
+            lines.push(Line::from(Span::styled(
+                prefix.clone(),
+                Style::default().fg(indicator_color),
+            )));
+            for mut diff_line in render_diff_ratatui(&msg.content, theme) {
+                // Prepend 4-space indent to each span in the line.
+                diff_line.spans.insert(0, Span::raw("    "));
+                lines.push(diff_line);
+            }
+            return lines;
         }
 
-        if lines.is_empty() {
-            lines.push(Line::from(vec![Span::styled(prefix, style)]));
+        let content_lines: Vec<&str> = if msg.content.is_empty() {
+            vec![""]
+        } else {
+            msg.content.lines().collect()
+        };
+
+        for (i, text_line) in content_lines.iter().enumerate() {
+            let lead_text = if i == 0 { prefix.clone() } else { indent.clone() };
+            let lead = Span::styled(lead_text.clone(), Style::default().fg(indicator_color));
+            let content_span = Span::styled(text_line.to_string(), Style::default());
+
+            if let Some(bg) = bg_color {
+                // Pad the line to terminal width for full-width background.
+                let used = lead_text.width() + text_line.width();
+                let pad = (terminal_width as usize).saturating_sub(used);
+                let padding = Span::styled(
+                    " ".repeat(pad),
+                    Style::default().bg(bg),
+                );
+                let lead_bg = Span::styled(
+                    lead_text,
+                    Style::default().fg(indicator_color).bg(bg),
+                );
+                let content_bg = Span::styled(
+                    text_line.to_string(),
+                    Style::default().bg(bg),
+                );
+                lines.push(Line::from(vec![lead_bg, content_bg, padding]));
+            } else {
+                lines.push(Line::from(vec![lead, content_span]));
+            }
         }
 
         lines
@@ -498,30 +755,52 @@ impl InteractiveMode {
         }
     }
 
+    // ── Layout helpers ──────────────────────────────────────────────────────
+
+    /// Compute a centered rect of fixed height inside `r`, as wide as `percent_x` percent.
+    fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {
+        let vert = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(height),
+                Constraint::Min(0),
+            ])
+            .split(r);
+
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage((100 - percent_x) / 2),
+                Constraint::Percentage(percent_x),
+                Constraint::Percentage((100 - percent_x) / 2),
+            ])
+            .split(vert[1])[1]
+    }
+
     // ── Render ──────────────────────────────────────────────────────────────
 
     /// Render the TUI frame — CC-style borderless layout.
-    ///
-    /// ```
-    /// ┌ header: model name ────────────────── ↑Xk ↓Xk  $X.XXXX ┐
-    /// │ messages area (no border)                                 │
-    /// │   ❯  user input                                           │
-    /// │   ◆  assistant response                                   │
-    /// ├ ─────────────────────────────────────────────────────── ─ ┤
-    /// └   ❯  input buffer  (or  ⠋  Thinking…)                   ┘
-    /// ```
     fn render(&mut self, f: &mut ratatui::Frame) {
         let size = f.area();
         let width = size.width;
+        let theme = get_theme();
 
-        // Layout: header(1) | messages(∞) | divider(1) | input(1)
+        // Dynamic layout: add slash menu row if matches exist.
+        let menu_rows = if self.completion_matches.is_empty() {
+            0u16
+        } else {
+            (self.completion_matches.len().min(5) + 2) as u16
+        };
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1), // header
-                Constraint::Min(0),    // messages
-                Constraint::Length(1), // divider
-                Constraint::Length(1), // input prompt
+                Constraint::Length(1),            // header
+                Constraint::Min(0),               // messages
+                Constraint::Length(menu_rows),    // slash menu (0 if empty)
+                Constraint::Length(1),            // divider
+                Constraint::Length(1),            // input prompt
             ])
             .split(size);
 
@@ -533,26 +812,32 @@ impl InteractiveMode {
 
         // ── Header ────────────────────────────────────────────────────────
         let model_label = self.model_id.as_deref().unwrap_or("claude");
-        let header_left = format!("  {model_label}");
+        let header_left = format!("  sage  {model_label}");
         let stats = format!(
             "↑{}  ↓{}  {}  ",
             Self::format_tokens(self.session_input_tokens),
             Self::format_tokens(self.session_output_tokens),
             Self::format_cost(self.session_cost_usd),
         );
-        // Right-align stats; pad between left label and right stats.
-        let left_len = header_left.chars().count() as u16;
-        let stats_len = stats.chars().count() as u16;
+        let left_len = header_left.width() as u16;
+        let stats_len = stats.width() as u16;
         let gap = width.saturating_sub(left_len + stats_len);
         let header_line = Line::from(vec![
             Span::styled(
-                header_left,
+                "  sage  ".to_string(),
                 Style::default()
-                    .fg(Color::White)
+                    .fg(theme.ratatui_fg(ThemeColor::Accent))
                     .add_modifier(Modifier::BOLD),
             ),
+            Span::styled(
+                model_label.to_string(),
+                Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+            ),
             Span::raw(" ".repeat(gap as usize)),
-            Span::styled(stats, Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                stats,
+                Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+            ),
         ]);
         f.render_widget(Paragraph::new(vec![header_line]), chunks[0]);
 
@@ -560,7 +845,7 @@ impl InteractiveMode {
         let mut message_lines: Vec<Line> = self
             .messages
             .iter()
-            .flat_map(|m| Self::message_to_lines(m))
+            .flat_map(|m| Self::message_to_lines(m, &theme, width))
             .collect();
 
         // Empty state: welcome prompt when no conversation has started.
@@ -568,10 +853,13 @@ impl InteractiveMode {
             message_lines = vec![
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled("  ◆ ", Style::default().fg(Color::Green)),
+                    Span::styled(
+                        "  ◆ ",
+                        Style::default().fg(theme.ratatui_fg(ThemeColor::Accent)),
+                    ),
                     Span::styled(
                         "What can I help you with?",
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
                     ),
                 ]),
             ];
@@ -583,6 +871,50 @@ impl InteractiveMode {
             .scroll((self.scroll_top, 0));
         f.render_widget(messages_widget, chunks[1]);
 
+        // ── Completion menu (slash commands or @ files) ───────────────────
+        let is_slash_mode = self.input_buffer.starts_with('/');
+        if menu_rows > 0 {
+            let visible: Vec<_> = self.completion_matches.iter().take(5).collect();
+            let menu_lines: Vec<Line> = visible
+                .iter()
+                .enumerate()
+                .map(|(i, (primary, hint))| {
+                    let selected = i == self.completion_selected;
+                    let bg = if selected {
+                        theme.ratatui_bg(ThemeBg::SelectedBg)
+                    } else {
+                        Color::Reset
+                    };
+                    let label = if is_slash_mode {
+                        format!("  /{primary:<12}")
+                    } else {
+                        format!("  {primary:<14}")
+                    };
+                    Line::from(vec![
+                        Span::styled(
+                            label,
+                            Style::default()
+                                .fg(theme.ratatui_fg(ThemeColor::Accent))
+                                .bg(bg),
+                        ),
+                        Span::styled(
+                            format!("  {hint}"),
+                            Style::default()
+                                .fg(theme.ratatui_fg(ThemeColor::Muted))
+                                .bg(bg),
+                        ),
+                    ])
+                })
+                .collect();
+            let menu_block = Block::default()
+                .borders(Borders::TOP | Borders::BOTTOM)
+                .border_style(Style::default().fg(theme.ratatui_fg(ThemeColor::BorderMuted)));
+            f.render_widget(
+                Paragraph::new(menu_lines).block(menu_block),
+                chunks[2],
+            );
+        }
+
         // ── Divider — with scroll indicator when content overflows ────────
         let divider_str = if !self.is_sticky
             && total_lines > viewport_height
@@ -592,32 +924,113 @@ impl InteractiveMode {
                 .saturating_sub(viewport_height)
                 .saturating_sub(self.scroll_top);
             let suffix = format!(" ↓{remaining} ");
-            let dash_count = (width as usize).saturating_sub(suffix.len());
+            let dash_count = (width as usize).saturating_sub(suffix.width());
             format!("{}{}", "─".repeat(dash_count), suffix)
         } else {
             "─".repeat(width as usize)
         };
         let divider_line = Line::from(Span::styled(
             divider_str,
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.ratatui_fg(ThemeColor::BorderMuted)),
         ));
-        f.render_widget(Paragraph::new(vec![divider_line]), chunks[2]);
+        f.render_widget(Paragraph::new(vec![divider_line]), chunks[3]);
 
         // ── Input / spinner ───────────────────────────────────────────────
         const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let input_line = if self.is_thinking {
             let frame = SPINNER[(self.tick as usize) % SPINNER.len()];
             Line::from(vec![
-                Span::styled(format!("  {frame} "), Style::default().fg(Color::Green)),
-                Span::styled("Thinking…", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("  {frame} "),
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Accent)),
+                ),
+                Span::styled(
+                    "Thinking…",
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+                ),
             ])
         } else {
+            // Cursor blinks every 10 ticks (~500ms).
+            let show_cursor = (self.tick / 10) & 1 == 0;
+            let cursor = if show_cursor { "▋" } else { " " };
             Line::from(vec![
-                Span::styled("  ❯ ", Style::default().fg(Color::Green)),
+                Span::styled(
+                    "  ❯ ",
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Accent)),
+                ),
                 Span::raw(self.input_buffer.clone()),
+                Span::styled(
+                    cursor.to_string(),
+                    Style::default().add_modifier(Modifier::REVERSED),
+                ),
             ])
         };
-        f.render_widget(Paragraph::new(vec![input_line]), chunks[3]);
+        f.render_widget(Paragraph::new(vec![input_line]), chunks[4]);
+
+        // ── Permission approval dialog ────────────────────────────────────
+        if let Some(approval) = &self.pending_approval {
+            let dialog_height = 8u16;
+            let popup_area = Self::centered_rect(62, dialog_height, size);
+            f.render_widget(Clear, popup_area);
+
+            let tool_name = approval.tool_name.clone();
+            let msg_preview: String = {
+                // Flatten control chars inline — no intermediate String allocation.
+                let mut chars = approval
+                    .message
+                    .chars()
+                    .map(|c| if c.is_control() { ' ' } else { c });
+                let mut s: String = chars.by_ref().take(60).collect();
+                if chars.next().is_some() {
+                    s.push('…');
+                }
+                s
+            };
+
+            let dialog_lines = vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(
+                        "  Tool: ",
+                        Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+                    ),
+                    Span::styled(
+                        tool_name,
+                        Style::default()
+                            .fg(theme.ratatui_fg(ThemeColor::Accent))
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(vec![Span::styled(
+                    format!("  {msg_preview}"),
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+                )]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(
+                        "  [y] Allow  ",
+                        Style::default().fg(theme.ratatui_fg(ThemeColor::Success)),
+                    ),
+                    Span::styled(
+                        "[n] Deny",
+                        Style::default().fg(theme.ratatui_fg(ThemeColor::Error)),
+                    ),
+                ]),
+            ];
+
+            let dialog = Paragraph::new(dialog_lines)
+                .block(
+                    Block::default()
+                        .title(" ⚠ Permission Required ")
+                        .title_alignment(Alignment::Center)
+                        .borders(Borders::ALL)
+                        .border_style(
+                            Style::default().fg(theme.ratatui_fg(ThemeColor::Warning)),
+                        ),
+                )
+                .wrap(Wrap { trim: false });
+            f.render_widget(dialog, popup_area);
+        }
     }
 }
 
@@ -741,21 +1154,23 @@ mod tests {
 
     #[test]
     fn message_to_lines_empty_content() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
         let msg = ChatMessage {
             role: MessageRole::User,
             content: String::new(),
         };
-        let lines = InteractiveMode::message_to_lines(&msg);
+        let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
         assert_eq!(lines.len(), 1);
     }
 
     #[test]
     fn message_to_lines_multiline() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
         let msg = ChatMessage {
             role: MessageRole::Assistant,
             content: "first\nsecond\nthird".to_string(),
         };
-        let lines = InteractiveMode::message_to_lines(&msg);
+        let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
         assert_eq!(lines.len(), 3);
     }
 
@@ -772,5 +1187,24 @@ mod tests {
         mode.clamp_scroll();
         // 1 message = 1 line; max scroll = 1 - 24 = 0 (saturating)
         assert_eq!(mode.scroll_top, 0);
+    }
+
+    #[test]
+    fn update_completion_matches_finds_commands() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.input_buffer = "/co".to_string();
+        mode.update_completion_matches();
+        // "compact" and "copy" start with "co"
+        assert!(!mode.completion_matches.is_empty());
+        assert!(mode.completion_matches.iter().any(|(n, _)| *n == "compact"));
+        assert!(mode.completion_matches.iter().any(|(n, _)| *n == "copy"));
+    }
+
+    #[test]
+    fn update_completion_matches_clears_when_no_slash() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.input_buffer = "hello".to_string();
+        mode.update_completion_matches();
+        assert!(mode.completion_matches.is_empty());
     }
 }

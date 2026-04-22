@@ -120,7 +120,7 @@ pub fn detect_color_mode() -> ColorMode {
 }
 
 /// Parse a hex color string to (r, g, b).
-fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
+pub fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
     let cleaned = hex.trim_start_matches('#');
     if cleaned.len() != 6 {
         return None;
@@ -236,6 +236,8 @@ pub struct Theme {
     pub name: Option<String>,
     fg_colors: HashMap<ThemeColor, String>,
     bg_colors: HashMap<ThemeBg, String>,
+    fg_rgb: HashMap<ThemeColor, (u8, u8, u8)>,
+    bg_rgb: HashMap<ThemeBg, (u8, u8, u8)>,
     mode: ColorMode,
 }
 
@@ -304,6 +306,22 @@ impl Theme {
 
     pub fn bash_mode_border_color(&self) -> ThemeColor {
         ThemeColor::BashMode
+    }
+
+    /// Return the ratatui foreground `Color` for a theme color key.
+    pub fn ratatui_fg(&self, color: ThemeColor) -> ratatui::style::Color {
+        match self.fg_rgb.get(&color) {
+            Some(&(r, g, b)) => ratatui::style::Color::Rgb(r, g, b),
+            None => ratatui::style::Color::Reset,
+        }
+    }
+
+    /// Return the ratatui background `Color` for a theme background key.
+    pub fn ratatui_bg(&self, color: ThemeBg) -> ratatui::style::Color {
+        match self.bg_rgb.get(&color) {
+            Some(&(r, g, b)) => ratatui::style::Color::Rgb(r, g, b),
+            None => ratatui::style::Color::Reset,
+        }
     }
 }
 
@@ -401,18 +419,33 @@ pub fn dark_theme(mode: ColorMode) -> Theme {
     ];
 
     let mut fg_colors = HashMap::new();
+    let mut fg_rgb = HashMap::new();
     for (key, val) in fg_map {
         fg_colors.insert(key.clone(), fg_ansi(val, mode));
+        if let ColorValue::Hex(h) = val
+            && !h.is_empty()
+            && let Some(rgb) = hex_to_rgb(h)
+        {
+            fg_rgb.insert(key.clone(), rgb);
+        }
     }
     let mut bg_colors = HashMap::new();
+    let mut bg_rgb = HashMap::new();
     for (key, val) in bg_map {
         bg_colors.insert(key.clone(), bg_ansi(val, mode));
+        if let ColorValue::Hex(h) = val
+            && let Some(rgb) = hex_to_rgb(h)
+        {
+            bg_rgb.insert(key.clone(), rgb);
+        }
     }
 
     Theme {
         name: Some("dark".to_string()),
         fg_colors,
         bg_colors,
+        fg_rgb,
+        bg_rgb,
         mode,
     }
 }
@@ -481,18 +514,33 @@ pub fn light_theme(mode: ColorMode) -> Theme {
     ];
 
     let mut fg_colors = HashMap::new();
+    let mut fg_rgb = HashMap::new();
     for (key, val) in fg_map {
         fg_colors.insert(key.clone(), fg_ansi(val, mode));
+        if let ColorValue::Hex(h) = val
+            && !h.is_empty()
+            && let Some(rgb) = hex_to_rgb(h)
+        {
+            fg_rgb.insert(key.clone(), rgb);
+        }
     }
     let mut bg_colors = HashMap::new();
+    let mut bg_rgb = HashMap::new();
     for (key, val) in bg_map {
         bg_colors.insert(key.clone(), bg_ansi(val, mode));
+        if let ColorValue::Hex(h) = val
+            && let Some(rgb) = hex_to_rgb(h)
+        {
+            bg_rgb.insert(key.clone(), rgb);
+        }
     }
 
     Theme {
         name: Some("light".to_string()),
         fg_colors,
         bg_colors,
+        fg_rgb,
+        bg_rgb,
         mode,
     }
 }

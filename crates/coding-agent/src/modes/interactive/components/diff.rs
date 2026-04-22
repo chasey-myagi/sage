@@ -4,7 +4,12 @@
 //!
 //! Renders unified diff text with colored lines and intra-line change highlighting.
 
-use crate::modes::interactive::theme::{ThemeColor, get_theme};
+use ratatui::{
+    style::Style,
+    text::{Line, Span},
+};
+
+use crate::modes::interactive::theme::{Theme, ThemeColor, get_theme};
 
 /// Options for diff rendering (kept for API compatibility).
 #[derive(Debug, Default)]
@@ -83,6 +88,33 @@ fn render_intra_line_diff(old_content: &str, new_content: &str) -> (String, Stri
     }
 
     (removed_line, added_line)
+}
+
+/// Render a unified diff as ratatui `Line`s with styled `Span`s (no ANSI escapes).
+///
+/// Handles actual `git diff` output format where lines start with `+`/`-`/` `.
+/// - `+` added lines → ToolDiffAdded color
+/// - `-` removed lines → ToolDiffRemoved color
+/// - ` ` context lines → ToolDiffContext color
+/// - Header lines (diff --git, @@, ---/+++) → Dim color
+pub fn render_diff_ratatui(diff_text: &str, theme: &Theme) -> Vec<Line<'static>> {
+    let color_added = theme.ratatui_fg(ThemeColor::ToolDiffAdded);
+    let color_removed = theme.ratatui_fg(ThemeColor::ToolDiffRemoved);
+    let color_context = theme.ratatui_fg(ThemeColor::ToolDiffContext);
+    let color_header = theme.ratatui_fg(ThemeColor::Dim);
+
+    diff_text
+        .lines()
+        .map(|line| {
+            let color = match line.as_bytes().first() {
+                Some(b'+') if !line.starts_with("+++") => color_added,
+                Some(b'-') if !line.starts_with("---") => color_removed,
+                Some(b' ') => color_context,
+                _ => color_header,
+            };
+            Line::from(Span::styled(line.to_string(), Style::default().fg(color)))
+        })
+        .collect()
 }
 
 /// Render a unified diff string with colored lines and intra-line change highlighting.

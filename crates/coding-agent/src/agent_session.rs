@@ -18,6 +18,7 @@ use crate::core::tools::plan_mode::{
     ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ExitPlanModeInput, PlanExitStrategy,
     enter_plan_mode, exit_plan_mode,
 };
+use crate::modes::interactive::approval::{ApprovalRequest, ApprovalResponse};
 use crate::utils::permissions::engine::check_tool_permission;
 use crate::utils::permissions::loader::{load_permissions_from_file, permissions_json_to_rules};
 use crate::utils::permissions::parser::permission_rule_value_to_string;
@@ -91,23 +92,27 @@ impl LlmProvider for RegistryProvider {
 // ── Tool adapter: tools::AgentTool → types::AgentTool ───────────────────────
 
 /// Wraps a `agent_core::tools::AgentTool` (simple interface) into the
+/// How long the TUI approval dialog waits before treating silence as deny.
+const APPROVAL_TIMEOUT_SECS: u64 = 300; // 5 minutes
+
 /// `agent_core::types::AgentTool` trait (full interface expected by `Agent`).
 ///
 /// Calls `PermissionEngine::check()` before each tool execution, returning a
 /// denial message if the tool is blocked by settings.json permission rules.
-///
-/// Ask rules are treated as deny in all session modes (interactive and print).
-/// An interactive approval channel (TUI modal) is not yet implemented.
-/// Users must add explicit allow rules in settings.json to permit a tool.
 struct ToolAdapter {
     inner: Box<dyn SimpleTool>,
     tool_description: String,
     tool_schema: serde_json::Value,
     permission_ctx: Arc<Mutex<ToolPermissionContext>>,
+    approval_tx: Option<tokio::sync::mpsc::UnboundedSender<ApprovalRequest>>,
 }
 
 impl ToolAdapter {
-    fn new(tool: Box<dyn SimpleTool>, permission_ctx: Arc<Mutex<ToolPermissionContext>>) -> Self {
+    fn new(
+        tool: Box<dyn SimpleTool>,
+        permission_ctx: Arc<Mutex<ToolPermissionContext>>,
+        approval_tx: Option<tokio::sync::mpsc::UnboundedSender<ApprovalRequest>>,
+    ) -> Self {
         let description = tool.description().to_string();
         let schema = tool.parameters_schema();
         Self {
@@ -115,6 +120,7 @@ impl ToolAdapter {
             tool_description: description,
             tool_schema: schema,
             permission_ctx,
+            approval_tx,
         }
     }
 }
@@ -160,23 +166,93 @@ impl agent_core::types::AgentTool for ToolAdapter {
                 };
             }
             PermissionDecision::Ask { message, .. } => {
-                // Interactive approval channel not yet implemented.
-                // Both interactive and non-interactive sessions treat ask as deny.
-                // Users must add an explicit allow rule in settings.json to permit this tool.
-                // TODO: wire TUI approval modal when interactive session is available.
-                return AgentToolResult {
-                    content: vec![Content::Text {
-                        text: format!(
-                            "Tool '{}' requires explicit user approval (ask rule matched). \
-                             This session cannot obtain approval. Do not attempt alternative tools \
-                             or rephrased commands — stop and report to the user that approval is required.\n\
-                             Rule: {message}",
-                            self.inner.name()
-                        ),
-                    }],
-                    details: serde_json::Value::Null,
-                    is_error: true,
-                };
+                if let Some(tx) = &self.approval_tx {
+                    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                    let req = ApprovalRequest {
+                        tool_name: self.inner.name().to_string(),
+                        message: message.clone(),
+                        response_tx,
+                    };
+                    if tx.send(req).is_ok() {
+                        let result = tokio::time::timeout(
+                            std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS),
+                            response_rx,
+                        )
+                        .await;
+                        match result {
+                            Ok(Ok(ApprovalResponse::Allow)) => {}
+                            Ok(Ok(ApprovalResponse::Deny)) => {
+                                return AgentToolResult {
+                                    content: vec![Content::Text {
+                                        text: format!(
+                                            "The user denied permission to run '{}'. \
+                                             Do not retry — ask the user how they would like to proceed.",
+                                            self.inner.name()
+                                        ),
+                                    }],
+                                    details: serde_json::Value::Null,
+                                    is_error: true,
+                                };
+                            }
+                            Ok(Err(_)) => {
+                                // TUI closed before responding (sender dropped) — abort silently.
+                                return AgentToolResult {
+                                    content: vec![Content::Text {
+                                        text: format!(
+                                            "Approval for '{}' could not be obtained (session closed). \
+                                             Stop and wait for further instructions.",
+                                            self.inner.name()
+                                        ),
+                                    }],
+                                    details: serde_json::Value::Null,
+                                    is_error: true,
+                                };
+                            }
+                            Err(_) => {
+                                // Timeout elapsed — user did not respond in time.
+                                return AgentToolResult {
+                                    content: vec![Content::Text {
+                                        text: format!(
+                                            "Approval for '{}' timed out ({}m{}s). \
+                                             Stop and wait for further instructions.",
+                                            self.inner.name(),
+                                            APPROVAL_TIMEOUT_SECS / 60,
+                                            APPROVAL_TIMEOUT_SECS % 60,
+                                        ),
+                                    }],
+                                    details: serde_json::Value::Null,
+                                    is_error: true,
+                                };
+                            }
+                        }
+                    } else {
+                        return AgentToolResult {
+                            content: vec![Content::Text {
+                                text: format!(
+                                    "Tool '{}' requires user approval but the approval channel is closed. \
+                                     Stop and report this to the user.",
+                                    self.inner.name()
+                                ),
+                            }],
+                            details: serde_json::Value::Null,
+                            is_error: true,
+                        };
+                    }
+                } else {
+                    return AgentToolResult {
+                        content: vec![Content::Text {
+                            text: format!(
+                                "Tool '{}' requires explicit user approval (ask rule matched). \
+                                 This session cannot prompt for approval. Do not attempt alternative tools \
+                                 or rephrased commands — stop and report to the user that approval is required.\n\
+                                 Rule: {message}",
+                                self.inner.name()
+                            ),
+                        }],
+                        details: serde_json::Value::Null,
+                        is_error: true,
+                    };
+                }
             }
             PermissionDecision::Allow { .. } => {}
         }
@@ -540,6 +616,7 @@ fn create_default_tools(
     is_subagent: bool,
     provider_id: Option<String>,
     api_key: Option<String>,
+    approval_tx: Option<tokio::sync::mpsc::UnboundedSender<ApprovalRequest>>,
 ) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
     let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> = [
         "bash",
@@ -560,7 +637,7 @@ fn create_default_tools(
         )
     })
     .map(|t| -> Arc<dyn agent_core::types::AgentTool> {
-        Arc::new(ToolAdapter::new(t, Arc::clone(&permission_ctx)))
+        Arc::new(ToolAdapter::new(t, Arc::clone(&permission_ctx), approval_tx.clone()))
     })
     .collect();
 
@@ -579,6 +656,7 @@ fn create_default_tools(
             permission_ctx: Arc::clone(&permission_ctx),
         }),
         Arc::clone(&permission_ctx),
+        None,
     )));
 
     tools
@@ -606,6 +684,7 @@ async fn load_mcp_tools(
                             tools.push(Arc::new(ToolAdapter::new(
                                 Box::new(t),
                                 Arc::clone(&permission_ctx),
+                                None,
                             )));
                         }
                     }
@@ -702,6 +781,7 @@ pub async fn run_agent_session_to_channel(
     api_key: Option<String>,
     tx: tokio::sync::mpsc::UnboundedSender<AgentDelta>,
     permission_mode: String,
+    approval_tx: Option<tokio::sync::mpsc::UnboundedSender<ApprovalRequest>>,
 ) -> anyhow::Result<()> {
     if message.trim().is_empty() {
         return Ok(());
@@ -740,6 +820,7 @@ pub async fn run_agent_session_to_channel(
         false,
         provider_id_for_subagent,
         api_key_for_subagent,
+        approval_tx,
     );
 
     // Load MCP tools from settings and append to the tool list.
@@ -881,6 +962,7 @@ pub async fn spawn_subagent(
         true,
         provider_id_for_subagent,
         api_key_for_subagent,
+        None,
     );
 
     let name = agent_type.as_deref().unwrap_or("subagent").to_string();
@@ -957,6 +1039,7 @@ pub async fn run_agent_session(
         false,
         provider_id_for_subagent,
         api_key_for_subagent,
+        None,
     );
 
     // 4b. Load MCP tools from settings and append to the tool list.
