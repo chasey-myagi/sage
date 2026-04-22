@@ -20,6 +20,9 @@ use ai::types::Model;
 
 use super::runner::AgentError;
 
+/// Permission check callback: `Ok(())` if the tool may run.
+pub type CanUseTool = Arc<dyn Fn(&str, Option<&[String]>) -> Result<(), String> + Send + Sync>;
+
 /// Parameters for a single query-loop execution.
 ///
 /// Mirrors CC's `QueryLoopParams` object threaded into `query()`.
@@ -31,7 +34,7 @@ pub struct QueryLoopParams {
     /// Maximum number of LLM turns before the loop terminates.
     pub max_turns: u32,
     /// Permission check for tool calls. Returns `Ok(())` if allowed.
-    pub can_use_tool: Arc<dyn Fn(&str, Option<&[String]>) -> Result<(), String> + Send + Sync>,
+    pub can_use_tool: CanUseTool,
     /// Optional allowlist of tool names. `None` means no extra restriction.
     pub allowed_tools: Option<Vec<String>>,
     /// Cancellation token — signals the loop to abort cleanly.
@@ -166,11 +169,11 @@ mod tests {
     };
     use futures::StreamExt;
 
-    fn allow_all() -> Arc<dyn Fn(&str, Option<&[String]>) -> Result<(), String> + Send + Sync> {
+    fn allow_all() -> CanUseTool {
         Arc::new(|_tool, _allowed| Ok(()))
     }
 
-    fn deny_all() -> Arc<dyn Fn(&str, Option<&[String]>) -> Result<(), String> + Send + Sync> {
+    fn deny_all() -> CanUseTool {
         Arc::new(|tool, _allowed| Err(format!("tool {tool} not permitted")))
     }
 

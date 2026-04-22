@@ -179,7 +179,9 @@ pub struct HookJsonOutput {
 
 /// Outcome of a single hook execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum HookOutcome {
+    #[default]
     Success,
     Blocking,
     NonBlockingError,
@@ -209,11 +211,6 @@ pub struct HookResult {
     pub prevent_continuation: bool,
 }
 
-impl Default for HookOutcome {
-    fn default() -> Self {
-        HookOutcome::Success
-    }
-}
 
 /// Aggregated result from all hooks for one event.
 #[derive(Debug, Default)]

@@ -539,6 +539,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::assertions_on_constants)]
     async fn session_end_uses_tight_timeout() {
         // A command hook with no explicit timeout should use DEFAULT_SESSION_END_TIMEOUT_SECS
         // when called via execute_session_end. We test the timeout constant value directly.

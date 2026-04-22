@@ -27,15 +27,14 @@ impl HookRunner {
         for matchers in hooks.values() {
             for matcher in matchers {
                 for hook_cmd in &matcher.hooks {
-                    if let Some(condition) = hook_cmd.if_condition() {
-                        if condition.contains("{{") {
+                    if let Some(condition) = hook_cmd.if_condition()
+                        && condition.contains("{{") {
                             tracing::warn!(
                                 condition,
                                 "if-condition looks like a template expression ({{...}}); \
                                  only exact tool-name matching is supported in this implementation"
                             );
                         }
-                    }
                 }
             }
         }
@@ -637,6 +636,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::assertions_on_constants)]
     async fn session_end_uses_tight_default_timeout() {
         // Verify the session-end timeout constant is much smaller than the tool timeout.
         assert!(DEFAULT_SESSION_END_TIMEOUT_SECS < 10);
@@ -1362,6 +1362,9 @@ assert d.get('agent_type')=='coding-agent', f'wrong agent_type: {{d.get(\"agent_
         );
         let _ = std::fs::remove_file(&flag_file);
         // Verify the constant is tight.
-        assert!(DEFAULT_SESSION_END_TIMEOUT_SECS < 10);
+        #[allow(clippy::assertions_on_constants)]
+        {
+            assert!(DEFAULT_SESSION_END_TIMEOUT_SECS < 10);
+        }
     }
 }

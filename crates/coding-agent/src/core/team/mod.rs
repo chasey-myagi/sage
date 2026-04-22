@@ -11,6 +11,7 @@ use agent_core::types::{AgentMessage, AgentTool, Content, UserMessage};
 use ai::types::Model;
 
 use crate::core::agent::definition::{AgentModel, AgentPermissionMode};
+use crate::core::agent::query_loop::CanUseTool;
 use crate::core::agent::runner::{AgentError, resolve_model_override, resolve_system_prompt};
 
 /// Status of a team member.
@@ -103,7 +104,7 @@ pub fn generate_unique_name(base_name: &str, existing_names: &[&str]) -> String 
 fn build_can_use_tool(
     agent_tools: &[String],
     permission_mode: Option<&AgentPermissionMode>,
-) -> Arc<dyn Fn(&str, Option<&[String]>) -> Result<(), String> + Send + Sync> {
+) -> CanUseTool {
     // Auto / AcceptEdits / Bubble: pass everything through.
     let mode_allows_all = matches!(
         permission_mode,
@@ -124,11 +125,10 @@ fn build_can_use_tool(
         if allowed.iter().any(|t| t == tool) {
             return Ok(());
         }
-        if let Some(extra_list) = extra {
-            if extra_list.iter().any(|t| t == tool) {
+        if let Some(extra_list) = extra
+            && extra_list.iter().any(|t| t == tool) {
                 return Ok(());
             }
-        }
         Err(format!(
             "tool '{tool}' is not in the agent's allowed tool list"
         ))
@@ -228,15 +228,14 @@ pub async fn spawn_agent_in_team(
     // Spawn a non-blocking watchdog that captures JoinError (including panics)
     // and routes them through tracing::error so they appear in structured logs.
     tokio::spawn(async move {
-        if let Err(join_err) = handle.await {
-            if join_err.is_panic() {
+        if let Err(join_err) = handle.await
+            && join_err.is_panic() {
                 tracing::error!(
                     agent_id = %id_for_watchdog,
                     "sub-agent task panicked",
                 );
             }
             // Cancellation is not an error (task was intentionally aborted).
-        }
     });
 
     Ok(agent_id)

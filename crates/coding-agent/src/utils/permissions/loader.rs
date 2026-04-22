@@ -69,10 +69,10 @@ pub fn permissions_json_to_rules(
 ) -> Vec<PermissionRule> {
     let mut rules = Vec::new();
     for behavior in SUPPORTED_BEHAVIORS {
-        for rule_str in permissions.rules_for(behavior.clone()) {
+        for rule_str in permissions.rules_for(*behavior) {
             rules.push(PermissionRule {
                 source: source.clone(),
-                rule_behavior: behavior.clone(),
+                rule_behavior: *behavior,
                 rule_value: permission_rule_value_from_str(rule_str),
             });
         }
@@ -148,7 +148,7 @@ pub fn add_permission_rules_to_file(
     }
 
     let mut permissions = load_permissions_from_file(path).unwrap_or_default();
-    let existing_rules = permissions.rules_for(behavior.clone());
+    let existing_rules = permissions.rules_for(behavior);
 
     // Normalize existing entries to their canonical form so legacy names match.
     let existing_set: std::collections::HashSet<String> = existing_rules
@@ -186,7 +186,7 @@ pub fn delete_permission_rule_from_file(
     };
 
     let target = permission_rule_value_to_string(rule_value);
-    let rules = permissions.rules_for(behavior.clone());
+    let rules = permissions.rules_for(behavior);
 
     let new_rules: Vec<String> = rules
         .iter()
@@ -258,7 +258,7 @@ mod tests {
         };
         let rules = permissions_json_to_rules(&perms, PermissionRuleSource::ProjectSettings);
         assert_eq!(rules.len(), 3);
-        let behaviors: Vec<_> = rules.iter().map(|r| r.rule_behavior.clone()).collect();
+        let behaviors: Vec<_> = rules.iter().map(|r| r.rule_behavior).collect();
         assert!(behaviors.contains(&PermissionBehavior::Allow));
         assert!(behaviors.contains(&PermissionBehavior::Deny));
         assert!(behaviors.contains(&PermissionBehavior::Ask));

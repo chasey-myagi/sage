@@ -19,7 +19,7 @@ pub fn should_use_new_init_workflow() -> bool {
         || env::var("CLAUDE_CODE_NEW_INIT")
             .ok()
             .as_deref()
-            .map_or(false, is_truthy_env_flag)
+            .is_some_and(is_truthy_env_flag)
 }
 
 // ============================================================================

@@ -18,7 +18,7 @@ use ai::types::Model;
 
 use super::definition::{AgentDef, AgentModel};
 use super::forked::{CacheSafeParams, filter_incomplete_tool_calls};
-use super::query_loop::{QueryLoopParams, run_query_loop};
+use super::query_loop::{CanUseTool, QueryLoopParams, run_query_loop};
 
 const OPUS_MODEL_ID: &str = "claude-opus-4-7";
 const SONNET_MODEL_ID: &str = "claude-sonnet-4-6";
@@ -59,7 +59,7 @@ pub struct RunAgentParams {
     // TODO: wire when fork context sharing is implemented
     pub system_context: HashMap<String, String>,
     /// Permission check: returns `Ok(())` if the tool is allowed, `Err` otherwise.
-    pub can_use_tool: Arc<dyn Fn(&str, Option<&[String]>) -> Result<(), String> + Send + Sync>,
+    pub can_use_tool: CanUseTool,
     /// Initial messages for this agent (may include inherited fork context).
     pub messages: Vec<AgentMessage>,
     /// Maximum number of turns. `None` means use the agent def's `max_turns` or 200.
@@ -329,8 +329,7 @@ mod tests {
         }
     }
 
-    fn make_allow_all() -> Arc<dyn Fn(&str, Option<&[String]>) -> Result<(), String> + Send + Sync>
-    {
+    fn make_allow_all() -> CanUseTool {
         Arc::new(|_tool, _allowed| Ok(()))
     }
 

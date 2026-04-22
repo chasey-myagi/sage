@@ -142,14 +142,12 @@ pub fn check_app_keybinding(data: &str, action: &str) -> bool {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .as_ref()
-    {
-        if let Some(binding) = mgr.get_binding(action) {
+        && let Some(binding) = mgr.get_binding(action) {
             return binding
                 .as_keys()
                 .iter()
                 .any(|k| !k.contains(' ') && tui::keys::matches_key(data, k));
         }
-    }
     // Fall back to built-in defaults.
     if let Some(keys) = default_app_keys().get(action) {
         return keys.iter().any(|&k| tui::keys::matches_key(data, k));

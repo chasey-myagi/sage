@@ -754,11 +754,10 @@ pub async fn run_agent_session_to_channel(
     let hook_runner = wire_hooks(&mut agent, &cwd, &permission_mode);
 
     // SessionStart hooks fire once before the agent starts its first turn.
-    if let Some(runner) = &hook_runner {
-        if let Err(e) = runner.run_session_start().await {
+    if let Some(runner) = &hook_runner
+        && let Err(e) = runner.run_session_start().await {
             tracing::warn!(error = %e, "SessionStart hook failed — continuing session");
         }
-    }
 
     agent.subscribe(move |event| {
         use agent_core::AgentEvent;
@@ -826,11 +825,10 @@ pub async fn run_agent_session_to_channel(
         .map_err(|e| anyhow::anyhow!(e));
 
     // SessionEnd hooks fire after the agent finishes (regardless of success).
-    if let Some(runner) = hook_runner {
-        if let Err(e) = runner.run_session_end().await {
+    if let Some(runner) = hook_runner
+        && let Err(e) = runner.run_session_end().await {
             tracing::warn!(error = %e, "SessionEnd hook failed");
         }
-    }
 
     run_result
 }
@@ -843,6 +841,7 @@ pub async fn run_agent_session_to_channel(
 ///
 /// This is the primary user-facing entry point for the sub-agent system,
 /// wiring the session's LLM credentials into the team spawning path.
+#[allow(clippy::too_many_arguments)]
 pub async fn spawn_subagent(
     prompt: String,
     agent_type: Option<String>,
@@ -971,11 +970,10 @@ pub async fn run_agent_session(
     let hook_runner = wire_hooks(&mut agent, &cwd, &permission_mode);
 
     // 4d. SessionStart hooks fire once before the agent starts its first turn.
-    if let Some(runner) = &hook_runner {
-        if let Err(e) = runner.run_session_start().await {
+    if let Some(runner) = &hook_runner
+        && let Err(e) = runner.run_session_start().await {
             tracing::warn!(error = %e, "SessionStart hook failed — continuing session");
         }
-    }
 
     // 5. Subscribe to events: stream text deltas to stdout.
     let stdout = std::io::stdout();
@@ -1014,11 +1012,10 @@ pub async fn run_agent_session(
         .map_err(|e| anyhow::anyhow!(e));
 
     // 7. SessionEnd hooks fire after the agent finishes (regardless of success).
-    if let Some(runner) = hook_runner {
-        if let Err(e) = runner.run_session_end().await {
+    if let Some(runner) = hook_runner
+        && let Err(e) = runner.run_session_end().await {
             tracing::warn!(error = %e, "SessionEnd hook failed");
         }
-    }
 
     run_result
 }
