@@ -74,6 +74,8 @@ pub struct InteractiveMode {
     last_terminal_width: u16,
     /// Tick counter for spinner animation (incremented every ~50 ms).
     tick: u64,
+    /// Name of the tool currently executing, cleared when done.
+    current_tool: Option<String>,
 }
 
 /// A single chat turn in the history display.
@@ -119,6 +121,7 @@ impl InteractiveMode {
             last_viewport_height: 0,
             last_terminal_width: 80,
             tick: 0,
+            current_tool: None,
         }
     }
 
@@ -199,6 +202,7 @@ impl InteractiveMode {
                             self.session_cost_usd += cost.total;
                         }
                         Ok(AgentDelta::ToolStart { name, args_preview }) => {
+                            self.current_tool = Some(name.clone());
                             let content = if args_preview.is_empty() {
                                 name.clone()
                             } else {
@@ -235,9 +239,11 @@ impl InteractiveMode {
                                     success,
                                 };
                             }
+                            self.current_tool = None;
                         }
                         Ok(AgentDelta::Error(err)) => {
                             self.is_thinking = false;
+                            self.current_tool = None;
                             self.messages.push(ChatMessage {
                                 role: MessageRole::Error,
                                 content: err,
@@ -254,6 +260,7 @@ impl InteractiveMode {
             if disconnected {
                 self.agent_rx = None;
                 self.is_thinking = false;
+                self.current_tool = None;
             }
 
             // Sticky scroll: pin to bottom as new content arrives.
@@ -540,11 +547,20 @@ impl InteractiveMode {
             Self::format_tokens(self.session_output_tokens),
             Self::format_cost(self.session_cost_usd),
         );
-        // Right-align stats; pad between left label and right stats.
         let left_len = header_left.chars().count() as u16;
         let stats_len = stats.chars().count() as u16;
-        let gap = width.saturating_sub(left_len + stats_len);
-        let header_line = Line::from(vec![
+        let (tool_span, tool_len) = if let Some(name) = &self.current_tool {
+            let label = format!("⚙ {name}  ");
+            let len = label.chars().count() as u16;
+            (
+                Some(Span::styled(label, Style::default().fg(Color::Yellow))),
+                len,
+            )
+        } else {
+            (None, 0)
+        };
+        let gap = width.saturating_sub(left_len + tool_len + stats_len);
+        let mut spans = vec![
             Span::styled(
                 header_left,
                 Style::default()
@@ -552,8 +568,12 @@ impl InteractiveMode {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw(" ".repeat(gap as usize)),
-            Span::styled(stats, Style::default().fg(Color::DarkGray)),
-        ]);
+        ];
+        if let Some(ts) = tool_span {
+            spans.push(ts);
+        }
+        spans.push(Span::styled(stats, Style::default().fg(Color::DarkGray)));
+        let header_line = Line::from(spans);
         f.render_widget(Paragraph::new(vec![header_line]), chunks[0]);
 
         // ── Messages ──────────────────────────────────────────────────────
