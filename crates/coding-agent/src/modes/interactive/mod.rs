@@ -432,6 +432,9 @@ impl InteractiveMode {
                                     };
                                 }
                                 // Input handling
+                                (KeyCode::Enter, KeyModifiers::SHIFT) if !self.is_thinking => {
+                                    self.input_buffer.push('\n');
+                                }
                                 (KeyCode::Enter, _) if !self.is_thinking => {
                                     // Completion selection
                                     if !self.completion_matches.is_empty() {
@@ -1021,6 +1024,15 @@ impl InteractiveMode {
 
     // ── Render ──────────────────────────────────────────────────────────────
 
+    /// Number of lines the input box should occupy (1–6).
+    fn input_display_height(&self) -> u16 {
+        if self.is_thinking {
+            return 1;
+        }
+        let newlines = self.input_buffer.chars().filter(|&c| c == '\n').count() as u16;
+        (newlines + 1).min(6)
+    }
+
     /// Render the TUI frame — CC-style borderless layout.
     fn render(&mut self, f: &mut ratatui::Frame) {
         let size = f.area();
@@ -1034,14 +1046,16 @@ impl InteractiveMode {
             (self.completion_matches.len().min(5) + 2) as u16
         };
 
+        let input_height = self.input_display_height();
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),         // header
-                Constraint::Min(0),            // messages
-                Constraint::Length(menu_rows), // slash menu (0 if empty)
-                Constraint::Length(1),         // divider
-                Constraint::Length(1),         // input prompt
+                Constraint::Length(1),            // header
+                Constraint::Min(0),               // messages
+                Constraint::Length(menu_rows),    // slash menu (0 if empty)
+                Constraint::Length(1),            // divider
+                Constraint::Length(input_height), // input prompt
             ])
             .split(size);
 
@@ -1224,9 +1238,9 @@ impl InteractiveMode {
         f.render_widget(Paragraph::new(vec![divider_line]), chunks[3]);
 
         // ── Input / spinner ───────────────────────────────────────────────
-        let input_line = if self.is_thinking {
+        let input_lines: Vec<Line> = if self.is_thinking {
             let frame = SPINNER[(self.tick as usize) % SPINNER.len()];
-            Line::from(vec![
+            vec![Line::from(vec![
                 Span::styled(
                     format!("  {frame} "),
                     Style::default().fg(theme.ratatui_fg(ThemeColor::Accent)),
@@ -1235,24 +1249,52 @@ impl InteractiveMode {
                     "Thinking…",
                     Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
                 ),
-            ])
+            ])]
         } else {
+            let all_lines: Vec<&str> = self.input_buffer.split('\n').collect();
+            let total = all_lines.len();
+            let visible: Vec<&str> = if total > 6 {
+                all_lines[total - 6..].to_vec()
+            } else {
+                all_lines
+            };
+            let visible_count = visible.len();
             // Cursor blinks every 10 ticks (~500ms).
             let show_cursor = (self.tick / 10) & 1 == 0;
             let cursor = if show_cursor { "▋" } else { " " };
-            Line::from(vec![
-                Span::styled(
-                    "  ❯ ",
-                    Style::default().fg(theme.ratatui_fg(ThemeColor::Accent)),
-                ),
-                Span::raw(self.input_buffer.clone()),
-                Span::styled(
-                    cursor.to_string(),
-                    Style::default().add_modifier(Modifier::REVERSED),
-                ),
-            ])
+            visible
+                .into_iter()
+                .enumerate()
+                .map(|(i, text)| {
+                    let is_last = i == visible_count - 1;
+                    let cursor_span = if is_last {
+                        Some(Span::styled(
+                            cursor.to_string(),
+                            Style::default().add_modifier(Modifier::REVERSED),
+                        ))
+                    } else {
+                        None
+                    };
+                    if i == 0 {
+                        let mut spans = vec![
+                            Span::styled(
+                                "  ❯ ",
+                                Style::default().fg(theme.ratatui_fg(ThemeColor::Accent)),
+                            ),
+                            Span::raw(text.to_string()),
+                        ];
+                        spans.extend(cursor_span);
+                        Line::from(spans)
+                    } else {
+                        let mut spans =
+                            vec![Span::raw("    "), Span::raw(text.to_string())];
+                        spans.extend(cursor_span);
+                        Line::from(spans)
+                    }
+                })
+                .collect()
         };
-        f.render_widget(Paragraph::new(vec![input_line]), chunks[4]);
+        f.render_widget(Paragraph::new(input_lines), chunks[4]);
 
         // ── Permission approval dialog ────────────────────────────────────
         if let Some(approval) = &self.pending_approval {
