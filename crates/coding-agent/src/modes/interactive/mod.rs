@@ -325,6 +325,9 @@ impl InteractiveMode {
                                         .saturating_sub(self.last_viewport_height);
                                 }
                                 // Input handling
+                                (KeyCode::Enter, KeyModifiers::SHIFT) if !self.is_thinking => {
+                                    self.input_buffer.push('\n');
+                                }
                                 (KeyCode::Enter, _) if !self.is_thinking => {
                                     let input = std::mem::take(&mut self.input_buffer);
                                     if !input.trim().is_empty() {
@@ -507,6 +510,15 @@ impl InteractiveMode {
 
     // ── Render ──────────────────────────────────────────────────────────────
 
+    /// Number of lines the input box should occupy (1–6).
+    fn input_display_height(&self) -> u16 {
+        if self.is_thinking {
+            return 1;
+        }
+        let newlines = self.input_buffer.chars().filter(|&c| c == '\n').count() as u16;
+        (newlines + 1).min(6)
+    }
+
     /// Render the TUI frame — CC-style borderless layout.
     ///
     /// ```
@@ -521,14 +533,16 @@ impl InteractiveMode {
         let size = f.area();
         let width = size.width;
 
-        // Layout: header(1) | messages(∞) | divider(1) | input(1)
+        let input_height = self.input_display_height();
+
+        // Layout: header(1) | messages(∞) | divider(1) | input(1–6)
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1), // header
-                Constraint::Min(0),    // messages
-                Constraint::Length(1), // divider
-                Constraint::Length(1), // input prompt
+                Constraint::Length(1),            // header
+                Constraint::Min(0),               // messages
+                Constraint::Length(1),            // divider
+                Constraint::Length(input_height), // input prompt
             ])
             .split(size);
 
@@ -625,19 +639,37 @@ impl InteractiveMode {
 
         // ── Input / spinner ───────────────────────────────────────────────
         const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-        let input_line = if self.is_thinking {
+        let input_lines: Vec<Line> = if self.is_thinking {
             let frame = SPINNER[(self.tick as usize) % SPINNER.len()];
-            Line::from(vec![
+            vec![Line::from(vec![
                 Span::styled(format!("  {frame} "), Style::default().fg(Color::Green)),
                 Span::styled("Thinking…", Style::default().fg(Color::DarkGray)),
-            ])
+            ])]
         } else {
-            Line::from(vec![
-                Span::styled("  ❯ ", Style::default().fg(Color::Green)),
-                Span::raw(self.input_buffer.clone()),
-            ])
+            let mut lines: Vec<&str> = self.input_buffer.split('\n').collect();
+            // If buffer ends with '\n', split produces a trailing empty element representing
+            // the cursor being on a new blank line — keep it.
+            // Limit visible lines to 6; scroll the rest off the top.
+            let total = lines.len();
+            if total > 6 {
+                lines = lines[total - 6..].to_vec();
+            }
+            lines
+                .into_iter()
+                .enumerate()
+                .map(|(i, text)| {
+                    if i == 0 {
+                        Line::from(vec![
+                            Span::styled("  ❯ ", Style::default().fg(Color::Green)),
+                            Span::raw(text.to_string()),
+                        ])
+                    } else {
+                        Line::from(vec![Span::raw("    "), Span::raw(text.to_string())])
+                    }
+                })
+                .collect()
         };
-        f.render_widget(Paragraph::new(vec![input_line]), chunks[3]);
+        f.render_widget(Paragraph::new(input_lines), chunks[3]);
     }
 }
 
