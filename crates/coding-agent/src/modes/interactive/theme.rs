@@ -91,6 +91,7 @@ pub enum ThemeBg {
     ToolPendingBg,
     ToolSuccessBg,
     ToolErrorBg,
+    CodeBg,
 }
 
 // ============================================================================
@@ -416,6 +417,7 @@ pub fn dark_theme(mode: ColorMode) -> Theme {
         (ThemeBg::ToolPendingBg, hex("#282832")),
         (ThemeBg::ToolSuccessBg, hex("#283228")),
         (ThemeBg::ToolErrorBg, hex("#3c2828")),
+        (ThemeBg::CodeBg, hex("#2a2a3a")),
     ];
 
     let mut fg_colors = HashMap::new();
@@ -511,6 +513,7 @@ pub fn light_theme(mode: ColorMode) -> Theme {
         (ThemeBg::ToolPendingBg, hex("#e8e8f8")),
         (ThemeBg::ToolSuccessBg, hex("#e8f0e8")),
         (ThemeBg::ToolErrorBg, hex("#f8e8e8")),
+        (ThemeBg::CodeBg, hex("#ececf4")),
     ];
 
     let mut fg_colors = HashMap::new();
