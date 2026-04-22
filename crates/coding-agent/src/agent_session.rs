@@ -637,7 +637,11 @@ fn create_default_tools(
         )
     })
     .map(|t| -> Arc<dyn agent_core::types::AgentTool> {
-        Arc::new(ToolAdapter::new(t, Arc::clone(&permission_ctx), approval_tx.clone()))
+        Arc::new(ToolAdapter::new(
+            t,
+            Arc::clone(&permission_ctx),
+            approval_tx.clone(),
+        ))
     })
     .collect();
 

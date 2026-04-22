@@ -11,6 +11,9 @@ pub mod components;
 pub mod theme;
 
 use std::io;
+use std::sync::OnceLock;
+
+use regex::Regex;
 
 use crossterm::{
     event::{
@@ -579,8 +582,11 @@ impl InteractiveMode {
                     })
                     .take(MAX_COMPLETIONS)
                     .map(|p| {
-                        let hint =
-                            if p.is_dir() { "dir".to_string() } else { "file".to_string() };
+                        let hint = if p.is_dir() {
+                            "dir".to_string()
+                        } else {
+                            "file".to_string()
+                        };
                         (p.display().to_string(), hint)
                     })
                     .collect();
@@ -643,13 +649,61 @@ impl InteractiveMode {
             .sum()
     }
 
+    /// Parse a text line into styled ratatui spans, handling inline Markdown:
+    /// **bold**, *italic*, `code`, with list prefix substitution.
+    fn parse_inline_markdown(text: &str, theme: &Theme) -> Vec<Span<'static>> {
+        static RE: OnceLock<Regex> = OnceLock::new();
+        let re = RE.get_or_init(|| {
+            // Match: `code`, **bold**, *italic* (in precedence order)
+            Regex::new(r"`([^`]+)`|\*\*([^*]+)\*\*|\*([^*\s][^*]*)\*").unwrap()
+        });
+
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut last = 0;
+
+        for cap in re.captures_iter(text) {
+            let m = cap.get(0).unwrap();
+            if m.start() > last {
+                spans.push(Span::raw(text[last..m.start()].to_string()));
+            }
+            if let Some(code) = cap.get(1) {
+                let style = Style::default()
+                    .fg(theme.ratatui_fg(ThemeColor::Muted))
+                    .bg(theme.ratatui_bg(ThemeBg::CodeBg));
+                spans.push(Span::styled(code.as_str().to_string(), style));
+            } else if let Some(bold) = cap.get(2) {
+                spans.push(Span::styled(
+                    bold.as_str().to_string(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ));
+            } else if let Some(italic) = cap.get(3) {
+                spans.push(Span::styled(
+                    italic.as_str().to_string(),
+                    Style::default().add_modifier(Modifier::ITALIC),
+                ));
+            }
+            last = m.end();
+        }
+        if last < text.len() {
+            spans.push(Span::raw(text[last..].to_string()));
+        }
+        if spans.is_empty() {
+            spans.push(Span::raw(text.to_string()));
+        }
+        spans
+    }
+
     /// Convert a `ChatMessage` to ratatui `Line`s, handling embedded newlines.
     ///
     /// First content line: `  ❯ {text}` (user) or `  ◆ {text}` (assistant).
     /// Subsequent lines: indented by 4 spaces to align under the text.
     /// Diff content (detected by leading `diff --git` header) is rendered
     /// with ANSI color codes via `render_diff()`.
-    fn message_to_lines(msg: &ChatMessage, theme: &Theme, terminal_width: u16) -> Vec<Line<'static>> {
+    fn message_to_lines(
+        msg: &ChatMessage,
+        theme: &Theme,
+        terminal_width: u16,
+    ) -> Vec<Line<'static>> {
         let (indicator, indicator_color, bg_color) = match &msg.role {
             MessageRole::User => (
                 "❯",
@@ -698,7 +752,11 @@ impl InteractiveMode {
         };
 
         for (i, text_line) in content_lines.iter().enumerate() {
-            let lead_text = if i == 0 { prefix.clone() } else { indent.clone() };
+            let lead_text = if i == 0 {
+                prefix.clone()
+            } else {
+                indent.clone()
+            };
             let lead = Span::styled(lead_text.clone(), Style::default().fg(indicator_color));
             let content_span = Span::styled(text_line.to_string(), Style::default());
 
@@ -706,19 +764,31 @@ impl InteractiveMode {
                 // Pad the line to terminal width for full-width background.
                 let used = lead_text.width() + text_line.width();
                 let pad = (terminal_width as usize).saturating_sub(used);
-                let padding = Span::styled(
-                    " ".repeat(pad),
-                    Style::default().bg(bg),
-                );
-                let lead_bg = Span::styled(
-                    lead_text,
-                    Style::default().fg(indicator_color).bg(bg),
-                );
-                let content_bg = Span::styled(
-                    text_line.to_string(),
-                    Style::default().bg(bg),
-                );
+                let padding = Span::styled(" ".repeat(pad), Style::default().bg(bg));
+                let lead_bg = Span::styled(lead_text, Style::default().fg(indicator_color).bg(bg));
+                let content_bg = Span::styled(text_line.to_string(), Style::default().bg(bg));
                 lines.push(Line::from(vec![lead_bg, content_bg, padding]));
+            } else if matches!(msg.role, MessageRole::Assistant) {
+                // Render inline Markdown for assistant messages.
+                // Unordered list markers (`- ` / `* `) are replaced with a styled bullet.
+                let (body, list_bullet) = if let Some(rest) = text_line
+                    .strip_prefix("- ")
+                    .or_else(|| text_line.strip_prefix("* "))
+                {
+                    let bullet = Span::styled(
+                        "• ".to_string(),
+                        Style::default().fg(theme.ratatui_fg(ThemeColor::MdListBullet)),
+                    );
+                    (rest, Some(bullet))
+                } else {
+                    (*text_line, None)
+                };
+                let mut line_spans = vec![lead];
+                if let Some(b) = list_bullet {
+                    line_spans.push(b);
+                }
+                line_spans.extend(Self::parse_inline_markdown(body, theme));
+                lines.push(Line::from(line_spans));
             } else {
                 lines.push(Line::from(vec![lead, content_span]));
             }
@@ -796,11 +866,11 @@ impl InteractiveMode {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),            // header
-                Constraint::Min(0),               // messages
-                Constraint::Length(menu_rows),    // slash menu (0 if empty)
-                Constraint::Length(1),            // divider
-                Constraint::Length(1),            // input prompt
+                Constraint::Length(1),         // header
+                Constraint::Min(0),            // messages
+                Constraint::Length(menu_rows), // slash menu (0 if empty)
+                Constraint::Length(1),         // divider
+                Constraint::Length(1),         // input prompt
             ])
             .split(size);
 
@@ -909,10 +979,7 @@ impl InteractiveMode {
             let menu_block = Block::default()
                 .borders(Borders::TOP | Borders::BOTTOM)
                 .border_style(Style::default().fg(theme.ratatui_fg(ThemeColor::BorderMuted)));
-            f.render_widget(
-                Paragraph::new(menu_lines).block(menu_block),
-                chunks[2],
-            );
+            f.render_widget(Paragraph::new(menu_lines).block(menu_block), chunks[2]);
         }
 
         // ── Divider — with scroll indicator when content overflows ────────
@@ -1024,9 +1091,7 @@ impl InteractiveMode {
                         .title(" ⚠ Permission Required ")
                         .title_alignment(Alignment::Center)
                         .borders(Borders::ALL)
-                        .border_style(
-                            Style::default().fg(theme.ratatui_fg(ThemeColor::Warning)),
-                        ),
+                        .border_style(Style::default().fg(theme.ratatui_fg(ThemeColor::Warning))),
                 )
                 .wrap(Wrap { trim: false });
             f.render_widget(dialog, popup_area);
@@ -1206,5 +1271,106 @@ mod tests {
         mode.input_buffer = "hello".to_string();
         mode.update_completion_matches();
         assert!(mode.completion_matches.is_empty());
+    }
+
+    #[test]
+    fn parse_inline_markdown_bold() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
+        let spans = InteractiveMode::parse_inline_markdown("hello **world** end", &theme);
+        // Expect: "hello ", styled "world", " end"
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].content, "hello ");
+        assert_eq!(spans[1].content, "world");
+        assert!(
+            spans[1]
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+        assert_eq!(spans[2].content, " end");
+    }
+
+    #[test]
+    fn parse_inline_markdown_italic() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
+        let spans = InteractiveMode::parse_inline_markdown("*italic*", &theme);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, "italic");
+        assert!(
+            spans[0]
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::ITALIC)
+        );
+    }
+
+    #[test]
+    fn parse_inline_markdown_code() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
+        let spans = InteractiveMode::parse_inline_markdown("use `foo()` here", &theme);
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[1].content, "foo()");
+        // Code span should have a background color set
+        assert_ne!(spans[1].style.bg, None);
+    }
+
+    #[test]
+    fn parse_inline_markdown_plain_text() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
+        let spans = InteractiveMode::parse_inline_markdown("plain text", &theme);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, "plain text");
+    }
+
+    #[test]
+    fn message_to_lines_assistant_bold() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
+        let msg = ChatMessage {
+            role: MessageRole::Assistant,
+            content: "**bold** text".to_string(),
+        };
+        let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
+        assert_eq!(lines.len(), 1);
+        // Line has: indicator span + bold span + rest span
+        let spans = &lines[0].spans;
+        assert!(spans.len() >= 2);
+        // Find the bold span
+        let bold_span = spans.iter().find(|s| s.content == "bold");
+        assert!(bold_span.is_some());
+        assert!(
+            bold_span
+                .unwrap()
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+    }
+
+    #[test]
+    fn message_to_lines_assistant_unordered_list() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
+        let msg = ChatMessage {
+            role: MessageRole::Assistant,
+            content: "- item one".to_string(),
+        };
+        let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
+        assert_eq!(lines.len(), 1);
+        let all_text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(all_text.contains('•'));
+        assert!(!all_text.contains("- "));
+    }
+
+    #[test]
+    fn message_to_lines_assistant_ordered_list() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
+        let msg = ChatMessage {
+            role: MessageRole::Assistant,
+            content: "1. first item".to_string(),
+        };
+        let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
+        assert_eq!(lines.len(), 1);
+        let all_text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        // Number should be preserved
+        assert!(all_text.contains("1."));
     }
 }
