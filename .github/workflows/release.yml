@@ -135,11 +135,21 @@ jobs:
             -e "s|/releases/download/v[0-9.]*/sage-v[0-9.]*-linux-arm64|/releases/download/${VERSION}/sage-${VERSION}-linux-arm64|g" \
             Formula/sage.rb
 
-          # Update sha256 hashes (multi-line: match url line then immediately following sha256 line)
-          perl -i -0pe "s|(url \"[^\"]*darwin-arm64[^\"]*\"\n\s+sha256 \")[a-f0-9]+(\")|\\1${SHA_DARWIN_ARM64}\\2|g" Formula/sage.rb
-          perl -i -0pe "s|(url \"[^\"]*darwin-x86_64[^\"]*\"\n\s+sha256 \")[a-f0-9]+(\")|\\1${SHA_DARWIN_X86_64}\\2|g" Formula/sage.rb
-          perl -i -0pe "s|(url \"[^\"]*linux-x86_64[^\"]*\"\n\s+sha256 \")[a-f0-9]+(\")|\\1${SHA_LINUX_X86_64}\\2|g" Formula/sage.rb
-          perl -i -0pe "s|(url \"[^\"]*linux-arm64[^\"]*\"\n\s+sha256 \")[a-f0-9]+(\")|\\1${SHA_LINUX_ARM64}\\2|g" Formula/sage.rb
+          # Update sha256 hashes.
+          # SHA is passed via env so the replacement string never touches \1 + hex,
+          # which would be misread as octal escapes (e.g. \1 + "77..." = \177 = DEL).
+          SHA="${SHA_DARWIN_ARM64}" perl -i -0pe \
+            's|(url "[^"]*darwin-arm64[^"]*"\n\s+sha256 ")[a-f0-9]+(")|${1}$ENV{SHA}${2}|g' \
+            Formula/sage.rb
+          SHA="${SHA_DARWIN_X86_64}" perl -i -0pe \
+            's|(url "[^"]*darwin-x86_64[^"]*"\n\s+sha256 ")[a-f0-9]+(")|${1}$ENV{SHA}${2}|g' \
+            Formula/sage.rb
+          SHA="${SHA_LINUX_X86_64}" perl -i -0pe \
+            's|(url "[^"]*linux-x86_64[^"]*"\n\s+sha256 ")[a-f0-9]+(")|${1}$ENV{SHA}${2}|g' \
+            Formula/sage.rb
+          SHA="${SHA_LINUX_ARM64}" perl -i -0pe \
+            's|(url "[^"]*linux-arm64[^"]*"\n\s+sha256 ")[a-f0-9]+(")|${1}$ENV{SHA}${2}|g' \
+            Formula/sage.rb
 
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
