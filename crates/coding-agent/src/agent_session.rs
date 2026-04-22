@@ -979,6 +979,188 @@ pub async fn run_agent_session_to_channel(
     run_result
 }
 
+// ── Approval-path unit tests ─────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use agent_core::types::AgentTool as _;
+
+    use crate::modes::interactive::approval::ApprovalResponse;
+    use crate::utils::permissions::{PermissionRuleSource, ToolPermissionContext};
+
+    // ── Mock tool ────────────────────────────────────────────────────────────
+
+    struct MockTool {
+        tool_name: &'static str,
+        executed: Arc<AtomicBool>,
+    }
+
+    impl MockTool {
+        fn new(name: &'static str) -> (Self, Arc<AtomicBool>) {
+            let flag = Arc::new(AtomicBool::new(false));
+            (
+                Self {
+                    tool_name: name,
+                    executed: flag.clone(),
+                },
+                flag,
+            )
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl SimpleTool for MockTool {
+        fn name(&self) -> &str {
+            self.tool_name
+        }
+        fn description(&self) -> &str {
+            "mock"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        async fn execute(&self, _args: serde_json::Value) -> agent_core::tools::ToolOutput {
+            self.executed.store(true, Ordering::Relaxed);
+            agent_core::tools::ToolOutput {
+                content: vec![Content::Text {
+                    text: "ok".to_string(),
+                }],
+                is_error: false,
+            }
+        }
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    fn ask_ctx(tool_name: &str) -> Arc<Mutex<ToolPermissionContext>> {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.add_ask_rule(PermissionRuleSource::Session, tool_name.to_owned());
+        Arc::new(Mutex::new(ctx))
+    }
+
+    fn first_text(result: &AgentToolResult) -> &str {
+        result
+            .content
+            .iter()
+            .find_map(|c| {
+                if let Content::Text { text } = c {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or("")
+    }
+
+    fn make_adapter(
+        name: &'static str,
+    ) -> (
+        ToolAdapter,
+        Arc<AtomicBool>,
+        tokio::sync::mpsc::UnboundedReceiver<ApprovalRequest>,
+    ) {
+        let (tool, executed) = MockTool::new(name);
+        let ctx = ask_ctx(name);
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let session_rules = Arc::new(Mutex::new(HashMap::<String, bool>::new()));
+        let adapter = ToolAdapter::new(Box::new(tool), ctx, Some(tx), session_rules);
+        (adapter, executed, rx)
+    }
+
+    // ── Tests ────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn approval_allow_executes_tool() {
+        let (adapter, executed, mut rx) = make_adapter("test_tool");
+
+        tokio::spawn(async move {
+            if let Some(req) = rx.recv().await {
+                let _ = req.response_tx.send(ApprovalResponse::Allow);
+            }
+        });
+
+        let result = adapter.execute("id", serde_json::json!({}), None, None).await;
+        assert!(!result.is_error, "Allow should not be an error");
+        assert!(executed.load(Ordering::Relaxed), "Allow should execute the tool");
+    }
+
+    #[tokio::test]
+    async fn approval_deny_blocks_tool() {
+        let (adapter, executed, mut rx) = make_adapter("test_tool");
+
+        tokio::spawn(async move {
+            if let Some(req) = rx.recv().await {
+                let _ = req.response_tx.send(ApprovalResponse::Deny);
+            }
+        });
+
+        let result = adapter.execute("id", serde_json::json!({}), None, None).await;
+        assert!(result.is_error, "Deny should be an error");
+        assert!(!executed.load(Ordering::Relaxed), "Deny should not execute the tool");
+        assert!(
+            first_text(&result).contains("denied"),
+            "Deny message should contain 'denied': {}",
+            first_text(&result)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn approval_timeout_returns_error() {
+        let (adapter, executed, mut rx) = make_adapter("test_tool");
+
+        // Receive the request but never respond — hold response_tx alive until
+        // after the approval timeout fires.
+        tokio::spawn(async move {
+            let req = rx.recv().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_secs(
+                APPROVAL_TIMEOUT_SECS + 60,
+            ))
+            .await;
+            drop(req);
+        });
+
+        let result = adapter.execute("id", serde_json::json!({}), None, None).await;
+        assert!(result.is_error, "Timeout should be an error");
+        assert!(
+            !executed.load(Ordering::Relaxed),
+            "Timeout should not execute the tool"
+        );
+        assert!(
+            first_text(&result).contains("timed out"),
+            "Timeout message should contain 'timed out': {}",
+            first_text(&result)
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_session_closed_returns_error() {
+        let (adapter, executed, mut rx) = make_adapter("test_tool");
+
+        // Simulate TUI close: receive the request and drop the response sender.
+        tokio::spawn(async move {
+            if let Some(req) = rx.recv().await {
+                drop(req.response_tx);
+            }
+        });
+
+        let result = adapter.execute("id", serde_json::json!({}), None, None).await;
+        assert!(result.is_error, "Session closed should be an error");
+        assert!(
+            !executed.load(Ordering::Relaxed),
+            "Session closed should not execute the tool"
+        );
+        assert!(
+            first_text(&result).contains("session closed"),
+            "Session closed message should contain 'session closed': {}",
+            first_text(&result)
+        );
+    }
+}
+
 /// Spawn a sub-agent as a team member, running it asynchronously in the background.
 ///
 /// Resolves a model and provider using the same defaults as `run_agent_session`,
