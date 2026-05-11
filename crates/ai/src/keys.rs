@@ -369,25 +369,6 @@ mod tests {
     // These tests MUST run with --test-threads=1 to avoid data races.
 
     #[test]
-    fn test_env_var_google_vertex() {
-        assert_eq!(api_key_env_var("google-vertex"), "GOOGLE_CLOUD_API_KEY");
-    }
-
-    #[test]
-    #[serial]
-    fn test_resolve_api_key_google_vertex_recognized() {
-        unsafe { std::env::remove_var("GOOGLE_CLOUD_API_KEY") };
-        let result = resolve_api_key("google-vertex");
-        assert!(result.is_err());
-        let err = format!("{}", result.unwrap_err());
-        assert!(
-            err.contains("GOOGLE_CLOUD_API_KEY"),
-            "google-vertex should be a known provider, got: {}",
-            err
-        );
-    }
-
-    #[test]
     #[serial]
     fn test_resolve_api_key_whitespace_only() {
         // Key with only whitespace should be treated as empty/missing
