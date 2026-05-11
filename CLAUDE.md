@@ -7,10 +7,10 @@
 
 ```
 crates/
-├── ai/            # LLM provider 抽象 + 流式 SSE + 类型
-├── agent-core/    # Agent loop / 工具执行 / 压缩 / MCP / hook
-├── tui/           # ratatui 组件库（输入框 / markdown / approval 等）
-└── coding-agent/  # CLI 入口（bin name = sage）+ session 管理
+├── ai/          # LLM provider 抽象 + 流式 SSE + 类型
+├── agent-core/  # Agent loop / 工具执行 / 压缩 / MCP / hook
+├── tui/         # ratatui 组件库（输入框 / markdown / approval 等）
+└── sage-cli/    # CLI 入口（bin name = sage）+ session 管理
 ```
 
 四 crate 分层：`ai` 不知道 tool 的存在；`agent-core` 不知道渲染；`tui` 不依赖 LLM。
@@ -20,11 +20,11 @@ crates/
 ```bash
 cargo build
 cargo test
-cargo run -p coding-agent -- -p "hello"
-cargo run -p coding-agent --release
+cargo run -p sage-cli -- -p "hello"
+cargo run -p sage-cli --release
 ```
 
-CLI bin 叫 `sage`（见 `crates/coding-agent/Cargo.toml`），package 叫 `coding-agent`。
+CLI bin 叫 `sage`，package 叫 `sage-cli`（见 `crates/sage-cli/Cargo.toml`）。
 
 ## 代码对齐原则
 

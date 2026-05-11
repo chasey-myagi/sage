@@ -3,7 +3,7 @@ members = [
     "crates/ai",
     "crates/agent-core",
     "crates/tui",
-    "crates/coding-agent",
+    "crates/sage-cli",
 ]
 resolver = "2"
 
@@ -57,4 +57,4 @@ indexmap = { version = "2", features = ["serde"] }
 ai = { path = "crates/ai" }
 agent-core = { path = "crates/agent-core" }
 tui = { path = "crates/tui" }
-coding-agent = { path = "crates/coding-agent" }
+sage-cli = { path = "crates/sage-cli" }

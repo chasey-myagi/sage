@@ -1,10 +1,9 @@
 # Sage
 
-> A Rust implementation of a multi-provider AI coding agent with a full-featured terminal UI.
+> 领域专家 Agent 应用 — 给一个领域配置一个有独立工作空间、有记忆沉淀的专员。
 
-Sage is a terminal-native coding agent built around a clean, layered architecture:
-**ai → agent-core → tui / coding-agent**. It supports streaming responses, tool use,
-context compaction, and a rich TUI with Markdown rendering, fuzzy search, and image display.
+Sage 是 terminal-native agent，构建在分层架构上：**ai → agent-core → tui / sage-cli**。
+支持流式响应、工具调用、上下文压缩；TUI 含 Markdown 渲染、approval 对话、permission 模式。
 
 ---
 
@@ -12,14 +11,13 @@ context compaction, and a rich TUI with Markdown rendering, fuzzy search, and im
 
 ```
 crates/
-├── ai/            # LLM provider abstraction — Anthropic, OpenAI, Qwen, Google, Bedrock…
-├── agent-core/    # Agent loop, tool execution, compaction, system prompt
-├── tui/           # Terminal UI component library (ratatui-based)
-└── coding-agent/  # CLI entry point, session management, built-in tools
+├── ai/        # LLM provider 抽象 — Anthropic, OpenAI-compat, Google
+├── agent-core/  # Agent loop / 工具执行 / 压缩 / MCP / hook
+├── tui/         # ratatui 组件库（input / markdown / approval）
+└── sage-cli/    # CLI 入口（bin name = sage）+ session 管理
 ```
 
-The four-crate structure keeps concerns separated: `ai` knows nothing about tools,
-`agent-core` knows nothing about rendering, and `tui` has no LLM dependency.
+四 crate 分层：`ai` 不知道 tool 的存在；`agent-core` 不知道渲染；`tui` 不依赖 LLM。
 
 ---
 
@@ -29,15 +27,15 @@ The four-crate structure keeps concerns separated: `ai` knows nothing about tool
 # Build (Rust 1.85+)
 cargo build --release
 
-# Run with Anthropic
+# Anthropic
 export ANTHROPIC_API_KEY=sk-ant-...
 ./target/release/sage -p "explain this codebase"
 
-# Run with Qwen
+# Qwen / Kimi / OpenAI-compat 走同一个 provider
 export DASHSCOPE_API_KEY=sk-...
 ./target/release/sage --provider qwen --model qwen3-235b-a22b -p "你好"
 
-# Interactive mode
+# 交互模式
 ./target/release/sage
 ```
 
@@ -45,57 +43,55 @@ export DASHSCOPE_API_KEY=sk-...
 
 ## Supported Providers
 
-| Provider | Env Var |
-|---|---|
-| Anthropic | `ANTHROPIC_API_KEY` |
-| OpenAI | `OPENAI_API_KEY` |
-| Qwen (DashScope) | `DASHSCOPE_API_KEY` |
-| Google Gemini | `GEMINI_API_KEY` |
-| Moonshot (Kimi) | `MOONSHOT_API_KEY` |
-| AWS Bedrock | AWS credential chain |
-| Azure OpenAI | `AZURE_OPENAI_API_KEY` |
-| GitHub Copilot | OAuth (browser flow) |
-| … | see `crates/ai/src/provider_specs.rs` |
+3 个内置：
+
+| Provider | Env Var | API |
+|---|---|---|
+| Anthropic | `ANTHROPIC_API_KEY` | anthropic-messages |
+| Google Gemini | `GEMINI_API_KEY` | google-generative-ai |
+| OpenAI-compat | `OPENAI_API_KEY` / `DASHSCOPE_API_KEY` / `MOONSHOT_API_KEY` / `DEEPSEEK_API_KEY` / … | openai-completions |
+
+所有 OpenAI 兼容端点（Qwen / Kimi / DeepSeek / Groq / xAI / OpenRouter / Cerebras …）走同一个 provider，按 `--provider <name>` 自动选 base_url + env var。
 
 ---
 
 ## Features
 
-- **Streaming** — token-by-token output with SSE parsing
-- **Tool use** — Read, Write, Edit, Bash, Grep, Find, LS, Glob
-- **Context compaction** — proactive + reactive summarization to stay within context limits
-- **Markdown rendering** — full CommonMark via pulldown-cmark with tables, code blocks, lists
-- **Image support** — Kitty/iTerm2 inline image protocol, clipboard paste (macOS/WSL)
-- **Fuzzy search** — slash-command autocomplete with fuzzy matching
-- **Kill ring** — Emacs-style yank/kill text buffer
-- **Cancellable operations** — Escape key cancels in-flight requests via `CancellationToken`
-- **Settings UI** — event-driven settings list with submenu support
+- **流式响应** — SSE token-by-token
+- **工具集** — Read / Write / Edit / Bash / Grep / Find / LS / web_fetch / web_search + MCP
+- **上下文压缩** — 主动 + 被动两策略
+- **Markdown 渲染** — CommonMark via pulldown-cmark
+- **Approval 对话** — 工具执行前可显式批准/拒绝
+- **Permission 模式** — `--permission-mode` 控制工具白名单严格度
+- **可中断** — Esc 取消进行中的请求
 
 ---
 
 ## Development
 
 ```bash
-# Run all tests
-cargo test
+# 全量测试
+cargo test --workspace
 
-# Run TUI tests
+# TUI 测试单独
 cargo test -p tui
-
-# Regenerate models list from models.dev
-cargo run -p ai --bin generate-models -- --write
 ```
+
+多 worktree 并行开发时**必须**用隔离 cargo target：
+
+```bash
+CARGO_TARGET_DIR=./target cargo build --workspace
+```
+
+详见 `CLAUDE.md` 末段。
 
 ---
 
 ## Acknowledgements
 
-Sage's architecture, provider implementations, and agent loop design draw heavily from
-[**pi-mono**](https://github.com/elie222/pi-mono) — an open-source multi-provider AI
-assistant framework. The overall package structure (ai / agent-core / tui / coding-agent),
-streaming SSE handling, tool schema design, compaction logic, and TUI component system
-are all shaped by pi-mono's thoughtful TypeScript design. We are grateful for the
-excellent foundation it provided.
+Sage 的架构、provider 实现和 agent loop 设计直接借鉴自 [**pi-mono**](https://github.com/badlogic/pi-mono) — 一个开源的多 provider AI assistant 框架。整体包结构（ai / agent-core / tui / sage-cli）、SSE 流式处理、工具 schema 设计、compaction 逻辑、TUI 组件系统都由 pi-mono 的 TypeScript 设计塑造。感谢这份扎实的基础。
+
+记忆模型设计借鉴 [**GenericAgent**](https://github.com/lsdefine/GenericAgent) 的 L0–L4 分层。
 
 ---
 

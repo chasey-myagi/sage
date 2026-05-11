@@ -11,7 +11,7 @@
 // up for specific features or future expansion; silence dead_code at the
 // module level to keep the binary building cleanly.
 #[allow(dead_code)]
-mod agent_session;
+mod print_session;
 #[allow(dead_code)]
 mod cli;
 #[allow(dead_code)]
@@ -280,7 +280,7 @@ async fn main() {
             .model
             .clone()
             .or_else(|| settings_manager.get_default_model().map(str::to_owned));
-        if let Err(e) = agent_session::run_agent_session(
+        if let Err(e) = print_session::run_agent_session(
             all_messages,
             effective_model,
             effective_provider,

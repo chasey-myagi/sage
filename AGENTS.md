@@ -6,13 +6,13 @@
 
 ```
 crates/
-├── ai/           # LLM providers、streaming、类型系统
-├── agent-core/   # Agent 循环、tool 执行、compaction
-├── tui/          # 终端 UI 组件（与 ai/agent-core 完全解耦）
-└── coding-agent/ # CLI 入口、session 管理、内置工具
+├── ai/         # LLM providers、streaming、类型系统
+├── agent-core/ # Agent 循环、tool 执行、compaction
+├── tui/        # 终端 UI 组件（与 ai/agent-core 完全解耦）
+└── sage-cli/   # CLI 入口、session 管理、内置工具（bin = sage）
 ```
 
-依赖方向：`ai` ← `agent-core` ← `coding-agent`，`tui` 独立。
+依赖方向：`ai` ← `agent-core` ← `sage-cli`，`tui` 独立。
 
 ## 代码对齐原则
 
@@ -22,7 +22,6 @@ crates/
 |------|-------------|
 | `providers/anthropic.rs` | `providers/anthropic.ts` |
 | `providers/openai_completions.rs` | `providers/openai-completions.ts` |
-| `providers/openai_responses.rs` | `providers/openai-responses.ts` |
 | `providers/google.rs` | `providers/google.ts` |
 | `types.rs` / `stream.rs` | `types.ts` / `stream.ts` |
 

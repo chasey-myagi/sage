@@ -30,14 +30,14 @@
 | `test` | 测试 |
 | `chore` | 构建、CI、依赖 |
 
-scope: `ai`, `agent-core`, `tui`, `coding-agent`
+scope: `ai`, `agent-core`, `tui`, `sage-cli`
 
 示例：
 ```
 feat(ai): add Mistral provider
 fix(agent-core): handle empty tool call arguments
 refactor(tui): replace hand-written markdown parser with pulldown-cmark
-fix(coding-agent): validate agent name against path traversal
+fix(sage-cli): validate agent name against path traversal
 chore(ci): add Clippy -Dwarnings gate
 ```
 

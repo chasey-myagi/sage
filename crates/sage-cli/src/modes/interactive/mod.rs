@@ -38,7 +38,7 @@ use tokio::sync::mpsc;
 
 use unicode_width::UnicodeWidthStr as _;
 
-use crate::agent_session::AgentDelta;
+use crate::print_session::AgentDelta;
 use crate::core::slash_commands::BUILTIN_SLASH_COMMANDS;
 use crate::modes::interactive::approval::{ApprovalRequest, ApprovalResponse};
 use crate::modes::interactive::components::diff::render_diff_ratatui;
@@ -683,7 +683,7 @@ impl InteractiveMode {
         let session_rules = Arc::clone(&self.session_rules);
 
         let handle = tokio::spawn(async move {
-            if let Err(e) = crate::agent_session::run_agent_session_to_channel(
+            if let Err(e) = crate::print_session::run_agent_session_to_channel(
                 message,
                 model_id,
                 provider_id,
