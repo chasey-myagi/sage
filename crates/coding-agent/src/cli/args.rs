@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-/// Output mode for non-interactive / RPC operation.
+/// Output mode for non-interactive operation.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Mode {
     /// Plain-text output of the final assistant reply.
@@ -12,8 +12,6 @@ pub enum Mode {
     Text,
     /// Newline-delimited JSON stream of all session events.
     Json,
-    /// JSON-RPC 2.0 server on stdin/stdout (for editor integrations).
-    Rpc,
 }
 
 impl std::str::FromStr for Mode {
@@ -22,7 +20,6 @@ impl std::str::FromStr for Mode {
         match s {
             "text" => Ok(Mode::Text),
             "json" => Ok(Mode::Json),
-            "rpc" => Ok(Mode::Rpc),
             other => Err(format!("unknown mode: {other}")),
         }
     }
@@ -468,12 +465,6 @@ mod tests {
     fn parse_mode_json() {
         let args = parse_args(&sv(&["--mode", "json"]), None);
         assert_eq!(args.mode, Some(Mode::Json));
-    }
-
-    #[test]
-    fn parse_mode_rpc() {
-        let args = parse_args(&sv(&["--mode", "rpc"]), None);
-        assert_eq!(args.mode, Some(Mode::Rpc));
     }
 
     #[test]

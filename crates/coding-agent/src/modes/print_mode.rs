@@ -106,7 +106,7 @@ pub async fn run_print_mode<S: PrintModeSession>(
                 let _ = writeln!(out, "{json}");
             }
         }
-        Mode::Text | Mode::Rpc => {
+        Mode::Text => {
             // Text mode: output final assistant response
             if let Some(msg) = session.last_assistant_message() {
                 let stop_reason = msg.stop_reason.as_deref().unwrap_or("");

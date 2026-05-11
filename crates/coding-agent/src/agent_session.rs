@@ -8,12 +8,10 @@ use std::io::Write as _;
 use std::sync::{Arc, Mutex};
 
 use crate::config::{CONFIG_DIR_NAME, get_agent_dir, get_sessions_dir};
-use crate::core::agent::runner::AgentError;
 use crate::core::hooks::HooksLifecycle;
 use crate::core::hooks::executor::HookExecutor;
 use crate::core::hooks::runner::HookRunner;
 use crate::core::settings_manager::SettingsManager;
-use crate::core::team::{SpawnAgentConfig, spawn_agent_in_team};
 use crate::core::tools::plan_mode::{
     ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ExitPlanModeInput, PlanExitStrategy,
     enter_plan_mode, exit_plan_mode,
@@ -541,138 +539,15 @@ fn build_model(provider_id: Option<&str>, model_id: Option<&str>) -> anyhow::Res
     })
 }
 
-// ── SpawnSubagentTool ────────────────────────────────────────────────────────
-
-struct SpawnSubagentTool {
-    provider_id: Option<String>,
-    api_key: Option<String>,
-    permission_ctx: Arc<Mutex<ToolPermissionContext>>,
-}
-
-#[async_trait::async_trait]
-impl SimpleTool for SpawnSubagentTool {
-    fn name(&self) -> &str {
-        "spawn_subagent"
-    }
-
-    fn description(&self) -> &str {
-        "Spawn a sub-agent to handle a task asynchronously in the background. \
-         The sub-agent has access to the full set of coding tools and runs \
-         independently. Returns the unique agent ID of the spawned agent. \
-         Use this to parallelise independent sub-tasks or to delegate \
-         specialised work to a background worker."
-    }
-
-    fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "task": {
-                    "type": "string",
-                    "description": "The prompt or task description for the sub-agent to execute."
-                },
-                "model": {
-                    "type": "string",
-                    "description": "Optional model ID override (e.g. 'claude-opus-4-5'). Inherits the session default when omitted."
-                },
-                "cwd": {
-                    "type": "string",
-                    "description": "Optional working directory for the sub-agent. Defaults to the current directory when omitted."
-                }
-            },
-            "required": ["task"]
-        })
-    }
-
-    async fn execute(&self, args: serde_json::Value) -> ToolOutput {
-        let task = match args.get("task").and_then(|v| v.as_str()) {
-            Some(t) => t.to_string(),
-            None => {
-                return ToolOutput {
-                    content: vec![Content::Text {
-                        text: "Error: 'task' parameter is required".to_string(),
-                    }],
-                    is_error: true,
-                };
-            }
-        };
-
-        let model_id = args
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-        let cwd = args
-            .get("cwd")
-            .and_then(|v| v.as_str())
-            .map(std::path::PathBuf::from);
-
-        // Always read the current permission mode from the live context at spawn
-        // time so the sub-agent reflects whatever mode the parent is in right
-        // now (e.g. if the parent has entered plan mode, the sub-agent must
-        // also run in plan mode — it must not be more permissive).
-        let (is_plan_mode, effective_mode) = {
-            let ctx = self.permission_ctx.lock().unwrap();
-            (ctx.mode == PermissionMode::Plan, ctx.mode.to_string())
-        };
-
-        // N4: Refuse to spawn a sub-agent while the parent is in Plan mode.
-        // Plan mode is a read-only exploration phase; spawning sub-agents that
-        // could write files would silently bypass the plan-mode contract.
-        if is_plan_mode {
-            return ToolOutput {
-                content: vec![Content::Text {
-                    text: "Cannot spawn sub-agent while in Plan mode. \
-                           Exit Plan mode first (ExitPlanMode tool), then retry."
-                        .to_string(),
-                }],
-                is_error: true,
-            };
-        }
-
-        match spawn_subagent(
-            task,
-            None,
-            model_id,
-            self.provider_id.clone(),
-            self.api_key.clone(),
-            None,
-            cwd,
-            effective_mode,
-        )
-        .await
-        {
-            Ok(agent_id) => ToolOutput {
-                content: vec![Content::Text {
-                    text: format!("Sub-agent spawned with ID: {agent_id}"),
-                }],
-                is_error: false,
-            },
-            Err(e) => ToolOutput {
-                content: vec![Content::Text {
-                    text: format!("Failed to spawn sub-agent: {e}"),
-                }],
-                is_error: true,
-            },
-        }
-    }
-}
-
 // ── Default tool list ────────────────────────────────────────────────────────
 
 /// Create the default coding-agent tools backed by the local filesystem.
 ///
 /// All standard tools are wrapped in `ToolAdapter` which enforces permission
-/// rules from settings.json before each execution.  `SpawnSubagent` is always
-/// registered.  `EnterPlanMode` and `ExitPlanMode` are only registered for
-/// top-level agents — sub-agents must NOT enter plan mode because they run
-/// inside an isolated `ToolPermissionContext` that the parent cannot observe,
-/// which would silently bypass the parent's permission model.
+/// rules from settings.json before each execution.
 fn create_default_tools(
     backend: Arc<LocalBackend>,
     permission_ctx: Arc<Mutex<ToolPermissionContext>>,
-    is_subagent: bool,
-    provider_id: Option<String>,
-    api_key: Option<String>,
     approval_tx: Option<tokio::sync::mpsc::UnboundedSender<ApprovalRequest>>,
     session_rules: Arc<Mutex<std::collections::HashMap<String, bool>>>,
 ) -> Vec<Arc<dyn agent_core::types::AgentTool>> {
@@ -704,24 +579,12 @@ fn create_default_tools(
     })
     .collect();
 
-    if !is_subagent {
-        tools.push(Arc::new(EnterPlanModeTool {
-            permission_ctx: Arc::clone(&permission_ctx),
-        }));
-        tools.push(Arc::new(ExitPlanModeTool {
-            permission_ctx: Arc::clone(&permission_ctx),
-        }));
-    }
-    tools.push(Arc::new(ToolAdapter::new(
-        Box::new(SpawnSubagentTool {
-            provider_id,
-            api_key,
-            permission_ctx: Arc::clone(&permission_ctx),
-        }),
-        Arc::clone(&permission_ctx),
-        None,
-        Arc::new(Mutex::new(std::collections::HashMap::new())),
-    )));
+    tools.push(Arc::new(EnterPlanModeTool {
+        permission_ctx: Arc::clone(&permission_ctx),
+    }));
+    tools.push(Arc::new(ExitPlanModeTool {
+        permission_ctx: Arc::clone(&permission_ctx),
+    }));
 
     tools
 }
@@ -857,10 +720,6 @@ pub async fn run_agent_session_to_channel(
     let registry = Arc::new(ApiProviderRegistry::new());
     ai::register_builtin_into(&registry);
 
-    // Clone before move into StreamOptions so we can pass to SpawnSubagentTool.
-    let provider_id_for_subagent = provider_id.clone();
-    let api_key_for_subagent = api_key.clone();
-
     let options = StreamOptions {
         api_key,
         ..StreamOptions::default()
@@ -883,9 +742,6 @@ pub async fn run_agent_session_to_channel(
     let mut tools = create_default_tools(
         backend,
         Arc::clone(&permission_ctx),
-        false,
-        provider_id_for_subagent,
-        api_key_for_subagent,
         approval_tx,
         session_rules,
     );
@@ -1188,76 +1044,6 @@ mod tests {
     }
 }
 
-/// Spawn a sub-agent as a team member, running it asynchronously in the background.
-///
-/// Resolves a model and provider using the same defaults as `run_agent_session`,
-/// creates a `SpawnAgentConfig`, and delegates to `spawn_agent_in_team`.
-/// Returns the spawned agent's unique ID.
-///
-/// This is the primary user-facing entry point for the sub-agent system,
-/// wiring the session's LLM credentials into the team spawning path.
-#[allow(clippy::too_many_arguments)]
-pub async fn spawn_subagent(
-    prompt: String,
-    agent_type: Option<String>,
-    model_id: Option<String>,
-    provider_id: Option<String>,
-    api_key: Option<String>,
-    team_name: Option<String>,
-    cwd: Option<std::path::PathBuf>,
-    permission_mode: String,
-) -> anyhow::Result<String> {
-    let model = build_model(provider_id.as_deref(), model_id.as_deref())?;
-
-    let registry = Arc::new(ApiProviderRegistry::new());
-    ai::register_builtin_into(&registry);
-
-    // Clone before move into StreamOptions so SpawnSubagentTool can carry them.
-    let provider_id_for_subagent = provider_id.clone();
-    let api_key_for_subagent = api_key.clone();
-
-    let options = StreamOptions {
-        api_key,
-        ..StreamOptions::default()
-    };
-    let provider: Arc<dyn LlmProvider> = Arc::new(RegistryProvider { registry, options });
-
-    let effective_cwd = cwd.clone().unwrap_or_else(|| {
-        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-    });
-    let permission_ctx = build_permission_context(&permission_mode, &effective_cwd);
-
-    let backend = LocalBackend::new();
-    let tools = create_default_tools(
-        backend,
-        permission_ctx,
-        true,
-        provider_id_for_subagent,
-        api_key_for_subagent,
-        None,
-        Arc::new(Mutex::new(std::collections::HashMap::new())),
-    );
-
-    let name = agent_type.as_deref().unwrap_or("subagent").to_string();
-    let config = SpawnAgentConfig {
-        name,
-        prompt,
-        team_name,
-        agent_type,
-        model: None,
-        cwd,
-        provider,
-        tools,
-        parent_model: model,
-    };
-
-    // Passes empty existing_members — concurrent spawns may produce duplicate names
-    // until callers thread live team membership into this call site.
-    spawn_agent_in_team(config, &[])
-        .await
-        .map_err(|e: AgentError| anyhow::anyhow!("{e}"))
-}
-
 /// Run a single-shot agent session in print mode.
 ///
 /// Resolves the model + provider, wires up tools, streams events to stdout,
@@ -1279,10 +1065,6 @@ pub async fn run_agent_session(
     // 2. Register built-in API providers and wrap in our adapter.
     let registry = Arc::new(ApiProviderRegistry::new());
     ai::register_builtin_into(&registry);
-
-    // Clone before move into StreamOptions so SpawnSubagentTool can carry them.
-    let provider_id_for_subagent = provider_id.clone();
-    let api_key_for_subagent = api_key.clone();
 
     let options = StreamOptions {
         api_key,
@@ -1309,9 +1091,6 @@ pub async fn run_agent_session(
     let mut tools = create_default_tools(
         backend,
         Arc::clone(&permission_ctx),
-        false,
-        provider_id_for_subagent,
-        api_key_for_subagent,
         None,
         Arc::new(Mutex::new(std::collections::HashMap::new())),
     );

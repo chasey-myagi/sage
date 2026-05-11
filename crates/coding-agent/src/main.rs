@@ -225,12 +225,8 @@ async fn main() {
         return;
     }
 
-    // Read piped stdin for non-RPC modes
-    let stdin_content: Option<String> = if parsed.mode.as_ref() != Some(&Mode::Rpc) {
-        read_piped_stdin()
-    } else {
-        None
-    };
+    // Read piped stdin
+    let stdin_content: Option<String> = read_piped_stdin();
 
     // If stdin content was provided, force print mode
     let mut parsed = parsed;
@@ -240,15 +236,12 @@ async fn main() {
 
     // Determine run mode
     let is_interactive = !parsed.print && parsed.mode.is_none();
-    let mode = parsed.mode.clone().unwrap_or(Mode::Text);
+    let _mode = parsed.mode.clone().unwrap_or(Mode::Text);
 
     // Build initial message
     let initial_message = build_initial_message(&parsed, stdin_content.as_deref());
 
-    if mode == Mode::Rpc {
-        eprintln!("RPC mode not yet connected to agent session in this build.");
-        std::process::exit(1);
-    } else if is_interactive {
+    if is_interactive {
         let options = InteractiveModeOptions {
             initial_message: initial_message.clone(),
             verbose: parsed.verbose,
@@ -376,7 +369,7 @@ async fn run_print_mode_simple(
             });
             println!("{}", serde_json::to_string(&event).unwrap_or_default());
         }
-        Mode::Text | Mode::Rpc => {
+        Mode::Text => {
             if let Some(msg) = initial_message {
                 eprintln!("[sage] Would send to agent: {msg}");
             }
