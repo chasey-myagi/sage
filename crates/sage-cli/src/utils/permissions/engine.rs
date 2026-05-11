@@ -237,8 +237,13 @@ pub fn get_ask_rules(ctx: &ToolPermissionContext) -> Vec<PermissionRule> {
 ///   over-deny than to silently ignore a deny rule).
 ///
 /// Also handles MCP server-level permissions (`mcp__server`).
+///
+/// Tool-name comparison is **case-insensitive** because CC convention writes
+/// rules with capitalized tool names ("Bash", "Read") while the Rust tool
+/// impls return lowercase from `name()`. Without this normalization no
+/// settings.json rule would ever match.
 fn tool_matches_rule(tool_name: &str, rule: &PermissionRule, skip_if_has_content: bool) -> bool {
-    if rule.rule_value.tool_name == tool_name {
+    if rule.rule_value.tool_name.eq_ignore_ascii_case(tool_name) {
         if rule.rule_value.rule_content.is_some() {
             if skip_if_has_content {
                 // Allow rules with content: skip in tool-name-only matching.
@@ -340,7 +345,8 @@ pub fn get_allow_rule_contents_for_tool(
     get_allow_rules(ctx)
         .into_iter()
         .filter(|rule| {
-            rule.rule_value.tool_name == tool_name && rule.rule_value.rule_content.is_some()
+            rule.rule_value.tool_name.eq_ignore_ascii_case(tool_name)
+                && rule.rule_value.rule_content.is_some()
         })
         .filter_map(|rule| {
             rule.rule_value
@@ -349,6 +355,63 @@ pub fn get_allow_rule_contents_for_tool(
                 .map(|content| (content, rule))
         })
         .collect()
+}
+
+/// Does the rule content pattern match the actual tool argument?
+///
+/// Accepts a simple suffix-glob: a trailing `*` (optionally preceded by `:`)
+/// becomes a prefix match. Other glob syntax is not supported — keep this
+/// minimal until real users need more.
+///
+/// Examples:
+/// - `"lark-cli:*"` matches `"lark-cli base ..."` and `"lark-cli:foo"`
+/// - `"npm install"` is an exact prefix match for `"npm install --save ..."`
+/// - `"git status"` matches `"git status"` and `"  git status\n"`
+pub fn content_matches_rule(rule_content: &str, actual: &str) -> bool {
+    let pattern = rule_content
+        .trim_end_matches('*')
+        .trim_end_matches(':');
+    actual.trim_start().starts_with(pattern)
+}
+
+/// Permission check that honors content-level rules (e.g. `Bash(lark-cli:*)`).
+///
+/// Falls back to [`check_tool_permission`] when `content` is `None` or no
+/// content-level allow rule matches. This is the function ToolAdapter should
+/// call for tools whose risk surface depends on the actual arguments (Bash
+/// command, Read path, etc.).
+///
+/// Deny / Ask / mode-based decisions from the basic check are preserved —
+/// content matching only **upgrades** an Ask to an Allow when an explicit
+/// content rule matches.
+pub fn check_tool_permission_with_content(
+    ctx: &ToolPermissionContext,
+    tool_name: &str,
+    content: Option<&str>,
+) -> PermissionDecision {
+    let basic = check_tool_permission(ctx, tool_name);
+
+    if matches!(
+        basic,
+        PermissionDecision::Allow { .. } | PermissionDecision::Deny { .. }
+    ) {
+        return basic;
+    }
+
+    if let Some(actual) = content
+        && !actual.is_empty()
+    {
+        let allow_contents = get_allow_rule_contents_for_tool(ctx, tool_name);
+        for (pattern, rule) in allow_contents.iter() {
+            if content_matches_rule(pattern, actual) {
+                return PermissionDecision::Allow {
+                    reason: Some(PermissionDecisionReason::Rule(rule.clone())),
+                };
+            }
+        }
+    }
+
+    basic
 }
 
 // ============================================================================
@@ -512,6 +575,61 @@ mod tests {
         let mut ctx = ToolPermissionContext::default();
         ctx.add_allow_rule(PermissionRuleSource::Session, tool.to_owned());
         ctx
+    }
+
+    #[test]
+    fn tool_name_matching_is_case_insensitive() {
+        // CC convention writes "Bash" in settings.json; Rust tool name() returns "bash".
+        let ctx = make_ctx_with_allow("Bash");
+        assert!(check_tool_permission(&ctx, "bash").is_allow());
+    }
+
+    #[test]
+    fn content_matches_rule_trims_trailing_star_and_colon() {
+        assert!(content_matches_rule("lark-cli:*", "lark-cli base ..."));
+        assert!(content_matches_rule("lark-cli:*", "lark-cli"));
+        assert!(content_matches_rule("npm install", "npm install --save"));
+        assert!(content_matches_rule("git status", "  git status\n"));
+        assert!(!content_matches_rule("lark-cli:*", "rm -rf /"));
+    }
+
+    #[test]
+    fn check_with_content_upgrades_ask_to_allow_when_content_rule_matches() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.add_allow_rule(PermissionRuleSource::Session, "Bash(lark-cli:*)".to_owned());
+
+        // No content → falls through to Ask (no plain Bash allow rule).
+        assert!(matches!(
+            check_tool_permission_with_content(&ctx, "bash", None),
+            PermissionDecision::Ask { .. }
+        ));
+
+        // Matching command content → Allow.
+        assert!(check_tool_permission_with_content(
+            &ctx,
+            "bash",
+            Some("lark-cli base list ...")
+        )
+        .is_allow());
+
+        // Non-matching command → still Ask.
+        assert!(matches!(
+            check_tool_permission_with_content(&ctx, "bash", Some("rm -rf /")),
+            PermissionDecision::Ask { .. }
+        ));
+    }
+
+    #[test]
+    fn check_with_content_does_not_override_deny() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.add_deny_rule(PermissionRuleSource::Session, "Bash".to_owned());
+        ctx.add_allow_rule(PermissionRuleSource::Session, "Bash(lark-cli:*)".to_owned());
+
+        // Even with a matching content allow, the plain Bash deny wins.
+        assert!(matches!(
+            check_tool_permission_with_content(&ctx, "bash", Some("lark-cli base list")),
+            PermissionDecision::Deny { .. }
+        ));
     }
 
     fn make_ctx_with_deny(tool: &str) -> ToolPermissionContext {

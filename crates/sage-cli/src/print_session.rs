@@ -17,7 +17,7 @@ use crate::core::tools::plan_mode::{
     enter_plan_mode, exit_plan_mode,
 };
 use crate::modes::interactive::approval::{ApprovalRequest, ApprovalResponse};
-use crate::utils::permissions::engine::check_tool_permission;
+use crate::utils::permissions::engine::check_tool_permission_with_content;
 use crate::utils::permissions::loader::{load_permissions_from_file, permissions_json_to_rules};
 use crate::utils::permissions::parser::permission_rule_value_to_string;
 use crate::utils::permissions::{
@@ -157,9 +157,16 @@ impl agent_core::types::AgentTool for ToolAdapter {
         _on_update: Option<&OnUpdateFn>,
     ) -> AgentToolResult {
         // Check permission rules from settings.json before executing.
+        // For tools whose risk depends on arguments (Bash command, Read path)
+        // pass the relevant content so content-level rules can apply.
+        let content = match self.inner.name() {
+            "bash" => args.get("command").and_then(|v| v.as_str()),
+            "read" | "write" | "edit" => args.get("path").and_then(|v| v.as_str()),
+            _ => None,
+        };
         let decision = {
             let ctx = self.permission_ctx.lock().unwrap();
-            check_tool_permission(&ctx, self.inner.name())
+            check_tool_permission_with_content(&ctx, self.inner.name(), content)
         };
         match decision {
             PermissionDecision::Deny { message, .. } => {
