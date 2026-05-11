@@ -3,7 +3,6 @@
 
 pub mod agent;
 pub mod agent_loop;
-pub mod bedrock_models;
 pub mod compaction;
 pub mod event;
 pub mod hook;

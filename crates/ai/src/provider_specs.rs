@@ -190,27 +190,6 @@ static PROVIDERS: LazyLock<Vec<ProviderSpec>> = LazyLock::new(|| {
             default_max_tokens: 8192,
             default_context_window: 128_000,
         },
-        ProviderSpec {
-            id: "mistral",
-            base_url: "https://api.mistral.ai/v1",
-            api_key_env: "MISTRAL_API_KEY",
-            api_kind: api::OPENAI_COMPLETIONS,
-            default_compat: compat_default(),
-            hint_docs_url: "https://docs.mistral.ai/getting-started/models/models_overview/",
-            default_max_tokens: 8192,
-            default_context_window: 128_000,
-        },
-        ProviderSpec {
-            // github-copilot 代表性首个 model 走 anthropic-messages
-            id: "github-copilot",
-            base_url: "https://api.individual.githubcopilot.com",
-            api_key_env: "COPILOT_GITHUB_TOKEN",
-            api_kind: api::ANTHROPIC_MESSAGES,
-            default_compat: compat_default(),
-            hint_docs_url: "https://docs.github.com/en/copilot",
-            default_max_tokens: 8192,
-            default_context_window: 200_000,
-        },
         // ── OpenRouter ── Linus v1 补齐（pi-mono env-api-keys.ts:119）
         ProviderSpec {
             id: "openrouter",
@@ -221,37 +200,6 @@ static PROVIDERS: LazyLock<Vec<ProviderSpec>> = LazyLock::new(|| {
             hint_docs_url: "https://openrouter.ai/models",
             default_max_tokens: 8192,
             default_context_window: 200_000,
-        },
-        // ── 运行时解析 base_url 的三个（空串表示 implementer layer 解析）──
-        ProviderSpec {
-            id: "azure-openai-responses",
-            base_url: "",
-            api_key_env: "AZURE_OPENAI_API_KEY",
-            api_kind: api::AZURE_OPENAI_RESPONSES,
-            default_compat: compat_default(),
-            hint_docs_url: "https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models",
-            default_max_tokens: 16384,
-            default_context_window: 128_000,
-        },
-        ProviderSpec {
-            id: "amazon-bedrock",
-            base_url: "",
-            api_key_env: "AWS_ACCESS_KEY_ID",
-            api_kind: api::BEDROCK_CONVERSE_STREAM,
-            default_compat: compat_default(),
-            hint_docs_url: "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html",
-            default_max_tokens: 8192,
-            default_context_window: 200_000,
-        },
-        ProviderSpec {
-            id: "google-vertex",
-            base_url: "",
-            api_key_env: "GOOGLE_CLOUD_API_KEY",
-            api_kind: api::GOOGLE_VERTEX,
-            default_compat: compat_default(),
-            hint_docs_url: "https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models",
-            default_max_tokens: 8192,
-            default_context_window: 1_000_000,
         },
     ]
 });
@@ -394,12 +342,7 @@ mod tests {
             ("groq", api::OPENAI_COMPLETIONS),
             ("xai", api::OPENAI_COMPLETIONS),
             ("cerebras", api::OPENAI_COMPLETIONS),
-            ("mistral", api::OPENAI_COMPLETIONS),
-            ("github-copilot", api::ANTHROPIC_MESSAGES),
             ("openrouter", api::OPENAI_COMPLETIONS),
-            ("azure-openai-responses", api::AZURE_OPENAI_RESPONSES),
-            ("amazon-bedrock", api::BEDROCK_CONVERSE_STREAM),
-            ("google-vertex", api::GOOGLE_VERTEX),
         ];
         let actual: Vec<(&str, &str)> = list_providers()
             .iter()
@@ -488,15 +431,6 @@ mod tests {
             resolve_provider("google").unwrap().api_kind,
             api::GOOGLE_GENERATIVE_AI,
             "google api_kind should be google-generative-ai"
-        );
-    }
-
-    #[test]
-    fn amazon_bedrock_spec_api_kind_is_bedrock_converse_stream() {
-        assert_eq!(
-            resolve_provider("amazon-bedrock").unwrap().api_kind,
-            api::BEDROCK_CONVERSE_STREAM,
-            "amazon-bedrock api_kind should be bedrock-converse-stream"
         );
     }
 
@@ -596,38 +530,6 @@ mod tests {
         assert_eq!(
             resolve_provider("deepseek").unwrap().api_kind,
             api::OPENAI_COMPLETIONS,
-        );
-    }
-
-    #[test]
-    fn mistral_spec_api_kind_is_openai_completions() {
-        assert_eq!(
-            resolve_provider("mistral").unwrap().api_kind,
-            api::OPENAI_COMPLETIONS,
-        );
-    }
-
-    #[test]
-    fn github_copilot_spec_api_kind_is_anthropic_messages() {
-        assert_eq!(
-            resolve_provider("github-copilot").unwrap().api_kind,
-            api::ANTHROPIC_MESSAGES,
-        );
-    }
-
-    #[test]
-    fn azure_openai_responses_spec_api_kind_is_azure_openai_responses() {
-        assert_eq!(
-            resolve_provider("azure-openai-responses").unwrap().api_kind,
-            api::AZURE_OPENAI_RESPONSES,
-        );
-    }
-
-    #[test]
-    fn google_vertex_spec_api_kind_is_google_vertex() {
-        assert_eq!(
-            resolve_provider("google-vertex").unwrap().api_kind,
-            api::GOOGLE_VERTEX,
         );
     }
 

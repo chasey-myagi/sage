@@ -13,8 +13,6 @@
 #[allow(dead_code)]
 mod agent_session;
 #[allow(dead_code)]
-mod bun;
-#[allow(dead_code)]
 mod cli;
 #[allow(dead_code)]
 mod commands;
