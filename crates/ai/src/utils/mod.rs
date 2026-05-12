@@ -16,7 +16,6 @@
 pub mod event_stream;
 pub mod hash;
 pub mod json_parse;
-pub mod oauth;
 pub mod overflow;
 pub mod sanitize_unicode;
 pub mod typebox_helpers;

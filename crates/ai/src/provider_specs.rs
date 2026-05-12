@@ -126,6 +126,20 @@ static PROVIDERS: LazyLock<Vec<ProviderSpec>> = LazyLock::new(|| {
             default_max_tokens: 8192,
             default_context_window: 131_072,
         },
+        // Kimi Code（独立付费产品，与 kimi 是两个产品）。
+        // 走 Anthropic-compatible 协议（OpenAI-compat 路径 403 — Moonshot 限制
+        // 必须是认证过的 coding agent）。
+        // Docs: https://www.kimi.com/code/docs/third-party-tools/other-coding-agents.html
+        ProviderSpec {
+            id: "kimi-code",
+            base_url: "https://api.kimi.com/coding/v1",
+            api_key_env: "KIMI_CODE_API_KEY",
+            api_kind: api::ANTHROPIC_MESSAGES,
+            default_compat: compat_default(),
+            hint_docs_url: "https://www.kimi.com/code/docs/",
+            default_max_tokens: 32768,
+            default_context_window: 262_144,
+        },
         ProviderSpec {
             id: "minimax",
             // pi-mono models.generated.ts:4557 — 走 anthropic 兼容路径
@@ -190,27 +204,6 @@ static PROVIDERS: LazyLock<Vec<ProviderSpec>> = LazyLock::new(|| {
             default_max_tokens: 8192,
             default_context_window: 128_000,
         },
-        ProviderSpec {
-            id: "mistral",
-            base_url: "https://api.mistral.ai/v1",
-            api_key_env: "MISTRAL_API_KEY",
-            api_kind: api::OPENAI_COMPLETIONS,
-            default_compat: compat_default(),
-            hint_docs_url: "https://docs.mistral.ai/getting-started/models/models_overview/",
-            default_max_tokens: 8192,
-            default_context_window: 128_000,
-        },
-        ProviderSpec {
-            // github-copilot 代表性首个 model 走 anthropic-messages
-            id: "github-copilot",
-            base_url: "https://api.individual.githubcopilot.com",
-            api_key_env: "COPILOT_GITHUB_TOKEN",
-            api_kind: api::ANTHROPIC_MESSAGES,
-            default_compat: compat_default(),
-            hint_docs_url: "https://docs.github.com/en/copilot",
-            default_max_tokens: 8192,
-            default_context_window: 200_000,
-        },
         // ── OpenRouter ── Linus v1 补齐（pi-mono env-api-keys.ts:119）
         ProviderSpec {
             id: "openrouter",
@@ -221,37 +214,6 @@ static PROVIDERS: LazyLock<Vec<ProviderSpec>> = LazyLock::new(|| {
             hint_docs_url: "https://openrouter.ai/models",
             default_max_tokens: 8192,
             default_context_window: 200_000,
-        },
-        // ── 运行时解析 base_url 的三个（空串表示 implementer layer 解析）──
-        ProviderSpec {
-            id: "azure-openai-responses",
-            base_url: "",
-            api_key_env: "AZURE_OPENAI_API_KEY",
-            api_kind: api::AZURE_OPENAI_RESPONSES,
-            default_compat: compat_default(),
-            hint_docs_url: "https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models",
-            default_max_tokens: 16384,
-            default_context_window: 128_000,
-        },
-        ProviderSpec {
-            id: "amazon-bedrock",
-            base_url: "",
-            api_key_env: "AWS_ACCESS_KEY_ID",
-            api_kind: api::BEDROCK_CONVERSE_STREAM,
-            default_compat: compat_default(),
-            hint_docs_url: "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html",
-            default_max_tokens: 8192,
-            default_context_window: 200_000,
-        },
-        ProviderSpec {
-            id: "google-vertex",
-            base_url: "",
-            api_key_env: "GOOGLE_CLOUD_API_KEY",
-            api_kind: api::GOOGLE_VERTEX,
-            default_compat: compat_default(),
-            hint_docs_url: "https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models",
-            default_max_tokens: 8192,
-            default_context_window: 1_000_000,
         },
     ]
 });
@@ -388,18 +350,14 @@ mod tests {
             ("qwen", api::OPENAI_COMPLETIONS),
             ("doubao", api::OPENAI_COMPLETIONS),
             ("kimi", api::OPENAI_COMPLETIONS),
+            ("kimi-code", api::ANTHROPIC_MESSAGES),
             ("minimax", api::ANTHROPIC_MESSAGES),
             ("zai", api::OPENAI_COMPLETIONS),
             ("deepseek", api::OPENAI_COMPLETIONS),
             ("groq", api::OPENAI_COMPLETIONS),
             ("xai", api::OPENAI_COMPLETIONS),
             ("cerebras", api::OPENAI_COMPLETIONS),
-            ("mistral", api::OPENAI_COMPLETIONS),
-            ("github-copilot", api::ANTHROPIC_MESSAGES),
             ("openrouter", api::OPENAI_COMPLETIONS),
-            ("azure-openai-responses", api::AZURE_OPENAI_RESPONSES),
-            ("amazon-bedrock", api::BEDROCK_CONVERSE_STREAM),
-            ("google-vertex", api::GOOGLE_VERTEX),
         ];
         let actual: Vec<(&str, &str)> = list_providers()
             .iter()
@@ -488,15 +446,6 @@ mod tests {
             resolve_provider("google").unwrap().api_kind,
             api::GOOGLE_GENERATIVE_AI,
             "google api_kind should be google-generative-ai"
-        );
-    }
-
-    #[test]
-    fn amazon_bedrock_spec_api_kind_is_bedrock_converse_stream() {
-        assert_eq!(
-            resolve_provider("amazon-bedrock").unwrap().api_kind,
-            api::BEDROCK_CONVERSE_STREAM,
-            "amazon-bedrock api_kind should be bedrock-converse-stream"
         );
     }
 
@@ -600,38 +549,6 @@ mod tests {
     }
 
     #[test]
-    fn mistral_spec_api_kind_is_openai_completions() {
-        assert_eq!(
-            resolve_provider("mistral").unwrap().api_kind,
-            api::OPENAI_COMPLETIONS,
-        );
-    }
-
-    #[test]
-    fn github_copilot_spec_api_kind_is_anthropic_messages() {
-        assert_eq!(
-            resolve_provider("github-copilot").unwrap().api_kind,
-            api::ANTHROPIC_MESSAGES,
-        );
-    }
-
-    #[test]
-    fn azure_openai_responses_spec_api_kind_is_azure_openai_responses() {
-        assert_eq!(
-            resolve_provider("azure-openai-responses").unwrap().api_kind,
-            api::AZURE_OPENAI_RESPONSES,
-        );
-    }
-
-    #[test]
-    fn google_vertex_spec_api_kind_is_google_vertex() {
-        assert_eq!(
-            resolve_provider("google-vertex").unwrap().api_kind,
-            api::GOOGLE_VERTEX,
-        );
-    }
-
-    #[test]
     fn groq_spec_api_kind_is_openai_completions() {
         assert_eq!(
             resolve_provider("groq").unwrap().api_kind,
@@ -684,5 +601,48 @@ mod tests {
     fn google_default_context_window_is_gemini_scale() {
         // Gemini 1.5 Pro: 1M+ context。默认不能被 OpenAI 家的 128K 拖下来。
         assert!(resolve_provider("google").unwrap().default_context_window >= 1_000_000,);
+    }
+
+    // ── Kimi Code 是付费独立产品（与 kimi 是两个产品）─────────────────────
+    //
+    // 走 Anthropic-compatible 协议（OpenAI-compat 路径返回 403，被 Moonshot
+    // 限定必须是注册过的 coding agent）。
+    // Docs: https://www.kimi.com/code/docs/third-party-tools/other-coding-agents.html
+
+    #[test]
+    fn kimi_code_uses_anthropic_messages_api() {
+        let spec = resolve_provider("kimi-code").unwrap();
+        assert_eq!(
+            spec.api_kind,
+            api::ANTHROPIC_MESSAGES,
+            "kimi-code 必须走 Anthropic-compat（OpenAI-compat 被服务端拒绝）"
+        );
+    }
+
+    #[test]
+    fn kimi_code_base_url_targets_api_kimi_com_coding_v1() {
+        let spec = resolve_provider("kimi-code").unwrap();
+        assert_eq!(
+            spec.base_url, "https://api.kimi.com/coding/v1",
+            "anthropic.rs 拼成 <base>/messages，URL 必须是 ../coding/v1/messages"
+        );
+    }
+
+    #[test]
+    fn kimi_code_uses_dedicated_env_var_not_moonshot_key() {
+        // Kimi Code 与普通 Kimi 是两个产品两本账。复用 MOONSHOT_API_KEY 会
+        // 让普通 Kimi 用户误触付费路径。
+        let spec = resolve_provider("kimi-code").unwrap();
+        assert_eq!(spec.api_key_env, "KIMI_CODE_API_KEY");
+        let kimi_spec = resolve_provider("kimi").unwrap();
+        assert_eq!(kimi_spec.api_key_env, "MOONSHOT_API_KEY");
+        assert_ne!(spec.api_key_env, kimi_spec.api_key_env);
+    }
+
+    #[test]
+    fn kimi_code_context_window_matches_doc_262k() {
+        let spec = resolve_provider("kimi-code").unwrap();
+        // 官方推荐 262144。低于这个值会让长任务被截断。
+        assert!(spec.default_context_window >= 200_000);
     }
 }

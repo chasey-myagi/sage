@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Unified LLM API — Anthropic, OpenAI, Google, Bedrock and OpenAI-compatible providers"
+description = "Unified LLM API — Anthropic, Google, and OpenAI-compatible providers"
 keywords = ["llm", "anthropic", "openai", "ai", "async"]
 categories = ["asynchronous"]
 
@@ -25,14 +25,6 @@ sha2 = { workspace = true }
 rand = { workspace = true }
 url = { workspace = true }
 regex = { workspace = true }
-aws-config = { workspace = true }
-aws-sdk-bedrockruntime = { workspace = true }
-aws-smithy-types = { workspace = true }
-aws-types = { workspace = true }
-
-[[bin]]
-name = "generate-models"
-path = "src/bin/generate_models.rs"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }

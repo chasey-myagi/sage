@@ -41,15 +41,11 @@ pub fn api_key_env_var(provider: &str) -> String {
         "qwen" => "DASHSCOPE_API_KEY".into(),
         "doubao" => "ARK_API_KEY".into(),
         "kimi" => "MOONSHOT_API_KEY".into(),
+        "kimi-code" => "KIMI_CODE_API_KEY".into(),
         "minimax" => "MINIMAX_API_KEY".into(),
         "zai" => "ZHIPU_API_KEY".into(),
         "deepseek" => "DEEPSEEK_API_KEY".into(),
-        "mistral" => "MISTRAL_API_KEY".into(),
         "cerebras" => "CEREBRAS_API_KEY".into(),
-        "github-copilot" => "COPILOT_GITHUB_TOKEN".into(),
-        "azure-openai-responses" => "AZURE_OPENAI_API_KEY".into(),
-        "amazon-bedrock" => "AWS_ACCESS_KEY_ID".into(),
-        "google-vertex" => "GOOGLE_CLOUD_API_KEY".into(),
         other => format!("{}_API_KEY", other.to_uppercase()),
     }
 }
@@ -138,6 +134,12 @@ mod tests {
     }
 
     #[test]
+    fn test_env_var_kimi_code_is_distinct_from_moonshot() {
+        // Kimi Code 与普通 Kimi 是两个产品两本账。不能复用 MOONSHOT_API_KEY。
+        assert_eq!(api_key_env_var("kimi-code"), "KIMI_CODE_API_KEY");
+    }
+
+    #[test]
     fn test_env_var_minimax() {
         assert_eq!(api_key_env_var("minimax"), "MINIMAX_API_KEY");
     }
@@ -153,31 +155,8 @@ mod tests {
     }
 
     #[test]
-    fn test_env_var_mistral() {
-        assert_eq!(api_key_env_var("mistral"), "MISTRAL_API_KEY");
-    }
-
-    #[test]
     fn test_env_var_cerebras() {
         assert_eq!(api_key_env_var("cerebras"), "CEREBRAS_API_KEY");
-    }
-
-    // ========================================================================
-    // resolve_api_key — mistral and cerebras recognized
-    // ========================================================================
-
-    #[test]
-    #[serial]
-    fn test_resolve_api_key_mistral_recognized() {
-        unsafe { std::env::remove_var("MISTRAL_API_KEY") };
-        let result = resolve_api_key("mistral");
-        assert!(result.is_err());
-        let err = format!("{}", result.unwrap_err());
-        assert!(
-            err.contains("MISTRAL_API_KEY"),
-            "mistral should be a known provider, got: {}",
-            err
-        );
     }
 
     #[test]
@@ -190,66 +169,6 @@ mod tests {
         assert!(
             err.contains("CEREBRAS_API_KEY"),
             "cerebras should be a known provider, got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn test_env_var_github_copilot() {
-        assert_eq!(api_key_env_var("github-copilot"), "COPILOT_GITHUB_TOKEN");
-    }
-
-    #[test]
-    fn test_env_var_azure_openai_responses() {
-        assert_eq!(
-            api_key_env_var("azure-openai-responses"),
-            "AZURE_OPENAI_API_KEY"
-        );
-    }
-
-    #[test]
-    #[serial]
-    fn test_resolve_api_key_azure_openai_responses_recognized() {
-        unsafe { std::env::remove_var("AZURE_OPENAI_API_KEY") };
-        let result = resolve_api_key("azure-openai-responses");
-        assert!(result.is_err());
-        let err = format!("{}", result.unwrap_err());
-        assert!(
-            err.contains("AZURE_OPENAI_API_KEY"),
-            "azure-openai-responses should be a known provider, got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn test_env_var_amazon_bedrock() {
-        assert_eq!(api_key_env_var("amazon-bedrock"), "AWS_ACCESS_KEY_ID");
-    }
-
-    #[test]
-    #[serial]
-    fn test_resolve_api_key_amazon_bedrock_recognized() {
-        unsafe { std::env::remove_var("AWS_ACCESS_KEY_ID") };
-        let result = resolve_api_key("amazon-bedrock");
-        assert!(result.is_err());
-        let err = format!("{}", result.unwrap_err());
-        assert!(
-            err.contains("AWS_ACCESS_KEY_ID"),
-            "amazon-bedrock should be a known provider, got: {}",
-            err
-        );
-    }
-
-    #[test]
-    #[serial]
-    fn test_resolve_api_key_github_copilot_recognized() {
-        unsafe { std::env::remove_var("COPILOT_GITHUB_TOKEN") };
-        let result = resolve_api_key("github-copilot");
-        assert!(result.is_err());
-        let err = format!("{}", result.unwrap_err());
-        assert!(
-            err.contains("COPILOT_GITHUB_TOKEN"),
-            "github-copilot should be a known provider, got: {}",
             err
         );
     }
@@ -455,25 +374,6 @@ mod tests {
 
     // NOTE: std::env::set_var is unsafe in multi-threaded context (Rust 2024 edition).
     // These tests MUST run with --test-threads=1 to avoid data races.
-
-    #[test]
-    fn test_env_var_google_vertex() {
-        assert_eq!(api_key_env_var("google-vertex"), "GOOGLE_CLOUD_API_KEY");
-    }
-
-    #[test]
-    #[serial]
-    fn test_resolve_api_key_google_vertex_recognized() {
-        unsafe { std::env::remove_var("GOOGLE_CLOUD_API_KEY") };
-        let result = resolve_api_key("google-vertex");
-        assert!(result.is_err());
-        let err = format!("{}", result.unwrap_err());
-        assert!(
-            err.contains("GOOGLE_CLOUD_API_KEY"),
-            "google-vertex should be a known provider, got: {}",
-            err
-        );
-    }
 
     #[test]
     #[serial]
