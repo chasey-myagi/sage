@@ -113,7 +113,7 @@ pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     },
     BuiltinSlashCommand {
         name: "compact",
-        description: "Manually compact the session context",
+        description: "Trim display history — last 20 messages visible (LLM context is stateless)",
     },
     BuiltinSlashCommand {
         name: "resume",
@@ -130,6 +130,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand {
         name: "permissions",
         description: "Switch permission mode: default | bypass | plan",
+    },
+    BuiltinSlashCommand {
+        name: "thinking",
+        description: "Set thinking level: off | minimal | low | medium | high | xhigh (no arg to cycle)",
     },
 ];
 

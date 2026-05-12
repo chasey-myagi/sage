@@ -353,6 +353,32 @@ impl std::str::FromStr for ThinkingLevel {
     }
 }
 
+impl ThinkingLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThinkingLevel::Off => "off",
+            ThinkingLevel::Minimal => "minimal",
+            ThinkingLevel::Low => "low",
+            ThinkingLevel::Medium => "medium",
+            ThinkingLevel::High => "high",
+            ThinkingLevel::Xhigh => "xhigh",
+        }
+    }
+
+    /// Cycle through main levels: off → low → medium → high → xhigh → off.
+    /// `Minimal` is only reachable via explicit `/thinking minimal` and is not
+    /// part of the cycle — one more press advances it to `Low`.
+    pub fn cycle(self) -> Self {
+        match self {
+            ThinkingLevel::Off | ThinkingLevel::Minimal => ThinkingLevel::Low,
+            ThinkingLevel::Low => ThinkingLevel::Medium,
+            ThinkingLevel::Medium => ThinkingLevel::High,
+            ThinkingLevel::High => ThinkingLevel::Xhigh,
+            ThinkingLevel::Xhigh => ThinkingLevel::Off,
+        }
+    }
+}
+
 // ============================================================================
 // Built-in dark theme (from dark.json)
 // ============================================================================

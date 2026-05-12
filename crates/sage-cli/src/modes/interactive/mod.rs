@@ -42,7 +42,10 @@ use crate::print_session::AgentDelta;
 use crate::core::slash_commands::BUILTIN_SLASH_COMMANDS;
 use crate::modes::interactive::approval::{ApprovalRequest, ApprovalResponse};
 use crate::modes::interactive::components::diff::render_diff_ratatui;
-use crate::modes::interactive::theme::{Theme, ThemeBg, ThemeColor, get_theme};
+use crate::modes::interactive::theme::{Theme, ThemeBg, ThemeColor, ThinkingLevel, get_theme};
+use crate::utils::clipboard::copy_to_clipboard;
+use crate::core::session_manager::{SessionEntry, SessionManager};
+use crate::core::settings_manager::SettingsManager;
 
 // ============================================================================
 // InteractiveMode
@@ -73,6 +76,8 @@ pub struct InteractiveMode {
     model_id: Option<String>,
     session_input_tokens: u64,
     session_output_tokens: u64,
+    session_cache_read_tokens: u64,
+    session_cache_write_tokens: u64,
     session_cost_usd: f64,
     /// Current scroll offset in display lines.
     scroll_top: u16,
@@ -84,6 +89,8 @@ pub struct InteractiveMode {
     last_terminal_width: u16,
     /// Tick counter for spinner animation (incremented every ~50 ms).
     tick: u64,
+    /// Cached git branch name, refreshed every ~10s (200 ticks).
+    git_branch: Option<String>,
     /// Name of the tool currently executing, cleared when done.
     current_tool: Option<String>,
     // ── Approval channel ──────────────────────────────────────────────────
@@ -107,6 +114,43 @@ pub struct InteractiveMode {
     history_draft: String,
     /// Current permission mode: "default" | "bypassPermissions" | "plan".
     permission_mode: String,
+    /// Thinking/reasoning budget level for the next agent call.
+    thinking_level: ThinkingLevel,
+    /// Timestamp of session start (for /session duration display).
+    session_start: std::time::Instant,
+    /// Set to true by /quit; checked after slash dispatch to break the event loop.
+    quit_pending: bool,
+    // ── Session / Settings ──────────────────────────────────────────────────────
+    session_manager: SessionManager,
+    settings_manager: SettingsManager,
+    session_name: Option<String>,
+    /// How many entries in `messages` have already been flushed to the session file.
+    /// Compared on each TurnUsage to find newly-completed assistant turns.
+    session_assistant_saved_up_to: usize,
+    // ── Context window tracking ──────────────────────────────────────────────
+    /// Model context window size (tokens); 0 until first TurnUsage.
+    context_window: u32,
+    /// Full context size from the last API response: input + cache_read + cache_write + output.
+    /// Matches CC's `getTokenCountFromUsage()` formula.
+    last_turn_context_tokens: u64,
+    // ── Ctrl+F search ────────────────────────────────────────────────────────
+    search_active: bool,
+    search_query: String,
+    /// Indices into `messages` that match the current query.
+    search_matches: Vec<usize>,
+    /// Which match is currently selected (index into search_matches).
+    search_idx: usize,
+    // ── Settings overlay ─────────────────────────────────────────────────────
+    settings_active: bool,
+    settings_selected: usize,
+    settings_scroll: usize,
+    settings_items: Vec<crate::modes::interactive::components::settings_selector::SettingItem>,
+    // ── Compact ───────────────────────────────────────────────────────────────
+    compact_warned: bool,
+    /// LLM-generated summary from the most recent /compact, injected into subsequent turns.
+    compact_summary: Option<String>,
+    /// True while the compact LLM call is running.
+    compacting: bool,
 }
 
 /// A single chat turn in the history display.
@@ -116,6 +160,10 @@ pub struct ChatMessage {
     pub content: String,
     /// `@path` file references successfully expanded into this message.
     pub at_refs: Vec<AtRef>,
+    /// Full untruncated tool output (tool messages only).
+    pub full_output: Option<String>,
+    /// Whether the full_output is currently expanded (tool messages only).
+    pub full_output_expanded: bool,
 }
 
 /// An `@path` file reference that was expanded before sending to the LLM.
@@ -147,10 +195,31 @@ pub enum MessageRole {
     },
 }
 
+/// Session state replayed from a JSONL session file.
+struct ReplayedState {
+    messages: Vec<ChatMessage>,
+    /// Last `thinking_level_change` entry seen, if any.
+    thinking_level: Option<ThinkingLevel>,
+    /// Last `model_change` model_id seen, if any.
+    model_id: Option<String>,
+    /// Last `model_change` provider seen, if any.
+    provider_id: Option<String>,
+    /// Last `session_info` name seen, if any.
+    session_name: Option<String>,
+}
+
 impl InteractiveMode {
     /// Create a new InteractiveMode with the given options.
     pub fn new(options: InteractiveModeOptions) -> Self {
         let (approval_tx, approval_rx) = mpsc::unbounded_channel();
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| ".".to_string());
+        let agent_dir = crate::config::get_agent_dir();
+        let settings_manager = SettingsManager::create(&cwd, &agent_dir);
+        let init_model = settings_manager.get_default_model().map(|s| s.to_string());
+        let init_provider = settings_manager.get_default_provider().map(|s| s.to_string());
+        let session_manager = SessionManager::create(&cwd, None);
         Self {
             options,
             input_buffer: String::new(),
@@ -158,16 +227,19 @@ impl InteractiveMode {
             running: false,
             agent_rx: None,
             is_thinking: false,
-            provider_id: None,
-            model_id: None,
+            provider_id: init_provider,
+            model_id: init_model,
             session_input_tokens: 0,
             session_output_tokens: 0,
+            session_cache_read_tokens: 0,
+            session_cache_write_tokens: 0,
             session_cost_usd: 0.0,
             scroll_top: 0,
             is_sticky: true,
             last_viewport_height: 0,
             last_terminal_width: 80,
             tick: 0,
+            git_branch: Self::read_git_branch(),
             current_tool: None,
             approval_tx,
             approval_rx,
@@ -180,6 +252,26 @@ impl InteractiveMode {
             history_idx: None,
             history_draft: String::new(),
             permission_mode: "default".to_string(),
+            thinking_level: ThinkingLevel::Off,
+            session_start: std::time::Instant::now(),
+            quit_pending: false,
+            session_manager,
+            settings_manager,
+            session_name: None,
+            session_assistant_saved_up_to: 0,
+            context_window: 0,
+            last_turn_context_tokens: 0,
+            search_active: false,
+            search_query: String::new(),
+            search_matches: Vec::new(),
+            search_idx: 0,
+            settings_active: false,
+            settings_selected: 0,
+            settings_scroll: 0,
+            settings_items: Vec::new(),
+            compact_warned: false,
+            compact_summary: None,
+            compacting: false,
         }
     }
 
@@ -200,6 +292,8 @@ impl InteractiveMode {
                 role: MessageRole::User,
                 content: msg.clone(),
                 at_refs,
+                full_output: None,
+                full_output_expanded: false,
             });
         }
         Ok(())
@@ -224,18 +318,24 @@ impl InteractiveMode {
                 role: MessageRole::User,
                 content: msg.clone(),
                 at_refs,
+                full_output: None,
+                full_output_expanded: false,
             });
             for warn in warnings {
                 self.messages.push(ChatMessage {
                     role: MessageRole::System,
                     content: warn,
                     at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
                 });
             }
             self.messages.push(ChatMessage {
                 role: MessageRole::Assistant,
                 content: String::new(),
                 at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
             });
             self.spawn_agent(expanded);
         }
@@ -266,6 +366,8 @@ impl InteractiveMode {
                                         role: MessageRole::Assistant,
                                         content: delta,
                                         at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
                                     });
                                 }
                             }
@@ -274,12 +376,50 @@ impl InteractiveMode {
                             usage,
                             model,
                             is_fast,
+                            context_window,
                         }) => {
                             self.session_input_tokens += usage.input;
                             self.session_output_tokens += usage.output;
+                            self.session_cache_read_tokens += usage.cache_read;
+                            self.session_cache_write_tokens += usage.cache_write;
+                            self.context_window = context_window;
+                            // CC formula: full context = input + cache_read + cache_write + output
+                            self.last_turn_context_tokens =
+                                usage.input + usage.cache_read + usage.cache_write + usage.output;
                             let cost =
                                 ai::model_pricing::calculate_usd_cost(&usage, &model, is_fast);
                             self.session_cost_usd += cost.total;
+                            // Warn when context window is within 20k tokens of the limit
+                            // (mirrors CC's WARNING_THRESHOLD_BUFFER_TOKENS = 20_000).
+                            const WARN_BUFFER: u64 = 20_000;
+                            if context_window > 0 && !self.compact_warned {
+                                let threshold = context_window as u64;
+                                let used = self.last_turn_context_tokens;
+                                if used + WARN_BUFFER >= threshold {
+                                    let pct = (used * 100 / threshold).min(100);
+                                    self.compact_warned = true;
+                                    self.messages.push(ChatMessage {
+                                        role: MessageRole::System,
+                                        content: format!("Context at {pct}% — consider /compact to summarize the conversation"),
+                                        at_refs: Vec::new(),
+                                        full_output: None,
+                                        full_output_expanded: false,
+                                    });
+                                }
+                            }
+                            // Persist every assistant turn produced since the last TurnUsage.
+                            // Iterating from `saved_up_to` avoids re-saving earlier turns
+                            // and correctly captures multi-turn responses interleaved with tools.
+                            let saved_up_to = self.session_assistant_saved_up_to;
+                            for msg in &self.messages[saved_up_to..] {
+                                if msg.role == MessageRole::Assistant && !msg.content.is_empty() {
+                                    self.session_manager.append_message(serde_json::json!({
+                                        "role": "assistant",
+                                        "content": [{"type": "text", "text": msg.content}]
+                                    }));
+                                }
+                            }
+                            self.session_assistant_saved_up_to = self.messages.len();
                         }
                         Ok(AgentDelta::ToolStart { name, args_preview }) => {
                             self.current_tool = Some(name.clone());
@@ -296,12 +436,15 @@ impl InteractiveMode {
                                 },
                                 content,
                                 at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
                             });
                         }
                         Ok(AgentDelta::ToolEnd {
                             name,
                             success,
                             output_preview,
+                            full_output,
                         }) => {
                             let pos = self.messages.iter().rposition(|m| {
                                 matches!(&m.role, MessageRole::Tool { name: n, pending: true, .. } if n == &name)
@@ -319,8 +462,41 @@ impl InteractiveMode {
                                     pending: false,
                                     success,
                                 };
+                                if !full_output.is_empty() {
+                                    self.messages[idx].full_output = Some(full_output);
+                                }
                             }
                             self.current_tool = None;
+                        }
+                        Ok(AgentDelta::ImageResult { tool_name, base64, mime_type }) => {
+                            use tui::terminal_image;
+                            let dims = terminal_image::get_image_dimensions(&base64, &mime_type);
+                            let content = if let Some(d) = dims {
+                                let max_cols = (self.last_terminal_width / 2).max(40) as u32;
+                                let opts = terminal_image::ImageRenderOptions {
+                                    max_width_cells: Some(max_cols),
+                                    max_height_cells: Some(20),
+                                    preserve_aspect_ratio: Some(true),
+                                    image_id: Some(terminal_image::allocate_image_id()),
+                                };
+                                match terminal_image::render_image(&base64, d, &opts) {
+                                    Some((seq, _, _)) => seq,
+                                    None => terminal_image::image_fallback(&mime_type, None, Some(&tool_name)),
+                                }
+                            } else {
+                                terminal_image::image_fallback(&mime_type, None, Some(&tool_name))
+                            };
+                            self.messages.push(ChatMessage {
+                                role: MessageRole::Tool {
+                                    name: tool_name,
+                                    pending: false,
+                                    success: true,
+                                },
+                                content,
+                                at_refs: Vec::new(),
+                                full_output: None,
+                                full_output_expanded: false,
+                            });
                         }
                         Ok(AgentDelta::Error(err)) => {
                             self.is_thinking = false;
@@ -329,6 +505,8 @@ impl InteractiveMode {
                                 role: MessageRole::Error,
                                 content: err,
                                 at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
                             });
                         }
                         Ok(AgentDelta::ThinkingStart) => {
@@ -339,6 +517,8 @@ impl InteractiveMode {
                                 },
                                 content: String::new(),
                                 at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
                             });
                         }
                         Ok(AgentDelta::ThinkingEnd {
@@ -360,6 +540,11 @@ impl InteractiveMode {
                                     *d = duration_ms;
                                 }
                             }
+                        }
+                        Ok(AgentDelta::CompactionDone { summary }) => {
+                            // /compact 完成 — LLM 生成的摘要保存下来，下一轮起注入到 system prompt。
+                            self.compact_summary = Some(summary);
+                            self.compacting = false;
                         }
                         Err(mpsc::error::TryRecvError::Empty) => break,
                         Err(mpsc::error::TryRecvError::Disconnected) => {
@@ -416,12 +601,114 @@ impl InteractiveMode {
                                 continue;
                             }
 
+                            // Settings overlay intercepts all keys when active.
+                            if self.settings_active {
+                                match (key.code, key.modifiers) {
+                                    (KeyCode::Char('c'), KeyModifiers::CONTROL)
+                                    | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                                        self.abort_agent();
+                                        self.running = false;
+                                        break;
+                                    }
+                                    (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
+                                        if self.settings_selected > 0 {
+                                            self.settings_selected -= 1;
+                                            if self.settings_selected < self.settings_scroll {
+                                                self.settings_scroll = self.settings_selected;
+                                            }
+                                        }
+                                    }
+                                    (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
+                                        if self.settings_selected + 1 < self.settings_items.len() {
+                                            self.settings_selected += 1;
+                                            const SETTINGS_VISIBLE: usize = 15;
+                                            if self.settings_selected >= self.settings_scroll + SETTINGS_VISIBLE {
+                                                self.settings_scroll = self.settings_selected + 1 - SETTINGS_VISIBLE;
+                                            }
+                                        }
+                                    }
+                                    (KeyCode::Left, _) | (KeyCode::Char('h'), _) => {
+                                        self.settings_cycle_value(false);
+                                    }
+                                    (KeyCode::Right, _) | (KeyCode::Char('l'), _) => {
+                                        self.settings_cycle_value(true);
+                                    }
+                                    (KeyCode::Enter, _) => {
+                                        self.settings_apply_selected();
+                                    }
+                                    (KeyCode::Esc, _) | (KeyCode::Char('q'), _) => {
+                                        self.settings_active = false;
+                                    }
+                                    _ => {}
+                                }
+                                continue;
+                            }
+
+                            // Search mode intercepts character input and navigation.
+                            if self.search_active {
+                                match (key.code, key.modifiers) {
+                                    (KeyCode::Char('c'), KeyModifiers::CONTROL)
+                                    | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                                        self.abort_agent();
+                                        self.running = false;
+                                        break;
+                                    }
+                                    (KeyCode::Esc, _) => {
+                                        self.search_active = false;
+                                        self.search_query.clear();
+                                        self.search_matches.clear();
+                                        self.search_idx = 0;
+                                    }
+                                    (KeyCode::Backspace, _) => {
+                                        self.search_query.pop();
+                                        self.refresh_search();
+                                    }
+                                    (KeyCode::Enter, _) | (KeyCode::Char('n'), _) => {
+                                        self.search_next(1);
+                                    }
+                                    (KeyCode::Char('N'), _) => {
+                                        self.search_next(-1);
+                                    }
+                                    (KeyCode::Char(c), _) => {
+                                        self.search_query.push(c);
+                                        self.refresh_search();
+                                        self.search_next(0);
+                                    }
+                                    _ => {}
+                                }
+                                continue;
+                            }
+
                             match (key.code, key.modifiers) {
                                 (KeyCode::Char('c'), KeyModifiers::CONTROL)
                                 | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
                                     self.abort_agent();
                                     self.running = false;
                                     break;
+                                }
+                                // Ctrl+P — cycle through scoped models (same as CC)
+                                (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+                                    self.cycle_scoped_model();
+                                }
+                                // Ctrl+U — clear current input line
+                                (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                                    self.input_buffer.clear();
+                                    self.completion_matches.clear();
+                                    self.completion_selected = 0;
+                                }
+                                // Ctrl+W — delete last word
+                                (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
+                                    // Find last whitespace boundary and truncate there.
+                                    let trimmed = self.input_buffer.trim_end_matches(|c: char| c.is_whitespace());
+                                    let last_space = trimmed.rfind(|c: char| c.is_whitespace())
+                                        .map(|i| i + 1)
+                                        .unwrap_or(0);
+                                    self.input_buffer.truncate(last_space);
+                                    self.update_completion_matches();
+                                }
+                                // Ctrl+L — force full redraw (useful if terminal is corrupted)
+                                (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
+                                    terminal.clear()?;
                                 }
                                 // Scroll shortcuts — active only when input buffer is empty
                                 // so j/k/g/G are available for typing when composing a message.
@@ -556,57 +843,75 @@ impl InteractiveMode {
                                     self.history_idx = None;
                                     self.history_draft.clear();
                                     if !input.trim().is_empty() {
-                                        if let Some(rest) = input.trim().strip_prefix("/permissions") {
-                                            let sub = rest.trim();
-                                            let (new_mode, msg) = match sub {
-                                                "bypass" => (
-                                                    "bypassPermissions",
-                                                    "⚡ BYPASS mode — all tool approvals skipped".to_string(),
-                                                ),
-                                                "plan" => (
-                                                    "plan",
-                                                    "📋 PLAN mode — read-only tools only".to_string(),
-                                                ),
-                                                "default" | "" => (
-                                                    "default",
-                                                    "Permissions: default mode (Ask)".to_string(),
-                                                ),
-                                                other => (
-                                                    self.permission_mode.as_str(),
-                                                    format!("Unknown permission mode: \"{other}\". Use: default | bypass | plan"),
-                                                ),
-                                            };
-                                            self.permission_mode = new_mode.to_string();
-                                            self.messages.push(ChatMessage {
-                                                role: MessageRole::System,
-                                                content: msg,
-                                                at_refs: Vec::new(),
-                                            });
-                                            self.is_sticky = true;
-                                        } else {
+                                        // Split "/<cmd> <args>" on the first space so that
+                                        // "/thinkingfoo" never accidentally matches "/thinking".
+                                        let trimmed = input.trim();
+                                        let (cmd, args) = match trimmed.split_once(' ') {
+                                            Some((c, a)) => (c, a.trim()),
+                                            None => (trimmed, ""),
+                                        };
+                                        if !self.handle_builtin_slash_command(cmd, args) {
                                             self.history.push(input.clone());
+                                            self.session_manager.append_message(serde_json::json!({
+                                                "role": "user",
+                                                "content": [{"type": "text", "text": input}]
+                                            }));
                                             let (expanded, at_refs, warnings) =
                                                 Self::expand_at_refs(&input);
                                             self.messages.push(ChatMessage {
                                                 role: MessageRole::User,
                                                 content: input.clone(),
                                                 at_refs,
+                                                full_output: None,
+                                                full_output_expanded: false,
                                             });
                                             for warn in warnings {
                                                 self.messages.push(ChatMessage {
                                                     role: MessageRole::System,
                                                     content: warn,
                                                     at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
                                                 });
                                             }
                                             self.messages.push(ChatMessage {
                                                 role: MessageRole::Assistant,
                                                 content: String::new(),
                                                 at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
                                             });
                                             self.is_sticky = true;
                                             self.spawn_agent(expanded);
                                         }
+                                        if self.quit_pending {
+                                            self.abort_agent();
+                                            self.running = false;
+                                            break;
+                                        }
+                                    }
+                                }
+                                // Ctrl+F — enter search mode
+                                (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
+                                    self.search_active = true;
+                                    self.search_query.clear();
+                                    self.search_matches.clear();
+                                    self.search_idx = 0;
+                                }
+                                // x — toggle expand on last tool message (when input empty)
+                                (KeyCode::Char('x'), KeyModifiers::NONE)
+                                    if self.input_buffer.is_empty() =>
+                                {
+                                    // Find the last tool message index that has full_output.
+                                    let maybe_idx = self.messages.iter().enumerate().rev()
+                                        .find(|(_, m)| {
+                                            matches!(m.role, MessageRole::Tool { pending: false, .. })
+                                                && m.full_output.is_some()
+                                        })
+                                        .map(|(i, _)| i);
+                                    if let Some(idx) = maybe_idx {
+                                        self.messages[idx].full_output_expanded =
+                                            !self.messages[idx].full_output_expanded;
                                     }
                                 }
                                 (KeyCode::Backspace, _) => {
@@ -616,6 +921,19 @@ impl InteractiveMode {
                                 (KeyCode::Esc, _) if !self.completion_matches.is_empty() => {
                                     self.completion_matches.clear();
                                     self.completion_selected = 0;
+                                }
+                                // Escape during agent execution cancels it (CC parity)
+                                (KeyCode::Esc, _) if self.is_thinking => {
+                                    self.abort_agent();
+                                    self.is_thinking = false;
+                                    self.messages.push(ChatMessage {
+                                        role: MessageRole::System,
+                                        content: "Interrupted".to_string(),
+                                        at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                                    });
+                                    self.is_sticky = true;
                                 }
                                 (KeyCode::Char(c), _) => {
                                     self.input_buffer.push(c);
@@ -641,6 +959,10 @@ impl InteractiveMode {
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
                     self.tick = self.tick.wrapping_add(1);
+                    // Refresh git branch every ~10s (200 ticks × 50ms).
+                    if self.tick % 200 == 0 {
+                        self.git_branch = Self::read_git_branch();
+                    }
                 }
             }
         }
@@ -656,7 +978,61 @@ impl InteractiveMode {
     }
 
     /// Abort any running agent task and deny its pending approval (if any).
+    /// Cycle to the next model in the scoped-models list (Ctrl+P).
+    /// Falls back to a short status message when the list is empty.
+    fn cycle_scoped_model(&mut self) {
+        let s = self.settings_manager.get_effective_settings();
+        let models: Vec<String> = s.enabled_models.unwrap_or_default();
+        if models.is_empty() {
+            self.messages.push(ChatMessage {
+                role: MessageRole::System,
+                content: "No scoped models set. Use /scoped-models <pattern> to add one."
+                    .to_string(),
+                at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+            });
+            self.is_sticky = true;
+            return;
+        }
+        // Find current model's position and advance by one.
+        let current = self.model_id.as_deref().unwrap_or("");
+        let next_idx = models
+            .iter()
+            .position(|m| m == current)
+            .map(|i| (i + 1) % models.len())
+            .unwrap_or(0);
+        let next = models[next_idx].clone();
+        self.model_id = Some(next.clone());
+        self.messages.push(ChatMessage {
+            role: MessageRole::System,
+            content: format!("Model: {next}  ({}/{}) — Ctrl+P to cycle", next_idx + 1, models.len()),
+            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+        });
+        self.is_sticky = true;
+    }
+
+    /// Save any assistant messages produced since the last TurnUsage but not yet
+    /// persisted. Called before aborting or switching sessions so partial content
+    /// is not silently dropped from the session file.
+    fn flush_pending_assistant(&mut self) {
+        let saved_up_to = self.session_assistant_saved_up_to;
+        for msg in &self.messages[saved_up_to..] {
+            if msg.role == MessageRole::Assistant && !msg.content.is_empty() {
+                self.session_manager.append_message(serde_json::json!({
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": msg.content}]
+                }));
+            }
+        }
+        self.session_assistant_saved_up_to = self.messages.len();
+    }
+
     fn abort_agent(&mut self) {
+        // Flush any partial assistant content before dropping the channel.
+        self.flush_pending_assistant();
         // Deny pending approval so the agent-side oneshot doesn't hang until timeout.
         if let Some(req) = self.pending_approval.take() {
             let _ = req.response_tx.send(ApprovalResponse::Deny);
@@ -664,7 +1040,1097 @@ impl InteractiveMode {
         if let Some(handle) = self.agent_handle.take() {
             handle.abort();
         }
+        // Drop the receiver immediately so stale deltas from the aborted task
+        // are never read by the next event-loop iteration.
+        self.agent_rx = None;
+        self.current_tool = None;
         self.is_thinking = false;
+    }
+
+    /// Handle a built-in slash command. Returns `true` if handled (no agent
+    /// should be spawned), `false` if the input should be treated as a normal
+    /// message and forwarded to the agent.
+    fn handle_builtin_slash_command(&mut self, cmd: &str, args: &str) -> bool {
+        match cmd {
+            "/permissions" => {
+                let (new_mode, msg) = match args {
+                    "bypass" => (
+                        "bypassPermissions",
+                        "⚡ BYPASS mode — all tool approvals skipped".to_string(),
+                    ),
+                    "plan" => (
+                        "plan",
+                        "📋 PLAN mode — read-only tools only".to_string(),
+                    ),
+                    "default" | "" => (
+                        "default",
+                        "Permissions: default mode (Ask)".to_string(),
+                    ),
+                    other => (
+                        self.permission_mode.as_str(),
+                        format!(
+                            "Unknown permission mode: \"{other}\". Use: default | bypass | plan"
+                        ),
+                    ),
+                };
+                self.permission_mode = new_mode.to_string();
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: msg,
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                self.is_sticky = true;
+                true
+            }
+            "/thinking" => {
+                let (new_level, ok) = if args.is_empty() {
+                    (self.thinking_level.cycle(), true)
+                } else {
+                    match args.parse::<ThinkingLevel>() {
+                        Ok(l) => (l, true),
+                        Err(_) => (self.thinking_level, false),
+                    }
+                };
+                let msg = if ok {
+                    self.thinking_level = new_level;
+                    format!("🧠 Thinking level: {}", new_level.as_str())
+                } else {
+                    format!(
+                        "Unknown thinking level: \"{args}\". Use: off | minimal | low | medium | high | xhigh"
+                    )
+                };
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: msg,
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                self.is_sticky = true;
+                true
+            }
+            "/compact" => {
+                // UI-only trim: removes old messages from the display.
+                // The LLM context is not affected — each session is
+                // stateless and uses only the current message.
+                const COMPACT_KEEP: usize = 20;
+                let total = self.messages.len();
+                if total > COMPACT_KEEP {
+                    self.messages.drain(..total - COMPACT_KEEP);
+                    // saved_up_to may now point past the trimmed messages;
+                    // clamp it so the next TurnUsage slice doesn't panic.
+                    self.session_assistant_saved_up_to =
+                        self.session_assistant_saved_up_to.min(self.messages.len());
+                }
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: format!(
+                        "✂ Display trimmed — last {COMPACT_KEEP} messages visible (LLM context unchanged)"
+                    ),
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                self.is_sticky = true;
+                true
+            }
+            "/model" => {
+                if args.is_empty() {
+                    let current = self.model_id.as_deref().unwrap_or("claude");
+                    self.messages.push(ChatMessage {
+                        role: MessageRole::System,
+                        content: format!("Current model: {current}. Usage: /model <model-id>"),
+                        at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                    });
+                } else {
+                    self.model_id = Some(args.to_string());
+                    self.messages.push(ChatMessage {
+                        role: MessageRole::System,
+                        content: format!("Model set to: {args} (validated on next request)"),
+                        at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                    });
+                }
+                self.is_sticky = true;
+                true
+            }
+            "/quit" => {
+                self.quit_pending = true;
+                true
+            }
+            "/new" => {
+                self.abort_agent();
+                self.messages.clear();
+                self.session_input_tokens = 0;
+                self.session_output_tokens = 0;
+                self.session_cache_read_tokens = 0;
+                self.session_cache_write_tokens = 0;
+                self.session_cost_usd = 0.0;
+                self.scroll_top = 0;
+                self.is_sticky = true;
+                self.session_start = std::time::Instant::now();
+                self.session_name = None;
+                self.session_assistant_saved_up_to = 0;
+                self.session_manager.new_session(None);
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: "✦ New session started".to_string(),
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                true
+            }
+            "/hotkeys" => {
+                let text = "\
+⌨  Keyboard Shortcuts
+
+  Enter           Send message
+  Shift+Enter     New line in message
+  ↑ / ↓           Browse sent-message history
+  j / k           Scroll up/down (when input empty)
+  g / G           Scroll to top / bottom
+  t               Toggle thinking block expand
+  PageUp/Down     Scroll one page
+  Tab / ↓         Next autocomplete match
+  ↑               Previous autocomplete match
+  Esc             Close autocomplete menu; cancel agent when running
+  Ctrl+P          Cycle through scoped models
+  Ctrl+U          Clear input
+  Ctrl+W          Delete last word
+  Ctrl+L          Force redraw (fix terminal corruption)
+  Ctrl+C / D      Exit"
+                    .to_string();
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: text,
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                self.is_sticky = true;
+                true
+            }
+            "/settings" => {
+                if args.is_empty() {
+                    // No args: open the interactive settings overlay.
+                    self.settings_items = self.settings_build_items();
+                    self.settings_selected = 0;
+                    self.settings_scroll = 0;
+                    self.settings_active = true;
+                } else {
+                    // /settings set <key> <value> — text-based fallback.
+                    let parts: Vec<&str> = args.splitn(3, ' ').collect();
+                    if parts.len() >= 3 && parts[0] == "set" {
+                        let key = parts[1];
+                        let value = parts[2];
+                        match key {
+                            "default_model" | "defaultModel" => {
+                                self.settings_manager.set_default_model(value);
+                                self.model_id = Some(value.to_string());
+                                self.messages.push(ChatMessage {
+                                    role: MessageRole::System,
+                                    content: format!("✓ default_model set to: {value}"),
+                                    at_refs: Vec::new(),
+                                    full_output: None,
+                                    full_output_expanded: false,
+                                });
+                            }
+                            "default_provider" | "defaultProvider" => {
+                                self.settings_manager.set_default_provider(value);
+                                self.provider_id = Some(value.to_string());
+                                self.messages.push(ChatMessage {
+                                    role: MessageRole::System,
+                                    content: format!("✓ default_provider set to: {value}"),
+                                    at_refs: Vec::new(),
+                                    full_output: None,
+                                    full_output_expanded: false,
+                                });
+                            }
+                            "theme" => {
+                                self.settings_manager.set_theme(value);
+                                self.messages.push(ChatMessage {
+                                    role: MessageRole::System,
+                                    content: format!("✓ theme set to: {value}"),
+                                    at_refs: Vec::new(),
+                                    full_output: None,
+                                    full_output_expanded: false,
+                                });
+                            }
+                            "steering_mode" | "steeringMode" => {
+                                self.settings_manager.set_steering_mode(value);
+                                self.messages.push(ChatMessage {
+                                    role: MessageRole::System,
+                                    content: format!("✓ steering_mode set to: {value}"),
+                                    at_refs: Vec::new(),
+                                    full_output: None,
+                                    full_output_expanded: false,
+                                });
+                            }
+                            _ => {
+                                self.messages.push(ChatMessage {
+                                    role: MessageRole::System,
+                                    content: format!(
+                                        "Unknown setting: {key}. Supported: default_model, default_provider, theme, steering_mode"
+                                    ),
+                                    at_refs: Vec::new(),
+                                    full_output: None,
+                                    full_output_expanded: false,
+                                });
+                            }
+                        }
+                    } else {
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: "Usage: /settings set <key> <value>. Or just /settings to open the settings menu.".to_string(),
+                            at_refs: Vec::new(),
+                            full_output: None,
+                            full_output_expanded: false,
+                        });
+                    }
+                    self.is_sticky = true;
+                }
+                true
+            }
+            "/changelog" => {
+                // Read the CHANGELOG.md from the crate root and display it.
+                let changelog_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../CHANGELOG.md");
+                let text = match std::fs::read_to_string(&changelog_path) {
+                    Ok(content) => {
+                        // Show only the first 60 lines to avoid overwhelming the display.
+                        let lines: Vec<&str> = content.lines().take(60).collect();
+                        lines.join("\n")
+                    }
+                    Err(_) => "No CHANGELOG.md found.".to_string(),
+                };
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: text,
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                self.is_sticky = true;
+                true
+            }
+            "/login" => {
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: "OAuth login: run `sage --login` from the terminal, or set ANTHROPIC_API_KEY.".to_string(),
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                self.is_sticky = true;
+                true
+            }
+            "/logout" => {
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: "Logout: unset ANTHROPIC_API_KEY or remove the credential from your keychain.".to_string(),
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                self.is_sticky = true;
+                true
+            }
+            "/copy" => {
+                let last_assistant = self
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == MessageRole::Assistant && !m.content.is_empty());
+                match last_assistant {
+                    Some(msg) => {
+                        let content = msg.content.clone();
+                        let feedback = match copy_to_clipboard(&content) {
+                            Ok(()) => "✓ Last response copied to clipboard".to_string(),
+                            Err(e) => format!("✘ Copy failed: {e}"),
+                        };
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: feedback,
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    }
+                    None => {
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: "No assistant response to copy".to_string(),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    }
+                }
+                self.is_sticky = true;
+                true
+            }
+            "/session" => {
+                let elapsed = self.session_start.elapsed();
+                let secs = elapsed.as_secs();
+                let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+                let duration = if h > 0 {
+                    format!("{h}h {m}m {s}s")
+                } else if m > 0 {
+                    format!("{m}m {s}s")
+                } else {
+                    format!("{s}s")
+                };
+                let model = self.model_id.as_deref().unwrap_or("claude");
+                let msgs = self.messages.iter().filter(|m| m.role == MessageRole::User).count();
+                let session_path = self.session_manager.get_session_file()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "(in-memory)".to_string());
+                let cache_line = if self.session_cache_read_tokens > 0 || self.session_cache_write_tokens > 0 {
+                    format!(
+                        "\n  Cache:   R{} / W{}",
+                        Self::format_tokens(self.session_cache_read_tokens),
+                        Self::format_tokens(self.session_cache_write_tokens),
+                    )
+                } else {
+                    String::new()
+                };
+                let text = format!(
+                    "📊 Session Stats\n  Model:   {model}\n  Time:    {duration}\n  Turns:   {msgs}\n  Input:   {} tokens\n  Output:  {} tokens{cache_line}\n  Cost:    ${:.4}\n  File:    {session_path}",
+                    Self::format_tokens(self.session_input_tokens),
+                    Self::format_tokens(self.session_output_tokens),
+                    self.session_cost_usd,
+                );
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: text,
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                self.is_sticky = true;
+                true
+            }
+            "/name" => {
+                if args.is_empty() {
+                    let current = self.session_name.as_deref().unwrap_or("(unnamed)");
+                    self.messages.push(ChatMessage {
+                        role: MessageRole::System,
+                        content: format!(
+                            "Session name: {current}. Usage: /name <title>"
+                        ),
+                        at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                    });
+                } else {
+                    self.session_name = Some(args.to_string());
+                    self.session_manager.append_session_info(args);
+                    self.messages.push(ChatMessage {
+                        role: MessageRole::System,
+                        content: format!("✓ Session name set to: {args}"),
+                        at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                    });
+                }
+                self.is_sticky = true;
+                true
+            }
+            "/resume" => {
+                if args.is_empty() {
+                    let sessions = self.session_manager.list_sync();
+                    if sessions.is_empty() {
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: "No saved sessions found. Usage: /resume <n>".to_string(),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    } else {
+                        let mut text =
+                            "📚 Saved Sessions (use /resume <n> to load):\n".to_string();
+                        for (i, s) in sessions.iter().take(10).enumerate() {
+                            let name = s.name.as_deref().unwrap_or(&s.first_message);
+                            let short: String = name.chars().take(60).collect();
+                            let date = s.modified.format("%Y-%m-%d %H:%M").to_string();
+                            text.push_str(&format!(
+                                "  [{n}] {date}  {short}\n",
+                                n = i + 1
+                            ));
+                        }
+                        text.push_str("\nType /resume <n> to load a session.");
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: text,
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    }
+                } else {
+                    match args.trim().parse::<usize>() {
+                        Ok(n) if n >= 1 => {
+                            let sessions = self.session_manager.list_sync();
+                            if n > sessions.len() {
+                                self.messages.push(ChatMessage {
+                                    role: MessageRole::System,
+                                    content: format!(
+                                        "No session #{n}. Use /resume to see the list."
+                                    ),
+                                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                                });
+                            } else {
+                                let path = sessions[n - 1].path.clone();
+                                self.abort_agent();
+                                self.session_manager = SessionManager::open(&path, None);
+                                self.messages.clear();
+                                self.session_input_tokens = 0;
+                                self.session_output_tokens = 0;
+                                self.session_cache_read_tokens = 0;
+                                self.session_cache_write_tokens = 0;
+                                self.session_cost_usd = 0.0;
+                                self.scroll_top = 0;
+                                self.session_start = std::time::Instant::now();
+                                let entries = self.session_manager.get_entries_ordered();
+                                let replayed = Self::load_session_entries_into_messages(&entries);
+                                let count = replayed.messages.len();
+                                self.messages = replayed.messages;
+                                self.session_assistant_saved_up_to = self.messages.len();
+                                self.session_name = replayed
+                                    .session_name
+                                    .or_else(|| self.session_manager.get_session_name());
+                                if let Some(tl) = replayed.thinking_level {
+                                    self.thinking_level = tl;
+                                }
+                                if let Some(m) = replayed.model_id {
+                                    self.model_id = Some(m);
+                                }
+                                if let Some(p) = replayed.provider_id {
+                                    self.provider_id = Some(p);
+                                }
+                                self.messages.push(ChatMessage {
+                                    role: MessageRole::System,
+                                    content: format!(
+                                        "✓ Session #{n} resumed: {count} messages"
+                                    ),
+                                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                                });
+                            }
+                        }
+                        _ => {
+                            self.messages.push(ChatMessage {
+                                role: MessageRole::System,
+                                content: format!(
+                                    "Invalid number: {args}. Use /resume to list sessions."
+                                ),
+                                at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                            });
+                        }
+                    }
+                }
+                self.is_sticky = true;
+                true
+            }
+            "/export" => {
+                match self.session_manager.get_session_file() {
+                    None => {
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content:
+                                "No session file to export (start a conversation first)."
+                                    .to_string(),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    }
+                    Some(source) => {
+                        let source = source.to_path_buf();
+                        let dest = if args.is_empty() {
+                            let date = chrono::Local::now()
+                                .format("%Y-%m-%d")
+                                .to_string();
+                            format!("sage-session-{date}.jsonl")
+                        } else {
+                            args.to_string()
+                        };
+                        match std::fs::copy(&source, &dest) {
+                            Ok(_) => {
+                                self.messages.push(ChatMessage {
+                                    role: MessageRole::System,
+                                    content: format!("✓ Session exported to: {dest}"),
+                                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                                });
+                            }
+                            Err(e) => {
+                                self.messages.push(ChatMessage {
+                                    role: MessageRole::System,
+                                    content: format!("✘ Export failed: {e}"),
+                                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                                });
+                            }
+                        }
+                    }
+                }
+                self.is_sticky = true;
+                true
+            }
+            "/import" => {
+                if args.is_empty() {
+                    self.messages.push(ChatMessage {
+                        role: MessageRole::System,
+                        content: "Usage: /import <path.jsonl>".to_string(),
+                        at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                    });
+                } else {
+                    let path = std::path::Path::new(args);
+                    if !path.exists() {
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: format!("✘ File not found: {args}"),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    } else if !Self::is_valid_session_file(path) {
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: format!(
+                                "✘ Not a valid session file: {args}\nExpected a JSONL file with a session header."
+                            ),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    } else {
+                        self.abort_agent();
+                        self.session_manager = SessionManager::open(path, None);
+                        self.messages.clear();
+                        self.session_input_tokens = 0;
+                        self.session_output_tokens = 0;
+                        self.session_cache_read_tokens = 0;
+                        self.session_cache_write_tokens = 0;
+                        self.session_cost_usd = 0.0;
+                        self.scroll_top = 0;
+                        self.session_start = std::time::Instant::now();
+                        let entries = self.session_manager.get_entries_ordered();
+                        let replayed = Self::load_session_entries_into_messages(&entries);
+                        let count = replayed.messages.len();
+                        self.messages = replayed.messages;
+                        self.session_assistant_saved_up_to = self.messages.len();
+                        self.session_name = replayed
+                            .session_name
+                            .or_else(|| self.session_manager.get_session_name());
+                        if let Some(tl) = replayed.thinking_level {
+                            self.thinking_level = tl;
+                        }
+                        if let Some(m) = replayed.model_id {
+                            self.model_id = Some(m);
+                        }
+                        if let Some(p) = replayed.provider_id {
+                            self.provider_id = Some(p);
+                        }
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: format!(
+                                "✓ Session imported: {count} messages from {args}"
+                            ),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    }
+                }
+                self.is_sticky = true;
+                true
+            }
+            "/fork" => {
+                let entries = self.session_manager.get_entries_ordered();
+                let message_ids: Vec<String> = entries
+                    .iter()
+                    .filter(|e| {
+                        e.is_message()
+                            && (e.message_role() == Some("user")
+                                || e.message_role() == Some("assistant"))
+                    })
+                    .map(|e| e.id().to_string())
+                    .collect();
+                let fork_count = message_ids.len();
+                if fork_count == 0 {
+                    self.messages.push(ChatMessage {
+                        role: MessageRole::System,
+                        content: "No messages to fork from. Start a conversation first."
+                            .to_string(),
+                        at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                    });
+                    self.is_sticky = true;
+                    return true;
+                }
+                let branch_idx = if args.is_empty() {
+                    fork_count - 1
+                } else {
+                    match args.parse::<usize>() {
+                        Ok(n) if n >= 1 && n <= fork_count => n - 1,
+                        _ => {
+                            self.messages.push(ChatMessage {
+                                role: MessageRole::System,
+                                content: format!(
+                                    "Usage: /fork [<turn>]. Session has {fork_count} turns."
+                                ),
+                                at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                            });
+                            self.is_sticky = true;
+                            return true;
+                        }
+                    }
+                };
+                let leaf_id = message_ids[branch_idx].clone();
+                match self.session_manager.create_branched_session(&leaf_id) {
+                    Ok(_) => {
+                        self.abort_agent();
+                        let new_entries = self.session_manager.get_entries_ordered();
+                        let replayed = Self::load_session_entries_into_messages(&new_entries);
+                        let count = replayed.messages.len();
+                        self.messages = replayed.messages;
+                        self.session_assistant_saved_up_to = self.messages.len();
+                        self.session_name = replayed.session_name;
+                        if let Some(tl) = replayed.thinking_level {
+                            self.thinking_level = tl;
+                        }
+                        if let Some(m) = replayed.model_id {
+                            self.model_id = Some(m);
+                        }
+                        if let Some(p) = replayed.provider_id {
+                            self.provider_id = Some(p);
+                        }
+                        self.session_input_tokens = 0;
+                        self.session_output_tokens = 0;
+                        self.session_cache_read_tokens = 0;
+                        self.session_cache_write_tokens = 0;
+                        self.session_cost_usd = 0.0;
+                        self.scroll_top = 0;
+                        self.session_start = std::time::Instant::now();
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: format!(
+                                "✦ Forked from turn {}: {count} messages in new branch",
+                                branch_idx + 1
+                            ),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    }
+                    Err(e) => {
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: format!("✘ Fork failed: {e}"),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    }
+                }
+                self.is_sticky = true;
+                true
+            }
+            "/tree" => {
+                let current_file = self
+                    .session_manager
+                    .get_session_file()
+                    .map(|p| p.to_path_buf());
+                let session_id = self.session_manager.get_session_id().to_string();
+                let name = self.session_name.as_deref().unwrap_or("(unnamed)");
+                let entries = self.session_manager.get_entries_ordered();
+                let msg_count = entries
+                    .iter()
+                    .filter(|e| {
+                        e.is_message()
+                            && (e.message_role() == Some("user")
+                                || e.message_role() == Some("assistant"))
+                    })
+                    .count();
+
+                // List all sessions and find branches of the current one.
+                let all_sessions = self.session_manager.list_sync();
+                let current_path_str = current_file
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string());
+                let mut text = format!(
+                    "🌳 Session Tree\n  Current:  {name}  [{msg_count} msgs]  id={session_id}\n"
+                );
+                let branches: Vec<_> = all_sessions
+                    .iter()
+                    .filter(|s| {
+                        s.parent_session_path.as_deref() == current_path_str.as_deref()
+                    })
+                    .collect();
+                if branches.is_empty() {
+                    text.push_str("  No branches forked from this session.\n");
+                } else {
+                    text.push_str(&format!("  Branches ({}):\n", branches.len()));
+                    for b in branches.iter().take(10) {
+                        let bname = b.name.as_deref().unwrap_or(&b.first_message);
+                        let short: String = bname.chars().take(50).collect();
+                        let date = b.modified.format("%Y-%m-%d %H:%M").to_string();
+                        text.push_str(&format!(
+                            "    ├─ {date}  {short}  [{} msgs]\n",
+                            b.message_count
+                        ));
+                    }
+                }
+                text.push_str("\nUse /fork to create a branch. Use /resume to switch sessions.");
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: text,
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                self.is_sticky = true;
+                true
+            }
+            "/share" => {
+                match self.session_manager.get_session_file() {
+                    None => {
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: "No session file available. Start a conversation first."
+                                .to_string(),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    }
+                    Some(p) => {
+                        let path = p.to_path_buf();
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: "📤 Uploading session as secret GitHub Gist…".to_string(),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                        match std::process::Command::new("gh")
+                            .args(["gist", "create", "--secret", "--filename", "sage-session.jsonl"])
+                            .arg(&path)
+                            .output()
+                        {
+                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                                self.messages.push(ChatMessage {
+                                    role: MessageRole::System,
+                                    content: format!(
+                                        "✘ `gh` not found. Install GitHub CLI (brew install gh) then run:\n  gh gist create --secret {}",
+                                        path.display()
+                                    ),
+                                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                                });
+                            }
+                            Err(e) => {
+                                self.messages.push(ChatMessage {
+                                    role: MessageRole::System,
+                                    content: format!("✘ Share failed: {e}"),
+                                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                                });
+                            }
+                            Ok(out) => {
+                                if out.status.success() {
+                                    let url = String::from_utf8_lossy(&out.stdout)
+                                        .trim()
+                                        .to_string();
+                                    self.messages.push(ChatMessage {
+                                        role: MessageRole::System,
+                                        content: format!("✓ Session shared: {url}"),
+                                        at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                                    });
+                                } else {
+                                    let stderr = String::from_utf8_lossy(&out.stderr)
+                                        .trim()
+                                        .to_string();
+                                    self.messages.push(ChatMessage {
+                                        role: MessageRole::System,
+                                        content: format!("✘ gh gist create failed:\n{stderr}"),
+                                        at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                self.is_sticky = true;
+                true
+            }
+            "/reload" => {
+                self.settings_manager.reload();
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: "✓ Settings reloaded from disk".to_string(),
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                self.is_sticky = true;
+                true
+            }
+            "/scoped-models" => {
+                if args.is_empty() {
+                    let s = self.settings_manager.get_effective_settings();
+                    let models = s.enabled_models.unwrap_or_default();
+                    if models.is_empty() {
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: "No scoped models set. Usage: /scoped-models <pattern> to toggle. Models cycle with Ctrl+P.".to_string(),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    } else {
+                        let list = models.join(", ");
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: format!(
+                                "Scoped models (Ctrl+P cycles): {list}\nUsage: /scoped-models <pattern> to toggle"
+                            ),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    }
+                } else {
+                    let s = self.settings_manager.get_effective_settings();
+                    let mut models: Vec<String> = s.enabled_models.unwrap_or_default();
+                    if let Some(pos) = models.iter().position(|m| m == args) {
+                        models.remove(pos);
+                        let new_models = if models.is_empty() {
+                            None
+                        } else {
+                            Some(models.clone())
+                        };
+                        self.settings_manager.set_enabled_models(new_models);
+                        let list = if models.is_empty() {
+                            "(empty)".to_string()
+                        } else {
+                            models.join(", ")
+                        };
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: format!(
+                                "✓ Removed {args} from scoped models. Current: {list}"
+                            ),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    } else {
+                        models.push(args.to_string());
+                        self.settings_manager
+                            .set_enabled_models(Some(models.clone()));
+                        let list = models.join(", ");
+                        self.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: format!(
+                                "✓ Added {args} to scoped models. Current: {list}"
+                            ),
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    }
+                }
+                self.is_sticky = true;
+                true
+            }
+            "/init" => {
+                let mut context = String::new();
+                if let Ok(out) = std::process::Command::new("git")
+                    .args(["log", "--oneline", "-10"])
+                    .output()
+                {
+                    if !out.stdout.is_empty() {
+                        context.push_str("Recent git history:\n");
+                        context.push_str(&String::from_utf8_lossy(&out.stdout));
+                        context.push('\n');
+                    }
+                }
+                for cargo_file in &["Cargo.toml", "package.json", "pyproject.toml"] {
+                    if let Ok(content) = std::fs::read_to_string(cargo_file) {
+                        let snippet: String = content.chars().take(1000).collect();
+                        context.push_str(&format!(
+                            "{cargo_file}:\n```\n{snippet}\n```\n"
+                        ));
+                        break;
+                    }
+                }
+                for readme in &["README.md", "README.txt", "README"] {
+                    if let Ok(content) = std::fs::read_to_string(readme) {
+                        let snippet: String = content.chars().take(2000).collect();
+                        context.push_str(&format!("{readme}:\n{snippet}\n"));
+                        break;
+                    }
+                }
+                let prompt = if context.is_empty() {
+                    "Please create a CLAUDE.md file in the current directory. Include: project purpose, directory structure, key commands, and important conventions.".to_string()
+                } else {
+                    format!(
+                        "Please create a CLAUDE.md file in the current directory.\n\nContext:\n{context}\n\nInclude: project purpose, directory structure, key commands, dependencies, and important conventions."
+                    )
+                };
+                self.session_manager.append_message(serde_json::json!({
+                    "role": "user",
+                    "content": [{"type": "text", "text": "/init (create CLAUDE.md)"}]
+                }));
+                self.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: "🚀 Generating CLAUDE.md...".to_string(),
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                self.messages.push(ChatMessage {
+                    role: MessageRole::User,
+                    content: "/init (create CLAUDE.md)".to_string(),
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                self.messages.push(ChatMessage {
+                    role: MessageRole::Assistant,
+                    content: String::new(),
+                    at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                });
+                self.is_sticky = true;
+                self.spawn_agent(prompt);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Load session entries, replaying messages and the most recent state-change
+    /// entries (ThinkingLevelChange, ModelChange, SessionInfo).
+    fn load_session_entries_into_messages(entries: &[SessionEntry]) -> ReplayedState {
+        let mut messages = Vec::new();
+        let mut thinking_level: Option<ThinkingLevel> = None;
+        let mut model_id: Option<String> = None;
+        let mut provider_id: Option<String> = None;
+        let mut session_name: Option<String> = None;
+
+        for entry in entries {
+            match entry {
+                SessionEntry::Message(e) => {
+                    let role =
+                        e.message.get("role").and_then(|r| r.as_str()).unwrap_or("");
+                    let content = Self::extract_message_text(&e.message);
+                    let msg_role = match role {
+                        "user" => MessageRole::User,
+                        "assistant" => MessageRole::Assistant,
+                        _ => continue,
+                    };
+                    if !content.is_empty() {
+                        messages.push(ChatMessage {
+                            role: msg_role,
+                            content,
+                            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+                        });
+                    }
+                }
+                SessionEntry::ThinkingLevelChange(e) => {
+                    thinking_level = e.thinking_level.parse().ok();
+                }
+                SessionEntry::ModelChange(e) => {
+                    model_id = Some(e.model_id.clone());
+                    provider_id = Some(e.provider.clone());
+                }
+                SessionEntry::SessionInfo(e) => {
+                    if e.name.is_some() {
+                        session_name = e.name.clone();
+                    }
+                }
+                // Compaction, BranchSummary, Custom, CustomMessage, Label: no TUI state to replay.
+                _ => {}
+            }
+        }
+
+        ReplayedState {
+            messages,
+            thinking_level,
+            model_id,
+            provider_id,
+            session_name,
+        }
+    }
+
+    /// Extract text content from a session message JSON value.
+    fn extract_message_text(message: &serde_json::Value) -> String {
+        match message.get("content") {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|b| {
+                    if b.get("type")?.as_str()? == "text" {
+                        b.get("text")?.as_str().map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(""),
+            _ => String::new(),
+        }
+    }
+
+    /// Check if a file looks like a valid sage session JSONL.
+    /// Reads only the first line to avoid loading large files.
+    fn is_valid_session_file(path: &std::path::Path) -> bool {
+        use std::io::{BufRead, BufReader};
+        let Ok(file) = std::fs::File::open(path) else {
+            return false;
+        };
+        let mut reader = BufReader::new(file);
+        let mut first_line = String::new();
+        if reader.read_line(&mut first_line).is_err() {
+            return false;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(first_line.trim()) else {
+            return false;
+        };
+        // A session file's first entry must have a "type" field (any SessionEntry variant).
+        v.get("type").and_then(|t| t.as_str()).is_some()
     }
 
     fn spawn_agent(&mut self, message: String) {
@@ -678,10 +2144,12 @@ impl InteractiveMode {
         let provider_id = self.provider_id.clone();
         let model_id = self.model_id.clone();
         let permission_mode = self.permission_mode.clone();
+        let thinking_level = self.thinking_level;
         let error_tx = tx.clone();
         let approval_tx = self.approval_tx.clone();
         let session_rules = Arc::clone(&self.session_rules);
 
+        let compact_summary = self.compact_summary.clone();
         let handle = tokio::spawn(async move {
             if let Err(e) = crate::print_session::run_agent_session_to_channel(
                 message,
@@ -690,8 +2158,10 @@ impl InteractiveMode {
                 None,
                 tx,
                 permission_mode,
+                thinking_level,
                 Some(approval_tx),
                 session_rules,
+                compact_summary,
             )
             .await
             {
@@ -739,6 +2209,286 @@ impl InteractiveMode {
         }
         // Always reset selection so the list doesn't "jump" when items change.
         self.completion_selected = 0;
+    }
+
+    // ── Search helpers ────────────────────────────────────────────────────────
+
+    fn refresh_search(&mut self) {
+        if self.search_query.is_empty() {
+            self.search_matches.clear();
+            self.search_idx = 0;
+            return;
+        }
+        let q = self.search_query.to_lowercase();
+        self.search_matches = self.messages.iter().enumerate()
+            .filter(|(_, m)| m.content.to_lowercase().contains(&q))
+            .map(|(i, _)| i)
+            .collect();
+    }
+
+    fn search_next(&mut self, direction: i32) {
+        let n = self.search_matches.len();
+        if n == 0 {
+            return;
+        }
+        match direction {
+            d if d > 0 => {
+                self.search_idx = (self.search_idx + 1) % n;
+            }
+            d if d < 0 => {
+                self.search_idx = if self.search_idx == 0 { n - 1 } else { self.search_idx - 1 };
+            }
+            _ => {}
+        }
+        // Jump scroll to the matched message.
+        self.scroll_to_message(self.search_matches[self.search_idx]);
+    }
+
+    fn scroll_to_message(&mut self, msg_idx: usize) {
+        // Count display lines for all messages before msg_idx.
+        let theme = get_theme();
+        let w = self.last_terminal_width;
+        let line_offset: u16 = self.messages[..msg_idx]
+            .iter()
+            .map(|m| Self::message_to_lines(m, &theme, w).len() as u16)
+            .sum();
+        let target = line_offset.saturating_sub(self.last_viewport_height / 3);
+        self.scroll_top = target;
+        self.is_sticky = false;
+        self.clamp_scroll();
+    }
+
+    // ── Settings helpers ──────────────────────────────────────────────────────
+
+    fn settings_build_items(&self) -> Vec<crate::modes::interactive::components::settings_selector::SettingItem> {
+        use crate::modes::interactive::components::settings_selector::SettingItem;
+        let s = self.settings_manager.get_effective_settings();
+        let bool_str = |b: bool| if b { "true" } else { "false" };
+        vec![
+            // ── UI / Interaction ──────────────────────────────────────────
+            SettingItem {
+                id: "thinking-level",
+                label: "Thinking level",
+                description: "Extended thinking budget for complex problems",
+                current_value: self.thinking_level.as_str().to_string(),
+                values: vec!["off".into(), "low".into(), "medium".into(), "high".into()],
+            },
+            SettingItem {
+                id: "permission-mode",
+                label: "Permission mode",
+                description: "Tool execution permission level",
+                current_value: self.permission_mode.clone(),
+                values: vec!["default".into(), "plan".into(), "bypassPermissions".into()],
+            },
+            SettingItem {
+                id: "steering-mode",
+                label: "Steering mode",
+                description: "Enter while streaming queues steering messages",
+                current_value: s.steering_mode.as_deref().unwrap_or("one-at-a-time").to_string(),
+                values: vec!["one-at-a-time".into(), "all".into()],
+            },
+            SettingItem {
+                id: "follow-up-mode",
+                label: "Follow-up mode",
+                description: "Alt+Enter queues follow-up messages until agent stops",
+                current_value: s.follow_up_mode.as_deref().unwrap_or("one-at-a-time").to_string(),
+                values: vec!["one-at-a-time".into(), "all".into()],
+            },
+            SettingItem {
+                id: "transport",
+                label: "Transport",
+                description: "Preferred transport for providers that support multiple",
+                current_value: s.transport.as_deref().unwrap_or("sse").to_string(),
+                values: vec!["sse".into(), "websocket".into(), "auto".into()],
+            },
+            // ── Display ───────────────────────────────────────────────────
+            SettingItem {
+                id: "hide-thinking",
+                label: "Hide thinking",
+                description: "Hide thinking blocks in assistant responses",
+                current_value: bool_str(s.hide_thinking_block.unwrap_or(false)).to_string(),
+                values: vec!["false".into(), "true".into()],
+            },
+            SettingItem {
+                id: "collapse-changelog",
+                label: "Collapse changelog",
+                description: "Show condensed changelog after updates",
+                current_value: bool_str(s.collapse_changelog.unwrap_or(false)).to_string(),
+                values: vec!["false".into(), "true".into()],
+            },
+            SettingItem {
+                id: "show-images",
+                label: "Show images",
+                description: "Render images inline in terminal",
+                current_value: bool_str(s.terminal.as_ref().and_then(|t| t.show_images).unwrap_or(true)).to_string(),
+                values: vec!["true".into(), "false".into()],
+            },
+            SettingItem {
+                id: "auto-resize-images",
+                label: "Auto-resize images",
+                description: "Resize large images to 2000×2000 max",
+                current_value: bool_str(s.images.as_ref().and_then(|i| i.auto_resize).unwrap_or(true)).to_string(),
+                values: vec!["true".into(), "false".into()],
+            },
+            SettingItem {
+                id: "block-images",
+                label: "Block images",
+                description: "Prevent images from being sent to LLM providers",
+                current_value: bool_str(s.images.as_ref().and_then(|i| i.block_images).unwrap_or(false)).to_string(),
+                values: vec!["false".into(), "true".into()],
+            },
+            SettingItem {
+                id: "show-hardware-cursor",
+                label: "Hardware cursor",
+                description: "Show terminal cursor for IME support",
+                current_value: bool_str(s.show_hardware_cursor.unwrap_or(false)).to_string(),
+                values: vec!["false".into(), "true".into()],
+            },
+            SettingItem {
+                id: "editor-padding",
+                label: "Editor padding",
+                description: "Horizontal padding for input editor (0–3)",
+                current_value: s.editor_padding_x.unwrap_or(0).to_string(),
+                values: vec!["0".into(), "1".into(), "2".into(), "3".into()],
+            },
+            SettingItem {
+                id: "autocomplete-max",
+                label: "Autocomplete max",
+                description: "Max visible items in autocomplete dropdown",
+                current_value: s.autocomplete_max_visible.unwrap_or(5).to_string(),
+                values: vec!["3".into(), "5".into(), "7".into(), "10".into(), "15".into(), "20".into()],
+            },
+            // ── Session ───────────────────────────────────────────────────
+            SettingItem {
+                id: "autocompact",
+                label: "Auto-compact",
+                description: "Automatically compact context when it gets too large",
+                current_value: bool_str(s.compaction.as_ref().and_then(|c| c.enabled).unwrap_or(true)).to_string(),
+                values: vec!["true".into(), "false".into()],
+            },
+            SettingItem {
+                id: "quiet-startup",
+                label: "Quiet startup",
+                description: "Disable verbose printing at startup",
+                current_value: bool_str(s.quiet_startup.unwrap_or(false)).to_string(),
+                values: vec!["false".into(), "true".into()],
+            },
+            // ── Commands ──────────────────────────────────────────────────
+            SettingItem {
+                id: "skill-commands",
+                label: "Skill commands",
+                description: "Register skills as /skill:name commands",
+                current_value: bool_str(s.enable_skill_commands.unwrap_or(false)).to_string(),
+                values: vec!["false".into(), "true".into()],
+            },
+            SettingItem {
+                id: "double-escape",
+                label: "Double-escape action",
+                description: "Action when pressing Escape twice with empty editor",
+                current_value: s.double_escape_action.as_deref().unwrap_or("none").to_string(),
+                values: vec!["none".into(), "tree".into(), "fork".into()],
+            },
+            SettingItem {
+                id: "tree-filter",
+                label: "Tree filter mode",
+                description: "Default filter when opening /tree",
+                current_value: s.tree_filter_mode.as_deref().unwrap_or("default").to_string(),
+                values: vec!["default".into(), "no-tools".into(), "user-only".into(), "labeled-only".into(), "all".into()],
+            },
+        ]
+    }
+
+    fn settings_cycle_value(&mut self, forward: bool) {
+        let idx = self.settings_selected;
+        if idx >= self.settings_items.len() {
+            return;
+        }
+        let item = &self.settings_items[idx];
+        let n = item.values.len();
+        if n == 0 {
+            return;
+        }
+        let cur_pos = item.values.iter().position(|v| v == &item.current_value).unwrap_or(0);
+        let new_pos = if forward {
+            (cur_pos + 1) % n
+        } else {
+            if cur_pos == 0 { n - 1 } else { cur_pos - 1 }
+        };
+        self.settings_items[idx].current_value = self.settings_items[idx].values[new_pos].clone();
+    }
+
+    fn settings_apply_selected(&mut self) {
+        let idx = self.settings_selected;
+        if idx >= self.settings_items.len() {
+            return;
+        }
+        let item = self.settings_items[idx].clone();
+        match item.id {
+            "thinking-level" => {
+                self.thinking_level = match item.current_value.as_str() {
+                    "low" => ThinkingLevel::Low,
+                    "medium" => ThinkingLevel::Medium,
+                    "high" => ThinkingLevel::High,
+                    _ => ThinkingLevel::Off,
+                };
+            }
+            "permission-mode" => {
+                self.permission_mode = item.current_value.clone();
+            }
+            "steering-mode" => {
+                self.settings_manager.set_steering_mode(&item.current_value);
+            }
+            "follow-up-mode" => {
+                self.settings_manager.set_follow_up_mode(&item.current_value);
+            }
+            "transport" => {
+                self.settings_manager.set_transport(&item.current_value);
+            }
+            "hide-thinking" => {
+                self.settings_manager.set_hide_thinking_block(item.current_value == "true");
+            }
+            "collapse-changelog" => {
+                self.settings_manager.set_collapse_changelog(item.current_value == "true");
+            }
+            "show-images" => {
+                self.settings_manager.set_show_images(item.current_value == "true");
+            }
+            "auto-resize-images" => {
+                self.settings_manager.set_image_auto_resize(item.current_value == "true");
+            }
+            "block-images" => {
+                self.settings_manager.set_block_images(item.current_value == "true");
+            }
+            "skill-commands" => {
+                self.settings_manager.set_enable_skill_commands(item.current_value == "true");
+            }
+            "show-hardware-cursor" => {
+                self.settings_manager.set_show_hardware_cursor(item.current_value == "true");
+            }
+            "editor-padding" => {
+                if let Ok(v) = item.current_value.parse::<u32>() {
+                    self.settings_manager.set_editor_padding_x(v);
+                }
+            }
+            "autocomplete-max" => {
+                if let Ok(v) = item.current_value.parse::<u32>() {
+                    self.settings_manager.set_autocomplete_max_visible(v);
+                }
+            }
+            "autocompact" => {
+                self.settings_manager.set_compaction_enabled(item.current_value == "true");
+            }
+            "quiet-startup" => {
+                self.settings_manager.set_quiet_startup(item.current_value == "true");
+            }
+            "double-escape" => {
+                self.settings_manager.set_double_escape_action(&item.current_value);
+            }
+            "tree-filter" => {
+                self.settings_manager.set_tree_filter_mode(&item.current_value);
+            }
+            _ => {}
+        }
     }
 
     /// List files/dirs that start with `prefix` (up to MAX_COMPLETIONS results).
@@ -884,7 +2634,7 @@ impl InteractiveMode {
             .content
             .lines()
             .map(|line| {
-                let n = line.width() as u16;
+                let n = line.width().min(u16::MAX as usize) as u16;
                 if n == 0 || n <= first_capacity {
                     1
                 } else {
@@ -904,12 +2654,12 @@ impl InteractiveMode {
     }
 
     /// Parse a text line into styled ratatui spans, handling inline Markdown:
-    /// **bold**, *italic*, `code`, with list prefix substitution.
+    /// **bold**, *italic*, `code`, [link](url), with list prefix substitution.
     fn parse_inline_markdown(text: &str, theme: &Theme) -> Vec<Span<'static>> {
         static RE: OnceLock<Regex> = OnceLock::new();
         let re = RE.get_or_init(|| {
-            // Match: `code`, **bold**, *italic* (in precedence order)
-            Regex::new(r"`([^`]+)`|\*\*([^*]+)\*\*|\*([^*\s][^*]*)\*").unwrap()
+            // Match: [text](url), `code`, **bold**, ~~strikethrough~~, *italic* (in precedence order)
+            Regex::new(r"\[([^\]]+)\]\(([^)]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|~~([^~]+)~~|\*([^*\s][^*]*)\*").unwrap()
         });
 
         let mut spans: Vec<Span<'static>> = Vec::new();
@@ -920,17 +2670,30 @@ impl InteractiveMode {
             if m.start() > last {
                 spans.push(Span::raw(text[last..m.start()].to_string()));
             }
-            if let Some(code) = cap.get(1) {
+            if let (Some(link_text), Some(_url)) = (cap.get(1), cap.get(2)) {
+                // Render link text underlined in accent color; URL is omitted (terminal can't click)
+                spans.push(Span::styled(
+                    link_text.as_str().to_string(),
+                    Style::default()
+                        .fg(theme.ratatui_fg(ThemeColor::Accent))
+                        .add_modifier(Modifier::UNDERLINED),
+                ));
+            } else if let Some(code) = cap.get(3) {
                 let style = Style::default()
                     .fg(theme.ratatui_fg(ThemeColor::Muted))
                     .bg(theme.ratatui_bg(ThemeBg::CodeBg));
                 spans.push(Span::styled(code.as_str().to_string(), style));
-            } else if let Some(bold) = cap.get(2) {
+            } else if let Some(bold) = cap.get(4) {
                 spans.push(Span::styled(
                     bold.as_str().to_string(),
                     Style::default().add_modifier(Modifier::BOLD),
                 ));
-            } else if let Some(italic) = cap.get(3) {
+            } else if let Some(strike) = cap.get(5) {
+                spans.push(Span::styled(
+                    strike.as_str().to_string(),
+                    Style::default().add_modifier(Modifier::CROSSED_OUT),
+                ));
+            } else if let Some(italic) = cap.get(6) {
                 spans.push(Span::styled(
                     italic.as_str().to_string(),
                     Style::default().add_modifier(Modifier::ITALIC),
@@ -976,7 +2739,7 @@ impl InteractiveMode {
                 Some(theme.ratatui_bg(ThemeBg::UserMessageBg)),
             ),
             MessageRole::Assistant => ("◆", theme.ratatui_fg(ThemeColor::Accent), None),
-            MessageRole::System => ("◆", theme.ratatui_fg(ThemeColor::Warning), None),
+            MessageRole::System => ("✦", theme.ratatui_fg(ThemeColor::Warning), None),
             MessageRole::Tool { pending: true, .. } => {
                 ("⏺", theme.ratatui_fg(ThemeColor::Warning), None)
             }
@@ -1011,10 +2774,31 @@ impl InteractiveMode {
             return lines;
         }
 
-        let content_lines: Vec<&str> = if msg.content.is_empty() {
+        // For completed tool messages with full output, handle expand/collapse.
+        let tool_full_content_buf: String;
+        let effective_content: &str = if matches!(msg.role, MessageRole::Tool { pending: false, .. })
+            && msg.full_output.is_some()
+        {
+            if msg.full_output_expanded {
+                tool_full_content_buf = msg.full_output.as_deref().unwrap_or("").to_string();
+                &tool_full_content_buf
+            } else {
+                &msg.content
+            }
+        } else {
+            &msg.content
+        };
+
+        let content_lines: Vec<&str> = if effective_content.is_empty() {
             vec![""]
         } else {
-            msg.content.lines().collect()
+            // Limit expanded output to 200 lines.
+            let all: Vec<&str> = effective_content.lines().collect();
+            if msg.full_output_expanded && all.len() > 200 {
+                all[..200].to_vec()
+            } else {
+                all
+            }
         };
 
         let mut in_code_block = false;
@@ -1084,8 +2868,109 @@ impl InteractiveMode {
                 }
 
                 // Render inline Markdown for assistant messages.
+
+                // Headings: # H1, ## H2, ### H3
+                let heading_level = if text_line.starts_with("### ") {
+                    Some((3usize, &text_line[4..]))
+                } else if text_line.starts_with("## ") {
+                    Some((2, &text_line[3..]))
+                } else if text_line.starts_with("# ") {
+                    Some((1, &text_line[2..]))
+                } else {
+                    None
+                };
+                if let Some((level, heading_text)) = heading_level {
+                    let heading_style = if level == 1 {
+                        Style::default()
+                            .fg(theme.ratatui_fg(ThemeColor::Accent))
+                            .add_modifier(Modifier::BOLD)
+                    } else if level == 2 {
+                        Style::default().add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                            .fg(theme.ratatui_fg(ThemeColor::Muted))
+                            .add_modifier(Modifier::BOLD)
+                    };
+                    let mut line_spans = vec![lead];
+                    line_spans.push(Span::styled(heading_text.to_string(), heading_style));
+                    lines.push(Line::from(line_spans));
+                    continue;
+                }
+
+                // Horizontal rules: --- or *** or === (three or more chars, only those chars)
+                let trimmed = text_line.trim();
+                if (trimmed.len() >= 3)
+                    && (trimmed.chars().all(|c| c == '-')
+                        || trimmed.chars().all(|c| c == '*')
+                        || trimmed.chars().all(|c| c == '='))
+                    && !trimmed.is_empty()
+                {
+                    let rule = "─".repeat((terminal_width as usize).saturating_sub(4));
+                    lines.push(Line::from(vec![
+                        lead,
+                        Span::styled(rule, Style::default().fg(theme.ratatui_fg(ThemeColor::BorderMuted))),
+                    ]));
+                    continue;
+                }
+
+                // Blockquotes: > text
+                if let Some(rest) = text_line.strip_prefix("> ").or_else(|| text_line.strip_prefix(">")) {
+                    let bar = Span::styled(
+                        "│ ".to_string(),
+                        Style::default().fg(theme.ratatui_fg(ThemeColor::BorderMuted)),
+                    );
+                    let mut line_spans = vec![lead, bar];
+                    line_spans.extend(Self::parse_inline_markdown(rest, theme));
+                    lines.push(Line::from(line_spans));
+                    continue;
+                }
+
+                // Markdown table rows: | col | col |
+                if text_line.trim_start().starts_with('|') && text_line.trim_end().ends_with('|') {
+                    let cells: Vec<&str> = text_line
+                        .trim()
+                        .trim_matches('|')
+                        .split('|')
+                        .map(str::trim)
+                        .collect();
+                    // Skip separator rows like |---|---|
+                    let is_separator = cells.iter().all(|c| c.chars().all(|ch| ch == '-' || ch == ':' || ch == ' '));
+                    if is_separator {
+                        let rule = "─".repeat((terminal_width as usize).saturating_sub(4));
+                        lines.push(Line::from(vec![
+                            lead,
+                            Span::styled(rule, Style::default().fg(theme.ratatui_fg(ThemeColor::BorderMuted))),
+                        ]));
+                    } else {
+                        let mut line_spans = vec![lead];
+                        for (ci, cell) in cells.iter().enumerate() {
+                            if ci > 0 {
+                                line_spans.push(Span::styled(
+                                    "  │  ".to_string(),
+                                    Style::default().fg(theme.ratatui_fg(ThemeColor::BorderMuted)),
+                                ));
+                            }
+                            line_spans.extend(Self::parse_inline_markdown(cell, theme));
+                        }
+                        lines.push(Line::from(line_spans));
+                    }
+                    continue;
+                }
+
+                // Ordered list: `1. `, `2. `, etc.
+                let ordered_bullet = {
+                    let num_end = text_line.find(". ").unwrap_or(0);
+                    if num_end > 0 && num_end <= 3 && text_line[..num_end].chars().all(|c| c.is_ascii_digit()) {
+                        let num_str = &text_line[..num_end + 2]; // "1. "
+                        let rest = &text_line[num_end + 2..];
+                        Some((num_str, rest))
+                    } else {
+                        None
+                    }
+                };
+
                 // Unordered list markers (`- ` / `* `) are replaced with a styled bullet.
-                let (body, list_bullet) = if let Some(rest) = text_line
+                let (body, list_prefix) = if let Some(rest) = text_line
                     .strip_prefix("- ")
                     .or_else(|| text_line.strip_prefix("* "))
                 {
@@ -1094,14 +2979,25 @@ impl InteractiveMode {
                         Style::default().fg(theme.ratatui_fg(ThemeColor::MdListBullet)),
                     );
                     (rest, Some(bullet))
+                } else if let Some((num, rest)) = ordered_bullet {
+                    let bullet = Span::styled(
+                        num.to_string(),
+                        Style::default().fg(theme.ratatui_fg(ThemeColor::MdListBullet)),
+                    );
+                    (rest, Some(bullet))
                 } else {
                     (*text_line, None)
                 };
                 let mut line_spans = vec![lead];
-                if let Some(b) = list_bullet {
+                if let Some(b) = list_prefix {
                     line_spans.push(b);
                 }
                 line_spans.extend(Self::parse_inline_markdown(body, theme));
+                lines.push(Line::from(line_spans));
+            } else if matches!(msg.role, MessageRole::System) {
+                // System messages get inline markdown rendering (bold, code, italic).
+                let mut line_spans = vec![lead];
+                line_spans.extend(Self::parse_inline_markdown(text_line, theme));
                 lines.push(Line::from(line_spans));
             } else {
                 lines.push(Line::from(vec![lead, content_span]));
@@ -1115,6 +3011,21 @@ impl InteractiveMode {
                 Span::raw(indent.clone()),
                 Span::styled(annotation, Style::default().fg(Color::DarkGray)),
             ]));
+        }
+
+        // Append expand/collapse hint for tool messages with full output.
+        if matches!(msg.role, MessageRole::Tool { pending: false, .. })
+            && msg.full_output.is_some()
+        {
+            let hint = if msg.full_output_expanded {
+                "    [x collapse]"
+            } else {
+                "    … [x expand]"
+            };
+            lines.push(Line::from(Span::styled(
+                hint.to_string(),
+                Style::default().fg(theme.ratatui_fg(ThemeColor::Dim)),
+            )));
         }
 
         lines
@@ -1182,6 +3093,17 @@ impl InteractiveMode {
     }
 
     // ── Format helpers ──────────────────────────────────────────────────────
+
+    fn read_git_branch() -> Option<String> {
+        std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && s != "HEAD")
+    }
 
     fn format_tokens(n: u64) -> String {
         if n >= 1_000_000 {
@@ -1270,15 +3192,55 @@ impl InteractiveMode {
         // ── Header ────────────────────────────────────────────────────────
         const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let model_label = self.model_id.as_deref().unwrap_or("claude");
-        let header_left = format!("  sage  {model_label}");
+        let branch_suffix = self
+            .git_branch
+            .as_deref()
+            .map(|b| format!("  ({b})"))
+            .unwrap_or_default();
+        let name_suffix = self
+            .session_name
+            .as_deref()
+            .map(|n| format!("  ·  {n}"))
+            .unwrap_or_default();
+        let header_left = format!("  sage  {model_label}{branch_suffix}{name_suffix}");
+        let cache_suffix = if self.session_cache_read_tokens > 0 || self.session_cache_write_tokens > 0 {
+            format!(
+                "  R{}  W{}",
+                Self::format_tokens(self.session_cache_read_tokens),
+                Self::format_tokens(self.session_cache_write_tokens),
+            )
+        } else {
+            String::new()
+        };
+        let (ctx_span, ctx_span_len) = if self.context_window > 0 {
+            let total = self.session_input_tokens + self.session_output_tokens;
+            let pct = (total * 100 / self.context_window as u64).min(100);
+            let kw = self.context_window / 1000;
+            let text = format!("  {pct}%/{kw}k");
+            let len = text.width() as u16;
+            let (color, bold) = match pct {
+                0..=49 => (theme.ratatui_fg(ThemeColor::Muted), false),
+                50..=79 => (theme.ratatui_fg(ThemeColor::Warning), false),
+                _ => (theme.ratatui_fg(ThemeColor::Error), true),
+            };
+            let style = if bold {
+                Style::default().fg(color).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(color)
+            };
+            (Some(Span::styled(text, style)), len)
+        } else {
+            (None, 0u16)
+        };
         let stats = format!(
-            "↑{}  ↓{}  {}  ",
+            "↑{}  ↓{}{}  {}  ",
             Self::format_tokens(self.session_input_tokens),
             Self::format_tokens(self.session_output_tokens),
+            cache_suffix,
             Self::format_cost(self.session_cost_usd),
         );
-        let left_len = header_left.width() as u16;
-        let stats_len = stats.width() as u16;
+        let left_len = header_left.width().min(u16::MAX as usize) as u16;
+        let stats_len = stats.width().min(u16::MAX as usize) as u16;
 
         // Permission mode badge (right of model label)
         let (mode_badge_span, badge_len) = match self.permission_mode.as_str() {
@@ -1311,6 +3273,22 @@ impl InteractiveMode {
             _ => (None, 0u16),
         };
 
+        // Thinking level badge (right of permission badge, only when not Off)
+        let (think_badge_span, think_badge_len) = if self.thinking_level != ThinkingLevel::Off {
+            let label = format!("  🧠 {}", self.thinking_level.as_str());
+            let len = label.width() as u16;
+            let color = theme.ratatui_fg(theme.thinking_border_color(self.thinking_level));
+            (
+                Some(Span::styled(
+                    label,
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                )),
+                len,
+            )
+        } else {
+            (None, 0u16)
+        };
+
         let (tool_span, tool_len) = if let Some(name) = &self.current_tool {
             let label = format!("⚙ {name}  ");
             let len = label.width() as u16;
@@ -1328,7 +3306,7 @@ impl InteractiveMode {
             let frame = SPINNER[(self.tick as usize) % SPINNER.len()];
             let thinking_text = format!("{frame} Thinking…  ");
             let thinking_len = thinking_text.width() as u16;
-            let gap = width.saturating_sub(left_len + badge_len + thinking_len + tool_len + stats_len);
+            let gap = width.saturating_sub(left_len + badge_len + think_badge_len + thinking_len + tool_len + ctx_span_len + stats_len);
             let mut spans = vec![
                 Span::styled(
                     "  sage  ".to_string(),
@@ -1341,8 +3319,17 @@ impl InteractiveMode {
                     Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
                 ),
             ];
+            if !branch_suffix.is_empty() {
+                spans.push(Span::styled(
+                    branch_suffix.clone(),
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Dim)),
+                ));
+            }
             if let Some(bs) = mode_badge_span {
                 spans.push(bs);
+            }
+            if let Some(tbs) = think_badge_span {
+                spans.push(tbs);
             }
             spans.push(Span::raw(" ".repeat(gap as usize)));
             spans.push(Span::styled(
@@ -1352,13 +3339,16 @@ impl InteractiveMode {
             if let Some(ts) = tool_span {
                 spans.push(ts);
             }
+            if let Some(cs) = ctx_span {
+                spans.push(cs);
+            }
             spans.push(Span::styled(
                 stats,
                 Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
             ));
             Line::from(spans)
         } else {
-            let gap = width.saturating_sub(left_len + badge_len + tool_len + stats_len);
+            let gap = width.saturating_sub(left_len + badge_len + think_badge_len + tool_len + ctx_span_len + stats_len);
             let mut spans = vec![
                 Span::styled(
                     "  sage  ".to_string(),
@@ -1371,12 +3361,24 @@ impl InteractiveMode {
                     Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
                 ),
             ];
+            if !branch_suffix.is_empty() {
+                spans.push(Span::styled(
+                    branch_suffix,
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Dim)),
+                ));
+            }
             if let Some(bs) = mode_badge_span {
                 spans.push(bs);
+            }
+            if let Some(tbs) = think_badge_span {
+                spans.push(tbs);
             }
             spans.push(Span::raw(" ".repeat(gap as usize)));
             if let Some(ts) = tool_span {
                 spans.push(ts);
+            }
+            if let Some(cs) = ctx_span {
+                spans.push(cs);
             }
             spans.push(Span::styled(
                 stats,
@@ -1405,6 +3407,18 @@ impl InteractiveMode {
                     Span::styled(
                         "What can I help you with?",
                         Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+                    ),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(
+                        "Tip: ",
+                        Style::default().fg(theme.ratatui_fg(ThemeColor::Accent)),
+                    ),
+                    Span::styled(
+                        "Type / for commands, @ to reference files, Esc to cancel",
+                        Style::default().fg(theme.ratatui_fg(ThemeColor::Dim)),
                     ),
                 ]),
             ];
@@ -1608,6 +3622,113 @@ impl InteractiveMode {
                 .wrap(Wrap { trim: false });
             f.render_widget(dialog, popup_area);
         }
+
+        // ── Settings overlay ──────────────────────────────────────────────
+        if self.settings_active {
+            const SETTINGS_VISIBLE: usize = 15;
+            let visible_count = SETTINGS_VISIBLE.min(self.settings_items.len());
+            let overlay_h = (visible_count as u16 + 5).min(size.height);
+            let overlay_area = Self::centered_rect(70, overlay_h, size);
+            f.render_widget(Clear, overlay_area);
+
+            let scroll = self.settings_scroll;
+            let items_text: Vec<Line> = self.settings_items.iter().enumerate()
+                .skip(scroll)
+                .take(SETTINGS_VISIBLE)
+                .map(|(i, item)| {
+                    let selected = i == self.settings_selected;
+                    if selected {
+                        Line::from(Span::styled(
+                            format!("  {:<24} {}", item.label, item.current_value),
+                            Style::default()
+                                .fg(theme.ratatui_fg(ThemeColor::Accent))
+                                .add_modifier(Modifier::REVERSED),
+                        ))
+                    } else {
+                        let mut spans = vec![
+                            Span::styled(
+                                format!("  {:<24} ", item.label),
+                                Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+                            ),
+                            Span::styled(
+                                item.current_value.clone(),
+                                Style::default().fg(theme.ratatui_fg(ThemeColor::Accent)),
+                            ),
+                        ];
+                        if !item.description.is_empty() {
+                            let desc: String = item.description.chars().take(30).collect();
+                            spans.push(Span::styled(
+                                format!("  {desc}"),
+                                Style::default().fg(theme.ratatui_fg(ThemeColor::Dim)),
+                            ));
+                        }
+                        Line::from(spans)
+                    }
+                }).collect();
+
+            let scroll_indicator = if self.settings_items.len() > SETTINGS_VISIBLE {
+                format!(" Settings ({}/{}) ", self.settings_selected + 1, self.settings_items.len())
+            } else {
+                " Settings ".to_string()
+            };
+
+            let mut all_lines = items_text;
+            all_lines.push(Line::from(""));
+            all_lines.push(Line::from(vec![
+                Span::styled(
+                    "  ↑↓ select  ←→ change  Enter apply  Esc close",
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Dim)),
+                ),
+            ]));
+
+            let settings_widget = Paragraph::new(all_lines)
+                .block(
+                    Block::default()
+                        .title(scroll_indicator)
+                        .title_alignment(Alignment::Center)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(theme.ratatui_fg(ThemeColor::Accent))),
+                )
+                .wrap(Wrap { trim: false });
+            f.render_widget(settings_widget, overlay_area);
+        }
+
+        // ── Search bar ────────────────────────────────────────────────────
+        if self.search_active {
+            let bar_area = Rect {
+                x: 0,
+                y: size.height.saturating_sub(1),
+                width: size.width,
+                height: 1,
+            };
+            let match_info = if self.search_matches.is_empty() {
+                if self.search_query.is_empty() {
+                    String::new()
+                } else {
+                    "  (no matches)".to_string()
+                }
+            } else {
+                format!("  [{}/{}]", self.search_idx + 1, self.search_matches.len())
+            };
+            let bar_line = Line::from(vec![
+                Span::styled(
+                    format!(" / {}", self.search_query),
+                    Style::default()
+                        .fg(theme.ratatui_fg(ThemeColor::Accent))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    match_info,
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Muted)),
+                ),
+                Span::styled(
+                    "  [n/N jump  Esc close]",
+                    Style::default().fg(theme.ratatui_fg(ThemeColor::Dim)),
+                ),
+            ]);
+            f.render_widget(Clear, bar_area);
+            f.render_widget(Paragraph::new(vec![bar_line]), bar_area);
+        }
     }
 }
 
@@ -1767,6 +3888,8 @@ mod tests {
             role: MessageRole::Assistant,
             content: "Hello world".to_string(),
             at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
         };
         let cloned = msg.clone();
         assert_eq!(cloned.content, "Hello world");
@@ -1794,6 +3917,8 @@ mod tests {
             role: MessageRole::User,
             content: "short".to_string(),
             at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
         };
         // "  ❯ short" fits in 80 cols → 1 row
         assert_eq!(InteractiveMode::compute_message_height(&msg, 80), 1);
@@ -1805,6 +3930,8 @@ mod tests {
             role: MessageRole::Assistant,
             content: "line one\nline two\nline three".to_string(),
             at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
         };
         // 3 content lines → 3 display rows (each fits in wide terminal)
         assert_eq!(InteractiveMode::compute_message_height(&msg, 80), 3);
@@ -1816,6 +3943,8 @@ mod tests {
             role: MessageRole::User,
             content: "a".repeat(100),
             at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
         };
         // first_capacity=16, overflow=84 chars at full width 20: 1+ceil(84/20)=6
         let h = InteractiveMode::compute_message_height(&msg, 20);
@@ -1831,6 +3960,8 @@ mod tests {
                 path: "Cargo.toml".to_string(),
                 line_count: 42,
             }],
+            full_output: None,
+            full_output_expanded: false,
         };
         // 1 content line + 1 annotation = 2 rows
         assert_eq!(InteractiveMode::compute_message_height(&msg, 80), 2);
@@ -1843,11 +3974,15 @@ mod tests {
                 role: MessageRole::User,
                 content: "hi".to_string(),
                 at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
             },
             ChatMessage {
                 role: MessageRole::Assistant,
                 content: "hello".to_string(),
                 at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
             },
         ];
         let total = InteractiveMode::total_content_lines(&msgs, 80);
@@ -1861,6 +3996,8 @@ mod tests {
             role: MessageRole::User,
             content: String::new(),
             at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
         };
         let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
         assert_eq!(lines.len(), 1);
@@ -1873,6 +4010,8 @@ mod tests {
             role: MessageRole::Assistant,
             content: "first\nsecond\nthird".to_string(),
             at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
         };
         let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
         assert_eq!(lines.len(), 3);
@@ -1888,6 +4027,8 @@ mod tests {
                 path: "Cargo.toml".to_string(),
                 line_count: 42,
             }],
+            full_output: None,
+            full_output_expanded: false,
         };
         let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
         // 1 content line + 1 annotation line
@@ -1905,6 +4046,8 @@ mod tests {
             role: MessageRole::User,
             content: "hello".to_string(),
             at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
         });
         mode.last_terminal_width = 80;
         mode.last_viewport_height = 24;
@@ -1989,6 +4132,8 @@ mod tests {
             role: MessageRole::Assistant,
             content: "**bold** text".to_string(),
             at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
         };
         let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
         assert_eq!(lines.len(), 1);
@@ -2014,6 +4159,8 @@ mod tests {
             role: MessageRole::Assistant,
             content: "- item one".to_string(),
             at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
         };
         let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
         assert_eq!(lines.len(), 1);
@@ -2029,12 +4176,100 @@ mod tests {
             role: MessageRole::Assistant,
             content: "1. first item".to_string(),
             at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
         };
         let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
         assert_eq!(lines.len(), 1);
         let all_text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
-        // Number should be preserved
         assert!(all_text.contains("1."));
+        assert!(all_text.contains("first item"));
+    }
+
+    #[test]
+    fn message_to_lines_assistant_heading1() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
+        let msg = ChatMessage {
+            role: MessageRole::Assistant,
+            content: "# My Title".to_string(),
+            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+        };
+        let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
+        assert_eq!(lines.len(), 1);
+        let all_text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(all_text.contains("My Title"));
+        // Heading span should be bold
+        let heading_span = lines[0].spans.iter().find(|s| s.content.contains("My Title")).unwrap();
+        assert!(heading_span.style.add_modifier.contains(ratatui::style::Modifier::BOLD));
+    }
+
+    #[test]
+    fn message_to_lines_assistant_horizontal_rule() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
+        let msg = ChatMessage {
+            role: MessageRole::Assistant,
+            content: "---".to_string(),
+            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+        };
+        let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
+        assert_eq!(lines.len(), 1);
+        let all_text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(all_text.contains('─'));
+    }
+
+    #[test]
+    fn message_to_lines_assistant_blockquote() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
+        let msg = ChatMessage {
+            role: MessageRole::Assistant,
+            content: "> quoted text".to_string(),
+            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+        };
+        let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
+        assert_eq!(lines.len(), 1);
+        let all_text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(all_text.contains('│'));
+        assert!(all_text.contains("quoted text"));
+    }
+
+    #[test]
+    fn message_to_lines_assistant_table_row() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
+        let msg = ChatMessage {
+            role: MessageRole::Assistant,
+            content: "| Name | Value |".to_string(),
+            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+        };
+        let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
+        assert_eq!(lines.len(), 1);
+        let all_text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(all_text.contains("Name"));
+        assert!(all_text.contains("Value"));
+        assert!(all_text.contains('│'));
+    }
+
+    #[test]
+    fn message_to_lines_assistant_table_separator_renders_as_rule() {
+        let theme = theme::dark_theme(theme::ColorMode::Truecolor);
+        let msg = ChatMessage {
+            role: MessageRole::Assistant,
+            content: "|---|---|".to_string(),
+            at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+        };
+        let lines = InteractiveMode::message_to_lines(&msg, &theme, 80);
+        assert_eq!(lines.len(), 1);
+        let all_text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(all_text.contains('─'));
     }
 
     #[test]
@@ -2212,6 +4447,8 @@ mod tests {
         assert_eq!(mode.input_buffer, "typing");
     }
 
+    // ── Slash command dispatch tests ─────────────────────────────────────────
+
     #[test]
     fn permission_mode_defaults_to_default() {
         let mode = InteractiveMode::new(InteractiveModeOptions::default());
@@ -2219,77 +4456,361 @@ mod tests {
     }
 
     #[test]
-    fn permission_mode_bypass_sets_field_and_system_message() {
+    fn slash_permissions_bypass() {
         let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
-        mode.input_buffer = "/permissions bypass".to_string();
-        let input = std::mem::take(&mut mode.input_buffer);
-        if let Some(rest) = input.trim().strip_prefix("/permissions") {
-            let sub = rest.trim();
-            let (new_mode, msg) = match sub {
-                "bypass" => (
-                    "bypassPermissions",
-                    "⚡ BYPASS mode — all tool approvals skipped".to_string(),
-                ),
-                "plan" => ("plan", "📋 PLAN mode — read-only tools only".to_string()),
-                "default" | "" => ("default", "Permissions: default mode (Ask)".to_string()),
-                other => (
-                    mode.permission_mode.as_str(),
-                    format!("Unknown permission mode: \"{other}\". Use: default | bypass | plan"),
-                ),
-            };
-            mode.permission_mode = new_mode.to_string();
-            mode.messages.push(ChatMessage {
-                role: MessageRole::System,
-                content: msg,
-                at_refs: Vec::new(),
-            });
-        }
+        assert!(mode.handle_builtin_slash_command("/permissions", "bypass"));
         assert_eq!(mode.permission_mode, "bypassPermissions");
         assert_eq!(mode.messages.len(), 1);
         assert!(mode.messages[0].content.contains("BYPASS"));
     }
 
     #[test]
-    fn permission_mode_plan_sets_field_and_system_message() {
+    fn slash_permissions_plan() {
         let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
-        mode.permission_mode = "bypassPermissions".to_string();
-        let input = "/permissions plan".to_string();
-        if let Some(rest) = input.trim().strip_prefix("/permissions") {
-            let sub = rest.trim();
-            let (new_mode, msg) = match sub {
-                "bypass" => (
-                    "bypassPermissions",
-                    "⚡ BYPASS mode — all tool approvals skipped".to_string(),
-                ),
-                "plan" => ("plan", "📋 PLAN mode — read-only tools only".to_string()),
-                "default" | "" => ("default", "Permissions: default mode (Ask)".to_string()),
-                _ => ("default", "fallback".to_string()),
-            };
-            mode.permission_mode = new_mode.to_string();
-            mode.messages.push(ChatMessage {
-                role: MessageRole::System,
-                content: msg,
-                at_refs: Vec::new(),
-            });
-        }
+        assert!(mode.handle_builtin_slash_command("/permissions", "plan"));
         assert_eq!(mode.permission_mode, "plan");
         assert!(mode.messages[0].content.contains("PLAN"));
     }
 
     #[test]
-    fn permission_mode_default_restores() {
+    fn slash_permissions_default_restores() {
         let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
         mode.permission_mode = "bypassPermissions".to_string();
-        let input = "/permissions default".to_string();
-        if let Some(rest) = input.trim().strip_prefix("/permissions") {
-            let sub = rest.trim();
-            let new_mode = match sub {
-                "bypass" => "bypassPermissions",
-                "plan" => "plan",
-                _ => "default",
-            };
-            mode.permission_mode = new_mode.to_string();
-        }
+        assert!(mode.handle_builtin_slash_command("/permissions", "default"));
         assert_eq!(mode.permission_mode, "default");
+    }
+
+    #[test]
+    fn slash_permissions_unknown_arg_keeps_mode() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.permission_mode = "plan".to_string();
+        assert!(mode.handle_builtin_slash_command("/permissions", "superpower"));
+        assert_eq!(mode.permission_mode, "plan");
+        assert!(mode.messages[0].content.contains("Unknown permission mode"));
+    }
+
+    #[test]
+    fn slash_thinking_no_arg_cycles() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert_eq!(mode.thinking_level, ThinkingLevel::Off);
+        assert!(mode.handle_builtin_slash_command("/thinking", ""));
+        assert_eq!(mode.thinking_level, ThinkingLevel::Low);
+        assert!(mode.messages[0].content.contains("low"));
+    }
+
+    #[test]
+    fn slash_thinking_explicit_level() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert!(mode.handle_builtin_slash_command("/thinking", "high"));
+        assert_eq!(mode.thinking_level, ThinkingLevel::High);
+        assert!(mode.messages[0].content.contains("high"));
+    }
+
+    #[test]
+    fn slash_thinking_minimal() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert!(mode.handle_builtin_slash_command("/thinking", "minimal"));
+        assert_eq!(mode.thinking_level, ThinkingLevel::Minimal);
+        assert!(mode.messages[0].content.contains("minimal"));
+    }
+
+    #[test]
+    fn slash_thinking_invalid_arg_leaves_level_and_shows_error() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        mode.thinking_level = ThinkingLevel::Medium;
+        assert!(mode.handle_builtin_slash_command("/thinking", "turbo"));
+        assert_eq!(mode.thinking_level, ThinkingLevel::Medium);
+        let msg = &mode.messages[0].content;
+        assert!(msg.contains("Unknown thinking level"));
+        assert!(msg.contains("minimal"));
+    }
+
+    #[test]
+    fn slash_compact_trims_display() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        for i in 0..30 {
+            mode.messages.push(ChatMessage {
+                role: MessageRole::User,
+                content: format!("msg {i}"),
+                at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+            });
+        }
+        assert!(mode.handle_builtin_slash_command("/compact", ""));
+        // 20 kept + 1 system notice
+        assert_eq!(mode.messages.len(), 21);
+        assert!(mode.messages.last().unwrap().content.contains("✂"));
+    }
+
+    #[test]
+    fn slash_compact_no_trim_when_few_messages() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        for i in 0..5 {
+            mode.messages.push(ChatMessage {
+                role: MessageRole::User,
+                content: format!("msg {i}"),
+                at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+            });
+        }
+        assert!(mode.handle_builtin_slash_command("/compact", ""));
+        // All 5 kept + 1 notice
+        assert_eq!(mode.messages.len(), 6);
+    }
+
+    #[test]
+    fn compact_clamps_session_saved_up_to_so_turn_usage_does_not_panic() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        for i in 0..30 {
+            mode.messages.push(ChatMessage {
+                role: MessageRole::Assistant,
+                content: format!("reply {i}"),
+                at_refs: Vec::new(),
+                    full_output: None,
+                    full_output_expanded: false,
+            });
+        }
+        // Simulate all 30 messages having been saved already.
+        mode.session_assistant_saved_up_to = 30;
+        assert!(mode.handle_builtin_slash_command("/compact", ""));
+        // After compact: 20 kept + 1 system notice = 21 entries.
+        // saved_up_to must not exceed messages.len() or the TurnUsage slice panics.
+        assert!(
+            mode.session_assistant_saved_up_to <= mode.messages.len(),
+            "saved_up_to {} > messages.len() {}",
+            mode.session_assistant_saved_up_to,
+            mode.messages.len()
+        );
+    }
+
+    #[test]
+    fn abort_agent_clears_agent_rx_so_stale_deltas_cannot_pollute_new_session() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        // Give the mode a fake agent channel so agent_rx is Some.
+        let (_tx, rx) = mpsc::unbounded_channel::<crate::print_session::AgentDelta>();
+        mode.agent_rx = Some(rx);
+        mode.abort_agent();
+        assert!(
+            mode.agent_rx.is_none(),
+            "abort_agent must clear agent_rx to prevent stale delta pollution"
+        );
+        assert!(mode.current_tool.is_none());
+    }
+
+    #[test]
+    fn slash_model_no_arg_shows_current() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert!(mode.handle_builtin_slash_command("/model", ""));
+        assert!(mode.messages[0].content.contains("Current model:"));
+    }
+
+    #[test]
+    fn slash_model_sets_model_id() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert!(mode.handle_builtin_slash_command("/model", "gpt-5"));
+        assert_eq!(mode.model_id, Some("gpt-5".to_string()));
+        assert!(mode.messages[0].content.contains("gpt-5"));
+    }
+
+    #[test]
+    fn slash_unknown_returns_false() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        // "/thinkingfoo" must NOT be handled as a slash command
+        assert!(!mode.handle_builtin_slash_command("/thinkingfoo", ""));
+        assert!(mode.messages.is_empty());
+    }
+
+    #[test]
+    fn slash_plain_message_returns_false() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert!(!mode.handle_builtin_slash_command("hello world", ""));
+        assert!(mode.messages.is_empty());
+    }
+
+    // ── extract_message_text tests ───────────────────────────────────────────
+
+    #[test]
+    fn extract_message_text_string_content() {
+        let v = serde_json::json!({"role": "user", "content": "hello world"});
+        assert_eq!(InteractiveMode::extract_message_text(&v), "hello world");
+    }
+
+    #[test]
+    fn extract_message_text_array_content() {
+        let v = serde_json::json!({
+            "role": "assistant",
+            "content": [{"type": "text", "text": "part one"}, {"type": "text", "text": " part two"}]
+        });
+        assert_eq!(
+            InteractiveMode::extract_message_text(&v),
+            "part one part two"
+        );
+    }
+
+    #[test]
+    fn extract_message_text_array_skips_non_text_blocks() {
+        let v = serde_json::json!({
+            "content": [
+                {"type": "tool_use", "id": "x"},
+                {"type": "text", "text": "answer"}
+            ]
+        });
+        assert_eq!(InteractiveMode::extract_message_text(&v), "answer");
+    }
+
+    #[test]
+    fn extract_message_text_missing_content_returns_empty() {
+        let v = serde_json::json!({"role": "user"});
+        assert_eq!(InteractiveMode::extract_message_text(&v), "");
+    }
+
+    // ── load_session_entries_into_messages tests ─────────────────────────────
+
+    #[test]
+    fn load_session_entries_empty_input_produces_no_messages() {
+        let replayed = InteractiveMode::load_session_entries_into_messages(&[]);
+        assert!(replayed.messages.is_empty());
+        assert!(replayed.thinking_level.is_none());
+        assert!(replayed.model_id.is_none());
+    }
+
+    #[test]
+    fn load_session_entries_loads_user_and_assistant() {
+        use crate::core::session_manager::{SessionEntry, SessionMessageEntry};
+        let entries = vec![
+            SessionEntry::Message(SessionMessageEntry {
+                entry_type: "message".to_string(),
+                id: "1".to_string(),
+                parent_id: None,
+                timestamp: "2024-01-01T00:00:00Z".to_string(),
+                message: serde_json::json!({"role": "user", "content": "hi"}),
+            }),
+            SessionEntry::Message(SessionMessageEntry {
+                entry_type: "message".to_string(),
+                id: "2".to_string(),
+                parent_id: Some("1".to_string()),
+                timestamp: "2024-01-01T00:00:01Z".to_string(),
+                message: serde_json::json!({
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "hello"}]
+                }),
+            }),
+        ];
+        let replayed = InteractiveMode::load_session_entries_into_messages(&entries);
+        assert_eq!(replayed.messages.len(), 2);
+        assert_eq!(replayed.messages[0].role, MessageRole::User);
+        assert_eq!(replayed.messages[0].content, "hi");
+        assert_eq!(replayed.messages[1].role, MessageRole::Assistant);
+        assert_eq!(replayed.messages[1].content, "hello");
+    }
+
+    #[test]
+    fn load_session_entries_skips_empty_content() {
+        use crate::core::session_manager::{SessionEntry, SessionMessageEntry};
+        let entries = vec![SessionEntry::Message(SessionMessageEntry {
+            entry_type: "message".to_string(),
+            id: "1".to_string(),
+            parent_id: None,
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+            message: serde_json::json!({"role": "user", "content": ""}),
+        })];
+        let replayed = InteractiveMode::load_session_entries_into_messages(&entries);
+        assert!(replayed.messages.is_empty());
+    }
+
+    #[test]
+    fn load_session_entries_replays_thinking_level_and_model_change() {
+        use crate::core::session_manager::{
+            ModelChangeEntry, SessionEntry, ThinkingLevelChangeEntry,
+        };
+        let entries = vec![
+            SessionEntry::ThinkingLevelChange(ThinkingLevelChangeEntry {
+                entry_type: "thinking_level_change".to_string(),
+                id: "1".to_string(),
+                parent_id: None,
+                timestamp: "2024-01-01T00:00:00Z".to_string(),
+                thinking_level: "high".to_string(),
+            }),
+            SessionEntry::ModelChange(ModelChangeEntry {
+                entry_type: "model_change".to_string(),
+                id: "2".to_string(),
+                parent_id: Some("1".to_string()),
+                timestamp: "2024-01-01T00:00:01Z".to_string(),
+                provider: "anthropic".to_string(),
+                model_id: "claude-opus-4-7".to_string(),
+            }),
+        ];
+        let replayed = InteractiveMode::load_session_entries_into_messages(&entries);
+        assert!(replayed.messages.is_empty());
+        assert_eq!(replayed.thinking_level, Some(ThinkingLevel::High));
+        assert_eq!(replayed.model_id.as_deref(), Some("claude-opus-4-7"));
+        assert_eq!(replayed.provider_id.as_deref(), Some("anthropic"));
+    }
+
+    // ── /settings set tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn slash_settings_set_model_updates_model_id() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert!(mode.handle_builtin_slash_command(
+            "/settings",
+            "set default_model claude-opus-4-7"
+        ));
+        assert_eq!(mode.model_id, Some("claude-opus-4-7".to_string()));
+        assert!(mode.messages[0].content.contains("claude-opus-4-7"));
+    }
+
+    #[test]
+    fn slash_settings_set_provider_updates_provider_id() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert!(mode.handle_builtin_slash_command(
+            "/settings",
+            "set default_provider anthropic"
+        ));
+        assert_eq!(mode.provider_id, Some("anthropic".to_string()));
+    }
+
+    #[test]
+    fn slash_settings_set_unknown_key_shows_error() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert!(mode.handle_builtin_slash_command("/settings", "set badkey value"));
+        assert!(mode.messages[0].content.contains("Unknown setting"));
+    }
+
+    #[test]
+    fn slash_settings_set_missing_value_shows_usage() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert!(mode.handle_builtin_slash_command("/settings", "set default_model"));
+        assert!(mode.messages[0].content.contains("Usage"));
+    }
+
+    // ── /resume boundary tests ───────────────────────────────────────────────
+
+    #[test]
+    fn slash_resume_no_arg_shows_list_header() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert!(mode.handle_builtin_slash_command("/resume", ""));
+        // With no saved sessions the message should say "No saved sessions" or list header
+        assert!(!mode.messages.is_empty());
+    }
+
+    #[test]
+    fn slash_resume_zero_is_invalid() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert!(mode.handle_builtin_slash_command("/resume", "0"));
+        assert!(
+            mode.messages[0].content.contains("Invalid")
+                || mode.messages[0].content.contains("invalid")
+        );
+    }
+
+    #[test]
+    fn slash_resume_out_of_bounds_shows_error() {
+        let mut mode = InteractiveMode::new(InteractiveModeOptions::default());
+        assert!(mode.handle_builtin_slash_command("/resume", "9999"));
+        // Either "No session #9999" or show list — not a panic
+        assert!(!mode.messages.is_empty());
     }
 }

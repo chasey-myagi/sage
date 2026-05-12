@@ -1011,13 +1011,21 @@ impl SessionManager {
             self.flushed = true;
         } else {
             use std::io::Write;
-            let mut file = std::fs::OpenOptions::new()
+            match std::fs::OpenOptions::new()
                 .append(true)
                 .create(true)
                 .open(&path)
-                .unwrap();
-            let line = serde_json::to_string(entry_value).unwrap_or_default();
-            writeln!(file, "{}", line).ok();
+            {
+                Ok(mut file) => {
+                    let line = serde_json::to_string(entry_value).unwrap_or_default();
+                    writeln!(file, "{line}").ok();
+                }
+                Err(_) => {
+                    // Disk error: fall back to full rewrite on next entry so
+                    // we don't permanently lose all buffered entries.
+                    self.flushed = false;
+                }
+            }
         }
     }
 
@@ -1711,6 +1719,11 @@ impl SessionManager {
         sessions.sort_by_key(|b| Reverse(b.modified));
         sessions
     }
+
+    /// List sessions in the session directory (sync version for TUI use).
+    pub fn list_sync(&self) -> Vec<SessionInfo> {
+        list_sessions_sync(&self.session_dir)
+    }
 }
 
 // ============================================================================
@@ -1883,6 +1896,148 @@ async fn list_sessions_from_dir(dir: &Path) -> Vec<SessionInfo> {
             sessions.push(info);
         }
     }
+    sessions
+}
+
+/// Sync version of build_session_info — used in TUI slash commands where async is not available.
+fn build_session_info_sync(file_path: &Path) -> Option<SessionInfo> {
+    let content = std::fs::read_to_string(file_path).ok()?;
+    let mut values: Vec<Value> = Vec::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(line) {
+            values.push(v);
+        }
+    }
+
+    if values.is_empty() {
+        return None;
+    }
+
+    let header = values
+        .iter()
+        .find(|v| v.get("type").and_then(|t| t.as_str()) == Some("session"))?;
+
+    let stats = std::fs::metadata(file_path).ok()?;
+    let mtime: chrono::DateTime<Utc> = stats
+        .modified()
+        .ok()
+        .map(chrono::DateTime::<Utc>::from)
+        .unwrap_or_else(Utc::now);
+
+    let mut message_count = 0usize;
+    let mut first_message = String::new();
+    let mut all_messages: Vec<String> = Vec::new();
+    let mut name: Option<String> = None;
+
+    for v in &values {
+        let t = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if t == "session_info" {
+            name = v
+                .get("name")
+                .and_then(|n| n.as_str())
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty());
+        }
+        if t != "message" {
+            continue;
+        }
+        message_count += 1;
+
+        let msg = match v.get("message") {
+            Some(m) => m,
+            None => continue,
+        };
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        if role != "user" && role != "assistant" {
+            continue;
+        }
+
+        let text = match msg.get("content") {
+            Some(Value::String(s)) => s.clone(),
+            Some(Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|c| {
+                    if c.get("type")?.as_str()? == "text" {
+                        c.get("text")?.as_str().map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+            _ => continue,
+        };
+
+        if !text.is_empty() {
+            all_messages.push(text.clone());
+            if first_message.is_empty() && role == "user" {
+                first_message = text;
+            }
+        }
+    }
+
+    let cwd = header
+        .get("cwd")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+    let parent_session_path = header
+        .get("parentSession")
+        .and_then(|p| p.as_str())
+        .map(|s| s.to_string());
+    let id = header.get("id").and_then(|i| i.as_str())?.to_string();
+
+    let created = header
+        .get("timestamp")
+        .and_then(|t| t.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(Utc::now);
+
+    Some(SessionInfo {
+        path: file_path.to_path_buf(),
+        id,
+        cwd,
+        name,
+        parent_session_path,
+        created,
+        modified: mtime,
+        message_count,
+        first_message: if first_message.is_empty() {
+            "(no messages)".to_string()
+        } else {
+            first_message
+        },
+        all_messages_text: all_messages.join(" "),
+    })
+}
+
+/// Sync version of list_sessions — for use in sync contexts (TUI).
+pub fn list_sessions_sync(dir: &Path) -> Vec<SessionInfo> {
+    if !dir.exists() {
+        return Vec::new();
+    }
+
+    let mut sessions: Vec<SessionInfo> = std::fs::read_dir(dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .map(|n| n.ends_with(".jsonl"))
+                .unwrap_or(false)
+        })
+        .filter_map(|e| build_session_info_sync(&e.path()))
+        .collect();
+
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.modified));
     sessions
 }
 

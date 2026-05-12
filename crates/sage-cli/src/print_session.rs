@@ -30,7 +30,21 @@ use agent_core::mcp::{McpClient, McpServerConfig};
 use agent_core::tools::backend::LocalBackend;
 use agent_core::tools::mcp_tool::discover_mcp_tools;
 use agent_core::tools::{AgentTool as SimpleTool, ToolOutput, create_tool};
-use agent_core::types::{AgentToolResult, Content, OnUpdateFn};
+use agent_core::types::{AgentToolResult, Content, OnUpdateFn, ThinkingLevel as CoreThinkingLevel};
+use crate::modes::interactive::theme::ThinkingLevel as UiThinkingLevel;
+
+impl From<UiThinkingLevel> for CoreThinkingLevel {
+    fn from(level: UiThinkingLevel) -> Self {
+        match level {
+            UiThinkingLevel::Off => CoreThinkingLevel::Off,
+            UiThinkingLevel::Minimal => CoreThinkingLevel::Minimal,
+            UiThinkingLevel::Low => CoreThinkingLevel::Low,
+            UiThinkingLevel::Medium => CoreThinkingLevel::Medium,
+            UiThinkingLevel::High => CoreThinkingLevel::High,
+            UiThinkingLevel::Xhigh => CoreThinkingLevel::XHigh,
+        }
+    }
+}
 use ai::registry::{ApiProviderRegistry, StreamOptions};
 use ai::types::{AssistantMessageEvent, InputType, Model, ModelCost, Usage};
 
@@ -44,6 +58,8 @@ pub enum AgentDelta {
         usage: Usage,
         model: String,
         is_fast: bool,
+        /// Context window size for the model, used to compute usage %.
+        context_window: u32,
     },
     /// A tool call has started.
     ToolStart { name: String, args_preview: String },
@@ -51,7 +67,16 @@ pub enum AgentDelta {
     ToolEnd {
         name: String,
         success: bool,
+        /// First non-empty line, truncated for display.
         output_preview: String,
+        /// Full untruncated tool output text.
+        full_output: String,
+    },
+    /// An image produced by a tool call.
+    ImageResult {
+        tool_name: String,
+        base64: String,
+        mime_type: String,
     },
     /// A fatal agent error.
     Error(String),
@@ -59,6 +84,8 @@ pub enum AgentDelta {
     ThinkingStart,
     /// A thinking block has finished. Contains accumulated content and duration.
     ThinkingEnd { duration_ms: u64, content: String },
+    /// Compact summarization complete — LLM-generated summary of the conversation.
+    CompactionDone { summary: String },
 }
 
 // ── Registry-backed LLM provider adapter ────────────────────────────────────
@@ -716,14 +743,18 @@ pub async fn run_agent_session_to_channel(
     api_key: Option<String>,
     tx: tokio::sync::mpsc::UnboundedSender<AgentDelta>,
     permission_mode: String,
+    thinking_level: UiThinkingLevel,
     approval_tx: Option<tokio::sync::mpsc::UnboundedSender<ApprovalRequest>>,
     session_rules: Arc<Mutex<std::collections::HashMap<String, bool>>>,
+    // When Some, prepended to the system prompt as compaction context.
+    compact_summary: Option<String>,
 ) -> anyhow::Result<()> {
     if message.trim().is_empty() {
         return Ok(());
     }
 
     let model = build_model(provider_id.as_deref(), model_id.as_deref())?;
+    let context_window = model.context_window;
     let registry = Arc::new(ApiProviderRegistry::new());
     ai::register_builtin_into(&registry);
 
@@ -736,11 +767,18 @@ pub async fn run_agent_session_to_channel(
         options,
     });
 
-    let mut agent = Agent::new(AgentOptions::new(
-        model,
-        "You are a helpful coding assistant.",
-        provider,
-    ));
+    let system_prompt = if let Some(ref summary) = compact_summary {
+        format!(
+            "You are a helpful coding assistant.\n\n\
+             <compacted_context>\n\
+             The following is a summary of the conversation so far:\n\n\
+             {summary}\n\
+             </compacted_context>"
+        )
+    } else {
+        "You are a helpful coding assistant.".to_string()
+    };
+    let mut agent = Agent::new(AgentOptions::new(model, system_prompt.as_str(), provider));
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let permission_ctx = build_permission_context(&permission_mode, &cwd);
@@ -761,6 +799,7 @@ pub async fn run_agent_session_to_channel(
     }
 
     agent.set_tools(tools);
+    agent.set_thinking_level(thinking_level.into());
 
     let hook_runner = wire_hooks(&mut agent, &cwd, &permission_mode);
 
@@ -783,6 +822,7 @@ pub async fn run_agent_session_to_channel(
                     usage: message.usage.clone(),
                     model: message.model.clone(),
                     is_fast,
+                    context_window,
                 });
             }
             AgentEvent::ToolExecutionStart {
@@ -800,18 +840,25 @@ pub async fn run_agent_session_to_channel(
                 ..
             } => {
                 use agent_core::types::Content;
-                let text = result
+                // Send any image blocks first.
+                for c in &result.content {
+                    if let Content::Image { data, mime_type } = c {
+                        let _ = tx.send(AgentDelta::ImageResult {
+                            tool_name: tool_name.clone(),
+                            base64: data.clone(),
+                            mime_type: mime_type.clone(),
+                        });
+                    }
+                }
+                let full_text: String = result
                     .content
                     .iter()
-                    .find_map(|c| {
-                        if let Content::Text { text } = c {
-                            Some(text.as_str())
-                        } else {
-                            None
-                        }
+                    .filter_map(|c| {
+                        if let Content::Text { text } = c { Some(text.as_str()) } else { None }
                     })
-                    .unwrap_or("");
-                let first_nonempty = text
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let first_nonempty = full_text
                     .lines()
                     .find(|l| !l.trim().is_empty())
                     .unwrap_or("")
@@ -822,6 +869,7 @@ pub async fn run_agent_session_to_channel(
                     name: tool_name.clone(),
                     success: !is_error,
                     output_preview: first_nonempty,
+                    full_output: full_text,
                 });
             }
             AgentEvent::RunError { error } => {
@@ -856,6 +904,94 @@ pub async fn run_agent_session_to_channel(
     }
 
     run_result
+}
+
+/// Run a compact/summarization LLM call. Collects the full response text,
+/// strips any `<analysis>...</analysis>` block (CC-style scratchpad), and
+/// sends a single `AgentDelta::CompactionDone { summary }` when done.
+pub async fn run_compact_to_channel(
+    conversation_text: String,
+    model_id: Option<String>,
+    provider_id: Option<String>,
+    tx: tokio::sync::mpsc::UnboundedSender<AgentDelta>,
+) -> anyhow::Result<()> {
+    let model = build_model(provider_id.as_deref(), model_id.as_deref())?;
+
+    let registry = Arc::new(ApiProviderRegistry::new());
+    ai::register_builtin_into(&registry);
+
+    let options = StreamOptions::default();
+    let provider: Arc<dyn LlmProvider> = Arc::new(RegistryProvider {
+        registry: Arc::clone(&registry),
+        options,
+    });
+
+    const COMPACT_SYSTEM: &str = "\
+Your task is to create a detailed summary of the conversation so far, \
+paying close attention to the user's explicit requests and your previous actions. \
+This summary should be thorough in capturing technical details, code patterns, \
+and architectural decisions that would be essential for continuing development \
+work without losing context.
+
+Before providing your final summary, wrap your analysis in <analysis> tags to \
+organise your thoughts. Your <summary> must include:
+
+1. Primary Request and Intent: all explicit requests and intents in detail.
+2. Key Technical Concepts: technologies, frameworks, and patterns discussed.
+3. Files and Code Sections: specific files examined, modified, or created with \
+   code snippets and reasons for each edit.
+4. Errors and Fixes: every error encountered and how it was resolved.
+5. Problem Solving: problems solved and ongoing troubleshooting.
+6. All user messages: every user message that is not a tool result.
+7. Pending Tasks: tasks explicitly asked for but not yet completed.
+8. Current Work: what was being worked on immediately before this summary.
+9. Optional Next Step: the immediate next step directly in line with the \
+   most recent user request (omit if the last task was fully completed).
+
+Respond with an <analysis> block followed by a <summary> block.";
+
+    let mut agent = Agent::new(AgentOptions::new(model, COMPACT_SYSTEM, provider));
+    // No tools — compact must respond with text only.
+    agent.set_tools(vec![]);
+    agent.set_thinking_level(CoreThinkingLevel::Off);
+
+    let text_buf = Arc::new(Mutex::new(String::new()));
+    let text_clone = Arc::clone(&text_buf);
+    let tx_done = tx.clone();
+
+    agent.subscribe(move |event| {
+        use agent_core::AgentEvent;
+        if let AgentEvent::MessageUpdate { delta, .. } = event {
+            text_clone.lock().unwrap().push_str(&delta);
+        }
+    });
+
+    agent
+        .prompt_text(conversation_text)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    let raw = Arc::try_unwrap(text_buf)
+        .unwrap_or_else(|a| Mutex::new(a.lock().unwrap().clone()))
+        .into_inner()
+        .unwrap_or_default();
+
+    // Strip <analysis>...</analysis> scratchpad (CC does the same).
+    let summary = if let (Some(start), Some(end)) = (raw.find("<summary>"), raw.rfind("</summary>"))
+    {
+        raw[start + "<summary>".len()..end].trim().to_string()
+    } else {
+        // Fallback: strip analysis block only
+        let after_analysis = if let Some(end) = raw.find("</analysis>") {
+            raw[end + "</analysis>".len()..].trim().to_string()
+        } else {
+            raw.trim().to_string()
+        };
+        after_analysis
+    };
+
+    let _ = tx_done.send(AgentDelta::CompactionDone { summary });
+    Ok(())
 }
 
 // ── Approval-path unit tests ─────────────────────────────────────────────────
