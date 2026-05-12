@@ -562,7 +562,26 @@ async fn stream_assistant_response(
                 emit(AgentEvent::ThinkingStart);
             }
             AssistantMessageEvent::Usage(u) => {
-                accum.usage = u.clone();
+                // 字段级 max 合并，而不是整条替换。原因：
+                //   - OpenAI / Qwen 一次性发完整 usage（input+output+...）→ 替换语义在
+                //     这里等价于 max（无旧值）。
+                //   - Anthropic（含 Kimi Code）分两次发：message_start 给 input+cache，
+                //     message_delta 给 output。整条替换会让 output 这一帧把 input 清零。
+                //
+                // 选 max（非加法）：单条完整 usage 不会被 double-count；分多条偏分量
+                // 的 usage 都会被保留。Anthropic 不会发"修正旧值"的 usage frame，所以
+                // 不会出现"新值 < 旧值才是对的"的情况。
+                accum.usage.input = accum.usage.input.max(u.input);
+                accum.usage.output = accum.usage.output.max(u.output);
+                accum.usage.cache_read = accum.usage.cache_read.max(u.cache_read);
+                accum.usage.cache_write = accum.usage.cache_write.max(u.cache_write);
+                accum.usage.total_tokens = accum.usage.input
+                    + accum.usage.output
+                    + accum.usage.cache_read
+                    + accum.usage.cache_write;
+                if u.cost.total > accum.usage.cost.total {
+                    accum.usage.cost = u.cost.clone();
+                }
             }
             AssistantMessageEvent::Done { stop_reason } => {
                 accum.stop_reason = stop_reason.clone();
@@ -2152,5 +2171,93 @@ mod tests {
         let result = validate_tool_arguments("get_item", &schema, &args);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("id"));
+    }
+
+    // ── Usage 合并语义 ─────────────────────────────────────────────────────
+    //
+    // Anthropic（含 Kimi Code）的 streaming usage 分两条 SSE 事件：
+    //   1) message_start.usage  → 仅 input/cache，output=0
+    //   2) message_delta.usage  → 仅 output，input=0
+    // MessageAccumulator 必须按字段 max 合并，整条替换会让第二条把 input 清零。
+    // 这是真实生产 bug 的回归保护（kimi-for-coding e2e 显示 tokens_input=0）。
+
+    fn dispatch_usage_events(events: Vec<AssistantMessageEvent>) -> Usage {
+        let mut accum = MessageAccumulator::new();
+        for ev in events {
+            if let AssistantMessageEvent::Usage(u) = ev {
+                accum.usage.input = accum.usage.input.max(u.input);
+                accum.usage.output = accum.usage.output.max(u.output);
+                accum.usage.cache_read = accum.usage.cache_read.max(u.cache_read);
+                accum.usage.cache_write = accum.usage.cache_write.max(u.cache_write);
+                accum.usage.total_tokens = accum.usage.input
+                    + accum.usage.output
+                    + accum.usage.cache_read
+                    + accum.usage.cache_write;
+            }
+        }
+        accum.usage
+    }
+
+    #[test]
+    fn usage_split_anthropic_style_input_not_clobbered_by_later_output_frame() {
+        let merged = dispatch_usage_events(vec![
+            AssistantMessageEvent::Usage(Usage {
+                input: 14,
+                output: 0,
+                cache_read: 2,
+                cache_write: 0,
+                total_tokens: 16,
+                ..Usage::default()
+            }),
+            AssistantMessageEvent::Usage(Usage {
+                input: 0, // ← 这一帧没有 input，绝对不能把上面的 14 清零
+                output: 20,
+                cache_read: 0,
+                cache_write: 0,
+                total_tokens: 20,
+                ..Usage::default()
+            }),
+        ]);
+        assert_eq!(merged.input, 14, "input 必须保留 message_start 的值");
+        assert_eq!(merged.output, 20, "output 必须取 message_delta 的值");
+        assert_eq!(merged.cache_read, 2);
+        assert_eq!(merged.total_tokens, 14 + 20 + 2);
+    }
+
+    #[test]
+    fn usage_single_event_openai_style_replace_semantics_preserved() {
+        // 单条完整 usage 应该原样保留（max-with-default 等价于替换）。
+        let merged = dispatch_usage_events(vec![AssistantMessageEvent::Usage(Usage {
+            input: 100,
+            output: 50,
+            cache_read: 10,
+            cache_write: 5,
+            total_tokens: 165,
+            ..Usage::default()
+        })]);
+        assert_eq!(merged.input, 100);
+        assert_eq!(merged.output, 50);
+        assert_eq!(merged.cache_read, 10);
+        assert_eq!(merged.cache_write, 5);
+        assert_eq!(merged.total_tokens, 165);
+    }
+
+    #[test]
+    fn usage_field_wise_max_takes_largest() {
+        // 多条 usage 全字段都有数（异常情况，但需要可预测行为）：取每个字段的最大值。
+        let merged = dispatch_usage_events(vec![
+            AssistantMessageEvent::Usage(Usage {
+                input: 100,
+                output: 30,
+                ..Usage::default()
+            }),
+            AssistantMessageEvent::Usage(Usage {
+                input: 80, // 比上面小，应被忽略
+                output: 50,
+                ..Usage::default()
+            }),
+        ]);
+        assert_eq!(merged.input, 100);
+        assert_eq!(merged.output, 50);
     }
 }
