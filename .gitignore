@@ -30,3 +30,6 @@ Thumbs.db
 research-report.md
 research-report/
 review.md
+
+# 本地多 worktree 编辑用，不入仓库
+/sage-worktrees/
