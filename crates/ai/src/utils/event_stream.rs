@@ -56,13 +56,21 @@ where
 // ---------------------------------------------------------------------------
 
 /// Process one complete SSE text line into the pending queue.
+///
+/// Per WHATWG SSE spec (https://html.spec.whatwg.org/multipage/server-sent-events.html),
+/// the leading space after the colon is optional. Most servers send `data: ...`
+/// (with space), but Moonshot's Kimi Code endpoint sends `data:...` (no space) —
+/// previously we silently dropped those lines.
 fn process_line(line: &str, pending: &mut std::collections::VecDeque<AssistantMessageEvent>) {
     let line = line.trim_end_matches('\r'); // handle CRLF
     let line = line.trim();
     if line.is_empty() || line.starts_with(':') {
         return;
     }
-    if let Some(data) = line.strip_prefix("data: ") {
+    let data = line
+        .strip_prefix("data:")
+        .map(|rest| rest.strip_prefix(' ').unwrap_or(rest));
+    if let Some(data) = data {
         match parse_sse_chunk_multi(data) {
             Ok(evts) => pending.extend(evts),
             Err(e) => tracing::warn!("EventStream SSE parse error: {e}, data: {data}"),
@@ -164,6 +172,18 @@ mod tests {
         ]);
         let ev = s.next().await.unwrap();
         assert!(matches!(ev, AssistantMessageEvent::TextDelta(t) if t == "hello"));
+    }
+
+    #[tokio::test]
+    async fn test_data_prefix_without_space() {
+        // Moonshot Kimi Code (api.kimi.com/coding) sends `data:{...}` without
+        // space after the colon. Per WHATWG SSE spec the leading space is
+        // optional, so we must accept both forms or silently drop frames.
+        let mut s = make_stream(vec![
+            "data:{\"choices\":[{\"delta\":{\"content\":\"hi\"},\"index\":0}]}\n",
+        ]);
+        let ev = s.next().await.unwrap();
+        assert!(matches!(ev, AssistantMessageEvent::TextDelta(t) if t == "hi"));
     }
 
     #[tokio::test]

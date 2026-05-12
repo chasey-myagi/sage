@@ -155,6 +155,28 @@ static MODEL_CATALOG: LazyLock<Vec<Model>> = LazyLock::new(|| {
             0.6,
             2.5,
         ),
+        // ── Kimi Code (Anthropic-compatible, paid Kimi Code membership) ──
+        // 独立产品，独立 API key（KIMI_CODE_API_KEY），走 Anthropic messages 协议。
+        Model {
+            id: "kimi-for-coding".into(),
+            name: "Kimi For Coding".into(),
+            api: api::ANTHROPIC_MESSAGES.into(),
+            provider: provider::KIMI_CODE.into(),
+            base_url: "https://api.kimi.com/coding/v1".into(),
+            api_key_env: "KIMI_CODE_API_KEY".into(),
+            reasoning: true,
+            input: vec![InputType::Text],
+            max_tokens: 32768,
+            context_window: 262_144,
+            cost: ModelCost {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_per_million: 0.0,
+                cache_write_per_million: 0.0,
+            },
+            headers: vec![],
+            compat: None,
+        },
         // ── DeepSeek (OpenAI-compatible) ──
         openai_compat(
             "deepseek-chat",
@@ -205,6 +227,7 @@ pub fn list_providers() -> Vec<&'static str> {
         "google",
         "qwen",
         "kimi",
+        "kimi-code",
         "deepseek",
     ]
 }

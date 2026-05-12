@@ -77,6 +77,7 @@ pub mod provider {
     pub const QWEN: &str = "qwen";
     pub const DOUBAO: &str = "doubao";
     pub const KIMI: &str = "kimi";
+    pub const KIMI_CODE: &str = "kimi-code";
     pub const MINIMAX: &str = "minimax";
     pub const ZAI: &str = "zai";
     pub const OPENROUTER: &str = "openrouter";

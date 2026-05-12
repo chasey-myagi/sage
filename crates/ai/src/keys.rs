@@ -41,6 +41,7 @@ pub fn api_key_env_var(provider: &str) -> String {
         "qwen" => "DASHSCOPE_API_KEY".into(),
         "doubao" => "ARK_API_KEY".into(),
         "kimi" => "MOONSHOT_API_KEY".into(),
+        "kimi-code" => "KIMI_CODE_API_KEY".into(),
         "minimax" => "MINIMAX_API_KEY".into(),
         "zai" => "ZHIPU_API_KEY".into(),
         "deepseek" => "DEEPSEEK_API_KEY".into(),
@@ -130,6 +131,12 @@ mod tests {
     #[test]
     fn test_env_var_kimi() {
         assert_eq!(api_key_env_var("kimi"), "MOONSHOT_API_KEY");
+    }
+
+    #[test]
+    fn test_env_var_kimi_code_is_distinct_from_moonshot() {
+        // Kimi Code 与普通 Kimi 是两个产品两本账。不能复用 MOONSHOT_API_KEY。
+        assert_eq!(api_key_env_var("kimi-code"), "KIMI_CODE_API_KEY");
     }
 
     #[test]

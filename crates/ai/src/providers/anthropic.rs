@@ -842,8 +842,12 @@ fn process_sse_line(
         return;
     }
 
-    let data = match line.strip_prefix("data: ") {
-        Some(d) => d,
+    // Per WHATWG SSE spec the space after `data:` is optional. Anthropic
+    // (api.anthropic.com) sends `data: {...}` with space; Moonshot Kimi Code
+    // (api.kimi.com/coding) sends `data:{...}` without. Accept both or we
+    // silently drop every frame from the latter.
+    let data = match line.strip_prefix("data:") {
+        Some(rest) => rest.strip_prefix(' ').unwrap_or(rest),
         None => return,
     };
 
@@ -2872,6 +2876,51 @@ mod tests {
         assert!(
             tool_result_msg.is_some(),
             "expected a user message with tool_result block"
+        );
+    }
+
+    // ── SSE 行解析的空格兼容性 ─────────────────────────────────────────────
+    //
+    // Anthropic 官方 endpoint 发 `data: {...}`（带空格）。
+    // Moonshot Kimi Code endpoint 发 `data:{...}`（无空格）。
+    // 两者都合规（WHATWG SSE 规范），sage 必须都吃。
+
+    #[test]
+    fn process_sse_line_accepts_data_prefix_without_space() {
+        let mut events = Vec::new();
+        let mut blocks = Vec::new();
+        let line = "data:{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}";
+        // Pre-seed an active text block at index 0 so the delta has somewhere to go.
+        blocks.push(BlockState {
+            index: 0,
+            block_type: BlockType::Text,
+            signature: String::new(),
+        });
+        process_sse_line(line, &mut events, &mut blocks);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AssistantMessageEvent::TextDelta(t) if t == "hi")),
+            "data: 无空格的 frame 必须解析出 TextDelta('hi')，否则 Kimi Code 整条流被丢弃"
+        );
+    }
+
+    #[test]
+    fn process_sse_line_accepts_data_prefix_with_space() {
+        // 回归保护：修空格 bug 时不要把官方 Anthropic 写法弄坏
+        let mut events = Vec::new();
+        let mut blocks = Vec::new();
+        let line = "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}";
+        blocks.push(BlockState {
+            index: 0,
+            block_type: BlockType::Text,
+            signature: String::new(),
+        });
+        process_sse_line(line, &mut events, &mut blocks);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AssistantMessageEvent::TextDelta(t) if t == "ok"))
         );
     }
 }
