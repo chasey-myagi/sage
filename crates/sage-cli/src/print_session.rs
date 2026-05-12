@@ -1121,35 +1121,61 @@ pub async fn run_agent_session(
         tracing::warn!(error = %e, "SessionStart hook failed — continuing session");
     }
 
-    // 5. Subscribe to events: stream text deltas to stdout.
+    // 5. Subscribe to events: stream text deltas to stdout, accumulate metrics.
+    let emit_stats = std::env::var("SAGE_EMIT_STATS").ok().as_deref() == Some("1");
+    let stats = Arc::new(Mutex::new(SessionMetrics::default()));
+    let start = std::time::Instant::now();
     let stdout = std::io::stdout();
-    agent.subscribe(move |event| {
-        use agent_core::AgentEvent;
-        match event {
-            AgentEvent::MessageUpdate { delta, .. } => {
-                let mut out = stdout.lock();
-                let _ = out.write_all(delta.as_bytes());
-                let _ = out.flush();
-            }
-            AgentEvent::AgentEnd { .. } => {
-                let mut out = stdout.lock();
-                let _ = out.write_all(b"\n");
-                let _ = out.flush();
-            }
-            AgentEvent::RunError { error } => {
-                eprintln!("\nError: {error}");
-            }
-            AgentEvent::TurnEnd { message, .. } => {
-                use agent_core::types::StopReason;
-                if let Some(err) = &message.error_message {
-                    eprintln!("Error: {err}");
-                } else if message.stop_reason == StopReason::Error {
-                    eprintln!("Error: agent stopped with error");
+    {
+        let stats = Arc::clone(&stats);
+        agent.subscribe(move |event| {
+            use agent_core::AgentEvent;
+            match event {
+                AgentEvent::MessageUpdate { delta, .. } => {
+                    let mut out = stdout.lock();
+                    let _ = out.write_all(delta.as_bytes());
+                    let _ = out.flush();
                 }
+                AgentEvent::AgentEnd { .. } => {
+                    let mut out = stdout.lock();
+                    let _ = out.write_all(b"\n");
+                    let _ = out.flush();
+                }
+                AgentEvent::RunError { error } => {
+                    eprintln!("\nError: {error}");
+                    let mut m = stats.lock().unwrap();
+                    m.error = Some(error.clone());
+                }
+                AgentEvent::TurnEnd { message, tool_results } => {
+                    use agent_core::types::StopReason;
+                    let mut m = stats.lock().unwrap();
+                    m.turns += 1;
+                    m.tokens_input += message.usage.input;
+                    m.tokens_output += message.usage.output;
+                    m.tokens_cache_read += message.usage.cache_read;
+                    m.tokens_cache_write += message.usage.cache_write;
+                    m.cost += message.usage.cost.total;
+                    m.tool_calls += tool_results.len() as u64;
+                    if m.provider.is_empty() {
+                        m.provider = message.provider.clone();
+                        m.model = message.model.clone();
+                    }
+                    if let Some(err) = &message.error_message {
+                        eprintln!("Error: {err}");
+                        m.error = Some(err.clone());
+                    } else if message.stop_reason == StopReason::Error {
+                        eprintln!("Error: agent stopped with error");
+                        m.error = Some("agent stopped with error".into());
+                    }
+                }
+                AgentEvent::ToolExecutionEnd { tool_name, .. } => {
+                    let mut m = stats.lock().unwrap();
+                    *m.tools_used.entry(tool_name.clone()).or_insert(0) += 1;
+                }
+                _ => {}
             }
-            _ => {}
-        }
-    });
+        });
+    }
 
     // 6. Send the message and wait.
     let run_result = agent
@@ -1164,5 +1190,31 @@ pub async fn run_agent_session(
         tracing::warn!(error = %e, "SessionEnd hook failed");
     }
 
+    // 8. Emit stats line to stderr when SAGE_EMIT_STATS=1 (for e2e harness).
+    if emit_stats {
+        let mut m = stats.lock().unwrap();
+        m.wall_time_ms = start.elapsed().as_millis() as u64;
+        if let Ok(json) = serde_json::to_string(&*m) {
+            eprintln!("SAGE_STATS: {json}");
+        }
+    }
+
     run_result
+}
+
+/// Metrics captured per agent run for e2e / eval harness consumption.
+#[derive(Debug, Default, serde::Serialize)]
+struct SessionMetrics {
+    provider: String,
+    model: String,
+    turns: u64,
+    tool_calls: u64,
+    tools_used: std::collections::HashMap<String, u64>,
+    tokens_input: u64,
+    tokens_output: u64,
+    tokens_cache_read: u64,
+    tokens_cache_write: u64,
+    cost: f64,
+    wall_time_ms: u64,
+    error: Option<String>,
 }
