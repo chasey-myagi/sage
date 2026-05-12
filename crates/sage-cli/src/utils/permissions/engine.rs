@@ -374,44 +374,109 @@ pub fn content_matches_rule(rule_content: &str, actual: &str) -> bool {
     actual.trim_start().starts_with(pattern)
 }
 
+/// Find a rule (deny / ask / allow) that targets the given tool, honoring
+/// content patterns when the caller supplies `content`.
+///
+/// - Rules without `rule_content` match by tool name (case-insensitive).
+/// - Rules with `rule_content` match only when `content` is `Some(...)` and
+///   the actual content matches the pattern via [`content_matches_rule`].
+///   If `content` is `None`, content-bearing rules are conservatively skipped.
+fn find_rule_matching(
+    rules: &[PermissionRule],
+    tool_name: &str,
+    content: Option<&str>,
+) -> Option<PermissionRule> {
+    rules.iter().find(|rule| {
+        if !rule.rule_value.tool_name.eq_ignore_ascii_case(tool_name) {
+            return false;
+        }
+        match (&rule.rule_value.rule_content, content) {
+            (None, _) => true,
+            (Some(pattern), Some(actual)) => content_matches_rule(pattern, actual),
+            (Some(_), None) => false,
+        }
+    }).cloned()
+}
+
 /// Permission check that honors content-level rules (e.g. `Bash(lark-cli:*)`).
 ///
-/// Falls back to [`check_tool_permission`] when `content` is `None` or no
-/// content-level allow rule matches. This is the function ToolAdapter should
-/// call for tools whose risk surface depends on the actual arguments (Bash
-/// command, Read path, etc.).
+/// This is the function ToolAdapter should call for tools whose risk surface
+/// depends on the actual arguments (Bash command, Read path, etc.). It applies
+/// content-aware matching at all three stages (Deny / Ask / Allow), so a
+/// `Bash(curl:*)` deny rule no longer denies every Bash call — only ones whose
+/// command actually starts with `curl`.
 ///
-/// Deny / Ask / mode-based decisions from the basic check are preserved —
-/// content matching only **upgrades** an Ask to an Allow when an explicit
-/// content rule matches.
+/// Priority order mirrors [`check_tool_permission`]:
+///   1. dontAsk mode → deny
+///   2. Deny rules (content-aware) → deny
+///   3. bypassPermissions → allow
+///   4. Plan mode whitelist → allow read-only / deny rest
+///   5. Ask rules (content-aware) → ask
+///   6. Allow rules (content-aware) → allow
+///   7. Default → ask
 pub fn check_tool_permission_with_content(
     ctx: &ToolPermissionContext,
     tool_name: &str,
     content: Option<&str>,
 ) -> PermissionDecision {
-    let basic = check_tool_permission(ctx, tool_name);
-
-    if matches!(
-        basic,
-        PermissionDecision::Allow { .. } | PermissionDecision::Deny { .. }
-    ) {
-        return basic;
+    if ctx.mode == PermissionMode::DontAsk {
+        return PermissionDecision::Deny {
+            reason: None,
+            message: format!("Permission denied: {tool_name} (dontAsk mode)"),
+        };
     }
 
-    if let Some(actual) = content
-        && !actual.is_empty()
-    {
-        let allow_contents = get_allow_rule_contents_for_tool(ctx, tool_name);
-        for (pattern, rule) in allow_contents.iter() {
-            if content_matches_rule(pattern, actual) {
-                return PermissionDecision::Allow {
-                    reason: Some(PermissionDecisionReason::Rule(rule.clone())),
-                };
-            }
+    let deny_rules = get_deny_rules(ctx);
+    if let Some(rule) = find_rule_matching(&deny_rules, tool_name, content) {
+        let message = create_permission_request_message(
+            tool_name,
+            Some(&PermissionDecisionReason::Rule(rule.clone())),
+        );
+        return PermissionDecision::Deny {
+            reason: Some(PermissionDecisionReason::Rule(rule)),
+            message,
+        };
+    }
+
+    if ctx.mode == PermissionMode::BypassPermissions {
+        return PermissionDecision::Allow { reason: None };
+    }
+
+    if ctx.mode == PermissionMode::Plan {
+        let read_only = PLAN_MODE_READ_ONLY_TOOLS.contains(&tool_name);
+        if !read_only {
+            return PermissionDecision::Deny {
+                reason: Some(PermissionDecisionReason::Mode(PermissionMode::Plan)),
+                message: format!("{tool_name} is not allowed in plan mode"),
+            };
         }
+        return PermissionDecision::Allow { reason: None };
     }
 
-    basic
+    let ask_rules = get_ask_rules(ctx);
+    if let Some(rule) = find_rule_matching(&ask_rules, tool_name, content) {
+        let message = create_permission_request_message(
+            tool_name,
+            Some(&PermissionDecisionReason::Rule(rule.clone())),
+        );
+        return PermissionDecision::Ask {
+            reason: Some(PermissionDecisionReason::Rule(rule)),
+            message,
+        };
+    }
+
+    let allow_rules = get_allow_rules(ctx);
+    if let Some(rule) = find_rule_matching(&allow_rules, tool_name, content) {
+        return PermissionDecision::Allow {
+            reason: Some(PermissionDecisionReason::Rule(rule)),
+        };
+    }
+
+    let message = create_permission_request_message(tool_name, None);
+    PermissionDecision::Ask {
+        reason: None,
+        message,
+    }
 }
 
 // ============================================================================
@@ -628,6 +693,66 @@ mod tests {
         // Even with a matching content allow, the plain Bash deny wins.
         assert!(matches!(
             check_tool_permission_with_content(&ctx, "bash", Some("lark-cli base list")),
+            PermissionDecision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn content_bearing_deny_does_not_block_unrelated_commands() {
+        // Regression: Bash(curl:*) deny used to match every Bash call because
+        // tool_matches_rule(skip_if_has_content=false) treated content as a hint
+        // but still matched on tool name only. Now content-bearing deny rules
+        // only fire when the actual command matches the pattern.
+        let mut ctx = ToolPermissionContext::default();
+        ctx.add_deny_rule(PermissionRuleSource::Session, "Bash(curl:*)".to_owned());
+        ctx.add_allow_rule(PermissionRuleSource::Session, "Bash(./craft/*)".to_owned());
+
+        // curl command → denied
+        assert!(matches!(
+            check_tool_permission_with_content(&ctx, "bash", Some("curl https://...")),
+            PermissionDecision::Deny { .. }
+        ));
+        // craft script → allowed
+        assert!(
+            check_tool_permission_with_content(
+                &ctx,
+                "bash",
+                Some("./craft/list-upcoming.sh")
+            )
+            .is_allow()
+        );
+        // Unrelated command without matching allow → default Ask
+        assert!(matches!(
+            check_tool_permission_with_content(&ctx, "bash", Some("echo hi")),
+            PermissionDecision::Ask { .. }
+        ));
+    }
+
+    #[test]
+    fn content_bearing_ask_only_fires_on_match() {
+        let mut ctx = ToolPermissionContext::default();
+        ctx.add_ask_rule(PermissionRuleSource::Session, "Bash(rm:*)".to_owned());
+        ctx.add_allow_rule(PermissionRuleSource::Session, "Bash(lark-cli:*)".to_owned());
+
+        // rm command → ask (matches the content-bearing ask rule)
+        assert!(matches!(
+            check_tool_permission_with_content(&ctx, "bash", Some("rm -rf /tmp/foo")),
+            PermissionDecision::Ask { .. }
+        ));
+        // lark-cli command → allow (matches content allow, ask rule doesn't apply)
+        assert!(
+            check_tool_permission_with_content(&ctx, "bash", Some("lark-cli auth status"))
+                .is_allow()
+        );
+    }
+
+    #[test]
+    fn blanket_deny_still_works() {
+        // A rule with no content (just "Bash") still denies all bash calls.
+        let mut ctx = ToolPermissionContext::default();
+        ctx.add_deny_rule(PermissionRuleSource::Session, "Bash".to_owned());
+        assert!(matches!(
+            check_tool_permission_with_content(&ctx, "bash", Some("anything")),
             PermissionDecision::Deny { .. }
         ));
     }
