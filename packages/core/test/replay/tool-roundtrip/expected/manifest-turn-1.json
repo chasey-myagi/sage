@@ -1,0 +1,13 @@
+{
+  "epoch": 0,
+  "turn": 1,
+  "claims": [],
+  "chunks": [
+    {
+      "id": "seq:0",
+      "tier": "full",
+      "reason": "passthrough"
+    }
+  ],
+  "anomalies": []
+}

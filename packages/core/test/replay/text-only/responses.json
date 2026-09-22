@@ -1,0 +1,17 @@
+[
+  [
+    { "type": "block_start", "index": 0, "blockType": "text" },
+    { "type": "text_delta", "index": 0, "text": "hello back" },
+    { "type": "block_end", "index": 0 },
+    {
+      "type": "usage",
+      "usage": {
+        "inputOther": 3,
+        "inputCacheRead": 1,
+        "inputCacheCreation": 0,
+        "output": 2
+      }
+    },
+    { "type": "finish", "kind": "stop" }
+  ]
+]

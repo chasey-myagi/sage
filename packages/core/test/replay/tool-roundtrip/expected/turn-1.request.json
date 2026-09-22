@@ -1,0 +1,39 @@
+{
+  "model": {
+    "provider": "anthropic",
+    "model": "claude-test"
+  },
+  "head": {
+    "system": "You are sage. Use tools when asked.",
+    "tools": [
+      {
+        "name": "echo",
+        "description": "Echo text",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "ping"
+        }
+      ]
+    }
+  ],
+  "cacheBreakpoints": ["head"],
+  "sampling": {
+    "maxTokens": 64,
+    "temperature": 0
+  }
+}
