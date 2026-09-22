@@ -1,0 +1,23 @@
+{
+  "epoch": 0,
+  "turn": 2,
+  "claims": [],
+  "chunks": [
+    {
+      "id": "seq:0",
+      "tier": "full",
+      "reason": "passthrough"
+    },
+    {
+      "id": "seq:2",
+      "tier": "full",
+      "reason": "passthrough"
+    },
+    {
+      "id": "seq:3",
+      "tier": "full",
+      "reason": "passthrough"
+    }
+  ],
+  "anomalies": []
+}
