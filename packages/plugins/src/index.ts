@@ -10,6 +10,13 @@
 
 export const PACKAGE = "@sage/plugins" as const;
 
+export {
+  agentsMd,
+  escapeClaimText,
+  progressLedger,
+  systemReminder,
+  toolCatalog,
+} from "./claims/index.js";
 export type { TokenCounter } from "./compiler/budget.js";
 export { allocate, defaultTokenCount } from "./compiler/budget.js";
 export type {
