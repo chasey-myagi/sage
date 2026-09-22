@@ -21,7 +21,17 @@ importers:
         specifier: ^5.0.1
         version: 5.0.1(@types/node@22.20.4)(vite@8.3.0(@types/node@22.20.4))
 
-  apps/sage: {}
+  apps/sage:
+    dependencies:
+      '@sage/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@sage/provider':
+        specifier: workspace:*
+        version: link:../../packages/provider
+      '@sage/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
 
   packages/core:
     dependencies:
@@ -33,7 +43,11 @@ importers:
 
   packages/provider: {}
 
-  packages/tools: {}
+  packages/tools:
+    dependencies:
+      '@sage/core':
+        specifier: workspace:*
+        version: link:../core
 
 packages:
 
