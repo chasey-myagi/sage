@@ -5,6 +5,9 @@
  * The kernel checks pairing and epoch freeze, then logs the envelope. It does
  * not score, drop, or rewrite blocks.
  *
+ * `epochStart` is a signal, not a log field: the kernel turns it into a
+ * `view_epoch` entry. `details` is copied onto that turn's manifest entry.
+ *
  * Intentionally not in the Log: the live CompiledView object. The kernel
  * appends the manifest as its own entry; this module does not.
  */
@@ -38,10 +41,17 @@ export type Anomaly = {
   note?: string;
 };
 
+export type BudgetReport = {
+  total: number;
+  used: number;
+  overrun: number;
+};
+
 export type Manifest = {
   epoch: number;
   turn: number;
-  budget?: number;
+  /** A finite number, or the compiler's `{ total, used, overrun }` report. */
+  budget?: number | BudgetReport;
   claims: ClaimRecord[];
   chunks: ChunkRecord[];
   anomalies: Anomaly[];
@@ -53,6 +63,16 @@ export type CompiledView = {
   messages: Message[];
   cacheBreakpoints: CacheBreakpoint[];
   manifest: Manifest;
+  /**
+   * Set when this view opens an epoch. The kernel appends `view_epoch` and
+   * does not store this field itself.
+   */
+  epochStart?: { reason: string };
+  /**
+   * Opaque bag copied onto the manifest entry. Claim text lives here under
+   * `claimContent`, and only for hashes that are new this turn.
+   */
+  details?: Record<string, unknown>;
 };
 
 export type ViewContext = {

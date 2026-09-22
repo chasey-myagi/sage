@@ -1,0 +1,100 @@
+import { AgentSession, MemoryLogStore } from "@sage/core";
+import { expect, it } from "vitest";
+import {
+  createFaux,
+  MODEL,
+  SYSTEM,
+  stopScript,
+  toolScript,
+} from "../../../core/test/support/faux.ts";
+import { contextCompiler } from "../../src/compiler/compiler.ts";
+import { rebuildFromLog } from "../../src/compiler/rebuild.ts";
+
+function echoTool() {
+  return {
+    def: {
+      name: "echo",
+      description: "Echo text",
+      inputSchema: { type: "object" },
+    },
+    isReadOnly: true,
+    isDestructive: false,
+    isOpenWorld: false,
+    accesses() {
+      return [];
+    },
+    async execute() {
+      return { content: "ok", isError: false };
+    },
+  };
+}
+
+it("rebuilds each turn's head and messages from the log, including content addressed tails", async () => {
+  const store = new MemoryLogStore();
+  const sessionId = "rebuild";
+  const { adapter, requests } = createFaux([
+    toolScript("c1", "echo"),
+    stopScript("done"),
+  ]);
+  const session = new AgentSession({
+    store,
+    sessionId,
+    adapter,
+    model: MODEL,
+    system: SYSTEM,
+    tools: [echoTool()],
+    viewProvider: contextCompiler({
+      budget: 10000,
+      claims: [
+        (ctx) => [
+          {
+            id: "persona",
+            priority: 90,
+            placement: "epoch-head",
+            tiers: { full: ctx.turn === 1 ? "careful" : "CHANGED" },
+          },
+          {
+            id: "hint",
+            priority: 40,
+            placement: "tail",
+            tiers: { full: `hint-${ctx.turn}` },
+          },
+          {
+            id: "ledger",
+            priority: 30,
+            placement: "tail-if-changed",
+            tiers: { full: "alpha" },
+          },
+        ],
+      ],
+    }),
+  });
+
+  await session.run("hello");
+  const path = store.path(sessionId);
+  expect(requests).toHaveLength(2);
+  expect(requests[0]?.messages[0]).toEqual(requests[1]?.messages[0]);
+  expect(JSON.stringify(requests[1]?.messages[0])).not.toContain("CHANGED");
+
+  const headers = path.filter((entry) => entry.kind === "request_header");
+  expect(headers[1]?.payload).not.toHaveProperty("system");
+  expect(headers[1]?.payload).not.toHaveProperty("tools");
+
+  const manifests = path.filter((entry) => entry.kind === "manifest");
+  const ledger = (index: number) => {
+    const details = manifests[index]?.details?.claimContent as
+      | Record<string, string>
+      | undefined;
+    return details?.ledger;
+  };
+  expect(ledger(0)).toContain("alpha");
+  expect(ledger(1)).toBeUndefined();
+
+  for (let turn = 1; turn <= requests.length; turn += 1) {
+    const rebuilt = rebuildFromLog(path, turn);
+    const sent = requests[turn - 1];
+    if (!sent) throw new Error(`missing request ${turn}`);
+    expect(rebuilt.head).toEqual(sent.head);
+    expect(rebuilt.messages).toEqual(sent.messages);
+  }
+});
