@@ -17,7 +17,8 @@
     "test": "vitest run",
     "test:update": "UPDATE_EXPECTED=1 vitest run",
     "test:coverage": "vitest run --coverage",
-    "bench:fetch": "node bench/tasks/fetch-swe-verified.mjs"
+    "bench:fetch": "node bench/tasks/fetch-swe-verified.mjs",
+    "bench:fetch-ts": "node bench/tasks/fetch-multi-swe-ts.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",

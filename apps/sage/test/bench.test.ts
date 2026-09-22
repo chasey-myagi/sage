@@ -277,6 +277,197 @@ it("fetch-swe-verified writes pytest commands from a fixture payload", () => {
   ]);
 });
 
+it("fetch-multi-swe-ts matches ts-mini.json byte for byte from a fixture", () => {
+  dir = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
+  const out = path.join(dir, "tasks.json");
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(repoRoot, "bench/tasks/fetch-multi-swe-ts.mjs"),
+      "--fixture",
+      path.join(repoRoot, "apps/sage/test/fixtures/multi-swe-ts"),
+      "--out",
+      out,
+    ],
+    { encoding: "utf8" },
+  );
+  expect(result.status).toBe(0);
+  const expected = readFileSync(
+    path.join(repoRoot, "bench/tasks/ts-mini.json"),
+  );
+  expect(Buffer.compare(expected, readFileSync(out))).toBe(0);
+});
+
+it("setupCommand failure is setup-failed and does not start the agent", async () => {
+  dir = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
+  const tasks = path.join(dir, "tasks.json");
+  writeFileSync(
+    tasks,
+    JSON.stringify([
+      {
+        ...task("setup-bad"),
+        setupCommand: "exit 1",
+      },
+    ]),
+  );
+  const out = path.join(dir, "out");
+  const started: string[] = [];
+  const tested: string[] = [];
+  const io = capture();
+  const code = await runCli(
+    [
+      "bench",
+      "run",
+      "--tasks",
+      tasks,
+      "--policy",
+      "passthrough",
+      "--model",
+      "claude-test",
+      "--out",
+      out,
+    ],
+    {
+      cwd: dir,
+      env: { ANTHROPIC_API_KEY: "test-key" },
+      stdout: io.stdout,
+      stderr: io.stderr,
+      benchDeps: {
+        async prepare() {},
+        async runSage(spec) {
+          started.push(spec.id);
+          return { code: 0, sessionFile: writeSession(dir, spec.id) };
+        },
+        async diffEmpty() {
+          return false;
+        },
+        async runTests(spec) {
+          tested.push(spec.id);
+          return { code: 0 };
+        },
+      },
+    },
+  );
+  expect(code).toBe(0);
+  expect(started).toEqual([]);
+  expect(tested).toEqual([]);
+  const results = JSON.parse(
+    readFileSync(path.join(out, "results.json"), "utf8"),
+  ) as {
+    tasks: { id: string; status: string; reason?: string; health: unknown }[];
+  };
+  expect(results.tasks).toEqual([
+    {
+      id: "setup-bad",
+      status: "error",
+      reason: "setup-failed",
+      health: null,
+    },
+  ]);
+  expect(existsSync(path.join(out, "sessions", "setup-bad.jsonl"))).toBe(false);
+});
+
+it("testPatch overwrites agent edits to test files before tests run", async () => {
+  dir = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
+  const origin = path.join(dir, "origin");
+  const repo = initFixtureRepo(origin);
+  const tasks = path.join(dir, "tasks.json");
+  const base = {
+    repo: origin,
+    baseCommit: repo.sha,
+    problem: "fix the bug",
+    timeoutSec: 30,
+    setupCommand: "true",
+  };
+  writeFileSync(
+    tasks,
+    JSON.stringify([
+      {
+        ...base,
+        id: "edited-test",
+        testCommand: "node -e 'process.exit(0)'",
+        testPatch: `${repo.patchExisting}${repo.patchNew}`,
+      },
+      {
+        ...base,
+        id: "edited-source",
+        testCommand: "node -e 'process.exit(0)'",
+        testPatch: repo.patchExisting,
+      },
+    ]),
+  );
+  const out = path.join(dir, "out");
+  const seen = new Map<string, Record<string, string | null>>();
+  const io = capture();
+  const code = await runCli(
+    [
+      "bench",
+      "run",
+      "--tasks",
+      tasks,
+      "--policy",
+      "passthrough",
+      "--model",
+      "claude-test",
+      "--out",
+      out,
+    ],
+    {
+      cwd: dir,
+      env: { ANTHROPIC_API_KEY: "test-key" },
+      stdout: io.stdout,
+      stderr: io.stderr,
+      benchDeps: {
+        async prepare(_spec, cwd) {
+          git(cwd, ["clone", origin, "."]);
+        },
+        async runSage(spec, cwd) {
+          if (spec.id === "edited-test") {
+            writeFileSync(path.join(cwd, "test/app.test.js"), "agent-test\n");
+            writeFileSync(
+              path.join(cwd, "test/extra.test.js"),
+              "agent-extra\n",
+            );
+          }
+          writeFileSync(path.join(cwd, "src/app.js"), "agent-source\n");
+          return { code: 0, sessionFile: writeSession(cwd, spec.id) };
+        },
+        async diffEmpty(_spec, cwd) {
+          const status = git(cwd, ["status", "--porcelain"]);
+          return status.trim().length === 0;
+        },
+        async runTests(spec, cwd) {
+          const extra = path.join(cwd, "test/extra.test.js");
+          seen.set(spec.id, {
+            test: readFileSync(path.join(cwd, "test/app.test.js"), "utf8"),
+            extra: existsSync(extra) ? readFileSync(extra, "utf8") : null,
+            source: readFileSync(path.join(cwd, "src/app.js"), "utf8"),
+          });
+          return { code: 0 };
+        },
+      },
+    },
+  );
+  expect(code).toBe(0);
+  expect(seen.get("edited-test")).toEqual({
+    test: "test-hidden\n",
+    extra: "extra-hidden\n",
+    source: "agent-source\n",
+  });
+  expect(seen.get("edited-source")).toEqual({
+    test: "test-hidden\n",
+    extra: null,
+    source: "agent-source\n",
+  });
+  const results = JSON.parse(
+    readFileSync(path.join(out, "results.json"), "utf8"),
+  ) as { tasks: { id: string; status: string }[] };
+  expect(results.tasks.map((item) => [item.id, item.status])).toEqual([
+    ["edited-test", "resolved"],
+    ["edited-source", "resolved"],
+  ]);
+});
+
 type Metrics = {
   resolvedRate: number | null;
   emptyPatchRate: number | null;
@@ -285,6 +476,50 @@ type Metrics = {
   cacheHitRatio: number | null;
   expandRate: number | null;
 };
+
+function git(cwd: string, args: string[]): string {
+  const result = spawnSync(
+    "git",
+    [
+      "-c",
+      "commit.gpgsign=false",
+      "-c",
+      "user.name=bench",
+      "-c",
+      "user.email=bench@example.com",
+      ...args,
+    ],
+    { cwd, encoding: "utf8" },
+  );
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.stdout || "git failed");
+  }
+  return result.stdout;
+}
+
+function initFixtureRepo(origin: string): {
+  sha: string;
+  patchExisting: string;
+  patchNew: string;
+} {
+  mkdirSync(path.join(origin, "src"), { recursive: true });
+  mkdirSync(path.join(origin, "test"), { recursive: true });
+  git(origin, ["init", "-b", "main"]);
+  writeFileSync(path.join(origin, "src/app.js"), "source-base\n");
+  writeFileSync(path.join(origin, "test/app.test.js"), "test-base\n");
+  git(origin, ["add", "."]);
+  git(origin, ["commit", "-m", "base"]);
+  const sha = git(origin, ["rev-parse", "HEAD"]).trim();
+  writeFileSync(path.join(origin, "test/app.test.js"), "test-hidden\n");
+  const patchExisting = git(origin, ["diff", "--", "test/app.test.js"]);
+  git(origin, ["checkout", "--", "."]);
+  writeFileSync(path.join(origin, "test/extra.test.js"), "extra-hidden\n");
+  git(origin, ["add", "-N", "test/extra.test.js"]);
+  const patchNew = git(origin, ["diff", "--", "test/extra.test.js"]);
+  git(origin, ["reset", "-q"]);
+  rmSync(path.join(origin, "test/extra.test.js"), { force: true });
+  return { sha, patchExisting, patchNew };
+}
 
 function task(id: string) {
   return {

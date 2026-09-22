@@ -2,19 +2,28 @@
  * Offline-triggerable benchmark runner. Not a CI gate.
  *
  * Contract: `bench run` reads a JSON array of
- * `{ id, repo, baseCommit, problem, testCommand, timeoutSec }`. It exits 2
+ * `{ id, repo, baseCommit, problem, testCommand, timeoutSec }` plus optional
+ * `setupCommand` and `testPatch`. It exits 2
  * when the selected provider has no API key, before it reads the task file
  * or clones anything. With no `--provider`, any preset env key is enough,
  * in the same order and with the same missing-key message as `sage -p`.
- * Each task is cloned into a temp directory, checked out
- * at `baseCommit`, then `sage -p <problem>` runs there. An empty `git status`
- * is `empty-patch` and the test command is not run. A patch whose test
- * command exits 0 is `resolved`. Anything else is `error` with a short
+ * Each task is cloned into a temp directory and checked out at `baseCommit`.
+ * `setupCommand`, when present, runs with `sh -c` in that directory before
+ * sage and under `timeoutSec`. A non-zero exit is `error` with reason
+ * `setup-failed`: sage is not started and the test command is not run.
+ * Then `sage -p <problem>` runs there. The session is copied next. An empty
+ * `git status` is `empty-patch` and the test command is not run. `testPatch`,
+ * when present, is a unified diff applied only after that copy and only when
+ * status is non-empty. Each path in a `diff --git` header is restored from
+ * `baseCommit` (`git checkout`, or `rm -f` when the blob is absent), then
+ * `git apply` runs. Apply failure is `error` with reason `test-patch-failed`
+ * and the test command is not run. The agent never sees `testPatch`. A test
+ * command that exits 0 is `resolved`. Anything else is `error` with a short
  * reason (`clone-failed`, `sage-failed`, `diff-failed`, `tests-failed`,
- * `timeout`). `health` is `runHealth` of the copied session, or null.
- * The result directory is `<out>/results.json` and
- * `<out>/sessions/<taskId>.jsonl`. Those files hold ids, statuses, reasons,
- * and health numbers. They do not copy the problem text.
+ * `timeout`, `setup-failed`, `test-patch-failed`). `health` is `runHealth`
+ * of the copied session, or null. The result directory is `<out>/results.json`
+ * and `<out>/sessions/<taskId>.jsonl`. Those files hold ids, statuses,
+ * reasons, and health numbers. They do not copy the problem text.
  * `bench report <runA> <runB>` prints one JSON object `{ a, b, delta }`.
  * Rates are counts over the task list. `tokensPerResolved` is the sum of
  * `health.tokens.total` divided by the resolved count, or null when nothing
@@ -22,9 +31,10 @@
  * per-task values. `delta` is B minus A. A null side makes that delta null.
  * Repo names without a scheme clone as `https://github.com/<repo>.git`.
  *
- * Intentionally not in the Log: argv, API keys, clone directories, and this
- * report. The session jsonl is the recorded run. The report reads health
- * back off it.
+ * Intentionally not in the Log: argv, API keys, clone directories, setup
+ * commands, test patches, test output, and this report. The session jsonl is
+ * the recorded run, copied before `testPatch` is applied. The report reads
+ * health back off it.
  */
 
 import { spawn } from "node:child_process";
@@ -54,6 +64,8 @@ export type BenchTask = {
   problem: string;
   testCommand: string;
   timeoutSec: number;
+  setupCommand?: string;
+  testPatch?: string;
 };
 
 export type BenchStatus = "resolved" | "empty-patch" | "error";
@@ -310,6 +322,29 @@ async function runTask(
         health: null,
       };
     }
+    if (task.setupCommand) {
+      try {
+        const setup = await exec("sh", ["-c", task.setupCommand], {
+          cwd: work,
+          timeoutMs: task.timeoutSec * 1000,
+        });
+        if (setup.code !== 0) {
+          return {
+            id: task.id,
+            status: "error",
+            reason: "setup-failed",
+            health: null,
+          };
+        }
+      } catch {
+        return {
+          id: task.id,
+          status: "error",
+          reason: "setup-failed",
+          health: null,
+        };
+      }
+    }
     let sage: { code: number; sessionFile?: string; timedOut?: boolean };
     try {
       sage = await deps.runSage(task, work, opts);
@@ -334,6 +369,18 @@ async function runTask(
       return { id: task.id, status: "error", reason: "diff-failed", health };
     }
     if (empty) return { id: task.id, status: "empty-patch", health };
+    if (task.testPatch) {
+      try {
+        await applyTestPatch(task, work);
+      } catch {
+        return {
+          id: task.id,
+          status: "error",
+          reason: "test-patch-failed",
+          health,
+        };
+      }
+    }
     let tests: { code: number; timedOut?: boolean };
     try {
       tests = await deps.runTests(task, work);
@@ -429,6 +476,64 @@ function defaultDeps(): BenchDeps {
       return { code: result.code, timedOut: result.timedOut };
     },
   };
+}
+
+async function applyTestPatch(task: BenchTask, cwd: string): Promise<void> {
+  const patch = task.testPatch;
+  if (!patch) return;
+  for (const file of filesInDiff(patch)) {
+    const target = workPath(cwd, file);
+    const probe = await exec("git", [
+      "-C",
+      cwd,
+      "cat-file",
+      "-e",
+      `${task.baseCommit}:${file}`,
+    ]);
+    if (probe.code === 0) {
+      const checkout = await exec("git", [
+        "-C",
+        cwd,
+        "checkout",
+        task.baseCommit,
+        "--",
+        file,
+      ]);
+      if (checkout.code !== 0) throw new Error(`checkout ${file} failed`);
+    } else {
+      rmSync(target, { force: true });
+    }
+  }
+  const patchPath = path.join(
+    tmpdir(),
+    `sage-bench-test-patch-${process.pid}-${Date.now()}`,
+  );
+  try {
+    writeFileSync(patchPath, patch);
+    const applied = await exec("git", ["-C", cwd, "apply", patchPath]);
+    if (applied.code !== 0) throw new Error("git apply failed");
+  } finally {
+    rmSync(patchPath, { force: true });
+  }
+}
+
+function workPath(cwd: string, file: string): string {
+  const root = path.resolve(cwd);
+  const resolved = path.resolve(cwd, file);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`test patch path escapes worktree: ${file}`);
+  }
+  return resolved;
+}
+
+function filesInDiff(patch: string): string[] {
+  const files: string[] = [];
+  for (const line of patch.split("\n")) {
+    const match = /^diff --git a\/\S+ b\/(\S+)$/.exec(line);
+    const file = match?.[1];
+    if (file && file !== "dev/null") files.push(file);
+  }
+  return files;
 }
 
 async function defaultPrepare(task: BenchTask, cwd: string): Promise<void> {
@@ -575,6 +680,8 @@ function parseTask(value: unknown, index: number): BenchTask {
   ) {
     throw new Error(`tasks[${index}] timeoutSec must be a positive number`);
   }
+  const setupCommand = optionalString(value, "setupCommand", index);
+  const testPatch = optionalString(value, "testPatch", index);
   return {
     id: requiredString(value, "id", index),
     repo: requiredString(value, "repo", index),
@@ -582,7 +689,23 @@ function parseTask(value: unknown, index: number): BenchTask {
     problem: requiredString(value, "problem", index),
     testCommand: requiredString(value, "testCommand", index),
     timeoutSec,
+    ...(setupCommand ? { setupCommand } : {}),
+    ...(testPatch ? { testPatch } : {}),
   };
+}
+
+function optionalString(
+  value: Record<string, unknown>,
+  key: string,
+  index: number,
+): string | undefined {
+  if (!Object.hasOwn(value, key) || value[key] === undefined) return undefined;
+  const found = value[key];
+  if (typeof found !== "string") {
+    throw new Error(`tasks[${index}] ${key} must be a string`);
+  }
+  if (found.length === 0) return undefined;
+  return found;
 }
 
 function requiredString(
