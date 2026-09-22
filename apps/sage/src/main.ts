@@ -2,7 +2,8 @@
  * One-shot coding CLI.
  *
  * Contract: parse argv, assemble AgentSession with the seven tools plus
- * update_ledger and expand, and a JsonlLogStore under
+ * update_ledger, expand, spawn_subtask, and spawn_subtasks, and a
+ * JsonlLogStore under
  * `<cwd>/.sage/sessions`. The view
  * is contextCompiler with budget 40000, the four first-party claims, and
  * the default route policy, unless `--passthrough` selects passthroughView.
@@ -33,6 +34,7 @@ import {
   progressLedger,
   type RoutePolicy,
   sensitivePolicy,
+  subtaskTools,
   systemReminder,
   toolCatalog,
   withSensitiveFilter,
@@ -86,28 +88,47 @@ export function createCodingSession(opts: {
       dir: opts.sessionsDir ?? path.join(opts.cwd, ".sage", "sessions"),
     });
   const ledger = progressLedger();
+  const system = opts.system ?? systemPrompt(opts.cwd);
+  const claims = [
+    systemReminder({ text: "Work in small verified steps." }),
+    agentsMd({ cwd: opts.cwd }),
+    toolCatalog({ deferred: [] }),
+    ledger.provider,
+  ];
+  const route = defaultRoutePolicy(Object.keys(adapters), opts.model.provider);
+  const tools = [
+    ...createTools({ cwd: opts.cwd, exec: opts.exec }),
+    ledger.tool,
+    expandTool({ store, sessionId }),
+  ];
+  const { spawn, spawnMany } = subtaskTools({
+    store,
+    adapters,
+    tools,
+    system,
+    makeCompiler: ({ budget, query }) =>
+      contextCompiler({
+        budget,
+        claims,
+        subtask: { query },
+        expectedTurns: 1,
+        route,
+      }),
+  });
+  tools.push(spawn, spawnMany);
   const session = new AgentSession({
     store,
     sessionId,
     adapters,
     model: opts.model,
-    system: opts.system ?? systemPrompt(opts.cwd),
-    tools: [
-      ...createTools({ cwd: opts.cwd, exec: opts.exec }),
-      ledger.tool,
-      expandTool({ store, sessionId }),
-    ],
+    system,
+    tools,
     viewProvider: opts.passthrough
       ? passthroughView
       : contextCompiler({
           budget: opts.budget ?? 40000,
-          claims: [
-            systemReminder({ text: "Work in small verified steps." }),
-            agentsMd({ cwd: opts.cwd }),
-            toolCatalog({ deferred: [] }),
-            ledger.provider,
-          ],
-          route: defaultRoutePolicy(Object.keys(adapters), opts.model.provider),
+          claims,
+          route,
         }),
     sampling: opts.sampling,
   });

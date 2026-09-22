@@ -37,6 +37,13 @@
  * message. `tail-if-changed` text is stored in `details.claimContent` only
  * when its hash is new. `none` is omitted from the view. A provider that
  * throws becomes one manifest row and does not stop the compile.
+ * When `ctx.parentPath` is set, this is a subtask recompile. Messages start
+ * with the parent request rebuilt from that path's latest manifest, epoch
+ * head included. `frozenDecisions` of the parent's current epoch supplies
+ * those chunk tiers. The child's own messages are `own:` chunks and go
+ * through `eliminate`. A tail claim `subtask-query` carries `subtask.query`
+ * and is appended after that prefix. `decideEpoch` is not called. The
+ * decision reason is `subtask:no-rebuild`.
  *
  * Intentionally not in the Log: claim providers, the token counter, the route
  * policy, and the live CompiledView. The kernel persists `view_epoch`,
@@ -47,6 +54,7 @@ import type { ClaimRecord, CompiledView, ViewContext } from "@sage/core";
 import { passthroughView } from "@sage/core";
 import { listModels } from "@sage/provider";
 import type { Message, ModelRef } from "@sage/provider/contract";
+import { escapeClaimText } from "../claims/escape.js";
 import type { RoutePolicy } from "../routing/types.js";
 import { applyDecisions } from "./apply.js";
 import { allocate, defaultTokenCount, type TokenCounter } from "./budget.js";
@@ -60,10 +68,12 @@ import type { ChunkDecision } from "./eliminate.js";
 import { eliminate } from "./eliminate.js";
 import { contentHash, parseClaimMessage, renderClaim } from "./format.js";
 import {
+  currentEpoch,
   epochOpenReason,
   frozenDecisions,
   frozenSeqCeiling,
 } from "./freeze.js";
+import { rebuildFromLog } from "./rebuild.js";
 import { renderStub } from "./stub.js";
 
 type ManifestClaim = ClaimRecord & {
@@ -98,6 +108,7 @@ export function contextCompiler(opts: {
   expectedTurns?: number;
   minSavingsRatio?: number;
   route?: RoutePolicy;
+  subtask?: { query: string };
 }): { view(ctx: ViewContext): Promise<CompiledView> } {
   const count = opts.count ?? defaultTokenCount;
   const keepRecent = opts.keepRecent ?? 6;
@@ -106,6 +117,14 @@ export function contextCompiler(opts: {
 
   return {
     async view(ctx: ViewContext): Promise<CompiledView> {
+      if (ctx.parentPath) {
+        return compileSubtask(ctx, {
+          budget: opts.budget,
+          query: opts.subtask?.query ?? "",
+          count,
+          keepRecent,
+        });
+      }
       const base = await passthroughView.view(ctx);
       const collected = await collect(opts.claims, ctx);
       const seqs = projectionSeqs(ctx.path);
@@ -779,5 +798,229 @@ function isMessage(value: unknown): value is Message {
   return (
     (value.role === "user" || value.role === "assistant") &&
     Array.isArray(value.content)
+  );
+}
+
+function compileSubtask(
+  ctx: ViewContext,
+  opts: {
+    budget: number;
+    query: string;
+    count: TokenCounter;
+    keepRecent: number;
+  },
+): CompiledView {
+  const parentPath = ctx.parentPath ?? [];
+  const epoch = currentEpoch(parentPath);
+  const manifest = latestManifest(parentPath);
+  const turn = manifestTurn(manifest);
+  if (turn === undefined) {
+    throw new Error("subtask parent path has no manifest");
+  }
+  const rebuilt = rebuildFromLog(parentPath, turn);
+  const parentMessages = structuredClone(rebuilt.messages);
+  const parentRows = overlayFrozen(
+    chunkRows(manifest),
+    frozenDecisions(parentPath, epoch),
+  );
+  const projected = passthroughView.view(ctx);
+  if (projected instanceof Promise) {
+    throw new Error("passthrough projection must be synchronous");
+  }
+  const seqs = projectionSeqs(ctx.path);
+  if (seqs.length !== projected.messages.length) {
+    throw new Error(
+      `projected seqs (${seqs.length}) do not match passthrough messages (${projected.messages.length})`,
+    );
+  }
+  const ownChunks = indexChunks(
+    projected.messages,
+    seqs,
+    ctx.tools,
+    opts.count,
+  ).map((chunk) => ({ ...chunk, id: `own:${chunk.id}` }));
+  const rendered = renderClaim(
+    "subtask-query",
+    "full",
+    escapeClaimText(opts.query),
+  );
+  const claimTokens = opts.count(rendered);
+  const parentTokens = keptTokens(parentRows);
+  const eliminated = eliminate(ownChunks, {
+    keepRecent: opts.keepRecent,
+    remainingBudget: Math.max(0, opts.budget - parentTokens - claimTokens),
+  });
+  const ownMessages = applyDecisions(
+    projected.messages,
+    ownChunks,
+    eliminated.decisions,
+  );
+  const parentCount = parentMessages.length;
+  const messages = parentMessages;
+  messages.push(...ownMessages);
+  appendSubtaskQuery(messages, parentCount, rendered);
+  const ownRows = ownRowsFrom(ownChunks, eliminated.decisions, opts.count);
+  const used = parentTokens + eliminated.used + claimTokens;
+  const omitted =
+    parentRows.filter((row) => row.tier === "none").length +
+    ownRows.filter((row) => row.tier === "none").length;
+  const prefixEnd = Math.max(0, parentCount - 1);
+  const last = Math.max(0, messages.length - 1);
+  const budget = {
+    total: opts.budget,
+    used,
+    overrun: Math.max(0, used - opts.budget),
+    omitted,
+    expands: countExpands(ctx.path),
+  };
+  const claims: ManifestClaim[] = [
+    {
+      id: "subtask-query",
+      tier: "full",
+      reason: "pinned",
+      tokens: claimTokens,
+      placement: "tail",
+      priority: 100,
+      contentHash: contentHash(rendered),
+    },
+  ];
+  const view: CompiledView = {
+    epoch,
+    head: ctx.head,
+    messages,
+    cacheBreakpoints: [
+      "head",
+      { afterMessage: prefixEnd },
+      { afterMessage: last },
+    ],
+    manifest: {
+      epoch,
+      turn: ctx.turn,
+      budget,
+      claims,
+      chunks: [...parentRows, ...ownRows],
+      anomalies: projected.manifest.anomalies,
+      epochDecision: {
+        rebuild: false,
+        oldTokens: parentTokens,
+        newTokens: used,
+        remainingTurns: 1,
+        readRate: 0,
+        writeRate: 0,
+        savingsPerTurn: 0,
+        extraCost: 0,
+        paybackTurns: null,
+        reason: "subtask:no-rebuild",
+      },
+      cache: {
+        expectedReadTokens: parentTokens,
+        measuredReadTokens: measuredCacheRead(parentPath),
+      },
+    },
+    details: { claimContent: { "subtask-query": rendered } },
+  };
+  return view;
+}
+
+function manifestTurn(
+  entry: ViewContext["path"][number] | undefined,
+): number | undefined {
+  if (!entry || !isRecord(entry.payload)) return undefined;
+  return typeof entry.payload.turn === "number"
+    ? entry.payload.turn
+    : undefined;
+}
+
+function chunkRows(entry: ViewContext["path"][number] | undefined): ChunkRow[] {
+  if (
+    !entry ||
+    !isRecord(entry.payload) ||
+    !Array.isArray(entry.payload.chunks)
+  ) {
+    return [];
+  }
+  const rows: ChunkRow[] = [];
+  for (const value of entry.payload.chunks) {
+    if (!isRecord(value) || typeof value.id !== "string") continue;
+    if (!isTierName(value.tier)) continue;
+    const row: ChunkRow = {
+      id: value.id,
+      tier: value.tier,
+      reason: typeof value.reason === "string" ? value.reason : "kept",
+      tokens: typeof value.tokens === "number" ? value.tokens : 0,
+    };
+    if (typeof value.originalTokens === "number") {
+      row.originalTokens = value.originalTokens;
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+function overlayFrozen(
+  rows: ChunkRow[],
+  frozen: Map<string, ChunkDecision> | undefined,
+): ChunkRow[] {
+  if (!frozen) return rows;
+  return rows.map((row) => {
+    const kept = frozen.get(row.id);
+    if (!kept) return row;
+    return { ...row, tier: kept.tier, reason: kept.reason };
+  });
+}
+
+function keptTokens(rows: readonly ChunkRow[]): number {
+  return rows.reduce(
+    (sum, row) => (row.tier === "none" ? sum : sum + row.tokens),
+    0,
+  );
+}
+
+function ownRowsFrom(
+  chunks: readonly Chunk[],
+  decisions: readonly ChunkDecision[],
+  count: TokenCounter,
+): ChunkRow[] {
+  return decisions.map((decision) => {
+    const chunk = chunks.find((item) => item.id === decision.id);
+    const original = chunk?.tokens ?? 0;
+    if (decision.tier === "none" && chunk?.kind === "tool") {
+      return {
+        id: decision.id,
+        tier: decision.tier,
+        reason: decision.reason,
+        tokens: count(renderStub(chunk)),
+        originalTokens: original,
+      };
+    }
+    return {
+      id: decision.id,
+      tier: decision.tier,
+      reason: decision.reason,
+      tokens: original,
+    };
+  });
+}
+
+function appendSubtaskQuery(
+  messages: Message[],
+  parentCount: number,
+  rendered: string,
+): void {
+  const block = { type: "text" as const, text: rendered };
+  const last = messages.at(-1);
+  if (messages.length > parentCount && last?.role === "user") {
+    last.content.push(block);
+    return;
+  }
+  messages.push({ role: "user", content: [block] });
+}
+
+function isTierName(value: unknown): value is Tier {
+  return (
+    value === "none" ||
+    value === "line" ||
+    value === "summary" ||
+    value === "full"
   );
 }

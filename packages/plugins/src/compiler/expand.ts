@@ -5,13 +5,17 @@
  * reads `store.path(sessionId)` and resolves ids with the same rules as
  * `indexChunks`. `seq:<seq>#<toolUseId>` returns that tool_result content.
  * `seq:<seq>` returns the prose of that message when it is a prose chunk.
- * Anything else is isError `Unknown chunk: <id>`. This tool does not append.
+ * `child:<sessionId>#<chunkId>` reads that session. An `own:` prefix is
+ * stripped and resolved on the child path. Any other chunk id follows the
+ * child's `subtask` entry to the parent leaf, so a parent `seq:` id still
+ * names the original text. Anything else is isError `Unknown chunk: <id>`.
+ * This tool does not append.
  *
  * Intentionally not in the Log: the tool object. The kernel logs the call
  * as an ordinary tool_use / tool_result. That pair is the expand numerator.
  */
 
-import type { HarnessTool, LogStore, StoredEntry } from "@sage/core";
+import type { EntryId, HarnessTool, LogStore, StoredEntry } from "@sage/core";
 
 const inputSchema = {
   type: "object",
@@ -43,7 +47,7 @@ export function expandTool(opts: {
     },
     async execute(input) {
       const id = readId(input);
-      const text = id ? locate(opts.store.path(opts.sessionId), id) : undefined;
+      const text = id ? resolve(opts.store, opts.sessionId, id) : undefined;
       if (text === undefined) {
         return { content: `Unknown chunk: ${id}`, isError: true };
       }
@@ -55,6 +59,40 @@ export function expandTool(opts: {
 function readId(input: unknown): string {
   if (!isRecord(input) || typeof input.id !== "string") return "";
   return input.id;
+}
+
+function resolve(
+  store: LogStore,
+  sessionId: string,
+  id: string,
+): string | undefined {
+  const child = /^child:([^#]+)#([\s\S]+)$/.exec(id);
+  if (!child) return locate(store.path(sessionId), id);
+  const childId = child[1] ?? "";
+  const chunkId = child[2] ?? "";
+  const path = store.path(childId);
+  if (chunkId.startsWith("own:")) {
+    return locate(path, chunkId.slice("own:".length));
+  }
+  const parent = parentPath(store, path);
+  if (parent) {
+    const found = locate(parent, chunkId);
+    if (found !== undefined) return found;
+  }
+  return locate(path, chunkId);
+}
+
+function parentPath(
+  store: LogStore,
+  path: readonly StoredEntry[],
+): readonly StoredEntry[] | undefined {
+  const entry = path.find((item) => item.kind === "subtask");
+  if (!entry || !isRecord(entry.payload)) return undefined;
+  const parentSessionId = entry.payload.parentSessionId;
+  const parentLeaf = entry.payload.parentLeaf;
+  if (typeof parentSessionId !== "string") return undefined;
+  if (typeof parentLeaf !== "string") return store.path(parentSessionId);
+  return store.path(parentSessionId, parentLeaf as EntryId);
 }
 
 function locate(path: readonly StoredEntry[], id: string): string | undefined {

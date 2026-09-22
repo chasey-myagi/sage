@@ -19,6 +19,10 @@
  * `epochDecision`, `calibration`, and `cache` are optional objects. The
  * kernel checks that shape and does not read the fields.
  *
+ * `subtask` records that a child session recompiles a parent leaf. The
+ * payload is `{ parentSessionId, parentLeaf, query, budget, readOnly }`.
+ * The kernel does not copy the parent path onto the child.
+ *
  * Intentionally not in the Log: reducer functions, the registry, and any
  * high-water mark.
  */
@@ -165,6 +169,26 @@ function isTerminal(payload: unknown): payload is TerminalPayload {
   return isRecord(payload) && typeof payload.outcome === "string";
 }
 
+export type SubtaskPayload = {
+  parentSessionId: string;
+  parentLeaf: string;
+  query: string;
+  budget: number;
+  readOnly: boolean;
+};
+
+function isSubtask(payload: unknown): payload is SubtaskPayload {
+  return (
+    isRecord(payload) &&
+    typeof payload.parentSessionId === "string" &&
+    typeof payload.parentLeaf === "string" &&
+    typeof payload.query === "string" &&
+    typeof payload.budget === "number" &&
+    Number.isFinite(payload.budget) &&
+    typeof payload.readOnly === "boolean"
+  );
+}
+
 registerEntryKind<Message>({
   kind: "message",
   persisted: true,
@@ -219,4 +243,11 @@ registerEntryKind<TerminalPayload>({
   persisted: true,
   doc: "Terminal outcome of a run. Optional usage and error stay opaque.",
   validate: isTerminal,
+});
+
+registerEntryKind<SubtaskPayload>({
+  kind: "subtask",
+  persisted: true,
+  doc: "Child session pointer. Names the parent leaf it recompiles. History is not copied.",
+  validate: isSubtask,
 });

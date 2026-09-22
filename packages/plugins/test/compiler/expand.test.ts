@@ -306,3 +306,43 @@ it("counts omitted chunks and expand calls on the manifest budget", async () => 
     expect.objectContaining({ omitted: 10, expands: 2 }),
   );
 });
+
+it("reads parent and own chunks through a child: id", async () => {
+  const store = new MemoryLogStore();
+  store.append("parent", {
+    kind: "message",
+    payload: {
+      role: "user",
+      content: [{ type: "text", text: "PARENT-TEXT" }],
+    },
+  });
+  const leaf = store.leaf("parent");
+  if (!leaf) throw new Error("missing parent leaf");
+  store.append("child", {
+    kind: "subtask",
+    payload: {
+      parentSessionId: "parent",
+      parentLeaf: leaf,
+      query: "q",
+      budget: 10,
+      readOnly: true,
+    },
+  });
+  store.append("child", {
+    kind: "message",
+    payload: {
+      role: "user",
+      content: [{ type: "text", text: "OWN-TEXT" }],
+    },
+  });
+  const tool = expandTool({ store, sessionId: "parent" });
+  const ctx = { sessionId: "parent", toolUseId: "ex" };
+  expect(await tool.execute({ id: "child:child#seq:0" }, ctx)).toEqual({
+    content: "PARENT-TEXT",
+    isError: false,
+  });
+  expect(await tool.execute({ id: "child:child#own:seq:1" }, ctx)).toEqual({
+    content: "OWN-TEXT",
+    isError: false,
+  });
+});
