@@ -11,7 +11,6 @@ import {
 import type { Head, Message, PreparedCall } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
-import { replayOffline } from "../../src/replay/offline.ts";
 
 const SESSION = "long-deepseek-flash";
 const SYSTEM = "You are sage.";
@@ -22,6 +21,7 @@ const fixtureDir = path.join(
 
 type Row = {
   turn: number;
+  epoch: number;
   recorded: number;
   oldTokens: number;
   reason: string;
@@ -65,25 +65,44 @@ it("keeps cache.expectedReadTokens within 15% of measuredReadTokens after turn 3
   expect(misses, misses.join("\n")).toEqual([]);
 });
 
-it("does not open context-window-guard on turn 3 of the 8000-window replay", async () => {
-  const diffs = await replayOffline(loadStore(), SESSION, policy(), deps());
-  const turn3 = diffs.find((diff) => diff.turn === 3);
-  expect(turn3?.decisionReason ?? "").not.toContain("context-window-guard");
-  const turn2 = diffs.find((diff) => diff.turn === 2);
-  expect(turn2?.decisionReason ?? "").not.toContain("context-window-guard");
+it("opens context-window-guard only for a real over-window input, and on the first over-window old estimate of each epoch", async () => {
+  const rows = await replayRows();
+  const limit = 8000 * 0.9;
+  const falseAlarms: string[] = [];
+  for (const row of rows) {
+    if (!row.reason.includes("context-window-guard")) continue;
+    if (row.recorded > limit) continue;
+    falseAlarms.push(
+      `turn ${row.turn} guard opened measured ${row.recorded} limit ${limit}`,
+    );
+  }
+  expect(falseAlarms, falseAlarms.join("\n")).toEqual([]);
+
+  const missed: string[] = [];
+  const epochs = new Map<number, Row[]>();
+  for (const row of rows) {
+    const group = epochs.get(row.epoch) ?? [];
+    group.push(row);
+    epochs.set(row.epoch, group);
+  }
+  for (const [epoch, group] of epochs) {
+    const first = group.find((row) => row.oldTokens > limit);
+    if (!first || first.reason.includes("context-window-guard")) continue;
+    missed.push(
+      `epoch ${epoch} turn ${first.turn} old ${first.oldTokens} measured ${first.recorded} limit ${limit} reason ${first.reason}`,
+    );
+  }
+  expect(missed, missed.join("\n")).toEqual([]);
+
+  const guarded = rows
+    .filter((row) => row.reason.includes("context-window-guard"))
+    .map((row) => row.turn);
+  expect(guarded).toEqual([3]);
 });
 
 function relative(estimate: number, actual: number): number {
   if (actual === 0) return estimate === 0 ? 0 : Number.POSITIVE_INFINITY;
   return Math.abs(estimate - actual) / actual;
-}
-
-function policy() {
-  return { budget: 40_000, keepRecent: 6, expectedTurns: 20 };
-}
-
-function deps() {
-  return { tools: traceTools(), system: SYSTEM };
 }
 
 function loadStore(): JsonlLogStore {
@@ -112,6 +131,7 @@ async function replayRows(): Promise<Row[]> {
     const decision = view.manifest.epochDecision;
     rows.push({
       turn: slice.turn,
+      epoch: view.epoch,
       recorded: inputTotal(slice.assistant),
       oldTokens: decision?.oldTokens ?? 0,
       reason: decision?.reason ?? "",

@@ -10,10 +10,14 @@
  * computable value on the path. Later turns set `ratio` to
  * `(measured − head) / estimated`. No usage, or a zero estimate, yields
  * undefined; callers then use ratio 1 and head 0. Callers scale block
- * tokens by `min(ratio, 1)`: a ratio above 1 is the anchor residual on a
- * small denominator and is not applied. `expectedFrozenPrefix` is `head`
- * plus that scale times the previous manifest's frozen chunks and
- * epoch-head claim tokens.
+ * tokens by the raw ratio, including when that ratio is above 1.
+ * `expectedFrozenPrefix` reads the previous manifest's own calibration
+ * and that manifest's `budget.frozenTokens`: `head + ratio × frozenTokens`.
+ * No calibration on that manifest uses head 0 and ratio 1. The product is
+ * the frozen-prefix estimate the previous turn emitted, so a later epoch's
+ * re-anchored head is not applied to the earlier freeze. A head below 0
+ * is stored as 0: a negative head makes new-view tokens negative and the
+ * cost check reopens immediately.
  *
  * Intentionally not in the Log: these functions. The manifest stores the
  * resulting calibration object.
@@ -55,16 +59,11 @@ export function calibrationFor(
   return { measured, estimated, head, ratio: (measured - head) / estimated };
 }
 
-export function expectedFrozenPrefix(
-  path: readonly StoredEntry[],
-  head: number,
-  scale = 1,
-): number {
+export function expectedFrozenPrefix(path: readonly StoredEntry[]): number {
   const manifest = previousManifest(path);
   if (!manifest || !isRecord(manifest.payload)) return 0;
-  const blocks =
-    frozenTokens(manifest.payload) + epochHeadTokens(manifest.payload);
-  return head + blocks * scale;
+  const prior = storedCalibration(manifest.payload);
+  return prior.head + frozenTokens(manifest.payload) * prior.ratio;
 }
 
 function anchorHead(path: readonly StoredEntry[]): number | undefined {
@@ -172,15 +171,16 @@ function frozenTokens(payload: Record<string, unknown>): number {
   return finite(budget.frozenTokens) ?? 0;
 }
 
-function epochHeadTokens(payload: Record<string, unknown>): number {
-  if (!Array.isArray(payload.claims)) return 0;
-  let total = 0;
-  for (const claim of payload.claims) {
-    if (!isRecord(claim) || claim.placement !== "epoch-head") continue;
-    if (claim.tier === "none") continue;
-    total += finite(claim.tokens) ?? 0;
-  }
-  return total;
+function storedCalibration(payload: Record<string, unknown>): {
+  head: number;
+  ratio: number;
+} {
+  const calibration = payload.calibration;
+  if (!isRecord(calibration)) return { head: 0, ratio: 1 };
+  return {
+    head: finite(calibration.head) ?? 0,
+    ratio: finite(calibration.ratio) ?? 1,
+  };
 }
 
 function latestUsage(

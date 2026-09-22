@@ -133,7 +133,7 @@ it("records a fixed head and projects old and new tokens as head plus used", asy
       ? third.manifest.budget.used
       : 0;
   expect(third.manifest.epochDecision?.oldTokens).toBeCloseTo(
-    head + thirdUsed,
+    head + thirdUsed * laterRatio,
     5,
   );
 });
@@ -168,6 +168,86 @@ it("floors head at 0 when the counter already exceeds the measured input", () =>
   expect(calibration?.measured).toBe(20);
   expect(calibration?.estimated).toBe(100);
   expect(calibration?.ratio).toBe(0.2);
+});
+
+it("estimates the frozen prefix from the previous manifest's own calibration", async () => {
+  const compiler = contextCompiler({
+    budget: 8000,
+    claims: [],
+    expectedTurns: 1,
+  });
+  const store = new MemoryLogStore();
+  store.append("s", { kind: "message", payload: user("hello") });
+  store.append("s", {
+    kind: "manifest",
+    payload: {
+      epoch: 0,
+      turn: 1,
+      budget: { total: 8000, used: 100, overrun: 0, frozenTokens: 5 },
+      // Epoch-head claim tokens stay out of the frozen-prefix estimate.
+      claims: [
+        {
+          id: "head-claim",
+          tier: "full",
+          reason: "pinned",
+          tokens: 100,
+          placement: "epoch-head",
+        },
+      ],
+      chunks: [],
+      anomalies: [],
+      calibration: { measured: 20, estimated: 5, head: 10, ratio: 2 },
+    },
+  });
+  store.append("s", {
+    kind: "message",
+    payload: { role: "assistant", content: [{ type: "text", text: "ok" }] },
+    details: {
+      usage: {
+        inputOther: 50,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+        output: 1,
+      },
+    },
+  });
+  const view = await compiler.view(context(store, 2));
+  expect(view.manifest.cache?.expectedReadTokens).toBeCloseTo(20, 5);
+});
+
+it("uses head 0 and ratio 1 when the previous manifest has no calibration", async () => {
+  const compiler = contextCompiler({
+    budget: 8000,
+    claims: [],
+    expectedTurns: 1,
+  });
+  const store = new MemoryLogStore();
+  store.append("s", { kind: "message", payload: user("hello") });
+  store.append("s", {
+    kind: "manifest",
+    payload: {
+      epoch: 0,
+      turn: 1,
+      budget: { total: 8000, used: 100, overrun: 0, frozenTokens: 7 },
+      claims: [],
+      chunks: [],
+      anomalies: [],
+    },
+  });
+  store.append("s", {
+    kind: "message",
+    payload: { role: "assistant", content: [{ type: "text", text: "ok" }] },
+    details: {
+      usage: {
+        inputOther: 50,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+        output: 1,
+      },
+    },
+  });
+  const view = await compiler.view(context(store, 2));
+  expect(view.manifest.cache?.expectedReadTokens).toBe(7);
 });
 
 it("rejects a calibration head that is not a finite number", () => {

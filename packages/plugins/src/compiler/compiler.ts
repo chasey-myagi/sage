@@ -21,13 +21,17 @@
  * unless oldest-first budget drops a new chunk; that drop is frozen too.
  * Frozen kept tokens are spent before that budget runs, so a frozen chunk
  * is not demoted. The first turn of an epoch has no freeze record.
- * `oldTokens` is `head + used × min(ratio, 1)` for the frozen view. `head`
- * is the fixed overhead from the epoch's first measured input. `ratio` is
- * `(measured − head) / budget.used`. A ratio above 1 is not applied: that
- * residual comes from a small denominator and would scale the head back
- * into the blocks. No calibration uses head 0 and ratio 1. `newTokens` is
- * the same projection of a from-scratch eliminate of every chunk, plus
- * claims. `budget.frozenTokens` sums tokens of frozen chunks that
+ * `oldTokens` is `head + used × ratio` for the frozen view. `head`
+ * is the fixed overhead from the epoch's first measured input, floored at 0
+ * so a negative head cannot make `newTokens` negative and reopen as
+ * immediate. `ratio` is `(measured − head) / budget.used` and is applied
+ * even when it is above 1. No calibration uses head 0 and ratio 1.
+ * `cache.expectedReadTokens` is the previous manifest's own
+ * `head + ratio × budget.frozenTokens` (head 0 and ratio 1 when that
+ * manifest has no calibration). It is the frozen-prefix estimate the
+ * previous turn emitted, not this turn's re-anchored head.
+ * `newTokens` is the same projection of a from-scratch eliminate of every
+ * chunk, plus claims. `budget.frozenTokens` sums tokens of frozen chunks that
  * are not none. `budget.staleOmittable` is the part a from-scratch eliminate
  * would set to none. Both describe the frozen view even on a rebuild turn.
  * A new epoch opens when `decideEpoch` says rebuild: the view is a full
@@ -191,8 +195,8 @@ export function contextCompiler(opts: {
       );
       const calibration = calibrationFor(ctx.path);
       const head = calibration?.head ?? 0;
-      const scale = Math.min(calibration?.ratio ?? 1, 1);
-      const project = (used: number) => head + used * scale;
+      const ratio = calibration?.ratio ?? 1;
+      const project = (used: number) => head + used * ratio;
       const rates = ratesFor(ctx.prepared.pricing);
       const remainingTurns = Math.max(
         1,
@@ -284,7 +288,7 @@ export function contextCompiler(opts: {
       );
       const last = Math.max(0, chosen.messages.length - 1);
       const cache = {
-        expectedReadTokens: expectedFrozenPrefix(ctx.path, head, scale),
+        expectedReadTokens: expectedFrozenPrefix(ctx.path),
         measuredReadTokens: measuredCacheRead(ctx.path),
       };
       let overrun = Math.max(0, chosen.used - opts.budget);

@@ -53,9 +53,9 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 - 回本轮数 = 额外成本 ÷ 每轮节省，向上取整
 - 额外成本不大于 0 就是立即回本
 
-读价是 `cacheRead / input`。写价是 `max(cacheWrite, input) / input`。缓存写价为 0 不是免费：新前缀第一次仍按未命中的输入价付一遍（无附加费 ≠ 免费，首次仍付未命中价）。Anthropic 的写价倍率是 1.25，DeepSeek 和 OpenAI 是 1.0。目录没有定价时退回 0.1 与 1.25。清单 `budget.used` 只含申领单和块，不含系统提示、工具 schema 和任务消息这截固定头。校准记在 `calibration`：`measured` 是上一轮 assistant usage 的输入合计，`estimated` 是那一轮的 `budget.used`。`head` 取本阶段第一轮（没有 usage 时取路径上最近一次算得出的轮）的 `measured − budget.used`，小于 0 记 0。之后各轮 `ratio = (measured − head) / estimated`，记在清单上，给离线 `policyTokens` 用。缺实测或 `estimated` 为 0 时不写校准，调用方用 `head = 0`。旧视图 token 是 `head + 冻结视图 used × min(ratio, 1)`。新视图 token 是 `head + 全量重编译 used × min(ratio, 1)`。锚点那一轮的 ratio 正好是 1。ratio 大于 1 时不乘回去，那是小分母上的残差，乘回整段 `used` 会把固定头再摊进块里，8000 窗口的回放仍会误触安全阀。ratio 小于 1 时乘回去，把计数器偏高的部分收回来。两边都加同一截头，差值仍只来自块的档位。省下的比例小于 `minSavingsRatio`（默认 0.2）就不开新阶段。`head + used × min(ratio, 1)` 超过上下文窗口的 0.9 时强制重开一次；这是安全阀，不是策略。重开后仍然超限就记在 `budget.overrun`，不再为同一道安全阀重复重开。重开那一轮的视图是全量重编译，随后按新阶段重新冻结，头也从新阶段的第一轮重算。
+读价是 `cacheRead / input`。写价是 `max(cacheWrite, input) / input`。缓存写价为 0 不是免费：新前缀第一次仍按未命中的输入价付一遍（无附加费 ≠ 免费，首次仍付未命中价）。Anthropic 的写价倍率是 1.25，DeepSeek 和 OpenAI 是 1.0。目录没有定价时退回 0.1 与 1.25。清单 `budget.used` 只含申领单和块，不含系统提示、工具 schema 和任务消息这截固定头。校准记在 `calibration`：`measured` 是上一轮 assistant usage 的输入合计，`estimated` 是那一轮的 `budget.used`。`head` 取本阶段第一轮（没有 usage 时取路径上最近一次算得出的轮）的 `measured − budget.used`，小于 0 记 0：负的头会把新视图 token 打成负数，成本式会把它当成立即回本，再开一阶段。之后各轮 `ratio = (measured − head) / estimated`，记在清单上，给离线 `policyTokens` 用。缺实测或 `estimated` 为 0 时不写校准，调用方用 `head = 0`。旧视图 token 是 `head + 冻结视图 used × ratio`。新视图 token 是 `head + 全量重编译 used × ratio`。锚点那一轮的 ratio 正好是 1。ratio 大于 1 也照乘，否则估算系统性低于实测，安全阀会漏报。ratio 小于 1 时同样乘回去，把计数器偏高的部分收回来。两边都加同一截头，差值仍只来自块的档位。省下的比例小于 `minSavingsRatio`（默认 0.2）就不开新阶段。`head + used × ratio` 超过上下文窗口的 0.9 时强制重开一次；这是安全阀，不是策略。重开后仍然超限就记在 `budget.overrun`，不再为同一道安全阀重复重开。重开那一轮的视图是全量重编译，随后按新阶段重新冻结，头也从新阶段的第一轮重算。
 
-`cache.expectedReadTokens` 是上一轮冻结前缀的估算：`head` 加上 `min(ratio, 1)` 乘以那一轮清单里的 `budget.frozenTokens` 与 epoch-head 申领 token。`cache.measuredReadTokens` 是那一轮 usage 的 `inputCacheRead`。两者同口径，expected 与 measured 差距大就是前缀被砸了。`cacheHitRatio` 仍是实测读 token 除以 `cache.expectedReadTokens`，口径不改，代码也不把差值抹平。DeepSeek 的前缀缓存以 64 token 为一块，而且只认完全相同的前缀。人工比对估算和实测时，相差不到一块是块对齐，不是没命中。
+`cache.expectedReadTokens` 是上一轮实际发出去的冻结前缀估算：用上一轮清单自己的 `calibration.head` 与 `calibration.ratio` 去乘那一轮的 `budget.frozenTokens`，即 `head + ratio × frozenTokens`。上一轮没有校准时 head 为 0、ratio 为 1。重开后本轮重新锚上的头不进这个数。`cache.measuredReadTokens` 是那一轮 usage 的 `inputCacheRead`。两者同口径，expected 与 measured 差距大就是前缀被砸了。`cacheHitRatio` 仍是实测读 token 除以 `cache.expectedReadTokens`，口径不改，代码也不把差值抹平。DeepSeek 的前缀缓存以 64 token 为一块，而且只认完全相同的前缀。人工比对估算和实测时，相差不到一块是块对齐，不是没命中。
 
 ## 路由
 
@@ -108,7 +108,7 @@ compareOffline(diffsA, diffsB) // { markdown, json }
 
 `policy` 是 `{ budget?, keepRecent?, scorer?, expectedTurns?, passthrough? }`。每一轮只用该轮视图提交之前的 path 前缀。编译器策略会把上一轮自己写下的清单放进影子 Log，后面的轮次冻结的是这套策略，不是录制时的清单。
 
-`recordedTokens` 是该轮 assistant `details.usage` 的输入合计（`inputOther + inputCacheRead + inputCacheCreation`）。`passthrough: true` 时 `policyTokens` 等于这个数，`saved` 为 0，已有回放 case 的 `prefixStable` 全为 true。编译器策略的 `policyTokens` 是该轮 `budget.used × calibration.ratio`，路径上没有校准则倍率是 1。这个乘积跟的是块和申领单；固定头在 `calibration.head` 里，不进 `policyTokens`。阶段决策的 old/new 是 `head + used × min(ratio, 1)`。Log 不存上下文窗口和定价，回放用 8000 和 `pricing: null`，与无 key 回放相同。
+`recordedTokens` 是该轮 assistant `details.usage` 的输入合计（`inputOther + inputCacheRead + inputCacheCreation`）。`passthrough: true` 时 `policyTokens` 等于这个数，`saved` 为 0，已有回放 case 的 `prefixStable` 全为 true。编译器策略的 `policyTokens` 是该轮 `budget.used × calibration.ratio`，路径上没有校准则倍率是 1。这个乘积跟的是块和申领单；固定头在 `calibration.head` 里，不进 `policyTokens`。阶段决策的 old/new 是 `head + used × ratio`，ratio 大于 1 也照乘。Log 不存上下文窗口和定价，回放用 8000 和 `pricing: null`，与无 key 回放相同。
 
 `prefixStable` 在第一轮为 true。之后，上一轮重编译出的 head 与本轮相同，且上一轮的 messages 是本轮 messages 的 JSON 前缀，才为 true。
 
