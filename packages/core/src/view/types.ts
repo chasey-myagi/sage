@@ -72,6 +72,8 @@ export type EpochDecisionReport = {
 export type CalibrationReport = {
   measured: number;
   estimated: number;
+  /** Fixed overhead: first measured input of the epoch minus that turn's budget. */
+  head: number;
   ratio: number;
 };
 
@@ -93,9 +95,16 @@ export type Manifest = {
   anomalies: Anomaly[];
   /** Cost-inequality result for this compile. Optional for older manifests. */
   epochDecision?: EpochDecisionReport;
-  /** Previous request: measured input tokens over the compiler's estimate. */
+  /**
+   * Previous request: measured input, the compiler's `budget.used`, the
+   * fixed head, and `(measured − head) / estimated`.
+   */
   calibration?: CalibrationReport;
-  /** Frozen-prefix estimate against the previous turn's cache read. */
+  /**
+   * Previous turn's frozen prefix (`head` + frozen chunks + epoch-head
+   * claims) against that turn's cache read. A large gap means the prefix
+   * was rewritten.
+   */
   cache?: CacheReport;
 };
 

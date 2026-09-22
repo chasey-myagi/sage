@@ -206,11 +206,21 @@ it("replays the long deepseek trace with a frozen prefix and a real rebuild", as
     );
   }
   expect(
+    diffs.find((diff) => diff.turn === 3)?.decisionReason ?? "",
+    detail,
+  ).not.toContain("context-window-guard");
+  expect(
+    diffs
+      .filter((diff) => diff.decisionReason.includes("context-window-guard"))
+      .map((diff) => diff.turn),
+    detail,
+  ).toEqual([4]);
+  expect(
     diffs.some(
       (diff) =>
-        diff.rebuild &&
-        (diff.decisionReason.includes("payback:") ||
-          diff.decisionReason.includes("immediate")),
+        !diff.rebuild &&
+        diff.newTokens < diff.oldTokens &&
+        diff.decisionReason.includes("payback:"),
     ),
     detail,
   ).toBe(true);
