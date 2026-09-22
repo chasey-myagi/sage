@@ -1,5 +1,6 @@
 import { MemoryLogStore, passthroughView, type ViewContext } from "@sage/core";
 import { expect, it } from "vitest";
+import { defaultTokenCount } from "../../src/compiler/budget.ts";
 import type { Claim, ClaimProvider } from "../../src/compiler/claim.ts";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
 
@@ -23,6 +24,7 @@ function context(
       adapterDefaults: {},
     },
     head: { system: HEAD.system, tools: [...HEAD.tools] },
+    tools: [],
   };
 }
 
@@ -38,11 +40,7 @@ function render(id: string, tier: string, body: string): string {
 }
 
 function countOf(table: Record<string, number>) {
-  return (text: string) => {
-    const tokens = table[text];
-    if (tokens === undefined) throw new Error(`no token count for ${text}`);
-    return tokens;
-  };
+  return (text: string) => table[text] ?? defaultTokenCount(text);
 }
 
 function claimHash(
@@ -104,11 +102,11 @@ it("writes downgrade reasons and the budget object onto the manifest", async () 
   ]);
   expect(view.manifest.budget).toEqual({
     total: 10000,
-    used: 3200,
+    used: 3202,
     overrun: 0,
   });
   expect(view.manifest.chunks).toEqual([
-    expect.objectContaining({ tier: "full", reason: "passthrough" }),
+    { id: "seq:0", tier: "full", reason: "kept", tokens: 2 },
   ]);
 });
 
@@ -154,8 +152,8 @@ it("keeps a pinned claim and records the overrun when the pin exceeds the budget
   ]);
   expect(view.manifest.budget).toEqual({
     total: 10000,
-    used: 20000,
-    overrun: 10000,
+    used: 20002,
+    overrun: 10002,
   });
   expect(JSON.stringify(view.messages)).not.toContain("x-full");
   expect(JSON.stringify(view.messages)).not.toContain("x-line");
@@ -195,7 +193,7 @@ it("freezes the epoch-head message for later turns of the same epoch", async () 
   expect(first.manifest.chunks).toHaveLength(1);
   expect(first.manifest.chunks[0]).toMatchObject({
     tier: "full",
-    reason: "passthrough",
+    reason: "kept",
   });
 
   store.append("s", {
@@ -349,7 +347,7 @@ it("keeps tail-if-changed text in the view but logs the body only when the hash 
   expect(JSON.stringify(rounds[3]?.messages)).not.toContain("alpha");
 });
 
-it("matches passthrough when no claim is submitted, except the budget field", async () => {
+it("matches passthrough messages when no claim is submitted and records chunk decisions", async () => {
   const store = new MemoryLogStore();
   store.append("s", { kind: "message", payload: user("go") });
   store.append("s", {
@@ -379,9 +377,28 @@ it("matches passthrough when no claim is submitted, except the budget field", as
   expect(compiled.cacheBreakpoints).toEqual(plain.cacheBreakpoints);
   expect(compiled.epochStart).toBeUndefined();
   expect(compiled.details).toBeUndefined();
-  const { budget, ...rest } = compiled.manifest;
-  expect(rest).toEqual(plain.manifest);
-  expect(budget).toEqual({ total: 8000, used: 0, overrun: 0 });
+  const { budget, chunks, ...rest } = compiled.manifest;
+  const {
+    budget: plainBudget,
+    chunks: plainChunks,
+    ...plainRest
+  } = plain.manifest;
+  expect(plainBudget).toBeUndefined();
+  expect(plainChunks.map((chunk) => chunk.reason)).toEqual([
+    "passthrough",
+    "passthrough",
+    "passthrough",
+  ]);
+  expect(rest).toEqual(plainRest);
+  expect(chunks.map(({ id, tier, reason }) => ({ id, tier, reason }))).toEqual([
+    { id: "seq:0", tier: "full", reason: "kept" },
+    { id: "seq:1#call_9", tier: "full", reason: "recent" },
+  ]);
+  const kept = chunks.reduce(
+    (sum, chunk) => sum + (chunk.tier === "none" ? 0 : (chunk.tokens ?? 0)),
+    0,
+  );
+  expect(budget).toEqual({ total: 8000, used: kept, overrun: 0 });
 });
 
 it("records a thrown provider and still renders the other claims", async () => {

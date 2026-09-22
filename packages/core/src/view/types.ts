@@ -20,6 +20,7 @@ import type {
   PreparedCall,
 } from "@sage/provider/contract";
 import type { StoredEntry } from "../log/types.js";
+import type { HarnessTool } from "../tools.js";
 
 export type ChunkRecord = {
   id: string;
@@ -83,6 +84,8 @@ export type ViewContext = {
   prepared: PreparedCall;
   /** Session-injected head for this turn. Replay reads it back off the log. */
   head: Head;
+  /** Tools registered on the session. Passthrough does not read them. */
+  tools: readonly HarnessTool[];
 };
 
 export interface ViewProvider {
