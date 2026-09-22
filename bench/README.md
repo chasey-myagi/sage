@@ -2,14 +2,14 @@
 
 真机对照一组任务上的两套上下文策略。离线回放只回答「省了多少 token、前缀稳不稳、被省略的块后来有没有被引用」，见 [`packages/plugins/README.md`](../packages/plugins/README.md) 的「离线回放」。下一步动作是否一致、任务成不成，只在这里看。
 
-**不进 CI。** 全套要 clone 仓库、调用模型、跑测试，耗时和费用都由跑的人承担。本仓不提供 SWE-bench 官方 docker 评测环境。
+**不进 CI。** 全套要取仓库、调用模型、跑测试，耗时和费用都由跑的人承担。本仓不提供 SWE-bench 官方 docker 评测环境。
 
 ## 准备环境
 
 - Node.js 22。系统自带的 Node 25 没有 corepack。`ts-mini.json` 里 vuejs/core 的四条，`setupCommand` 和 `testCommand` 都调用 `corepack pnpm`，跑之前要把 Node 22 放到 `PATH` 前面，并确认 `corepack pnpm` 能用。这 10 条是在 Node 22.20.0、npm 10.9.3、corepack 0.34.0 上验证的
 - `git`
 - 目标仓库能跑通的测试工具。Verified 任务的 `testCommand` 是 `python -m pytest …`，Python、依赖和被测仓库的构建由跑的人在执行测试的环境里准备好。`ts-mini.json` 的依赖由每条任务的 `setupCommand` 安装
-- 模型 key。没写 `--provider` 时，`DEEPSEEK_API_KEY`、`DASHSCOPE_API_KEY`、`MOONSHOT_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 里有一把即可。指定了 `--provider` 就只认那一把。没有对应的 key 时 `bench run` 直接退出 2，不会 clone
+- 模型 key。没写 `--provider` 时，`DEEPSEEK_API_KEY`、`DASHSCOPE_API_KEY`、`MOONSHOT_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 里有一把即可。指定了 `--provider` 就只认那一把。没有对应的 key 时 `bench run` 直接退出 2，不会去取仓库
 
 任务文件是 JSON 数组，每项：
 
@@ -26,9 +26,9 @@
 }
 ```
 
-`setupCommand` 和 `testPatch` 可以不写。Verified 的 Python 任务没有这两项。`repo` 不带协议时，按 `https://github.com/<repo>.git` clone。
+`setupCommand` 和 `testPatch` 可以不写。Verified 的 Python 任务没有这两项。`repo` 不带协议时，url 是 `https://github.com/<repo>.git`。取下来的工作区只有 `baseCommit` 这一个提交。
 
-`setupCommand`：checkout 之后、起 agent 之前，在 clone 目录里用 `sh -c` 执行，时限是 `timeoutSec`。退出码非 0，包括这条命令自己超时，记 `error`，`reason` 为 `setup-failed`，不起 agent，不跑测试。`timeout` 这个 reason 只用于 agent 和 `testCommand`。`setup-failed` 记进 `errorRate`：环境没准备好，和上下文策略无关，但分母仍是整份任务列表。
+`setupCommand`：取出 `baseCommit` 之后、起 agent 之前，在工作目录里用 `sh -c` 执行，时限是 `timeoutSec`。退出码非 0，包括这条命令自己超时，记 `error`，`reason` 为 `setup-failed`，不起 agent，不跑测试。`timeout` 这个 reason 只用于 agent 和 `testCommand`。`setup-failed` 记进 `errorRate`：环境没准备好，和上下文策略无关，但分母仍是整份任务列表。
 
 `testPatch`：unified diff。agent 结束、session 已复制、并且 `git status --porcelain` 非空之后才应用。从 `diff --git` 头取出路径，base 上有的文件执行 `git checkout <baseCommit> -- <file>`，base 上没有的文件执行 `rm -f`，然后 `git apply`。`git apply` 失败记 `error`，`reason` 为 `test-patch-failed`，不跑 `testCommand`。agent 运行期间工作区里没有这份隐藏测试。
 
@@ -83,9 +83,11 @@ node apps/sage/bin/sage.mjs bench run \
   --out bench/runs/<时间戳>-ts-passthrough
 ```
 
+工作区不能带着 `baseCommit` 之后的历史。agent 会跑 `git log --all`、`git show <sha>`、`git log --grep` 去翻上游是怎么改的；全量 clone 再 checkout 会把后来的修复提交、分支和标签留在仓库里，模型能把答案抄出来，通过率就失真了。
+
 每个任务：
 
-1. clone 到临时目录，`checkout baseCommit`
+1. 在临时目录 `git init`，`git remote add origin <url>`，`git fetch --depth 1 --no-tags origin <baseCommit>`，`git checkout -q FETCH_HEAD`，再 `git remote remove origin`。fetch 失败记 `error`，`reason` 为 `clone-failed`。起 agent 之前，`git rev-list --all --count` 必须是 1，`git tag` 和 `git remote` 必须为空；否则记 `error`，`reason` 为 `clone-unclean`，不起 agent，也不跑 `setupCommand`
 2. 有 `setupCommand` 时，在该目录 `sh -c` 执行，时限 `timeoutSec` 秒。退出码非 0 记 `error`，`reason` 为 `setup-failed`，不起 agent，不跑测试
 3. 在该目录执行 `sage -p <problem>`。写了 `--budget` 时，argv 里同时有 `--budget <tokens>`。时限 `timeoutSec` 秒
 4. 复制 session。这一步在应用 `testPatch` 之前，session 里没有隐藏测试
@@ -93,7 +95,7 @@ node apps/sage/bin/sage.mjs bench run \
 6. `git status --porcelain` 为空则记 `empty-patch`，不应用 `testPatch`，不跑测试
 7. 有 `testPatch` 时，把 diff 涉及的文件还原到 `baseCommit`（base 没有的文件删掉），再 `git apply`。失败记 `error`，`reason` 为 `test-patch-failed`，不跑测试
 8. 执行 `testCommand`，同样受 `timeoutSec` 限制。退出码 0 记 `resolved`，否则记 `error`，`reason` 为 `tests-failed`
-9. clone、sage 启动失败、diff 失败也记 `error`，`reason` 是 `clone-failed`、`sage-failed` 或 `diff-failed`
+9. fetch 失败记 `clone-failed`。工作区不是恰好一个提交，或还留着 tag、remote，记 `clone-unclean`。sage 启动失败、diff 失败记 `sage-failed` 或 `diff-failed`
 
 `ts-mini.json` 的 install / test 秒数（2026-09-23，Node 22.20.0，npm 与 pnpm 缓存是温的）。`test@base` 是打上隐藏测试后失败那次，`test@fix` 是再打上 gold patch 后通过那次。dayjs 的 install 首轮是 31.5s，表内 7.2s 是温缓存。vue core 冷的 pnpm store 大约 14s，darkreader 冷的 `npm ci` 大约 20s。
 
