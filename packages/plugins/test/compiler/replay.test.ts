@@ -93,6 +93,8 @@ for (const spec of REPLAY_CASES) {
         overrun: 0,
         omitted: 0,
         expands: 0,
+        frozenTokens: index === 0 ? 0 : 1,
+        staleOmittable: 0,
       });
     });
   });

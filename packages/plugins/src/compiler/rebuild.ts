@@ -11,6 +11,9 @@
  * stub, using `originalTokens` and the logged tool_use. A summary chunk
  * rebuilds that stub, a newline, and
  * `summary (model notes, not evidence): ` plus the logged summary string.
+ * An epoch head that is already one of the projected history messages is not
+ * inserted again. The compiler leaves that message in place when it is a
+ * logged history message rather than a claim.
  *
  * Intentionally not in the Log: this function. It only reads entries the
  * kernel already wrote.
@@ -57,7 +60,12 @@ export function rebuildFromLog(
   const epoch = epochOf(manifest);
   const epochHead = epochHeadFor(prefix, epoch);
   const messages = [...history];
-  if (epochHead) messages.unshift(structuredClone(epochHead));
+  if (
+    epochHead &&
+    !history.some((message) => sameMessage(message, epochHead))
+  ) {
+    messages.unshift(structuredClone(epochHead));
+  }
   appendTail(messages, tailBlocks(path, manifestIndex));
   return { head, messages };
 }
@@ -155,6 +163,10 @@ function headerPayload(entry: StoredEntry | undefined): {
       ? (payload.tools as ToolDef[])
       : undefined,
   };
+}
+
+function sameMessage(left: Message, right: Message): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function epochOf(entry: StoredEntry): number {

@@ -17,6 +17,9 @@
  * later turns freeze the policy under test, not the recorded one.
  * `prefixStable` is true on the first turn, and afterwards when the previous
  * recompiled head matches and its messages are a JSON prefix of this turn.
+ * `epoch`, `rebuild`, `oldTokens`, `newTokens`, `decisionReason`, and
+ * `chunkTiers` copy that turn's recompiled manifest. `compareOffline` does
+ * not print them.
  * `omittedIds` are manifest chunks at tier `none`. `likelyNeededOmissions`
  * are omitted tool chunks whose `toolUseId` (the id after `#`) or an
  * `accesses.key` occurs in a later assistant's text or tool_use input.
@@ -59,6 +62,12 @@ export type TurnDiff = {
   prefixStable: boolean;
   omittedIds: string[];
   likelyNeededOmissions: string[];
+  epoch: number;
+  rebuild: boolean;
+  oldTokens: number;
+  newTokens: number;
+  decisionReason: string;
+  chunkTiers: { id: string; tier: string }[];
 };
 
 const SCORER_NOTE = "scorer:offline-rule";
@@ -113,6 +122,7 @@ export async function replayOffline(
       ? recordedTokens
       : estimateTokens(view.manifest);
     const omittedIds = omittedChunkIds(view.manifest);
+    const decision = view.manifest.epochDecision;
     diffs.push({
       turn: slice.turn,
       recordedTokens,
@@ -126,6 +136,15 @@ export async function replayOffline(
         slice,
         deps.tools,
       ),
+      epoch: view.epoch,
+      rebuild: decision?.rebuild ?? false,
+      oldTokens: decision?.oldTokens ?? 0,
+      newTokens: decision?.newTokens ?? 0,
+      decisionReason: decision?.reason ?? "",
+      chunkTiers: view.manifest.chunks.map((chunk) => ({
+        id: chunk.id,
+        tier: chunk.tier,
+      })),
     });
     if (!policy.passthrough) commitView(shadow, shadowId, view, ctx);
   }

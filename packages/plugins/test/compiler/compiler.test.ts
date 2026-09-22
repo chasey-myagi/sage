@@ -106,6 +106,8 @@ it("writes downgrade reasons and the budget object onto the manifest", async () 
     overrun: 0,
     omitted: 0,
     expands: 0,
+    frozenTokens: 0,
+    staleOmittable: 0,
   });
   expect(view.manifest.chunks).toEqual([
     { id: "seq:0", tier: "full", reason: "kept", tokens: 2 },
@@ -158,6 +160,8 @@ it("keeps a pinned claim and records the overrun when the pin exceeds the budget
     overrun: 10002,
     omitted: 0,
     expands: 0,
+    frozenTokens: 0,
+    staleOmittable: 0,
   });
   expect(JSON.stringify(view.messages)).not.toContain("x-full");
   expect(JSON.stringify(view.messages)).not.toContain("x-line");
@@ -420,6 +424,8 @@ it("matches passthrough messages when no claim is submitted and records chunk de
     overrun: 0,
     omitted: 0,
     expands: 0,
+    frozenTokens: 0,
+    staleOmittable: 0,
   });
 });
 

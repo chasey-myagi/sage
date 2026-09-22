@@ -13,9 +13,10 @@
  * they differ from the default. The kernel does not decide that; it only
  * checks the shape.
  *
- * `manifest.budget` is either a finite number or `{ total, used, overrun }`
- * with three finite numbers. Both shapes are valid. The kernel does not
- * interpret the object.
+ * `manifest.budget` is either a finite number or an object with finite
+ * `total`, `used`, and `overrun`. `frozenTokens` and `staleOmittable`, when
+ * present, are finite numbers. Other fields are left unchecked. The kernel
+ * does not interpret the object.
  * `epochDecision`, `calibration`, and `cache` are optional objects. The
  * kernel checks that shape and does not read the fields.
  *
@@ -59,7 +60,15 @@ export type ModelChangePayload = {
 export type ManifestPayload = {
   epoch: number;
   turn: number;
-  budget?: number | { total: number; used: number; overrun: number };
+  budget?:
+    | number
+    | {
+        total: number;
+        used: number;
+        overrun: number;
+        frozenTokens?: number;
+        staleOmittable?: number;
+      };
   claims: unknown[];
   chunks: unknown[];
   anomalies: unknown[];
@@ -151,19 +160,31 @@ function isManifest(payload: unknown): payload is ManifestPayload {
   );
 }
 
-function isBudget(
-  value: unknown,
-): value is number | { total: number; used: number; overrun: number } {
+function isBudget(value: unknown): value is
+  | number
+  | {
+      total: number;
+      used: number;
+      overrun: number;
+      frozenTokens?: number;
+      staleOmittable?: number;
+    } {
   if (typeof value === "number") return Number.isFinite(value);
   if (!isRecord(value)) return false;
-  return (
-    typeof value.total === "number" &&
-    Number.isFinite(value.total) &&
-    typeof value.used === "number" &&
-    Number.isFinite(value.used) &&
-    typeof value.overrun === "number" &&
-    Number.isFinite(value.overrun)
-  );
+  if (!isFiniteNumber(value.total)) return false;
+  if (!isFiniteNumber(value.used)) return false;
+  if (!isFiniteNumber(value.overrun)) return false;
+  if (!isOptionalFinite(value.frozenTokens)) return false;
+  if (!isOptionalFinite(value.staleOmittable)) return false;
+  return true;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isOptionalFinite(value: unknown): boolean {
+  return value === undefined || isFiniteNumber(value);
 }
 
 function isTarget(payload: unknown): payload is TargetPayload {
