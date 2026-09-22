@@ -13,7 +13,8 @@
  * recent drops to none, reason `budget:oldest-first`, until the kept total
  * fits `remainingBudget`. User and assistant prose stay tier full, reason
  * `kept`. `used` sums tokens of chunks that are not none. `overrun` is how
- * far `used` still sits above `remainingBudget`.
+ * far `used` still sits above `remainingBudget`. `summary` is not set here;
+ * a scorer may attach it when it chooses tier summary.
  *
  * Intentionally not in the Log: this function. Callers copy decisions onto
  * the manifest entry.
@@ -23,7 +24,13 @@ import type { Access } from "@sage/core";
 import type { Chunk } from "./chunks.js";
 import type { Tier } from "./claim.js";
 
-export type ChunkDecision = { id: string; tier: Tier; reason: string };
+export type ChunkDecision = {
+  id: string;
+  tier: Tier;
+  reason: string;
+  /** Set by a scorer for tier summary. eliminate never writes this. */
+  summary?: string;
+};
 
 export function eliminate(
   chunks: Chunk[],

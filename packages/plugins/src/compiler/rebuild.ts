@@ -8,7 +8,9 @@
  * stored this content hash. System and tool text come from the latest
  * request_header that still carries them for the same hash. A manifest chunk
  * at tier none whose id contains `#` rebuilds that tool_result as the same
- * stub, using `originalTokens` and the logged tool_use.
+ * stub, using `originalTokens` and the logged tool_use. A summary chunk
+ * rebuilds that stub, a newline, and
+ * `summary (model notes, not evidence): ` plus the logged summary string.
  *
  * Intentionally not in the Log: this function. It only reads entries the
  * kernel already wrote.
@@ -22,7 +24,7 @@ import type {
   ToolDef,
   ToolUseBlock,
 } from "@sage/provider/contract";
-import { replaceToolResults } from "./apply.js";
+import { renderSummary, replaceToolResults } from "./apply.js";
 import type { Chunk } from "./chunks.js";
 import { renderStub } from "./stub.js";
 
@@ -260,7 +262,7 @@ function stubsFor(
 ): Map<string, string> {
   const stubs = new Map<string, string>();
   for (const chunk of loggedChunks(entry)) {
-    if (chunk.tier !== "none") continue;
+    if (chunk.tier !== "none" && chunk.tier !== "summary") continue;
     const mark = chunk.id.indexOf("#");
     if (mark < 0) continue;
     const toolUseId = chunk.id.slice(mark + 1);
@@ -279,6 +281,10 @@ function stubsFor(
       tokens,
       accesses: [],
     };
+    if (chunk.tier === "summary") {
+      stubs.set(toolUseId, renderSummary(rendered, chunk.summary ?? ""));
+      continue;
+    }
     stubs.set(toolUseId, renderStub(rendered));
   }
   return stubs;
@@ -288,6 +294,7 @@ function loggedChunks(entry: StoredEntry | undefined): {
   id: string;
   tier: string;
   originalTokens?: number;
+  summary?: string;
 }[] {
   if (
     !entry ||
@@ -296,7 +303,12 @@ function loggedChunks(entry: StoredEntry | undefined): {
   ) {
     return [];
   }
-  const chunks: { id: string; tier: string; originalTokens?: number }[] = [];
+  const chunks: {
+    id: string;
+    tier: string;
+    originalTokens?: number;
+    summary?: string;
+  }[] = [];
   for (const value of entry.payload.chunks) {
     if (!isRecord(value) || typeof value.id !== "string") continue;
     if (typeof value.tier !== "string") continue;
@@ -307,6 +319,7 @@ function loggedChunks(entry: StoredEntry | undefined): {
         typeof value.originalTokens === "number"
           ? value.originalTokens
           : undefined,
+      summary: typeof value.summary === "string" ? value.summary : undefined,
     });
   }
   return chunks;

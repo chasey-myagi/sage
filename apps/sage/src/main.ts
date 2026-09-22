@@ -7,6 +7,9 @@
  * `<cwd>/.sage/sessions`. The view
  * is contextCompiler with budget 40000, the four first-party claims, and
  * the default route policy, unless `--passthrough` selects passthroughView.
+ * `--scorer model` installs a model scorer on the root compiler. It reuses
+ * the assembled adapters and the session model. The default scorer is the
+ * deterministic rule scorer.
  * Two API keys assemble two adapters. One key routes only inside that
  * provider. stdout is one JSON
  * RunSummary. The kernel appends each turn's manifest. Exit 0 when the
@@ -31,8 +34,10 @@ import {
   contextCompiler,
   costTierPolicy,
   expandTool,
+  modelScorer,
   progressLedger,
   type RoutePolicy,
+  type Scorer,
   sensitivePolicy,
   subtaskTools,
   systemReminder,
@@ -69,6 +74,7 @@ export function createCodingSession(opts: {
   sampling?: Sampling;
   budget?: number;
   passthrough?: boolean;
+  scorer?: Scorer;
 }): CodingSession {
   if (!opts.adapter && !opts.adapters) {
     throw new Error("createCodingSession requires adapter or adapters");
@@ -129,6 +135,7 @@ export function createCodingSession(opts: {
           budget: opts.budget ?? 40000,
           claims,
           route,
+          ...(opts.scorer ? { scorer: opts.scorer } : {}),
         }),
     sampling: opts.sampling,
   });
@@ -173,6 +180,13 @@ export async function runCli(
     adapters,
     model: { provider: auth.provider, model: auth.model },
     passthrough: parsed.passthrough,
+    scorer:
+      parsed.scorer === "model"
+        ? modelScorer({
+            adapters,
+            model: { provider: auth.provider, model: auth.model },
+          })
+        : undefined,
   });
   let turn = 0;
   session.hooks.observe("turn_start", (payload) => {
@@ -255,6 +269,7 @@ type Parsed =
       provider?: string;
       model?: string;
       passthrough: boolean;
+      scorer?: "rule" | "model";
     }
   | { ok: false; message: string };
 
@@ -263,6 +278,7 @@ export function parseArgs(argv: string[]): Parsed {
   let provider: string | undefined;
   let model: string | undefined;
   let passthrough = false;
+  let scorer: "rule" | "model" | undefined;
   const positional: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? "";
@@ -280,6 +296,12 @@ export function parseArgs(argv: string[]): Parsed {
       if (taken.name === "print") task = taken.value;
       if (taken.name === "provider") provider = taken.value;
       if (taken.name === "model") model = taken.value;
+      if (taken.name === "scorer") {
+        if (taken.value !== "rule" && taken.value !== "model") {
+          return { ok: false, message: usage() };
+        }
+        scorer = taken.value;
+      }
       continue;
     }
     positional.push(arg);
@@ -289,11 +311,11 @@ export function parseArgs(argv: string[]): Parsed {
   }
   if (task === undefined) task = positional.join(" ");
   if (!task) return { ok: false, message: usage() };
-  return { ok: true, task, provider, model, passthrough };
+  return { ok: true, task, provider, model, passthrough, scorer };
 }
 
 function usage(): string {
-  return "usage: sage [-p | --print] <task> [--provider anthropic|openai] [--model <id>] [--passthrough]";
+  return "usage: sage [-p | --print] <task> [--provider anthropic|openai] [--model <id>] [--passthrough] [--scorer rule|model]";
 }
 
 function take(
@@ -303,7 +325,7 @@ function take(
 ):
   | {
       kind: "flag";
-      name: "print" | "provider" | "model";
+      name: "print" | "provider" | "model" | "scorer";
       value: string;
       next: number;
     }
@@ -323,18 +345,21 @@ function take(
 
 function flagName(
   arg: string,
-): "print" | "provider" | "model" | "unknown" | undefined {
+): "print" | "provider" | "model" | "scorer" | "unknown" | undefined {
   if (arg === "--print" || arg === "-p") return "print";
   if (arg === "--provider") return "provider";
   if (arg === "--model") return "model";
+  if (arg === "--scorer") return "scorer";
   if (arg.startsWith("-")) return "unknown";
   return undefined;
 }
 
 function inlineFlag(
   arg: string,
-): { name: "print" | "provider" | "model"; value: string } | undefined {
-  const names = ["print", "provider", "model"] as const;
+):
+  | { name: "print" | "provider" | "model" | "scorer"; value: string }
+  | undefined {
+  const names = ["print", "provider", "model", "scorer"] as const;
   for (const name of names) {
     const prefix = `--${name}=`;
     if (!arg.startsWith(prefix)) continue;
