@@ -1,11 +1,14 @@
 /**
  * Frozen chunk decisions for one view epoch.
  *
- * Contract: the freeze record is the first manifest after the `view_epoch`
- * that opened `epoch`. Epoch 0 with no `view_epoch` uses the first manifest
- * before any later `view_epoch`. No such manifest means this is the epoch's
- * first turn, and `frozenDecisions` returns undefined. `frozenSeqCeiling` is
- * the highest message seq before that manifest. Later messages are new.
+ * Contract: decisions accumulate across every manifest in the epoch, starting
+ * at that epoch's `view_epoch`. Epoch 0 with no `view_epoch` starts at the
+ * first manifest and stops at the next `view_epoch`. Chunks merge in
+ * appearance order. A later manifest does not override an id already
+ * recorded; the first tier is the one that stays frozen. No manifest means
+ * this is the epoch's first turn, and `frozenDecisions` returns undefined.
+ * `frozenSeqCeiling` is the highest message seq before the epoch's first
+ * manifest. Later messages are new.
  *
  * `currentEpoch` is the latest `view_epoch` on the path, or 0 when the path
  * has none. A subtask recompile reads the freeze from that epoch on the
@@ -25,9 +28,11 @@ export function frozenDecisions(
   path: readonly StoredEntry[],
   epoch: number,
 ): Map<string, ChunkDecision> | undefined {
-  const found = firstManifest(path, epoch);
-  if (!found) return undefined;
-  return chunkMap(found.entry);
+  const manifests = manifestsInEpoch(path, epoch);
+  if (manifests.length === 0) return undefined;
+  const map = new Map<string, ChunkDecision>();
+  for (const entry of manifests) mergeFirst(map, entry);
+  return map;
 }
 
 export function frozenSeqCeiling(
@@ -73,43 +78,49 @@ function firstManifest(
   path: readonly StoredEntry[],
   epoch: number,
 ): { index: number; entry: StoredEntry } | undefined {
+  const entry = manifestsInEpoch(path, epoch)[0];
+  if (!entry) return undefined;
+  const index = path.indexOf(entry);
+  if (index < 0) return undefined;
+  return { index, entry };
+}
+
+function manifestsInEpoch(
+  path: readonly StoredEntry[],
+  epoch: number,
+): StoredEntry[] {
   let start = -1;
   let opened = false;
   for (let index = 0; index < path.length; index += 1) {
     const entry = path[index];
-    if (entry?.kind !== "view_epoch" || !isRecord(entry.payload)) {
-      continue;
-    }
+    if (entry?.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
     if (entry.payload.epoch !== epoch) continue;
     start = index;
     opened = true;
     break;
   }
-  if (!opened && epoch !== 0) return undefined;
+  if (!opened && epoch !== 0) return [];
+  const found: StoredEntry[] = [];
   for (let index = start + 1; index < path.length; index += 1) {
     const entry = path[index];
     if (!entry) continue;
     if (entry.kind === "view_epoch") break;
-    if (entry.kind === "manifest") return { index, entry };
+    if (entry.kind === "manifest") found.push(entry);
   }
-  return undefined;
+  return found;
 }
 
-function chunkMap(entry: StoredEntry): Map<string, ChunkDecision> {
-  const map = new Map<string, ChunkDecision>();
-  if (!isRecord(entry.payload) || !Array.isArray(entry.payload.chunks)) {
-    return map;
-  }
+function mergeFirst(map: Map<string, ChunkDecision>, entry: StoredEntry): void {
+  if (!isRecord(entry.payload) || !Array.isArray(entry.payload.chunks)) return;
   for (const chunk of entry.payload.chunks) {
     if (!isRecord(chunk) || typeof chunk.id !== "string") continue;
-    if (!isTier(chunk.tier)) continue;
+    if (!isTier(chunk.tier) || map.has(chunk.id)) continue;
     map.set(chunk.id, {
       id: chunk.id,
       tier: chunk.tier,
       reason: typeof chunk.reason === "string" ? chunk.reason : "kept",
     });
   }
-  return map;
 }
 
 function isTier(value: unknown): value is Tier {

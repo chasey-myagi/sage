@@ -4,7 +4,9 @@
  * Contract: `bench run` reads a JSON array of
  * `{ id, repo, baseCommit, problem, testCommand, timeoutSec }`. It exits 2
  * when the selected provider has no API key, before it reads the task file
- * or clones anything. Each task is cloned into a temp directory, checked out
+ * or clones anything. With no `--provider`, any preset env key is enough,
+ * in the same order and with the same missing-key message as `sage -p`.
+ * Each task is cloned into a temp directory, checked out
  * at `baseCommit`, then `sage -p <problem>` runs there. An empty `git status`
  * is `empty-patch` and the test command is not run. A patch whose test
  * command exits 0 is `resolved`. Anything else is `error` with a short
@@ -535,6 +537,14 @@ function parseRun(argv: string[]):
   };
 }
 
+const AUTO_PROVIDERS = [
+  "deepseek",
+  "dashscope",
+  "moonshot",
+  "openai",
+  "anthropic",
+] as const;
+
 function missingKey(
   provider: string | undefined,
   env: NodeJS.ProcessEnv,
@@ -544,8 +554,15 @@ function missingKey(
     if (!preset) return `Unknown provider: ${provider}`;
     return env[preset.envKey] ? undefined : `Missing ${preset.envKey}`;
   }
-  if (env.ANTHROPIC_API_KEY || env.OPENAI_API_KEY) return undefined;
-  return "Missing ANTHROPIC_API_KEY or OPENAI_API_KEY";
+  const presets = AUTO_PROVIDERS.flatMap((name) => {
+    const preset = resolvePreset(name);
+    return preset ? [preset] : [];
+  });
+  if (presets.some((preset) => env[preset.envKey])) return undefined;
+  const keys = presets.map((preset) => preset.envKey);
+  if (keys.length === 0) return "Missing API key";
+  if (keys.length === 1) return `Missing ${keys[0]}`;
+  return `Missing ${keys.slice(0, -1).join(", ")}, or ${keys.at(-1)}`;
 }
 
 function parseTask(value: unknown, index: number): BenchTask {

@@ -28,7 +28,7 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 进视图的申领单按所选档位计 token，总和受预算约束。清单里每张申领单都有 tier、reason、tokens；`budget` 记下 total、used、overrun。
 
-历史按块估算。token 影响等于淘汰之后仍保留的块的 token 合计；降到 none 的工具块不再按原文占用剩余预算。清单里该块的 `tokens` 改记桩文本本身，`originalTokens` 保留原文估算。`summary` 档同样改记桩加笔记的长度，`used` 按这个长度计。`budget` 除了 total、used、overrun，还有 omitted 和 expands。
+历史按块估算。token 影响等于淘汰之后仍保留的块的 token 合计；降到 none 的工具块不再按原文占用剩余预算。清单里该块的 `tokens` 改记桩文本本身，`originalTokens` 保留原文估算。`summary` 档同样改记桩加笔记的长度，`used` 按这个长度计。`budget` 除了 total、used、overrun，还有 omitted、expands、frozenTokens 和 staleOmittable。`frozenTokens` 是本轮冻结视图里档位不是 none 的已冻结块的 tokens 合计。`staleOmittable` 是其中若现在做一次不带冻结的全量重编译会变成 none 的那部分。重开当轮这两个数仍按重开前那份冻结视图计算。阶段第一轮没有冻结记录，两者都是 0。子任务重编译不比较重开，这两个数是 0。
 
 ### KV cache effect
 
@@ -38,7 +38,7 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 ["head", {afterMessage: 冻结前缀最后一条}, {afterMessage: 最后一条}]
 ```
 
-`head` 盖住 system 和工具 schema。第二个断点落在本阶段第一份清单覆盖到的历史末尾（epoch 头加上当时的 seq 上限）。第三个断点落在当前最后一条消息。新块从那个 seq 之后才进入淘汰，近期窗口也只在这些新块里数。阶段重开时若用模型打分，那一次调用是上一轮主请求的前缀延长：头和历史逐字节复用，指令只追加在尾部。
+`head` 盖住 system 和工具 schema。第二个断点落在本阶段第一份清单覆盖到的历史末尾（epoch 头加上当时的 seq 上限）。第三个断点落在当前最后一条消息。阶段内，一个块的档位以它第一次出现在本阶段清单里的那次为准，后面的清单不改它。`superseded` 和预算降档都不作用于已冻结的块；它们可以过时，但不能变。淘汰只决定还没冻结的新块，输入里带上已冻结块作只读参考：新块在历史末尾，不会被更早的块盖掉，所以第一次进清单时是 `recent` 或 `full`。预算先扣掉已冻结且仍保留的 token，只把新块从最旧开始降到 none，降完的档位同样冻结。缓存断点仍停在阶段第一份清单的 seq 上限，新内容写在那个断点之后。阶段重开时若用模型打分，那一次调用是上一轮主请求的前缀延长：头和历史逐字节复用，指令只追加在尾部。
 
 开不开新阶段由这道不等式批准：
 
@@ -53,7 +53,7 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 - 回本轮数 = 额外成本 ÷ 每轮节省，向上取整
 - 额外成本不大于 0 就是立即回本
 
-读价是 `cacheRead / input`。写价是 `max(cacheWrite, input) / input`。缓存写价为 0 不是免费：新前缀第一次仍按未命中的输入价付一遍（无附加费 ≠ 免费，首次仍付未命中价）。Anthropic 的写价倍率是 1.25，DeepSeek 和 OpenAI 是 1.0。目录没有定价时退回 0.1 与 1.25。旧视图 token 用上一轮 usage 实测锚定，新视图先估算再乘以 measured/estimated。省下的比例小于 `minSavingsRatio`（默认 0.2）就不开新阶段。视图估算超过上下文窗口的 0.9 时强制重开一次；这是安全阀，不是策略。重开后仍然超限就记在 `budget.overrun`，不再为同一道安全阀重复重开。
+读价是 `cacheRead / input`。写价是 `max(cacheWrite, input) / input`。缓存写价为 0 不是免费：新前缀第一次仍按未命中的输入价付一遍（无附加费 ≠ 免费，首次仍付未命中价）。Anthropic 的写价倍率是 1.25，DeepSeek 和 OpenAI 是 1.0。目录没有定价时退回 0.1 与 1.25。旧视图 token 是冻结视图的 `used`（申领单加上按冻结档位保留的块），乘上一轮 usage 实测除以当时 `budget.used` 的倍率；路径上没有校准则倍率是 1。新视图 token 是同一轮对全部块不带冻结再跑一遍淘汰、加上申领单之后的 `used`，乘同一个倍率。两者分开之后，不等式才有差值：重开能省下的，就是冻结视图里已经过时、但为了前缀没被改掉的那部分。省下的比例小于 `minSavingsRatio`（默认 0.2）就不开新阶段。视图估算超过上下文窗口的 0.9 时强制重开一次；这是安全阀，不是策略。重开后仍然超限就记在 `budget.overrun`，不再为同一道安全阀重复重开。重开那一轮的视图是全量重编译，随后按新阶段重新冻结。
 
 `cacheHitRatio` 仍是实测读 token 除以 `cache.expectedReadTokens`，口径不改，代码也不把差值抹平。DeepSeek 的前缀缓存以 64 token 为一块，而且只认完全相同的前缀。人工比对估算和实测时，相差不到一块是块对齐，不是没命中。
 

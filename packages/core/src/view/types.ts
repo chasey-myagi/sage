@@ -50,6 +50,10 @@ export type BudgetReport = {
   total: number;
   used: number;
   overrun: number;
+  /** Kept tokens of chunks whose tier was copied from this epoch's freeze. */
+  frozenTokens?: number;
+  /** Subset of `frozenTokens` a from-scratch eliminate would set to none. */
+  staleOmittable?: number;
 };
 
 export type EpochDecisionReport = {
@@ -79,7 +83,10 @@ export type CacheReport = {
 export type Manifest = {
   epoch: number;
   turn: number;
-  /** A finite number, or the compiler's `{ total, used, overrun }` report. */
+  /**
+   * A finite number, or the compiler's budget report. The kernel does not
+   * read `frozenTokens` or `staleOmittable`.
+   */
   budget?: number | BudgetReport;
   claims: ClaimRecord[];
   chunks: ChunkRecord[];

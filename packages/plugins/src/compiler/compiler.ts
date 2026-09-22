@@ -13,9 +13,19 @@
  * and `expands` (assistant `expand` tool_use calls already on the path).
  * Each such call appends `;expanded_at:<turn>` to that chunk's reason, where
  * `<turn>` is the preceding manifest's turn. The tier is unchanged.
- * Inside an epoch, chunk decisions from that epoch's first manifest are
- * reused. New chunks go through eliminate, and the recent window counts only
- * those new chunks. The first turn of an epoch has no freeze record.
+ * Inside an epoch, every manifest contributes chunk decisions. The first
+ * tier recorded for an id stays; later manifests do not override it. Chunks
+ * already in that map are copied. eliminate sees those frozen chunks with
+ * their tokens zeroed, as a read-only reference, plus the new chunks. Only
+ * the new chunks keep eliminate's tier. Their first turn is recent or full,
+ * unless oldest-first budget drops a new chunk; that drop is frozen too.
+ * Frozen kept tokens are spent before that budget runs, so a frozen chunk
+ * is not demoted. The first turn of an epoch has no freeze record.
+ * `oldTokens` is the frozen view's used times the calibration ratio.
+ * `newTokens` is a from-scratch eliminate of every chunk, plus claims, times
+ * the same ratio. `budget.frozenTokens` sums tokens of frozen chunks that
+ * are not none. `budget.staleOmittable` is the part a from-scratch eliminate
+ * would set to none. Both describe the frozen view even on a rebuild turn.
  * A new epoch opens when `decideEpoch` says rebuild: the view is a full
  * recompile, `epoch` is the previous epoch plus one, and `epochStart.reason`
  * is `cost:<paybackTurns>`, `cost:immediate`, or `context-window-guard`.
@@ -54,7 +64,8 @@
  * those chunk tiers. The child's own messages are `own:` chunks and go
  * through `eliminate`. A tail claim `subtask-query` carries `subtask.query`
  * and is appended after that prefix. `decideEpoch` is not called. The
- * decision reason is `subtask:no-rebuild`.
+ * decision reason is `subtask:no-rebuild`. `budget.frozenTokens` and
+ * `budget.staleOmittable` are 0; this compile does not compare a reopen.
  *
  * Intentionally not in the Log: claim providers, the token counter, the route
  * policy, the scorer function, and the live CompiledView. The kernel persists
@@ -165,6 +176,11 @@ export function contextCompiler(opts: {
       const fresh = prior
         ? assemble({ freezeHead: false, prior: undefined })
         : stay;
+      const freezeStats = freezeAccounting(
+        prior,
+        stay.chunkRecords,
+        fresh.chunkRecords,
+      );
       const calibration = calibrationFor(ctx.path);
       const ratio = calibration?.ratio ?? 1;
       const rates = ratesFor(ctx.prepared.pricing);
@@ -278,6 +294,8 @@ export function contextCompiler(opts: {
         omitted: chosen.chunkRecords.filter((record) => record.tier === "none")
           .length,
         expands: countExpands(ctx.path),
+        frozenTokens: freezeStats.frozenTokens,
+        staleOmittable: freezeStats.staleOmittable,
       };
       const manifest = {
         epoch,
@@ -490,25 +508,24 @@ function decideChunks(
     const eliminated = eliminate(chunks, { keepRecent, remainingBudget });
     return { decisions: eliminated.decisions, used: eliminated.used };
   }
-  const fresh = chunks.filter((chunk) => !prior.has(chunk.id));
   let frozenKept = 0;
   for (const chunk of chunks) {
     const kept = prior.get(chunk.id);
     if (!kept || kept.tier === "none") continue;
     frozenKept += chunk.tokens;
   }
-  const eliminated = eliminate(fresh, {
+  const input = chunks.map((chunk) =>
+    prior.has(chunk.id) ? { ...chunk, tokens: 0 } : chunk,
+  );
+  const eliminated = eliminate(input, {
     keepRecent,
     remainingBudget: Math.max(0, remainingBudget - frozenKept),
   });
-  const freshById = new Map(
-    eliminated.decisions.map((decision) => [decision.id, decision]),
-  );
-  const decisions = chunks.map((chunk) => {
+  const decisions = chunks.map((chunk, index) => {
     const kept = prior.get(chunk.id);
     if (kept) return { id: chunk.id, tier: kept.tier, reason: kept.reason };
     return (
-      freshById.get(chunk.id) ?? {
+      eliminated.decisions[index] ?? {
         id: chunk.id,
         tier: "full" as const,
         reason: "kept",
@@ -521,6 +538,23 @@ function decideChunks(
     used += chunks[index]?.tokens ?? 0;
   }
   return { decisions, used };
+}
+
+function freezeAccounting(
+  prior: Map<string, ChunkDecision> | undefined,
+  stay: readonly ChunkRow[],
+  fresh: readonly ChunkRow[],
+): { frozenTokens: number; staleOmittable: number } {
+  if (!prior) return { frozenTokens: 0, staleOmittable: 0 };
+  const freshById = new Map(fresh.map((row) => [row.id, row]));
+  let frozenTokens = 0;
+  let staleOmittable = 0;
+  for (const row of stay) {
+    if (!prior.has(row.id) || row.tier === "none") continue;
+    frozenTokens += row.tokens;
+    if (freshById.get(row.id)?.tier === "none") staleOmittable += row.tokens;
+  }
+  return { frozenTokens, staleOmittable };
 }
 
 function withStamps(reason: string, stamps: readonly string[]): string {
@@ -951,6 +985,8 @@ function compileSubtask(
     overrun: Math.max(0, used - opts.budget),
     omitted,
     expands: countExpands(ctx.path),
+    frozenTokens: 0,
+    staleOmittable: 0,
   };
   const claims: ManifestClaim[] = [
     {

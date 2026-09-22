@@ -203,7 +203,7 @@ it("keeps the expanded chunk omitted and shows the expand result in full next tu
         reason: "budget:oldest-first;expanded_at:3",
       }),
       expect.objectContaining({
-        id: "seq:11#ex",
+        id: "seq:12#ex",
         tier: "full",
         reason: "recent",
       }),

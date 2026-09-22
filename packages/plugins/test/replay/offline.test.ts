@@ -163,6 +163,12 @@ it("scales compiler policy tokens by that turn's calibration ratio", async () =>
       prefixStable: true,
       omittedIds: [],
       likelyNeededOmissions: [],
+      epoch: 0,
+      rebuild: false,
+      oldTokens: 2,
+      newTokens: 2,
+      decisionReason: "savings-too-small;pricing:fallback",
+      chunkTiers: [{ id: "seq:0", tier: "full" }],
     },
   ]);
 });
