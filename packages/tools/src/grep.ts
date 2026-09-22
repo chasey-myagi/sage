@@ -3,7 +3,11 @@
  *
  * Contract: uses ripgrep when `rg` is on PATH, otherwise walks files in
  * process. Hits are `file:line: text`, capped at 200 unless max_results is
- * set. Paths that escape the workspace return isError.
+ * set. A hit line longer than 300 characters keeps 300 characters around the
+ * match: the first 300 when the match starts inside that prefix, otherwise
+ * 150 characters on each side of the match start. Each cut side gains `…`,
+ * and the line ends with `[+N chars]`. Paths that escape the workspace
+ * return isError.
  *
  * Intentionally not in the Log: files that did not match. The hit list is
  * the tool result the session logs.
@@ -28,6 +32,8 @@ import {
 import { resolveInside, workspaceRelative } from "./path-safety.js";
 
 export const GREP_MAX_RESULTS = 200;
+export const GREP_MAX_LINE_CHARS = 300;
+const MATCH_CONTEXT = GREP_MAX_LINE_CHARS / 2;
 const MAX_FILE_BYTES = 1_000_000;
 const SKIP_DIRS = new Set([".git", ".sage", "node_modules"]);
 
@@ -36,7 +42,7 @@ const inputSchema = {
   properties: {
     pattern: {
       type: "string",
-      description: "Regular expression to search for.",
+      description: `Regular expression to search for. Matching lines longer than ${GREP_MAX_LINE_CHARS} characters are capped around the match.`,
     },
     path: {
       type: "string",
@@ -63,8 +69,7 @@ export function createGrep(cwd: string): HarnessTool {
   return {
     def: {
       name: "grep",
-      description:
-        "Search file contents with a regular expression. Use it to find where a string is used.",
+      description: `Search file contents with a regular expression. Use it to find where a string is used. Each hit line is capped at ${GREP_MAX_LINE_CHARS} characters around the match.`,
       inputSchema,
     },
     isReadOnly: true,
@@ -185,10 +190,7 @@ function collectHits(
       pushFile(hits, cwd, abs, regex, glob);
     }
   }
-  hits.sort((left, right) => {
-    if (left.file !== right.file) return left.file < right.file ? -1 : 1;
-    return left.line - right.line;
-  });
+  hits.sort(compareHits);
   return hits;
 }
 
@@ -220,8 +222,33 @@ function pushFile(
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
     if (!regex.test(line)) continue;
-    hits.push({ file: rel, line: index + 1, text: line });
+    hits.push({ file: rel, line: index + 1, text: clipHitText(line, regex) });
   }
+}
+
+function compareHits(left: Hit, right: Hit): number {
+  if (left.file !== right.file) return left.file < right.file ? -1 : 1;
+  return left.line - right.line;
+}
+
+function clipHitText(line: string, pattern: RegExp | undefined): string {
+  if (line.length <= GREP_MAX_LINE_CHARS) return line;
+  let index = 0;
+  if (pattern) {
+    const probe = new RegExp(pattern.source, pattern.flags.replaceAll("g", ""));
+    const found = probe.exec(line);
+    if (found) index = found.index;
+  }
+  const centered = index >= GREP_MAX_LINE_CHARS;
+  let start = centered ? index - MATCH_CONTEXT : 0;
+  let end = centered ? index + MATCH_CONTEXT : GREP_MAX_LINE_CHARS;
+  if (start < 0) start = 0;
+  if (end > line.length) end = line.length;
+  const shown = line.slice(start, end);
+  const lead = start > 0 ? "…" : "";
+  const tail = end < line.length ? "…" : "";
+  const omitted = line.length - shown.length;
+  return `${lead}${shown}${tail}[+${omitted} chars]`;
 }
 
 export function formatHits(hits: Hit[], maxResults: number): string {
@@ -281,6 +308,12 @@ async function searchWithRg(opts: {
   if (opts.glob) args.push("--glob", opts.glob);
   args.push(relRoot);
   const output = await runRg(args, workspace);
+  let matcher: RegExp | undefined;
+  try {
+    matcher = new RegExp(opts.pattern);
+  } catch {
+    matcher = undefined;
+  }
   const hits: Hit[] = [];
   for (const raw of output.split("\n")) {
     if (raw.length === 0) continue;
@@ -291,10 +324,10 @@ async function searchWithRg(opts: {
       .split(path.sep)
       .join("/");
     const line = Number(match[2]);
-    const text = match[3] ?? "";
     if (!Number.isInteger(line)) continue;
-    hits.push({ file, line, text });
+    hits.push({ file, line, text: clipHitText(match[3] ?? "", matcher) });
   }
+  hits.sort(compareHits);
   return hits;
 }
 
