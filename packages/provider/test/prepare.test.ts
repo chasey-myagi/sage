@@ -164,6 +164,18 @@ const known: { ref: ModelRef; contextWindow: number; pricing: Pricing }[] = [
     ref: { provider: "dashscope", model: "qwen-max" },
     contextWindow: 32_768,
     pricing: {
+      inputPerMTok: 2.4,
+      outputPerMTok: 9.6,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.24,
+      source: DASHSCOPE_SOURCE,
+      currency: "CNY",
+    },
+  },
+  {
+    ref: { provider: "dashscope", model: "qwen3.8-max" },
+    contextWindow: 32_768,
+    pricing: {
       inputPerMTok: 12,
       outputPerMTok: 36,
       cacheWritePerMTok: 0,
@@ -210,7 +222,7 @@ describe("catalog export", () => {
     );
     expect(
       provider.listModels("dashscope").map((entry) => entry.model),
-    ).toEqual(["qwen-plus", "qwen-max", "qwen-flash"]);
+    ).toEqual(["qwen-plus", "qwen-max", "qwen3.8-max", "qwen-flash"]);
     for (const entry of [
       ...provider.listModels("anthropic"),
       ...provider.listModels("openai"),

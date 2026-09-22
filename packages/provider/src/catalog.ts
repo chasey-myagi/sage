@@ -200,6 +200,19 @@ const MODELS: readonly CatalogEntry[] = [
     model: "qwen-max",
     contextWindow: 32_768,
     pricing: {
+      inputPerMTok: 2.4,
+      outputPerMTok: 9.6,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.24,
+      source: DASHSCOPE_SOURCE,
+      currency: "CNY",
+    },
+  },
+  {
+    provider: "dashscope",
+    model: "qwen3.8-max",
+    contextWindow: 32_768,
+    pricing: {
       inputPerMTok: 12,
       outputPerMTok: 36,
       cacheWritePerMTok: 0,
