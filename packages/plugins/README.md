@@ -89,6 +89,27 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 CLI `--scorer model` 给根编译器装上模型打分，沿用已装配的 adapter 和当前模型。不写这个参数就是规则打分。
 
+## 离线回放
+
+离线重编译拿不到模型对新视图的反应，所以这一路不打模型。`policy.scorer.name` 不是 `rule` 时，`replayOffline` 换成 `ruleScorer`，并在返回数组上挂一个不可枚举的 `scorerNote`。`compareOffline` 读到它，就在 Markdown 和 JSON 里写上 `scorer:offline-rule`。
+
+```ts
+replayOffline(store, sessionId, policy, { tools, system })
+compareOffline(diffsA, diffsB) // { markdown, json }
+```
+
+`policy` 是 `{ budget?, keepRecent?, scorer?, expectedTurns?, passthrough? }`。每一轮只用该轮视图提交之前的 path 前缀。编译器策略会把上一轮自己写下的清单放进影子 Log，后面的轮次冻结的是这套策略，不是录制时的清单。
+
+`recordedTokens` 是该轮 assistant `details.usage` 的输入合计（`inputOther + inputCacheRead + inputCacheCreation`）。`passthrough: true` 时 `policyTokens` 等于这个数，`saved` 为 0，已有回放 case 的 `prefixStable` 全为 true。编译器策略的 `policyTokens` 是该轮 `budget.used × calibration.ratio`，路径上没有校准则倍率是 1。Log 不存上下文窗口和定价，回放用 8000 和 `pricing: null`，与无 key 回放相同。
+
+`prefixStable` 在第一轮为 true。之后，上一轮重编译出的 head 与本轮相同，且上一轮的 messages 是本轮 messages 的 JSON 前缀，才为 true。
+
+`omittedIds` 是本轮清单里 tier 为 `none` 的块 id。`likelyNeededOmissions` 是其中的工具块：块 id 里 `#` 后面的 `toolUseId`，或该工具 `accesses(input)` 的 `key`，出现在更后面某条 assistant 的文本或 tool_use 输入里。这是「后来被引用」的代理。
+
+`compareOffline` 的表是每轮两边的 `policyTokens`、总 `saved`、前缀稳定轮数、疑似误删条数。Markdown 和 JSON 只有数字、id 和 `scorer:offline-rule`，没有块原文。
+
+下一步动作是否一致、任务成不成，由真机基准比较两套策略。见仓库 [`bench/README.md`](../../bench/README.md)。基准不进 CI。
+
 ## 第一方申领单
 
 - 系统提醒：模型在最后一条 user 消息末尾看到一行提醒；落点 `tail`；只有 line 档。

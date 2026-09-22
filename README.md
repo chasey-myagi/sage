@@ -24,6 +24,10 @@
 - 设计文档：[`docs/design/context-compiler.md`](./docs/design/context-compiler.md)
 - 总纲与路线：[issue #1](https://github.com/chasey-myagi/sage/issues/1)（M1 内核 → M2 claim 预算与清单 → M3 阶段与路由 → M4 打分器与回放）
 
+## 基准
+
+离线回放和真机基准手动触发，不进 CI。任务集、环境准备和三个数的口径见 [`bench/README.md`](./bench/README.md)。
+
 ## 协作规矩
 
 见 [`AGENTS.md`](./AGENTS.md)。
