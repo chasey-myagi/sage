@@ -34,4 +34,5 @@ export type {
   ToolUseBlock,
   Usage,
 } from "./contract/index.js";
+export { normalizeForApi } from "./normalize.js";
 export { OpenAIAdapter } from "./openai/index.js";

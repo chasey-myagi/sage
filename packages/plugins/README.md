@@ -55,6 +55,16 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 读价、写价来自目录里该模型的 `cacheRead / input` 与 `cacheWrite / input`。目录没有定价时退回 0.1 与 1.25。旧视图 token 用上一轮 usage 实测锚定，新视图先估算再乘以 measured/estimated。省下的比例小于 `minSavingsRatio`（默认 0.2）就不开新阶段。视图估算超过上下文窗口的 0.9 时强制重开一次；这是安全阀，不是策略。重开后仍然超限就记在 `budget.overrun`，不再为同一道安全阀重复重开。
 
+## 路由
+
+`contextCompiler({ route })` 只在本轮决定重开阶段时调用。策略没装，或者 `rebuild` 为 false，一次都不会进策略。
+
+传给策略的候选默认是当前 provider 的 `listModels`。要跨 provider，调用方在策略里换成已装配 provider 的目录并集。`costTierPolicy` 只看 ladder 上的型号，目录里定不了价的跳过。
+
+`sensitivePolicy` 看的是这次新视图的块，不是整段历史。tier 为 `none` 的块不触发规则。命中的 access key 写成 `sensitive:<key>`，对应 provider 从候选里拿掉。`withSensitiveFilter` 先裁候选，再跑里面的策略。`costTierPolicy({ pick: "cheapest-allowed" })` 在剩下的 ladder 里选 input 价最低的。
+
+选中的型号写在 `epochStart.model`。策略 reason 追加到清单的 `epochDecision.reason`，形如 `;route:<reason>`。适配器切换和 `model_change` 由内核落盘。
+
 ## 第一方申领单
 
 - 系统提醒：模型在最后一条 user 消息末尾看到一行提醒；落点 `tail`；只有 line 档。

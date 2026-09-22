@@ -402,6 +402,176 @@ describe("scenario 6 expand an omitted chunk", () => {
   });
 });
 
+describe("scenario 9 two adapters", () => {
+  it("switches to the cheapest model when both providers are assembled", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-route-"));
+    const anthropic = routedFaux("anthropic-messages");
+    const openai = routedFaux("openai-chat");
+    const { createCodingSession: create, defaultRoutePolicy } = await import(
+      "../src/main.ts"
+    );
+    expect(typeof defaultRoutePolicy).toBe("function");
+    const { session, store } = create({
+      cwd: dir,
+      adapters: {
+        anthropic: anthropic.adapter,
+        openai: openai.adapter,
+      },
+      model: { provider: "anthropic", model: "claude-sonnet-5" },
+      sessionId: "route-both",
+    });
+    let head = "";
+    session.hooks.observe("view_compiled", ({ view }) => {
+      if (!head) head = JSON.stringify(view.head);
+    });
+    const summary = await session.run("x".repeat(200));
+    expect(summary.modelChanges).toBe(1);
+    expect(openai.requests).toHaveLength(1);
+    expect(openai.requests[0]?.model).toEqual({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+    });
+    expect(anthropic.requests).toHaveLength(0);
+    expect(JSON.stringify(openai.requests[0]?.head)).toBe(head);
+    const kinds = store.path("route-both").map((entry) => entry.kind);
+    const changeAt = kinds.indexOf("model_change");
+    expect(changeAt).toBeGreaterThan(-1);
+    expect(kinds[changeAt + 1]).toBe("view_epoch");
+  });
+
+  it("stays inside the only assembled provider", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-route-one-"));
+    const anthropic = routedFaux("anthropic-messages");
+    const { session } = createCodingSession({
+      cwd: dir,
+      adapters: { anthropic: anthropic.adapter },
+      model: { provider: "anthropic", model: "claude-sonnet-5" },
+      sessionId: "route-one",
+    });
+    const summary = await session.run("x".repeat(200));
+    expect(summary.modelChanges).toBe(1);
+    expect(anthropic.requests[0]?.model).toEqual({
+      provider: "anthropic",
+      model: "claude-haiku-4-5-20251001",
+    });
+  });
+
+  it("denies the non-default provider when the new view touches .env or secrets", async () => {
+    const { defaultRoutePolicy, adaptersFromEnv } = await import(
+      "../src/main.ts"
+    );
+    const policy = defaultRoutePolicy(["anthropic", "openai"], "anthropic");
+    const base = {
+      epoch: 1,
+      current: { provider: "anthropic", model: "claude-sonnet-5" },
+      candidates: [],
+      decision: {
+        rebuild: true,
+        oldTokens: 1,
+        newTokens: 1,
+        remainingTurns: 1,
+        readRate: 0.1,
+        writeRate: 1.25,
+        savingsPerTurn: 0,
+        extraCost: 0,
+        paybackTurns: 0,
+        reason: "immediate",
+      },
+      budget: 100,
+    };
+    const open = policy({ ...base, viewChunks: [] });
+    expect(open?.model).toEqual({ provider: "openai", model: "gpt-5.4-mini" });
+    const closed = policy({
+      ...base,
+      viewChunks: [
+        {
+          id: "env",
+          tier: "full",
+          reason: "kept",
+          accesses: [{ key: "/work/.env", mode: "read" }],
+        },
+      ],
+    });
+    expect(closed?.model.provider).not.toBe("openai");
+    expect(closed?.model).toEqual({
+      provider: "anthropic",
+      model: "claude-haiku-4-5-20251001",
+    });
+    expect(closed?.reason).toContain("sensitive:/work/.env");
+    const secrets = policy({
+      ...base,
+      viewChunks: [
+        {
+          id: "sec",
+          tier: "line",
+          reason: "kept",
+          accesses: [{ key: "/work/secrets/token", mode: "read" }],
+        },
+      ],
+    });
+    expect(secrets?.reason).toContain("sensitive:/work/secrets/token");
+    expect(secrets?.model.provider).toBe("anthropic");
+    const hidden = policy({
+      ...base,
+      viewChunks: [
+        {
+          id: "gone",
+          tier: "none",
+          reason: "budget:oldest-first",
+          accesses: [{ key: ".env", mode: "read" }],
+        },
+      ],
+    });
+    expect(hidden?.model.provider).toBe("openai");
+    const only = defaultRoutePolicy(["openai"], "openai");
+    const stayed = only({
+      ...base,
+      current: { provider: "openai", model: "gpt-5.4" },
+      viewChunks: [
+        {
+          id: "env",
+          tier: "full",
+          reason: "kept",
+          accesses: [{ key: ".env", mode: "read" }],
+        },
+      ],
+    });
+    expect(stayed?.model).toEqual({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+    });
+    const built = adaptersFromEnv({
+      ANTHROPIC_API_KEY: "a",
+      OPENAI_API_KEY: "b",
+    });
+    expect(Object.keys(built).sort()).toEqual(["anthropic", "openai"]);
+    expect(built.anthropic?.api).toBe("anthropic-messages");
+    expect(built.openai?.api).toBe("openai-chat");
+    expect(Object.keys(adaptersFromEnv({ OPENAI_API_KEY: "b" }))).toEqual([
+      "openai",
+    ]);
+  });
+});
+
+function routedFaux(api: "anthropic-messages" | "openai-chat") {
+  const { adapter, requests } = createFaux([stopScript("done")]);
+  return {
+    requests,
+    adapter: {
+      api,
+      prepare(model: { provider: string; model: string }) {
+        return {
+          model,
+          contextWindow: 10,
+          pricing: null,
+          adapterDefaults: { maxTokens: 32 },
+        };
+      },
+      stream: adapter.stream.bind(adapter),
+    },
+  };
+}
+
 function textBlocks(content: unknown[]): string {
   return content
     .map((block) => {

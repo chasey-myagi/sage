@@ -2,9 +2,11 @@
  * Minimal agent loop.
  *
  * One turn, in order:
- * turn_start → prepared = adapter.prepare(model) once per run →
- * view = await viewProvider.view(ctx) → assertPaired → assertHeadFrozen →
- * structuredClone(view) is what observe("view_compiled") receives →
+ * turn_start → view = await viewProvider.view(ctx) → assertPaired →
+ * assertHeadFrozen → structuredClone(view) is what observe("view_compiled")
+ * receives → if view.epochStart.model is set and differs from the current
+ * model, append model_change {from, to, reason} then switch adapter and
+ * prepare again (no adapter for that provider → terminal error, no request) →
  * if view.epochStart is set, or view.epoch is greater than the latest
  * view_epoch on the path (0 when none exists), append view_epoch
  * { epoch, reason } with details.epochHead = messages[0] →
@@ -23,11 +25,17 @@
  * Contract: the kernel does not compress. Hooks never receive the store.
  * ViewContext.path is a structured clone taken before view().
  * ViewContext.tools is the tool list given to the constructor.
+ * prepare runs at the start of the run and again when the model changes.
+ * model_change.reason is `route:` plus the text after `;route:` in
+ * epochDecision.reason. Head bytes are not rewritten on a switch.
+ * RunSummary.modelChanges counts model_change entries appended in this run.
+ * Constructor takes `adapters` (provider → adapter) or one `adapter`, which
+ * is stored under the starting model's provider.
  *
  * Intentionally not in the Log: the hook list, the abort signal, observer
- * errors, and tool execute details. Model-visible text is the message and
- * request_header entries. The manifest entry is the kernel's record of the
- * view that produced that request.
+ * errors, the adapter table, and tool execute details. Model-visible text
+ * is the message and request_header entries. The manifest entry is the
+ * kernel's record of the view that produced that request.
  */
 
 import type {
@@ -69,6 +77,7 @@ export type RunSummary = {
   outcome: Exclude<TurnOutcome, "continue">;
   turns: number;
   usage: Usage;
+  modelChanges: number;
   observerErrors: { event: string; error: string }[];
   error?: string;
 };
@@ -79,6 +88,19 @@ const EMPTY_USAGE: Usage = {
   inputCacheCreation: 0,
   output: 0,
 };
+
+function sameModel(left: ModelRef, right: ModelRef): boolean {
+  return left.provider === right.provider && left.model === right.model;
+}
+
+function routeReason(view: CompiledView): string {
+  const reason = view.manifest.epochDecision?.reason ?? "";
+  const marker = ";route:";
+  const at = reason.lastIndexOf(marker);
+  if (at >= 0) return `route:${reason.slice(at + marker.length)}`;
+  if (reason.startsWith("route:")) return reason;
+  return "route:";
+}
 
 function addUsage(left: Usage, right: Usage): Usage {
   return {
@@ -160,27 +182,44 @@ export class AgentSession {
   private readonly observerErrors: { event: string; error: string }[] = [];
   private readonly store: LogStore;
   private readonly sessionId: string;
-  private readonly adapter: ProviderAdapter;
-  private readonly model: ModelRef;
+  private readonly adapters: Record<string, ProviderAdapter>;
+  private adapter: ProviderAdapter;
+  private model: ModelRef;
+  private modelChanges = 0;
   private readonly system: string;
   private readonly tools: HarnessTool[];
   private readonly viewProvider: ViewProvider;
   private readonly sampling: Sampling | undefined;
 
-  constructor(opts: {
-    store: LogStore;
-    sessionId: string;
-    adapter: ProviderAdapter;
-    model: ModelRef;
-    system: string;
-    tools: HarnessTool[];
-    viewProvider?: ViewProvider;
-    sampling?: Sampling;
-  }) {
+  constructor(
+    opts: {
+      store: LogStore;
+      sessionId: string;
+      model: ModelRef;
+      system: string;
+      tools: HarnessTool[];
+      viewProvider?: ViewProvider;
+      sampling?: Sampling;
+    } & (
+      | { adapter: ProviderAdapter; adapters?: Record<string, ProviderAdapter> }
+      | { adapters: Record<string, ProviderAdapter>; adapter?: ProviderAdapter }
+    ),
+  ) {
     this.store = opts.store;
     this.sessionId = opts.sessionId;
-    this.adapter = opts.adapter;
-    this.model = opts.model;
+    const adapters: Record<string, ProviderAdapter> = {
+      ...(opts.adapters ?? {}),
+    };
+    if (opts.adapter && adapters[opts.model.provider] === undefined) {
+      adapters[opts.model.provider] = opts.adapter;
+    }
+    const selected = adapters[opts.model.provider];
+    if (!selected) {
+      throw new Error(`No adapter for provider: ${opts.model.provider}`);
+    }
+    this.adapters = adapters;
+    this.adapter = selected;
+    this.model = { provider: opts.model.provider, model: opts.model.model };
     this.system = opts.system;
     this.tools = opts.tools;
     this.viewProvider = opts.viewProvider ?? passthroughView;
@@ -196,7 +235,8 @@ export class AgentSession {
     const signal = opts?.signal;
     const maxTurns = opts?.maxTurns ?? 50;
     this.observerErrors.length = 0;
-    const prepared = this.adapter.prepare(this.model);
+    this.modelChanges = 0;
+    let prepared = this.adapter.prepare(this.model);
     await this.dispatcher.emit("session_start", { sessionId: this.sessionId });
     this.appendUser(userText);
 
@@ -209,6 +249,7 @@ export class AgentSession {
         }
         turns += 1;
         const outcome = await this.turn(turns, prepared, signal);
+        prepared = outcome.prepared;
         usage = addUsage(usage, outcome.usage);
         if (outcome.kind === "continue") continue;
         return await this.finish(outcome.kind, turns, usage, outcome.error);
@@ -226,8 +267,13 @@ export class AgentSession {
     prepared: PreparedCall,
     signal: AbortSignal | undefined,
   ): Promise<
-    | { kind: "continue"; usage: Usage }
-    | { kind: "done" | "aborted" | "error"; usage: Usage; error?: string }
+    | { kind: "continue"; usage: Usage; prepared: PreparedCall }
+    | {
+        kind: "done" | "aborted" | "error";
+        usage: Usage;
+        error?: string;
+        prepared: PreparedCall;
+      }
   > {
     await this.dispatcher.emit("turn_start", { turn });
     const view = await this.viewProvider.view({
@@ -241,7 +287,21 @@ export class AgentSession {
     });
     assertPaired(view.messages);
     this.assertEpoch(view);
-    const sampling = mergeSampling(prepared.adapterDefaults, this.sampling);
+    await this.dispatcher.emit("view_compiled", {
+      view: structuredClone(view),
+    });
+    const routed = this.applyRoute(view, prepared);
+    if ("error" in routed) {
+      await this.dispatcher.emit("turn_end", { turn, outcome: "error" });
+      return {
+        kind: "error",
+        usage: { ...EMPTY_USAGE },
+        error: routed.error,
+        prepared,
+      };
+    }
+    const active = routed.prepared;
+    const sampling = mergeSampling(active.adapterDefaults, this.sampling);
     const request: Request = {
       model: this.model,
       head: view.head,
@@ -249,11 +309,8 @@ export class AgentSession {
       cacheBreakpoints: [...view.cacheBreakpoints],
       sampling,
     };
-    await this.dispatcher.emit("view_compiled", {
-      view: structuredClone(view),
-    });
     this.appendViewEpoch(view);
-    this.appendHeader(view, sampling, prepared);
+    this.appendHeader(view, sampling, active);
     this.store.append(this.sessionId, {
       kind: "manifest",
       payload: view.manifest,
@@ -263,7 +320,7 @@ export class AgentSession {
     // The contract barrel is TypeScript source; a static import breaks that load.
     const { collect } = await import("@sage/provider/contract");
     const assistant = await collect(
-      this.adapter.stream(request, prepared, signal),
+      this.adapter.stream(request, active, signal),
       {
         responseModel: this.model.model,
         responseId: "",
@@ -285,7 +342,7 @@ export class AgentSession {
 
     if (assistant.finish.kind === "aborted" || signal?.aborted) {
       await this.dispatcher.emit("turn_end", { turn, outcome: "aborted" });
-      return { kind: "aborted", usage: assistant.usage };
+      return { kind: "aborted", usage: assistant.usage, prepared: active };
     }
     if (assistant.finish.kind === "error") {
       await this.dispatcher.emit("turn_end", { turn, outcome: "error" });
@@ -293,23 +350,44 @@ export class AgentSession {
         kind: "error",
         usage: assistant.usage,
         error: assistant.finish.error?.message ?? "model request failed",
+        prepared: active,
       };
     }
     if (assistant.finish.kind === "tool_use") {
       const results = await this.runTools(toolUses(assistant.content), signal);
       if (signal?.aborted) {
         await this.dispatcher.emit("turn_end", { turn, outcome: "aborted" });
-        return { kind: "aborted", usage: assistant.usage };
+        return { kind: "aborted", usage: assistant.usage, prepared: active };
       }
       if (results.length > 0) {
         const payload: Message = { role: "user", content: results };
         this.store.append(this.sessionId, { kind: "message", payload });
       }
       await this.dispatcher.emit("turn_end", { turn, outcome: "continue" });
-      return { kind: "continue", usage: assistant.usage };
+      return { kind: "continue", usage: assistant.usage, prepared: active };
     }
     await this.dispatcher.emit("turn_end", { turn, outcome: "done" });
-    return { kind: "done", usage: assistant.usage };
+    return { kind: "done", usage: assistant.usage, prepared: active };
+  }
+
+  private applyRoute(
+    view: CompiledView,
+    prepared: PreparedCall,
+  ): { prepared: PreparedCall } | { error: string } {
+    const next = view.epochStart?.model;
+    if (!next || sameModel(next, this.model)) return { prepared };
+    const from = { provider: this.model.provider, model: this.model.model };
+    const to = { provider: next.provider, model: next.model };
+    this.store.append(this.sessionId, {
+      kind: "model_change",
+      payload: { from, to, reason: routeReason(view) },
+    });
+    this.modelChanges += 1;
+    const adapter = this.adapters[to.provider];
+    if (!adapter) return { error: `No adapter for provider: ${to.provider}` };
+    this.adapter = adapter;
+    this.model = { provider: to.provider, model: to.model };
+    return { prepared: adapter.prepare(this.model) };
   }
 
   private injectedHead(): Head {
@@ -420,6 +498,7 @@ export class AgentSession {
       outcome,
       turns,
       usage,
+      modelChanges: this.modelChanges,
       observerErrors: this.observerErrors,
     };
     if (error !== undefined) summary.error = error;
