@@ -34,7 +34,9 @@
  * text.
  * `results.json` also has top-level `budget`: the positive integer from
  * `--budget` for a compiler run, or null when the flag is omitted or the
- * policy is passthrough. `bench report <runA> <runB>` prints one JSON
+ * policy is passthrough. Top-level `toolNetwork` is `none` unless
+ * `--tool-network full` is set. The default `none` is always forwarded on
+ * the sage argv. `bench report <runA> <runB>` prints one JSON
  * object `{ a, b, delta }`. `a` and `b` each include that `budget`.
  * Rates are counts over the task list. `tokensPerResolved` is the sum of
  * `health.tokens.total` divided by the resolved count, or null when nothing
@@ -65,6 +67,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JsonlLogStore, type RunHealth, runHealth } from "@sage/core";
 import { resolvePreset } from "@sage/provider";
+import type { ToolNetwork } from "@sage/tools";
 
 export type BenchPolicy = "passthrough" | "compiler";
 
@@ -92,6 +95,7 @@ export type BenchResults = {
   policy: BenchPolicy;
   model: string;
   budget: number | null;
+  toolNetwork: ToolNetwork;
   tasks: BenchTaskResult[];
 };
 
@@ -115,6 +119,7 @@ export type BenchDeps = {
       provider?: string;
       env: NodeJS.ProcessEnv;
       budget: number | null;
+      toolNetwork: ToolNetwork;
       argv: string[];
     },
   ): Promise<{ code: number; sessionFile?: string; timedOut?: boolean }>;
@@ -140,6 +145,7 @@ const FLAGS = new Set([
   "provider",
   "out",
   "budget",
+  "tool-network",
 ]);
 
 export async function runBenchCli(
@@ -176,6 +182,7 @@ export async function runBenchCli(
     policy: parsed.policy,
     model: parsed.model,
     budget: parsed.policy === "passthrough" ? null : parsed.budget,
+    toolNetwork: parsed.toolNetwork,
     tasks: [],
   };
   for (const task of tasks) {
@@ -186,6 +193,7 @@ export async function runBenchCli(
         ...(parsed.provider ? { provider: parsed.provider } : {}),
         env: io.env,
         budget: parsed.budget,
+        toolNetwork: parsed.toolNetwork,
       }),
     );
     writeResults(out, results);
@@ -266,8 +274,9 @@ function loadResults(dir: string): BenchResults {
     typeof parsed.budget === "number" && Number.isFinite(parsed.budget)
       ? parsed.budget
       : null;
+  const toolNetwork = parsed.toolNetwork === "full" ? "full" : "none";
   const tasks = parsed.tasks.map((item) => readTaskResult(item));
-  return { policy, model, budget, tasks };
+  return { policy, model, budget, toolNetwork, tasks };
 }
 
 function readTaskResult(value: unknown): BenchTaskResult {
@@ -336,6 +345,7 @@ async function runTask(
     provider?: string;
     env: NodeJS.ProcessEnv;
     budget: number | null;
+    toolNetwork: ToolNetwork;
   },
 ): Promise<BenchTaskResult> {
   const work = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
@@ -462,6 +472,7 @@ function writeResults(out: string, results: BenchResults): void {
     policy: results.policy,
     model: results.model,
     budget: results.budget,
+    toolNetwork: results.toolNetwork,
     tasks: results.tasks.map((task) => ({
       id: task.id,
       status: task.status,
@@ -663,12 +674,14 @@ function sageArgv(
     model: string;
     provider?: string;
     budget: number | null;
+    toolNetwork: ToolNetwork;
   },
 ): string[] {
   const args = [sageBin(), "-p", task.problem, "--model", opts.model];
   if (opts.provider) args.push("--provider", opts.provider);
   if (opts.budget !== null) args.push("--budget", String(opts.budget));
   if (opts.policy === "passthrough") args.push("--passthrough");
+  args.push("--tool-network", opts.toolNetwork);
   return args;
 }
 
@@ -683,6 +696,10 @@ function invalidBudget(value: string): string {
   return `Invalid --budget ${JSON.stringify(value)}: expected a positive integer`;
 }
 
+function invalidToolNetwork(value: string): string {
+  return `Invalid --tool-network ${JSON.stringify(value)}: expected none or full`;
+}
+
 function parseRun(argv: string[]):
   | {
       tasks: string;
@@ -691,6 +708,7 @@ function parseRun(argv: string[]):
       provider?: string;
       out: string;
       budget: number | null;
+      toolNetwork: ToolNetwork;
     }
   | { message: string; exitCode?: number } {
   const values = new Map<string, string>();
@@ -733,12 +751,21 @@ function parseRun(argv: string[]):
     }
     budget = parsed;
   }
+  const rawNetwork = values.get("tool-network");
+  let toolNetwork: ToolNetwork = "none";
+  if (rawNetwork !== undefined) {
+    if (rawNetwork !== "none" && rawNetwork !== "full") {
+      return { message: invalidToolNetwork(rawNetwork), exitCode: 2 };
+    }
+    toolNetwork = rawNetwork;
+  }
   return {
     tasks,
     policy,
     model,
     out,
     budget,
+    toolNetwork,
     ...(provider ? { provider } : {}),
   };
 }
@@ -823,7 +850,7 @@ function requiredString(
 
 function benchUsage(): string {
   return [
-    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] --out <dir>",
+    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--tool-network none|full] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }

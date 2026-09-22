@@ -10,6 +10,9 @@
  * `--budget <tokens>` replaces 40000. The value must be a positive integer;
  * anything else exits 2 with one stderr line. `--passthrough` ignores a
  * valid `--budget` and writes one stderr line.
+ * `--tool-network none|full` defaults to full. `none` cuts network only for
+ * bash child processes. On a platform that cannot enforce it, sage exits 2
+ * before the run. Provider calls stay in this process.
  * `--scorer model` installs a model scorer on the root compiler. It reuses
  * the assembled adapters and the session model. `--scorer jev` installs the
  * TypeSafe Jev scorer and reads `TYPESAFE_API_KEY`; a missing key exits 2.
@@ -41,8 +44,10 @@
  *
  * Intentionally not in the Log: argv, API keys, the stderr progress
  * lines, and the stderr note that `--passthrough` ignored `--budget`.
- * The system prompt is model-visible and is stored on request_header.
- * Claim text reaches the Log only through the manifest the kernel appends.
+ * `--tool-network` is argv. bash records `network: "none"` through the
+ * kernel's toolResults, not as its own entry. The system prompt is
+ * model-visible and is stored on request_header. Claim text reaches the
+ * Log only through the manifest the kernel appends.
  */
 
 import { randomUUID } from "node:crypto";
@@ -84,7 +89,12 @@ import {
   resolvePreset,
   type Sampling,
 } from "@sage/provider";
-import { type BashExec, createTools } from "@sage/tools";
+import {
+  type BashExec,
+  createTools,
+  type ToolNetwork,
+  toolNetworkSupport,
+} from "@sage/tools";
 import { type BenchDeps, runBenchCli } from "./bench.js";
 
 export type CodingSession = {
@@ -103,6 +113,9 @@ export function createCodingSession(opts: {
   sessionsDir?: string;
   store?: LogStore;
   exec?: BashExec;
+  network?: ToolNetwork;
+  platform?: NodeJS.Platform;
+  unshareAvailable?: boolean;
   sampling?: Sampling;
   budget?: number;
   passthrough?: boolean;
@@ -141,7 +154,15 @@ export function createCodingSession(opts: {
     opts.ladder,
   );
   const tools = [
-    ...createTools({ cwd: opts.cwd, exec: opts.exec }),
+    ...createTools({
+      cwd: opts.cwd,
+      exec: opts.exec,
+      network: opts.network,
+      platform: opts.platform,
+      ...(opts.unshareAvailable !== undefined
+        ? { unshareAvailable: opts.unshareAvailable }
+        : {}),
+    }),
     ledger.tool,
     expandTool({ store, sessionId }),
   ];
@@ -191,6 +212,11 @@ export type CliIo = {
   adapters?: Record<string, ProviderAdapter>;
   /** Test seam. Production runs use git, the sage bin, and the test command. */
   benchDeps?: BenchDeps;
+  exec?: BashExec;
+  /** Test seam. Production uses process.platform. */
+  platform?: NodeJS.Platform;
+  /** Test seam. Production probes `unshare -n` on linux. */
+  unshareAvailable?: boolean;
 };
 
 export async function runCli(
@@ -217,6 +243,20 @@ export async function runCli(
   if (!parsed.ok) {
     stderr.write(`${parsed.message}\n`);
     return parsed.exitCode ?? 1;
+  }
+  const network = parsed.toolNetwork ?? "full";
+  const platform = io.platform ?? process.platform;
+  let unshareAvailable = io.unshareAvailable;
+  if (network === "none") {
+    const support = toolNetworkSupport({
+      platform,
+      ...(unshareAvailable !== undefined ? { unshareAvailable } : {}),
+    });
+    if (!support.ok) {
+      stderr.write(`${support.message}\n`);
+      return 2;
+    }
+    if (platform === "linux") unshareAvailable = true;
   }
   if (parsed.scorer === "jev" && !env.TYPESAFE_API_KEY) {
     stderr.write("Missing TYPESAFE_API_KEY\n");
@@ -255,6 +295,10 @@ export async function runCli(
     model: { provider: auth.provider, model: auth.model },
     passthrough: parsed.passthrough,
     home: homedir(),
+    network,
+    platform,
+    ...(unshareAvailable !== undefined ? { unshareAvailable } : {}),
+    ...(io.exec ? { exec: io.exec } : {}),
     ...(parsed.budget !== undefined && !parsed.passthrough
       ? { budget: parsed.budget }
       : {}),
@@ -393,7 +437,8 @@ type FlagName =
   | "ladder"
   | "base-url"
   | "api-key-env"
-  | "budget";
+  | "budget"
+  | "tool-network";
 
 type Parsed =
   | {
@@ -408,6 +453,7 @@ type Parsed =
       scorer?: "rule" | "model" | "jev";
       ladder?: { provider: string; model: string }[];
       budget?: number;
+      toolNetwork?: ToolNetwork;
     }
   | { ok: false; message: string; exitCode?: number };
 
@@ -422,6 +468,7 @@ export function parseArgs(argv: string[]): Parsed {
   let scorer: "rule" | "model" | "jev" | undefined;
   let ladder: { provider: string; model: string }[] | undefined;
   let budget: number | undefined;
+  let toolNetwork: ToolNetwork | undefined;
   const positional: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? "";
@@ -479,6 +526,16 @@ export function parseArgs(argv: string[]): Parsed {
         }
         budget = parsedBudget;
       }
+      if (taken.name === "tool-network") {
+        if (taken.value !== "none" && taken.value !== "full") {
+          return {
+            ok: false,
+            exitCode: 2,
+            message: invalidToolNetwork(taken.value),
+          };
+        }
+        toolNetwork = taken.value;
+      }
       continue;
     }
     positional.push(arg);
@@ -500,14 +557,15 @@ export function parseArgs(argv: string[]): Parsed {
     scorer,
     ladder,
     ...(budget !== undefined ? { budget } : {}),
+    ...(toolNetwork !== undefined ? { toolNetwork } : {}),
   };
 }
 
 function usage(): string {
   return [
-    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--passthrough] [--scorer rule|model|jev] [--json]",
+    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--tool-network none|full] [--passthrough] [--scorer rule|model|jev] [--json]",
     "       sage stats <session.jsonl>",
-    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] --out <dir>",
+    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--tool-network none|full] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }
@@ -546,6 +604,7 @@ function flagName(arg: string): FlagName | "unknown" | undefined {
   if (arg === "--base-url") return "base-url";
   if (arg === "--api-key-env") return "api-key-env";
   if (arg === "--budget") return "budget";
+  if (arg === "--tool-network") return "tool-network";
   if (arg.startsWith("-")) return "unknown";
   return undefined;
 }
@@ -562,6 +621,7 @@ function inlineFlag(
     "base-url",
     "api-key-env",
     "budget",
+    "tool-network",
   ] as const;
   for (const name of names) {
     const prefix = `--${name}=`;
@@ -582,6 +642,10 @@ function positiveInt(value: string): number | undefined {
 
 function invalidBudget(value: string): string {
   return `Invalid --budget ${JSON.stringify(value)}: expected a positive integer`;
+}
+
+function invalidToolNetwork(value: string): string {
+  return `Invalid --tool-network ${JSON.stringify(value)}: expected none or full`;
 }
 
 function parseLadder(

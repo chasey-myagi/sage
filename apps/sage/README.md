@@ -3,13 +3,15 @@
 one-shot CLI。`node apps/sage/bin/sage.mjs -p "任务"`（或 `sage "任务"`）在当前目录跑完一轮，把 `RunSummary` 打成一行 JSON。
 
 ```
-usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--passthrough] [--scorer rule|model|jev] [--json]
+usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--tool-network none|full] [--passthrough] [--scorer rule|model|jev] [--json]
        sage stats <session.jsonl>
-       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] --out <dir>
+       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--tool-network none|full] --out <dir>
        sage bench report <runA> <runB>
 ```
 
 `--budget <tokens>` 覆盖默认预算 40000，必须是正整数，否则退出 2，stderr 一行说明。和 `--passthrough` 一起用时忽略这个值，并在 stderr 提示一句。对照实验请显式压预算，默认 40000 在短任务上不会触发编译器。
+
+`--tool-network none|full` 默认 `full`。`none` 只切断 bash 子进程的网络，父进程照常请求模型。当前平台做不到时退出 2，stderr 一行说明，不会悄悄放开。`bench run` 的默认是 `none`。
 
 ## Model Experience
 

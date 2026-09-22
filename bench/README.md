@@ -72,6 +72,8 @@ node apps/sage/bin/sage.mjs bench run \
 
 `--policy passthrough` 给每个任务加上 `--passthrough`。`compiler` 用 CLI 默认编译器（预算 40000，规则打分）。可选 `--provider`，取值是预设名，例如 `deepseek`。可选 `--budget <tokens>`，透传给每个任务的 `sage -p`（passthrough 也透传，sage 会忽略并在 stderr 提示一句）。对照实验请显式压预算，默认 40000 在短任务上不会触发编译器。
 
+默认还给每个任务加上 `--tool-network none`。要让 bash 子进程上网，写 `--tool-network full`。`results.json` 顶层 `toolNetwork` 记下这次的值。断网只作用于工具子进程；父进程里的 provider 请求不受影响。评测必须默认断网：clone 只留 baseCommit 之后，agent 仍会 `curl` GitHub 上的上游提交，把修复抄进工作区，隐藏测试因此通过，这组结果作废。
+
 TS/JS 这 10 条：
 
 ```sh
@@ -89,7 +91,7 @@ node apps/sage/bin/sage.mjs bench run \
 
 1. 在临时目录 `git init`，`git remote add origin <url>`，`git fetch --depth 1 --no-tags origin <baseCommit>`，`git checkout -q FETCH_HEAD`，再 `git remote remove origin`。fetch 失败记 `error`，`reason` 为 `clone-failed`。起 agent 之前，`git rev-list --all --count` 必须是 1，`git tag` 和 `git remote` 必须为空；否则记 `error`，`reason` 为 `clone-unclean`，不起 agent，也不跑 `setupCommand`
 2. 有 `setupCommand` 时，在该目录 `sh -c` 执行，时限 `timeoutSec` 秒。退出码非 0 记 `error`，`reason` 为 `setup-failed`，不起 agent，不跑测试
-3. 在该目录执行 `sage -p <problem>`。写了 `--budget` 时，argv 里同时有 `--budget <tokens>`。时限 `timeoutSec` 秒
+3. 在该目录执行 `sage -p <problem>`。argv 里有 `--tool-network none`，除非这次 run 写了 `--tool-network full`。写了 `--budget` 时，argv 里同时有 `--budget <tokens>`。时限 `timeoutSec` 秒
 4. 复制 session。这一步在应用 `testPatch` 之前，session 里没有隐藏测试
 5. sage 超时记 `error`，`reason` 为 `timeout`
 6. `git status --porcelain` 为空则记 `empty-patch`，不应用 `testPatch`，不跑测试
@@ -119,7 +121,7 @@ node apps/sage/bin/sage.mjs bench run \
 <out>/sessions/<taskId>.jsonl
 ```
 
-`results.json` 有 `policy`、`model`、`budget`，以及每个任务的 `id`、`status`、可选 `reason`、`health`。compiler 组的 `budget` 是 `--budget` 的正整数；没写这个旗标，或策略是 passthrough，则为 `null`。`health` 是该 session 的 `runHealth`。问题陈述和块原文不写进这份文件。跑完的目录不要提交。
+`results.json` 有 `policy`、`model`、`budget`、`toolNetwork`，以及每个任务的 `id`、`status`、可选 `reason`、`health`。compiler 组的 `budget` 是 `--budget` 的正整数；没写这个旗标，或策略是 passthrough，则为 `null`。`toolNetwork` 默认 `none`，写了 `--tool-network full` 时为 `full`。`health` 是该 session 的 `runHealth`。问题陈述和块原文不写进这份文件。跑完的目录不要提交。
 
 ## 报表怎么读
 
