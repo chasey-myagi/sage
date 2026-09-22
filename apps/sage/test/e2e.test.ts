@@ -112,15 +112,9 @@ describe("scenario 7 one-shot cli", () => {
     expect(positionalCode).toBe(0);
   });
 
-  it("uses the catalog's first model for the selected provider", async () => {
+  it("uses defaultModel when --model is omitted", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "sage-cli-"));
-    const catalog = readFileSync(
-      path.join(process.cwd(), "packages/provider/src/catalog.ts"),
-      "utf8",
-    );
-    const first = catalog.match(/provider: "(\w+)",\s*model: "([^"]+)"/);
-    const openai = catalog.match(/provider: "openai",\s*model: "([^"]+)"/);
-    expect(first?.[1]).toBe("anthropic");
+    const { defaultModel } = await import("@sage/provider");
     const { adapter, requests } = createFaux([stopScript("ok")]);
     const io = capture();
     await runCli(["--print", "hi"], {
@@ -130,10 +124,7 @@ describe("scenario 7 one-shot cli", () => {
       stderr: io.stderr,
       adapter: adapter as ProviderAdapter,
     });
-    expect(requests[0]?.model).toEqual({
-      provider: "anthropic",
-      model: first?.[2],
-    });
+    expect(requests[0]?.model).toEqual(defaultModel("anthropic"));
 
     const open = capture();
     const faux = createFaux([stopScript("ok")]);
@@ -158,10 +149,7 @@ describe("scenario 7 one-shot cli", () => {
       stderr: fallback.stderr,
       adapter: fallbackFaux.adapter as ProviderAdapter,
     });
-    expect(fallbackFaux.requests[0]?.model).toEqual({
-      provider: "openai",
-      model: openai?.[1],
-    });
+    expect(fallbackFaux.requests[0]?.model).toEqual(defaultModel("openai"));
   });
 
   it("starts from the bin and exits 1 without a key", () => {
@@ -227,16 +215,33 @@ describe("scenario 8 faux read then edit", () => {
     const logFile = path.join(dir, ".sage", "sessions", "e2e.jsonl");
     expect(readFileSync(logFile, "utf8").length).toBeGreaterThan(0);
     const pathEntries = store.path("e2e");
-    const kinds = new Set(pathEntries.map((entry) => entry.kind));
-    expect(kinds.has("message")).toBe(true);
-    expect(kinds.has("request_header")).toBe(true);
-    expect(kinds.has("manifest")).toBe(true);
+    expect(pathEntries.map((entry) => entry.kind)).toEqual([
+      "message",
+      "request_header",
+      "manifest",
+      "message",
+      "message",
+      "request_header",
+      "manifest",
+      "message",
+      "message",
+      "request_header",
+      "manifest",
+      "message",
+      "terminal",
+    ]);
     const manifests = pathEntries.filter((entry) => entry.kind === "manifest");
     expect(manifests.length).toBe(summary.turns);
     for (const entry of manifests) {
-      const chunks = (entry.payload as { chunks: { reason: string }[] }).chunks;
-      expect(chunks.length).toBeGreaterThan(0);
-      for (const chunk of chunks) expect(chunk.reason).toBe("passthrough");
+      const payload = entry.payload as {
+        anomalies: unknown[];
+        chunks: { reason: string }[];
+      };
+      expect(payload.anomalies).toEqual([]);
+      expect(payload).not.toHaveProperty("budget");
+      expect(payload.chunks.length).toBeGreaterThan(0);
+      for (const chunk of payload.chunks)
+        expect(chunk.reason).toBe("passthrough");
     }
   });
 });

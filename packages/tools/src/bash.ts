@@ -16,7 +16,6 @@
  */
 
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { HarnessTool } from "@sage/core";
 import {
@@ -28,7 +27,6 @@ import {
   requiredString,
 } from "./input.js";
 import { spill } from "./spill.js";
-import { currentToolUseId } from "./tool-use.js";
 
 export const BASH_TIMEOUT_MS = 120_000;
 
@@ -87,7 +85,7 @@ export function createBash(
           timeoutMs,
         });
         const combined = combine(result.stdout, result.stderr);
-        const body = spill(combined, spillPath(cwd)).text;
+        const body = spill(combined, spillPath(cwd, ctx.toolUseId)).text;
         const content = `[bash exit code ${result.code}]\n${body}`;
         return result.code === 0 ? ok(content) : fail(content);
       } catch (error) {
@@ -154,11 +152,9 @@ export function defaultExec(
   });
 }
 
-function spillPath(cwd: string): string {
-  const raw = currentToolUseId() ?? "";
-  const safe = raw.replace(/[^A-Za-z0-9._-]/g, "_");
-  const id = safe.length > 0 ? safe : randomUUID();
-  return path.join(cwd, ".sage", "tool-output", `${id}.txt`);
+function spillPath(cwd: string, toolUseId: string): string {
+  const safe = toolUseId.replace(/[^A-Za-z0-9._-]/g, "_");
+  return path.join(cwd, ".sage", "tool-output", `${safe}.txt`);
 }
 
 function combine(stdout: string, stderr: string): string {

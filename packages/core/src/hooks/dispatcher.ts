@@ -123,7 +123,7 @@ export class HookDispatcher implements Hooks {
   async runTool(
     call: ToolUseBlock,
     tool: HarnessTool | undefined,
-    exec: { sessionId: string; signal?: AbortSignal },
+    exec: { sessionId: string; toolUseId: string; signal?: AbortSignal },
   ): Promise<ToolResultBlock> {
     let input = call.input;
     for (const pre of this.pres) {

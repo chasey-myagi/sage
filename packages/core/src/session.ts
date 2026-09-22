@@ -6,7 +6,8 @@
  * view = await viewProvider.view(ctx) → assertPaired → assertHeadFrozen →
  * structuredClone(view) is what observe("view_compiled") receives →
  * append request_header (system and tools text only when that hash differs
- * from the previous request_header, or there is none) → adapter.stream →
+ * from the previous request_header, or there is none) →
+ * append manifest (payload is view.manifest) → adapter.stream →
  * collect → append message(assistant) with details
  * {responseModel, responseId, api, usage, finish} → llm_end →
  * if finish.kind is tool_use, run the tool pipeline for each tool_use and
@@ -20,7 +21,8 @@
  *
  * Intentionally not in the Log: the hook list, the abort signal, observer
  * errors, and tool execute details. Model-visible text is the message and
- * request_header entries.
+ * request_header entries. The manifest entry is the kernel's record of the
+ * view that produced that request.
  */
 
 import type {
@@ -245,6 +247,10 @@ export class AgentSession {
       view: structuredClone(view),
     });
     this.appendHeader(view, sampling, prepared);
+    this.store.append(this.sessionId, {
+      kind: "manifest",
+      payload: view.manifest,
+    });
     // Dynamic so dist/index.js can load under plain Node for the log manifest.
     // The contract barrel is TypeScript source; a static import breaks that load.
     const { collect } = await import("@sage/provider/contract");
@@ -364,6 +370,7 @@ export class AgentSession {
       results.push(
         await this.dispatcher.runTool(call, tool, {
           sessionId: this.sessionId,
+          toolUseId: call.id,
           signal,
         }),
       );

@@ -56,13 +56,25 @@ describe("scenario 3 request envelope and L4 rebuild", () => {
     expect(path.map((entry) => entry.kind)).toEqual([
       "message",
       "request_header",
+      "manifest",
       "message",
       "terminal",
     ]);
     expect(path[0]?.payload).toMatchObject({ role: "user" });
-    expect(path[2]?.payload).toMatchObject({ role: "assistant" });
-    expect(path[3]?.payload).toMatchObject({ outcome: "done" });
-    expect(path[2]?.details).toEqual(
+    expect(path[2]?.payload).toMatchObject({
+      epoch: 0,
+      turn: 1,
+      claims: [],
+      anomalies: [],
+    });
+    const manifest = path[2]?.payload as { chunks: { reason: string }[] };
+    expect(manifest.chunks.length).toBeGreaterThan(0);
+    for (const chunk of manifest.chunks) {
+      expect(chunk.reason).toBe("passthrough");
+    }
+    expect(path[3]?.payload).toMatchObject({ role: "assistant" });
+    expect(path[4]?.payload).toMatchObject({ outcome: "done" });
+    expect(path[3]?.details).toEqual(
       expect.objectContaining({
         responseModel: expect.any(String),
         responseId: expect.any(String),

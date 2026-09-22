@@ -46,9 +46,10 @@ export type ModelChangePayload = {
 export type ManifestPayload = {
   epoch: number;
   turn: number;
-  budget: unknown;
+  budget?: number;
   claims: unknown[];
   chunks: unknown[];
+  anomalies: unknown[];
 };
 
 export type TargetPayload = {
@@ -110,13 +111,23 @@ function isModelChange(payload: unknown): payload is ModelChangePayload {
 }
 
 function isManifest(payload: unknown): payload is ManifestPayload {
+  if (!isRecord(payload)) return false;
+  if (typeof payload.epoch !== "number" || !Number.isFinite(payload.epoch)) {
+    return false;
+  }
+  if (typeof payload.turn !== "number" || !Number.isFinite(payload.turn)) {
+    return false;
+  }
+  if (
+    payload.budget !== undefined &&
+    (typeof payload.budget !== "number" || !Number.isFinite(payload.budget))
+  ) {
+    return false;
+  }
   return (
-    isRecord(payload) &&
-    typeof payload.epoch === "number" &&
-    typeof payload.turn === "number" &&
-    "budget" in payload &&
     Array.isArray(payload.claims) &&
-    Array.isArray(payload.chunks)
+    Array.isArray(payload.chunks) &&
+    Array.isArray(payload.anomalies)
   );
 }
 

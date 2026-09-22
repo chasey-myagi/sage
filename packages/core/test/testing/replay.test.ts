@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
@@ -28,10 +28,14 @@ function normalize(entries: readonly StoredEntry[]): unknown[] {
   return entries.map((entry) => {
     const details = entry.details ? { ...entry.details } : undefined;
     if (details) delete details.responseId;
+    const payload =
+      entry.kind === "manifest"
+        ? stabilize(entry.payload as Manifest, entries)
+        : entry.payload;
     const next: Record<string, unknown> = {
       seq: entry.seq,
       kind: entry.kind,
-      payload: entry.payload,
+      payload,
     };
     if (details && Object.keys(details).length > 0) next.details = details;
     return next;
@@ -103,11 +107,17 @@ it("refuses the record lane without calling the network", async () => {
 for (const spec of REPLAY_CASES) {
   it(`replays ${spec.name} against the committed recording and expected files`, async () => {
     const dir = caseDir(spec.name);
-    const loaded = loadCase(dir);
     const result = await replaySession(dir, {
       system: spec.system,
       tools: spec.tools,
     });
+    if (process.env.UPDATE_EXPECTED === "1") {
+      writeFileSync(
+        path.join(dir, "session.jsonl"),
+        `${result.log.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+      );
+    }
+    const loaded = loadCase(dir);
     expect(result.requests).toHaveLength(loaded.responses.length);
     expect(result.manifests).toHaveLength(loaded.responses.length);
     expect(normalize(result.log)).toEqual(normalize(loaded.log));
