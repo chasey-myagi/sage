@@ -9,9 +9,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { JsonlLogStore } from "@sage/core";
 import { afterEach, expect, it } from "vitest";
+import { defaultPrepare } from "../src/bench.ts";
 import { runCli } from "../src/main.ts";
 
 const repoRoot = path.resolve(
@@ -574,6 +575,153 @@ it("testPatch overwrites agent edits to test files before tests run", async () =
   ]);
 });
 
+it("bench run keeps only baseCommit when the repo has a later commit", async () => {
+  dir = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
+  const origin = path.join(dir, "origin");
+  const history = initHistoryRepo(origin);
+  const tasks = path.join(dir, "tasks.json");
+  writeFileSync(
+    tasks,
+    JSON.stringify([
+      {
+        id: "future",
+        repo: pathToFileURL(origin).href,
+        baseCommit: history.base,
+        problem: "fix the bug",
+        testCommand: "true",
+        timeoutSec: 30,
+      },
+    ]),
+  );
+  const seen: { count: string; log: string; remote: string; tag: string } = {
+    count: "",
+    log: "",
+    remote: "",
+    tag: "",
+  };
+  let started = false;
+  const out = path.join(dir, "out");
+  const io = capture();
+  const code = await runCli(
+    [
+      "bench",
+      "run",
+      "--tasks",
+      tasks,
+      "--policy",
+      "passthrough",
+      "--model",
+      "claude-test",
+      "--out",
+      out,
+    ],
+    {
+      cwd: dir,
+      env: { ANTHROPIC_API_KEY: "test-key" },
+      stdout: io.stdout,
+      stderr: io.stderr,
+      benchDeps: {
+        prepare: defaultPrepare,
+        async runSage(_spec, cwd) {
+          started = true;
+          seen.count = git(cwd, ["rev-list", "--all", "--count"]).trim();
+          seen.log = git(cwd, ["log", "--all", "--format=%H"]).trim();
+          seen.remote = git(cwd, ["remote"]).trim();
+          seen.tag = git(cwd, ["tag"]).trim();
+          return { code: 0, sessionFile: writeSession(cwd, _spec.id) };
+        },
+        async diffEmpty() {
+          return true;
+        },
+        async runTests() {
+          return { code: 0 };
+        },
+      },
+    },
+  );
+  expect(code).toBe(0);
+  expect(started).toBe(true);
+  expect(seen).toEqual({
+    count: "1",
+    log: history.base,
+    remote: "",
+    tag: "",
+  });
+  expect(seen.log).not.toContain(history.later);
+});
+
+it("bench run records clone-failed and does not start the agent when fetch fails", async () => {
+  dir = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
+  const origin = path.join(dir, "origin");
+  initHistoryRepo(origin);
+  const tasks = path.join(dir, "tasks.json");
+  writeFileSync(
+    tasks,
+    JSON.stringify([
+      {
+        id: "missing",
+        repo: pathToFileURL(origin).href,
+        baseCommit: "0000000000000000000000000000000000000000",
+        problem: "fix the bug",
+        testCommand: "true",
+        timeoutSec: 30,
+      },
+    ]),
+  );
+  const started: string[] = [];
+  const out = path.join(dir, "out");
+  const io = capture();
+  const code = await runCli(
+    [
+      "bench",
+      "run",
+      "--tasks",
+      tasks,
+      "--policy",
+      "passthrough",
+      "--model",
+      "claude-test",
+      "--out",
+      out,
+    ],
+    {
+      cwd: dir,
+      env: { ANTHROPIC_API_KEY: "test-key" },
+      stdout: io.stdout,
+      stderr: io.stderr,
+      benchDeps: {
+        prepare: defaultPrepare,
+        async runSage(spec) {
+          started.push(spec.id);
+          return { code: 0 };
+        },
+        async diffEmpty() {
+          return false;
+        },
+        async runTests() {
+          return { code: 0 };
+        },
+      },
+    },
+  );
+  expect(code).toBe(0);
+  expect(started).toEqual([]);
+  const results = JSON.parse(
+    readFileSync(path.join(out, "results.json"), "utf8"),
+  ) as {
+    tasks: { id: string; status: string; reason?: string; health: unknown }[];
+  };
+  expect(results.tasks).toEqual([
+    {
+      id: "missing",
+      status: "error",
+      reason: "clone-failed",
+      health: null,
+    },
+  ]);
+  expect(existsSync(path.join(out, "sessions", "missing.jsonl"))).toBe(false);
+});
+
 type Metrics = {
   resolvedRate: number | null;
   emptyPatchRate: number | null;
@@ -601,6 +749,21 @@ function git(cwd: string, args: string[]): string {
     throw new Error(result.stderr || result.stdout || "git failed");
   }
   return result.stdout;
+}
+
+function initHistoryRepo(origin: string): { base: string; later: string } {
+  mkdirSync(origin, { recursive: true });
+  git(origin, ["init", "-b", "main"]);
+  writeFileSync(path.join(origin, "README"), "base\n");
+  git(origin, ["add", "."]);
+  git(origin, ["commit", "-m", "base"]);
+  const base = git(origin, ["rev-parse", "HEAD"]).trim();
+  writeFileSync(path.join(origin, "README"), "later\n");
+  git(origin, ["add", "."]);
+  git(origin, ["commit", "-m", "later fix"]);
+  const later = git(origin, ["rev-parse", "HEAD"]).trim();
+  git(origin, ["tag", "v-future"]);
+  return { base, later };
 }
 
 function initFixtureRepo(origin: string): {

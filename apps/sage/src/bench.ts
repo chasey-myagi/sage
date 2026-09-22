@@ -5,9 +5,14 @@
  * `{ id, repo, baseCommit, problem, testCommand, timeoutSec }` plus optional
  * `setupCommand` and `testPatch`. It exits 2
  * when the selected provider has no API key, before it reads the task file
- * or clones anything. With no `--provider`, any preset env key is enough,
+ * or fetches a repository. With no `--provider`, any preset env key is enough,
  * in the same order and with the same missing-key message as `sage -p`.
- * Each task is cloned into a temp directory and checked out at `baseCommit`.
+ * Each task is fetched into a temp directory as a single commit at
+ * `baseCommit`: `git init`, add origin, `git fetch --depth 1 --no-tags`
+ * of that SHA, `git checkout -q FETCH_HEAD`, then remove origin. Fetch
+ * failure is `clone-failed`. Before setup or the agent, that worktree must
+ * have exactly one commit and no tags or remotes; otherwise the task is
+ * `error` with reason `clone-unclean` and neither setup nor the agent runs.
  * `setupCommand`, when present, runs with `sh -c` in that directory before
  * sage and under `timeoutSec`. A non-zero exit is `error` with reason
  * `setup-failed`: sage is not started and the test command is not run.
@@ -21,11 +26,12 @@
  * `git apply` runs. Apply failure is `error` with reason `test-patch-failed`
  * and the test command is not run. The agent never sees `testPatch`. A test
  * command that exits 0 is `resolved`. Anything else is `error` with a short
- * reason (`clone-failed`, `sage-failed`, `diff-failed`, `tests-failed`,
- * `timeout`, `setup-failed`, `test-patch-failed`). `health` is `runHealth`
- * of the copied session, or null. The result directory is `<out>/results.json`
- * and `<out>/sessions/<taskId>.jsonl`. Those files hold ids, statuses,
- * reasons, and health numbers. They do not copy the problem text.
+ * reason (`clone-failed`, `clone-unclean`, `sage-failed`, `diff-failed`,
+ * `tests-failed`, `timeout`, `setup-failed`, `test-patch-failed`). `health`
+ * is `runHealth` of the copied session, or null. The result directory is
+ * `<out>/results.json` and `<out>/sessions/<taskId>.jsonl`. Those files hold
+ * ids, statuses, reasons, and health numbers. They do not copy the problem
+ * text.
  * `results.json` also has top-level `budget`: the positive integer from
  * `--budget` for a compiler run, or null when the flag is omitted or the
  * policy is passthrough. `bench report <runA> <runB>` prints one JSON
@@ -34,7 +40,7 @@
  * `health.tokens.total` divided by the resolved count, or null when nothing
  * resolved. `cacheHitRatio` and `expandRate` are the mean of the non-null
  * per-task values. `delta` is B minus A. A null side makes that delta null.
- * Repo names without a scheme clone as `https://github.com/<repo>.git`.
+ * Repo names without a scheme are fetched from `https://github.com/<repo>.git`.
  *
  * Intentionally not in the Log: argv, API keys, clone directories, setup
  * commands, test patches, test output, and this report. The session jsonl is
@@ -336,11 +342,12 @@ async function runTask(
   try {
     try {
       await deps.prepare(task, work);
-    } catch {
+    } catch (error) {
       return {
         id: task.id,
         status: "error",
-        reason: "clone-failed",
+        reason:
+          error instanceof CloneUncleanError ? "clone-unclean" : "clone-failed",
         health: null,
       };
     }
@@ -559,14 +566,47 @@ function filesInDiff(patch: string): string[] {
   return files;
 }
 
-async function defaultPrepare(task: BenchTask, cwd: string): Promise<void> {
+class CloneUncleanError extends Error {
+  constructor() {
+    super("clone unclean");
+    this.name = "CloneUncleanError";
+  }
+}
+
+export async function defaultPrepare(
+  task: BenchTask,
+  cwd: string,
+): Promise<void> {
   const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(task.repo)
     ? task.repo
     : `https://github.com/${task.repo}.git`;
-  const clone = await exec("git", ["clone", url, cwd]);
-  if (clone.code !== 0) throw new Error("clone failed");
-  const checkout = await exec("git", ["-C", cwd, "checkout", task.baseCommit]);
-  if (checkout.code !== 0) throw new Error("checkout failed");
+  const init = await exec("git", ["init"], { cwd });
+  if (init.code !== 0) throw new Error("clone failed");
+  const remote = await exec("git", ["remote", "add", "origin", url], { cwd });
+  if (remote.code !== 0) throw new Error("clone failed");
+  const fetched = await exec(
+    "git",
+    ["fetch", "--depth", "1", "--no-tags", "origin", task.baseCommit],
+    { cwd },
+  );
+  if (fetched.code !== 0) throw new Error("clone failed");
+  const checkout = await exec("git", ["checkout", "-q", "FETCH_HEAD"], {
+    cwd,
+  });
+  if (checkout.code !== 0) throw new Error("clone failed");
+  const removed = await exec("git", ["remote", "remove", "origin"], { cwd });
+  if (removed.code !== 0) throw new Error("clone failed");
+  const count = await exec("git", ["rev-list", "--all", "--count"], { cwd });
+  const tags = await exec("git", ["tag"], { cwd });
+  const remotes = await exec("git", ["remote"], { cwd });
+  const clean =
+    count.code === 0 &&
+    count.stdout.trim() === "1" &&
+    tags.code === 0 &&
+    tags.stdout.trim() === "" &&
+    remotes.code === 0 &&
+    remotes.stdout.trim() === "";
+  if (!clean) throw new CloneUncleanError();
 }
 
 function findSession(cwd: string): string | undefined {
