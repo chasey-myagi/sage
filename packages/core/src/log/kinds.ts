@@ -5,9 +5,9 @@
  * yet. `leaf` is kernel semantics (it moves the pointer); the other kinds are
  * recorded and left for later folds.
  *
- * `message` payload is `{ role, content }`, the shape of provider `Message`.
- * `@sage/provider/contract` does not export that type on this branch, so the
- * check is local. Do not value-import `@sage/provider`.
+ * `message` payload is `Message` from `@sage/provider/contract` (type-only).
+ * The validator checks that `role` is a string and `content` is present.
+ * Do not value-import `@sage/provider`.
  *
  * `request_header.system` and `request_header.tools` are present only when
  * they differ from the default. The kernel does not decide that; it only
@@ -17,8 +17,9 @@
  * high-water mark.
  */
 
+import type { Message } from "@sage/provider/contract";
 import { registerEntryKind } from "./registry.js";
-import { isRecord, type MessagePayload, type ModelRef } from "./types.js";
+import { isRecord, type ModelRef } from "./types.js";
 
 export type RequestHeaderPayload = {
   provider: string;
@@ -60,7 +61,7 @@ export type TerminalPayload = {
   error?: unknown;
 };
 
-function isMessage(payload: unknown): payload is MessagePayload {
+function isMessage(payload: unknown): payload is Message {
   return (
     isRecord(payload) &&
     typeof payload.role === "string" &&
@@ -127,7 +128,7 @@ function isTerminal(payload: unknown): payload is TerminalPayload {
   return isRecord(payload) && typeof payload.outcome === "string";
 }
 
-registerEntryKind<MessagePayload>({
+registerEntryKind<Message>({
   kind: "message",
   persisted: true,
   doc: "Conversation message. Payload is { role, content }.",

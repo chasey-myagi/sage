@@ -23,7 +23,11 @@ importers:
 
   apps/sage: {}
 
-  packages/core: {}
+  packages/core:
+    dependencies:
+      '@sage/provider':
+        specifier: workspace:*
+        version: link:../provider
 
   packages/plugins: {}
 
