@@ -7,8 +7,8 @@
  * `manifest.details.claimContent`, walking backward to the manifest that
  * stored this content hash. System and tool text come from the latest
  * request_header that still carries them for the same hash. A manifest chunk
- * at tier none whose id contains `#` rebuilds that tool_result as
- * `[omitted]`.
+ * at tier none whose id contains `#` rebuilds that tool_result as the same
+ * stub, using `originalTokens` and the logged tool_use.
  *
  * Intentionally not in the Log: this function. It only reads entries the
  * kernel already wrote.
@@ -16,8 +16,15 @@
 
 import type { StoredEntry, ViewContext } from "@sage/core";
 import { passthroughView } from "@sage/core";
-import type { Head, Message, ToolDef } from "@sage/provider/contract";
-import { omitToolResults } from "./apply.js";
+import type {
+  Head,
+  Message,
+  ToolDef,
+  ToolUseBlock,
+} from "@sage/provider/contract";
+import { replaceToolResults } from "./apply.js";
+import type { Chunk } from "./chunks.js";
+import { renderStub } from "./stub.js";
 
 type LoggedClaim = {
   id: string;
@@ -41,7 +48,10 @@ export function rebuildFromLog(
   }
   const manifest = path[manifestIndex];
   if (!manifest) throw new Error(`no manifest for turn ${turn}`);
-  const history = omitToolResults(projected.messages, omittedToolIds(manifest));
+  const history = replaceToolResults(
+    projected.messages,
+    stubsFor(projected.messages, manifest),
+  );
   const epoch = epochOf(manifest);
   const epochHead = epochHeadFor(prefix, epoch);
   const messages = [...history];
@@ -243,24 +253,74 @@ function appendTail(
   messages.push({ role: "user", content: blocks });
 }
 
-function omittedToolIds(entry: StoredEntry | undefined): Set<string> {
-  const ids = new Set<string>();
+function stubsFor(
+  messages: readonly Message[],
+  entry: StoredEntry | undefined,
+): Map<string, string> {
+  const stubs = new Map<string, string>();
+  for (const chunk of loggedChunks(entry)) {
+    if (chunk.tier !== "none") continue;
+    const mark = chunk.id.indexOf("#");
+    if (mark < 0) continue;
+    const toolUseId = chunk.id.slice(mark + 1);
+    if (toolUseId.length === 0) continue;
+    const use = findToolUse(messages, toolUseId);
+    if (!use) continue;
+    const tokens =
+      typeof chunk.originalTokens === "number" ? chunk.originalTokens : 0;
+    const rendered: Chunk = {
+      id: chunk.id,
+      kind: "tool",
+      messageIndex: 0,
+      toolUseId,
+      toolName: use.name,
+      input: use.input,
+      tokens,
+      accesses: [],
+    };
+    stubs.set(toolUseId, renderStub(rendered));
+  }
+  return stubs;
+}
+
+function loggedChunks(entry: StoredEntry | undefined): {
+  id: string;
+  tier: string;
+  originalTokens?: number;
+}[] {
   if (
     !entry ||
     !isRecord(entry.payload) ||
     !Array.isArray(entry.payload.chunks)
   ) {
-    return ids;
+    return [];
   }
+  const chunks: { id: string; tier: string; originalTokens?: number }[] = [];
   for (const value of entry.payload.chunks) {
-    if (!isRecord(value) || value.tier !== "none") continue;
-    if (typeof value.id !== "string") continue;
-    const mark = value.id.indexOf("#");
-    if (mark < 0) continue;
-    const toolUseId = value.id.slice(mark + 1);
-    if (toolUseId.length > 0) ids.add(toolUseId);
+    if (!isRecord(value) || typeof value.id !== "string") continue;
+    if (typeof value.tier !== "string") continue;
+    chunks.push({
+      id: value.id,
+      tier: value.tier,
+      originalTokens:
+        typeof value.originalTokens === "number"
+          ? value.originalTokens
+          : undefined,
+    });
   }
-  return ids;
+  return chunks;
+}
+
+function findToolUse(
+  messages: readonly Message[],
+  toolUseId: string,
+): ToolUseBlock | undefined {
+  for (const message of messages) {
+    for (const block of message.content) {
+      if (block.type === "tool_use" && block.id === toolUseId) return block;
+    }
+  }
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

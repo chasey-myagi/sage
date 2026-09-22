@@ -325,6 +325,83 @@ describe("first-party claims in the coding session", () => {
   });
 });
 
+describe("scenario 6 expand an omitted chunk", () => {
+  it("shows the logged original as the expand tool result on the third request", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-expand-"));
+    const original = "ORIGINAL_BYTES";
+    writeFileSync(path.join(dir, "note.txt"), original);
+    const inputJson = JSON.stringify({ path: "note.txt" });
+    const usage = {
+      inputOther: 3,
+      inputCacheRead: 1,
+      inputCacheCreation: 0,
+      output: 2,
+    };
+    const reads = ["r1", "r2", "r3", "r4", "r5", "r6", "r7"].flatMap(
+      (id, index) => [
+        {
+          type: "block_start" as const,
+          index,
+          blockType: "tool_use",
+          id,
+          name: "read",
+        },
+        { type: "tool_input_delta" as const, index, partialJson: inputJson },
+        { type: "block_end" as const, index },
+      ],
+    );
+    const { adapter, requests } = createFaux([
+      [
+        ...reads,
+        { type: "usage", usage },
+        { type: "finish", kind: "tool_use" },
+      ],
+      () => {
+        writeFileSync(path.join(dir, "note.txt"), "CHANGED");
+        return (async function* () {
+          for (const chunk of toolScript(
+            "ex1",
+            "expand",
+            JSON.stringify({ id: "seq:3#r1" }),
+          )) {
+            yield chunk;
+          }
+        })();
+      },
+      stopScript("done"),
+    ]);
+    const { session } = createCodingSession({
+      cwd: dir,
+      adapter: adapter as ProviderAdapter,
+      model: { provider: "anthropic", model: "claude-test" },
+      sessionId: "expand-e2e",
+    });
+    const summary = await session.run("read the note");
+    expect(summary.outcome).toBe("done");
+    expect(requests).toHaveLength(3);
+    const third = requests[2];
+    const expanded = (third?.messages ?? []).flatMap((message) =>
+      message.content.filter(
+        (block) =>
+          typeof block === "object" &&
+          block !== null &&
+          "type" in block &&
+          block.type === "tool_result" &&
+          "toolUseId" in block &&
+          block.toolUseId === "ex1",
+      ),
+    );
+    expect(expanded).toEqual([
+      {
+        type: "tool_result",
+        toolUseId: "ex1",
+        content: original,
+        isError: false,
+      },
+    ]);
+  });
+});
+
 function textBlocks(content: unknown[]): string {
   return content
     .map((block) => {

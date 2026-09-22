@@ -104,6 +104,8 @@ it("writes downgrade reasons and the budget object onto the manifest", async () 
     total: 10000,
     used: 3202,
     overrun: 0,
+    omitted: 0,
+    expands: 0,
   });
   expect(view.manifest.chunks).toEqual([
     { id: "seq:0", tier: "full", reason: "kept", tokens: 2 },
@@ -154,6 +156,8 @@ it("keeps a pinned claim and records the overrun when the pin exceeds the budget
     total: 10000,
     used: 20002,
     overrun: 10002,
+    omitted: 0,
+    expands: 0,
   });
   expect(JSON.stringify(view.messages)).not.toContain("x-full");
   expect(JSON.stringify(view.messages)).not.toContain("x-line");
@@ -398,7 +402,13 @@ it("matches passthrough messages when no claim is submitted and records chunk de
     (sum, chunk) => sum + (chunk.tier === "none" ? 0 : (chunk.tokens ?? 0)),
     0,
   );
-  expect(budget).toEqual({ total: 8000, used: kept, overrun: 0 });
+  expect(budget).toEqual({
+    total: 8000,
+    used: kept,
+    overrun: 0,
+    omitted: 0,
+    expands: 0,
+  });
 });
 
 it("records a thrown provider and still renders the other claims", async () => {

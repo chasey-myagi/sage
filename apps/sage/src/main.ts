@@ -2,7 +2,8 @@
  * One-shot coding CLI.
  *
  * Contract: parse argv, assemble AgentSession with the seven tools plus
- * update_ledger, and a JsonlLogStore under `<cwd>/.sage/sessions`. The view
+ * update_ledger and expand, and a JsonlLogStore under
+ * `<cwd>/.sage/sessions`. The view
  * is contextCompiler with budget 40000 and the four first-party claims,
  * unless `--passthrough` selects passthroughView. stdout is one JSON
  * RunSummary. The kernel appends each turn's manifest. Exit 0 when the
@@ -25,6 +26,7 @@ import {
 import {
   agentsMd,
   contextCompiler,
+  expandTool,
   progressLedger,
   systemReminder,
   toolCatalog,
@@ -71,7 +73,11 @@ export function createCodingSession(opts: {
     adapter: opts.adapter,
     model: opts.model,
     system: opts.system ?? systemPrompt(opts.cwd),
-    tools: [...createTools({ cwd: opts.cwd, exec: opts.exec }), ledger.tool],
+    tools: [
+      ...createTools({ cwd: opts.cwd, exec: opts.exec }),
+      ledger.tool,
+      expandTool({ store, sessionId }),
+    ],
     viewProvider: opts.passthrough
       ? passthroughView
       : contextCompiler({
