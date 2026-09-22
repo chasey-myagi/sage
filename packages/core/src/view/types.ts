@@ -96,9 +96,10 @@ export type CompiledView = {
   manifest: Manifest;
   /**
    * Set when this view opens an epoch. The kernel appends `view_epoch` and
-   * does not store this field itself.
+   * does not store this field itself. `model`, when set and different from
+   * the session's current model, becomes a `model_change` entry first.
    */
-  epochStart?: { reason: string };
+  epochStart?: { reason: string; model?: ModelRef };
   /**
    * Opaque bag copied onto the manifest entry. Claim text lives here under
    * `claimContent`, and only for hashes that are new this turn.

@@ -19,6 +19,10 @@
  * A new epoch opens when `decideEpoch` says rebuild: the view is a full
  * recompile, `epoch` is the previous epoch plus one, and `epochStart.reason`
  * is `cost:<paybackTurns>`, `cost:immediate`, or `context-window-guard`.
+ * `route`, when set, runs only on that rebuild. A result sets
+ * `epochStart.model` and appends `;route:<reason>` to the decision reason.
+ * Candidates are `listModels` of the current provider. Chunk accesses passed
+ * to the policy come from the chunk index and are not copied onto the manifest.
  * The context-window guard is the only rebuild allowed on an epoch's first
  * turn. If that rebuilt view is still over 90% of the context window,
  * `budget.overrun` records the excess when the compile budget itself did
@@ -34,13 +38,16 @@
  * when its hash is new. `none` is omitted from the view. A provider that
  * throws becomes one manifest row and does not stop the compile.
  *
- * Intentionally not in the Log: claim providers, the token counter, and the
- * live CompiledView. The kernel persists `view_epoch` and the manifest.
+ * Intentionally not in the Log: claim providers, the token counter, the route
+ * policy, and the live CompiledView. The kernel persists `view_epoch`,
+ * `model_change`, and the manifest.
  */
 
 import type { ClaimRecord, CompiledView, ViewContext } from "@sage/core";
 import { passthroughView } from "@sage/core";
-import type { Message } from "@sage/provider/contract";
+import { listModels } from "@sage/provider";
+import type { Message, ModelRef } from "@sage/provider/contract";
+import type { RoutePolicy } from "../routing/types.js";
 import { applyDecisions } from "./apply.js";
 import { allocate, defaultTokenCount, type TokenCounter } from "./budget.js";
 import { calibrationFor, measuredCacheRead } from "./calibrate.js";
@@ -90,6 +97,7 @@ export function contextCompiler(opts: {
   keepRecent?: number;
   expectedTurns?: number;
   minSavingsRatio?: number;
+  route?: RoutePolicy;
 }): { view(ctx: ViewContext): Promise<CompiledView> } {
   const count = opts.count ?? defaultTokenCount;
   const keepRecent = opts.keepRecent ?? 6;
@@ -149,10 +157,28 @@ export function contextCompiler(opts: {
       }
       const chosen = decision.rebuild && prior ? fresh : stay;
       let epoch = base.epoch;
-      let epochStart = chosen.epochStart;
+      let epochStart: { reason: string; model?: ModelRef } | undefined =
+        chosen.epochStart;
       if (decision.rebuild) {
         epoch = base.epoch + 1;
         epochStart = { reason: openReason(decision) };
+        if (opts.route) {
+          const routed = opts.route({
+            epoch,
+            current: ctx.model,
+            candidates: [...listModels(ctx.model.provider)],
+            viewChunks: routeChunks(chunks, chosen.chunkRecords),
+            decision,
+            budget: opts.budget,
+          });
+          if (routed) {
+            epochStart = { ...epochStart, model: routed.model };
+            decision = {
+              ...decision,
+              reason: `${decision.reason};route:${routed.reason}`,
+            };
+          }
+        }
       }
       const end = prefixEndIndex(
         chosen.messages.length,
@@ -340,6 +366,20 @@ export function contextCompiler(opts: {
       }
     },
   };
+}
+
+function routeChunks(chunks: readonly Chunk[], records: readonly ChunkRow[]) {
+  const byId = new Map(chunks.map((chunk) => [chunk.id, chunk]));
+  return records.map((record) => {
+    const chunk = byId.get(record.id);
+    return {
+      id: record.id,
+      tier: record.tier,
+      reason: record.reason,
+      tokens: record.tokens,
+      ...(chunk ? { accesses: chunk.accesses } : {}),
+    };
+  });
 }
 
 function decideChunks(

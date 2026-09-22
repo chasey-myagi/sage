@@ -4,8 +4,10 @@
  * Contract: parse argv, assemble AgentSession with the seven tools plus
  * update_ledger and expand, and a JsonlLogStore under
  * `<cwd>/.sage/sessions`. The view
- * is contextCompiler with budget 40000 and the four first-party claims,
- * unless `--passthrough` selects passthroughView. stdout is one JSON
+ * is contextCompiler with budget 40000, the four first-party claims, and
+ * the default route policy, unless `--passthrough` selects passthroughView.
+ * Two API keys assemble two adapters. One key routes only inside that
+ * provider. stdout is one JSON
  * RunSummary. The kernel appends each turn's manifest. Exit 0 when the
  * outcome is done, otherwise 1.
  *
@@ -26,14 +28,19 @@ import {
 import {
   agentsMd,
   contextCompiler,
+  costTierPolicy,
   expandTool,
   progressLedger,
+  type RoutePolicy,
+  sensitivePolicy,
   systemReminder,
   toolCatalog,
+  withSensitiveFilter,
 } from "@sage/plugins";
 import {
   AnthropicAdapter,
   defaultModel,
+  listModels,
   type ModelRef,
   OpenAIAdapter,
   type ProviderAdapter,
@@ -49,7 +56,8 @@ export type CodingSession = {
 
 export function createCodingSession(opts: {
   cwd: string;
-  adapter: ProviderAdapter;
+  adapter?: ProviderAdapter;
+  adapters?: Record<string, ProviderAdapter>;
   model: ModelRef;
   system?: string;
   sessionId?: string;
@@ -60,6 +68,17 @@ export function createCodingSession(opts: {
   budget?: number;
   passthrough?: boolean;
 }): CodingSession {
+  if (!opts.adapter && !opts.adapters) {
+    throw new Error("createCodingSession requires adapter or adapters");
+  }
+  const adapters =
+    opts.adapters ??
+    ({
+      [opts.model.provider]: opts.adapter,
+    } as Record<string, ProviderAdapter>);
+  if (!adapters[opts.model.provider]) {
+    throw new Error(`No adapter for provider: ${opts.model.provider}`);
+  }
   const sessionId = opts.sessionId ?? randomUUID();
   const store =
     opts.store ??
@@ -70,7 +89,7 @@ export function createCodingSession(opts: {
   const session = new AgentSession({
     store,
     sessionId,
-    adapter: opts.adapter,
+    adapters,
     model: opts.model,
     system: opts.system ?? systemPrompt(opts.cwd),
     tools: [
@@ -88,6 +107,7 @@ export function createCodingSession(opts: {
             toolCatalog({ deferred: [] }),
             ledger.provider,
           ],
+          route: defaultRoutePolicy(Object.keys(adapters), opts.model.provider),
         }),
     sampling: opts.sampling,
   });
@@ -100,6 +120,7 @@ export type CliIo = {
   stdout: { write(chunk: string): void };
   stderr: { write(chunk: string): void };
   adapter?: ProviderAdapter;
+  adapters?: Record<string, ProviderAdapter>;
 };
 
 export async function runCli(
@@ -120,10 +141,15 @@ export async function runCli(
     stderr.write(`${auth.message}\n`);
     return 1;
   }
-  const adapter = io.adapter ?? createAdapter(auth.provider, auth.apiKey);
+  const adapters =
+    io.adapters ??
+    (io.adapter ? { [auth.provider]: io.adapter } : adaptersFromEnv(env));
+  if (!adapters[auth.provider]) {
+    adapters[auth.provider] = createAdapter(auth.provider, auth.apiKey);
+  }
   const { session } = createCodingSession({
     cwd,
-    adapter,
+    adapters,
     model: { provider: auth.provider, model: auth.model },
     passthrough: parsed.passthrough,
   });
@@ -151,6 +177,44 @@ export async function runCli(
     stderr.write(`${message}\n`);
     return 1;
   }
+}
+
+const SENSITIVE = /(^|\/)\.env$|\/secrets\//;
+
+export function defaultRoutePolicy(
+  providers: readonly string[],
+  home: string,
+): RoutePolicy {
+  const unique = [...new Set(providers)];
+  const candidates = unique.flatMap((provider) => [...listModels(provider)]);
+  const ladder = candidates.map((entry) => ({
+    provider: entry.provider,
+    model: entry.model,
+  }));
+  const deny = unique.filter((provider) => provider !== home);
+  const policy = withSensitiveFilter(
+    costTierPolicy({ ladder, pick: "cheapest-allowed" }),
+    sensitivePolicy({
+      rules:
+        deny.length === 0 ? [] : [{ pattern: SENSITIVE, denyProviders: deny }],
+    }),
+  );
+  return (input) => policy({ ...input, candidates });
+}
+
+export function adaptersFromEnv(
+  env: NodeJS.ProcessEnv,
+): Record<string, ProviderAdapter> {
+  const adapters: Record<string, ProviderAdapter> = {};
+  if (env.ANTHROPIC_API_KEY) {
+    adapters.anthropic = new AnthropicAdapter({
+      apiKey: env.ANTHROPIC_API_KEY,
+    });
+  }
+  if (env.OPENAI_API_KEY) {
+    adapters.openai = new OpenAIAdapter({ apiKey: env.OPENAI_API_KEY });
+  }
+  return adapters;
 }
 
 function systemPrompt(cwd: string): string {

@@ -34,3 +34,14 @@ export { eliminate } from "./compiler/eliminate.js";
 export { expandTool } from "./compiler/expand.js";
 export { rebuildFromLog } from "./compiler/rebuild.js";
 export { renderStub, summarizeInput } from "./compiler/stub.js";
+export {
+  composePolicies,
+  costTierPolicy,
+  sensitivePolicy,
+  withSensitiveFilter,
+} from "./routing/policy.js";
+export type {
+  RouteInput,
+  RoutePolicy,
+  RouteResult,
+} from "./routing/types.js";

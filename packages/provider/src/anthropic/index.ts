@@ -21,6 +21,7 @@ import type { Driver, WireStop } from "../drive.js";
 import { blockStart, driveStream } from "../drive.js";
 import type { ClientOptions } from "../http.js";
 import { joinUrl } from "../http.js";
+import { normalizeForApi } from "../normalize.js";
 import { asRecord, indexOf, num } from "../record.js";
 import type { SseEvent } from "../sse.js";
 
@@ -99,7 +100,8 @@ function encodeRequest(
       ? { cache_control: { type: "ephemeral" } }
       : {}),
   }));
-  const messages = request.messages.map((message, index) => ({
+  const normalized = normalizeForApi(request.messages, "anthropic-messages");
+  const messages = normalized.map((message, index) => ({
     role: message.role,
     content: message.content.map((block, blockIndex) =>
       encodeBlock(

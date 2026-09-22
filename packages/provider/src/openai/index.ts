@@ -1,7 +1,7 @@
 /**
  * OpenAI-compatible chat adapter. cacheBreakpoints are ignored: this wire
- * format has no cache field. Thinking blocks are dropped; cross-provider
- * downgrade belongs to #13.
+ * format has no cache field. Thinking blocks and foreign tool ids are
+ * normalized before encode.
  *
  * Deliberately not a Log entry: the API key, request bytes, and abort
  * signal stay here. adapterDefaults are returned so a later
@@ -17,6 +17,7 @@ import type { Driver, WireStop } from "../drive.js";
 import { blockStart, driveStream } from "../drive.js";
 import type { ClientOptions } from "../http.js";
 import { joinUrl } from "../http.js";
+import { normalizeForApi } from "../normalize.js";
 import { asRecord, indexOf, num } from "../record.js";
 import type { SseEvent } from "../sse.js";
 
@@ -83,7 +84,8 @@ function encodeRequest(
   const messages: Record<string, unknown>[] = [
     { role: "system", content: request.head.system },
   ];
-  for (const message of request.messages) {
+  const normalized = normalizeForApi(request.messages, "openai-chat");
+  for (const message of normalized) {
     if (message.role === "assistant") pushAssistant(messages, message);
     else pushUser(messages, message);
   }
