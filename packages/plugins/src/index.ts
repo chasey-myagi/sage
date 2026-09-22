@@ -31,4 +31,6 @@ export type {
 export { contextCompiler } from "./compiler/compiler.js";
 export type { ChunkDecision } from "./compiler/eliminate.js";
 export { eliminate } from "./compiler/eliminate.js";
+export { expandTool } from "./compiler/expand.js";
 export { rebuildFromLog } from "./compiler/rebuild.js";
+export { renderStub, summarizeInput } from "./compiler/stub.js";

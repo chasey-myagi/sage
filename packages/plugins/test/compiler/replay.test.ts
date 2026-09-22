@@ -69,7 +69,13 @@ for (const spec of REPLAY_CASES) {
         (sum, chunk) => sum + (chunk.tier === "none" ? 0 : (chunk.tokens ?? 0)),
         0,
       );
-      expect(budget).toEqual({ total: 8000, used: kept, overrun: 0 });
+      expect(budget).toEqual({
+        total: 8000,
+        used: kept,
+        overrun: 0,
+        omitted: 0,
+        expands: 0,
+      });
     });
   });
 }

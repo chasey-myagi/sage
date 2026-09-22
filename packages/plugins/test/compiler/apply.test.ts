@@ -99,7 +99,7 @@ function usesOf(messages: Message[], id: string) {
   );
 }
 
-it("replaces a none tool result with [omitted] and leaves the tool_use and isError in place", () => {
+it("replaces a none tool result with a stub and leaves the tool_use and isError in place", () => {
   const messages: Message[] = [
     {
       role: "assistant",
@@ -134,10 +134,12 @@ it("replaces a none tool result with [omitted] and leaves the tool_use and isErr
     {
       type: "tool_result",
       toolUseId: "b1",
-      content: "[omitted]",
+      content:
+        '[#seq:3#b1 · bash · {"cmd":"ls"} · 0.0k tokens · omitted · expand("seq:3#b1") to retrieve]',
       isError: true,
     },
   ]);
+  expect(JSON.stringify(next)).not.toContain("[omitted]");
   expect(resultsOf(messages, "b1")[0]).toMatchObject({ content: "boom" });
   assertPaired(next);
 });
@@ -176,7 +178,8 @@ it("omits a superseded tool result in the compiled view and keeps anomalies empt
     {
       type: "tool_result",
       toolUseId: "r1",
-      content: "[omitted]",
+      content:
+        '[#seq:3#r1 · read · {"path":"/repo/a.ts"} · 0.0k tokens · omitted · expand("seq:3#r1") to retrieve]',
       isError: false,
     },
   ]);

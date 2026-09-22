@@ -14,19 +14,27 @@
 </claim>
 ```
 
-`none` 档的申领单不进视图。被淘汰的工具块仍留下 tool_use，配对的 tool_result 正文换成固定占位 `[omitted]`，isError 不变。
+`none` 档的申领单不进视图。被淘汰的工具块仍留下 tool_use，配对的 tool_result 正文换成一行桩，isError 不变：
+
+```text
+[#<chunkId> · <toolName> · <摘要> · <n>k tokens · omitted · expand("<chunkId>") to retrieve]
+```
+
+摘要是这条 tool_use 输入的紧凑单行，最长 80 个字符，更长就截断并加上 `…`。`<n>k` 是该块原文 token 数除以 1000，保留一位小数。模型要当时的原文时调用 `expand`，参数 `id` 就是桩里的 chunkId。这个工具按块 id 从 Log 取回当时的 tool_result 或文本消息，不重新执行原来的工具。
+
+expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本轮、路径上名字为 `expand` 的 tool_use 次数；`omitted` 是本轮档位为 none 的块数。
 
 ### Token effect
 
 进视图的申领单按所选档位计 token，总和受预算约束。清单里每张申领单都有 tier、reason、tokens；`budget` 记下 total、used、overrun。
 
-历史按块估算。token 影响等于淘汰之后仍保留的块的 token 合计；降到 none 的工具块不再占用剩余预算。清单里每块都有 id、tier、reason、tokens。
+历史按块估算。token 影响等于淘汰之后仍保留的块的 token 合计；降到 none 的工具块不再按原文占用剩余预算。清单里该块的 `tokens` 改记桩文本本身，`originalTokens` 保留原文估算。`budget` 除了 total、used、overrun，还有 omitted 和 expands。
 
 ### KV cache effect
 
 epoch-head 在同一阶段内逐字节冻结，阶段不重开，前缀不变。`tail` 每轮重算，`tail-if-changed` 只在正文变化时换新文本，两者都只影响消息尾部。
 
-淘汰会改写尾部之外的历史：tool_result 变成 `[omitted]`。M2 阶段淘汰结果每轮可能变化，前缀稳定性由 #12 接入。
+淘汰会改写尾部之外的历史：tool_result 变成一行桩。M2 阶段淘汰结果每轮可能变化，前缀稳定性由 #12 接入。
 
 ## 第一方申领单
 

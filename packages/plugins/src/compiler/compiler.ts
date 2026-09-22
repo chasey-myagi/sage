@@ -7,9 +7,14 @@
  * one tool call plus its result, or one prose message. Decisions follow
  * recent, superseded, retry, then oldest-first budget. `keepRecent` defaults
  * to 6. A none tool chunk keeps its tool_use and replaces the tool_result
- * content with `[omitted]`. Manifest chunks carry that id, tier, reason, and
- * the chunk's token estimate. Epoch stays whatever the path already says;
- * this compiler never opens a new epoch on its own.
+ * content with a one-line stub. Manifest chunks carry that id, tier, reason,
+ * and tokens. A stubbed tool chunk's `tokens` count the stub; `originalTokens`
+ * keeps the pre-stub estimate. `budget` also carries `omitted` (none chunks)
+ * and `expands` (assistant `expand` tool_use calls already on the path).
+ * Each such call appends `;expanded_at:<turn>` to that chunk's reason, where
+ * `<turn>` is the preceding manifest's turn. The tier is unchanged.
+ * Epoch stays whatever the path already says; this compiler never opens a
+ * new epoch on its own.
  * An epoch-head message is rendered once. Later turns of that epoch copy
  * `view_epoch.details.epochHead` and ignore fresh provider text. Tail blocks
  * are recomputed every turn and appended to the last message when it is a
@@ -30,6 +35,7 @@ import { indexChunks } from "./chunks.js";
 import type { Claim, ClaimProvider, Placement, Tier } from "./claim.js";
 import { eliminate } from "./eliminate.js";
 import { contentHash, parseClaimMessage, renderClaim } from "./format.js";
+import { renderStub } from "./stub.js";
 
 type ManifestClaim = ClaimRecord & {
   contentHash?: string;
@@ -127,11 +133,45 @@ export function contextCompiler(opts: {
         remainingBudget: Math.max(0, opts.budget - claimUsed),
       });
       const used = claimUsed + eliminated.used;
+      const expansions = expandStamps(ctx.path);
       const messages = applyDecisions(
         base.messages,
         chunks,
         eliminated.decisions,
       );
+      const chunkRecords = eliminated.decisions.map((decision) => {
+        const chunk = chunks.find((item) => item.id === decision.id);
+        const stamps = expansions.get(decision.id) ?? [];
+        const reason =
+          stamps.length > 0
+            ? `${decision.reason};${stamps.join(";")}`
+            : decision.reason;
+        const original = chunk?.tokens ?? 0;
+        if (decision.tier === "none" && chunk?.kind === "tool") {
+          return {
+            id: decision.id,
+            tier: decision.tier,
+            reason,
+            tokens: count(renderStub(chunk)),
+            originalTokens: original,
+          };
+        }
+        return {
+          id: decision.id,
+          tier: decision.tier,
+          reason,
+          tokens: original,
+        };
+      });
+      const budget = {
+        total: opts.budget,
+        used,
+        overrun: Math.max(0, used - opts.budget),
+        omitted: eliminated.decisions.filter(
+          (decision) => decision.tier === "none",
+        ).length,
+        expands: countExpands(ctx.path),
+      };
       let epochStart: { reason: string } | undefined;
       if (frozen) {
         messages.unshift(frozen);
@@ -151,19 +191,9 @@ export function contextCompiler(opts: {
         manifest: {
           epoch: base.epoch,
           turn: ctx.turn,
-          budget: {
-            total: opts.budget,
-            used,
-            overrun: Math.max(0, used - opts.budget),
-          },
+          budget,
           claims: [...records, ...collected.errors],
-          chunks: eliminated.decisions.map((decision) => ({
-            id: decision.id,
-            tier: decision.tier,
-            reason: decision.reason,
-            tokens:
-              chunks.find((chunk) => chunk.id === decision.id)?.tokens ?? 0,
-          })),
+          chunks: chunkRecords,
           anomalies: base.manifest.anomalies,
         },
       };
@@ -380,6 +410,50 @@ function projectionSeqs(path: ViewContext["path"]): number[] {
   }
   if (open.length > 0) flush();
   return seqs;
+}
+
+function expandStamps(path: ViewContext["path"]): Map<string, string[]> {
+  const stamps = new Map<string, string[]>();
+  let turn = 0;
+  for (const entry of path) {
+    if (
+      entry.kind === "manifest" &&
+      isRecord(entry.payload) &&
+      typeof entry.payload.turn === "number" &&
+      Number.isFinite(entry.payload.turn)
+    ) {
+      turn = entry.payload.turn;
+    }
+    if (entry.kind !== "message" || !isMessage(entry.payload)) continue;
+    if (entry.payload.role !== "assistant") continue;
+    for (const block of entry.payload.content) {
+      if (block.type !== "tool_use" || block.name !== "expand") continue;
+      const id = expandTarget(block.input);
+      if (!id) continue;
+      const list = stamps.get(id) ?? [];
+      list.push(`expanded_at:${turn}`);
+      stamps.set(id, list);
+    }
+  }
+  return stamps;
+}
+
+function countExpands(path: ViewContext["path"]): number {
+  let total = 0;
+  for (const entry of path) {
+    if (entry.kind !== "message" || !isMessage(entry.payload)) continue;
+    if (entry.payload.role !== "assistant") continue;
+    for (const block of entry.payload.content) {
+      if (block.type === "tool_use" && block.name === "expand") total += 1;
+    }
+  }
+  return total;
+}
+
+function expandTarget(input: unknown): string | undefined {
+  if (!isRecord(input)) return undefined;
+  if (typeof input.id !== "string" || input.id.length === 0) return undefined;
+  return input.id;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
