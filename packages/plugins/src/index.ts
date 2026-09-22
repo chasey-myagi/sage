@@ -45,4 +45,7 @@ export type {
   RoutePolicy,
   RouteResult,
 } from "./routing/types.js";
+export { modelScorer } from "./scorer/model.js";
+export { ruleScorer } from "./scorer/rule.js";
+export type { ScoreDecision, ScoreInput, Scorer } from "./scorer/types.js";
 export { subtaskTools } from "./subtask/spawn.js";

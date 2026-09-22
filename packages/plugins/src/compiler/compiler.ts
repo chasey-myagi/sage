@@ -21,6 +21,16 @@
  * is `cost:<paybackTurns>`, `cost:immediate`, or `context-window-guard`.
  * `route`, when set, runs only on that rebuild. A result sets
  * `epochStart.model` and appends `;route:<reason>` to the decision reason.
+ * `scorer` defaults to `ruleScorer` and runs only when this compile rebuilds
+ * and at least one kept tool chunk remains. The rule scorer leaves tier and
+ * reason untouched. Any other scorer may set a kept tool chunk to none,
+ * summary, or full with reason `scorer:model`. recent, superseded, retry, and
+ * budget reasons win. Summary tool_result text is the stub, a newline, and
+ * `summary (model notes, not evidence): `. That string is stored on the chunk
+ * record. A fallback appends `;scorer:fallback:<reason>` and keeps the
+ * eliminate tiers. When the call reports usage or a fallback, `manifest.scorer`
+ * is `{ calls, usage, fallback }`. The score request reuses the previous
+ * turn's head and messages rebuilt from the log.
  * Candidates are `listModels` of the current provider. Chunk accesses passed
  * to the policy come from the chunk index and are not copied onto the manifest.
  * The context-window guard is the only rebuild allowed on an epoch's first
@@ -46,17 +56,25 @@
  * decision reason is `subtask:no-rebuild`.
  *
  * Intentionally not in the Log: claim providers, the token counter, the route
- * policy, and the live CompiledView. The kernel persists `view_epoch`,
- * `model_change`, and the manifest.
+ * policy, the scorer function, and the live CompiledView. The kernel persists
+ * `view_epoch`, `model_change`, and the manifest, including `scorer` when set.
  */
 
 import type { ClaimRecord, CompiledView, ViewContext } from "@sage/core";
 import { passthroughView } from "@sage/core";
 import { listModels } from "@sage/provider";
-import type { Message, ModelRef } from "@sage/provider/contract";
+import type {
+  Message,
+  ModelRef,
+  Request,
+  Sampling,
+  Usage,
+} from "@sage/provider/contract";
 import { escapeClaimText } from "../claims/escape.js";
 import type { RoutePolicy } from "../routing/types.js";
-import { applyDecisions } from "./apply.js";
+import { ruleScorer } from "../scorer/rule.js";
+import type { ScoreDecision, Scorer } from "../scorer/types.js";
+import { applyDecisions, renderSummary } from "./apply.js";
 import { allocate, defaultTokenCount, type TokenCounter } from "./budget.js";
 import { calibrationFor, measuredCacheRead } from "./calibrate.js";
 import type { Chunk } from "./chunks.js";
@@ -88,6 +106,7 @@ type ChunkRow = {
   reason: string;
   tokens: number;
   originalTokens?: number;
+  summary?: string;
 };
 
 type Assembly = {
@@ -108,12 +127,14 @@ export function contextCompiler(opts: {
   expectedTurns?: number;
   minSavingsRatio?: number;
   route?: RoutePolicy;
+  scorer?: Scorer;
   subtask?: { query: string };
 }): { view(ctx: ViewContext): Promise<CompiledView> } {
   const count = opts.count ?? defaultTokenCount;
   const keepRecent = opts.keepRecent ?? 6;
   const expectedTurns = opts.expectedTurns ?? 20;
   const minSavingsRatio = opts.minSavingsRatio ?? 0.2;
+  const scorer = opts.scorer ?? ruleScorer;
 
   return {
     async view(ctx: ViewContext): Promise<CompiledView> {
@@ -174,7 +195,35 @@ export function contextCompiler(opts: {
           reason: tagReason("savings-too-small", rates),
         };
       }
-      const chosen = decision.rebuild && prior ? fresh : stay;
+      let chosen = decision.rebuild && prior ? fresh : stay;
+      let scorerReport:
+        | { calls: number; usage: Usage; fallback: boolean }
+        | undefined;
+      if (decision.rebuild) {
+        const scored = await runScorer({
+          scorer,
+          chunks,
+          rows: chosen.chunkRecords,
+          messages: chosen.messages,
+          used: chosen.used,
+          count,
+          prevRequest: previousRequest(ctx),
+          query: latestQuery(ctx.path),
+        });
+        chosen = {
+          ...chosen,
+          messages: scored.messages,
+          chunkRecords: scored.rows,
+          used: scored.used,
+        };
+        if (scored.fallback) {
+          decision = {
+            ...decision,
+            reason: `${decision.reason};scorer:fallback:${scored.fallback}`,
+          };
+        }
+        scorerReport = scored.report;
+      }
       let epoch = base.epoch;
       let epochStart: { reason: string; model?: ModelRef } | undefined =
         chosen.epochStart;
@@ -229,6 +278,18 @@ export function contextCompiler(opts: {
           .length,
         expands: countExpands(ctx.path),
       };
+      const manifest = {
+        epoch,
+        turn: ctx.turn,
+        budget,
+        claims: chosen.records,
+        chunks: chosen.chunkRecords,
+        anomalies: base.manifest.anomalies,
+        epochDecision: decision,
+        cache,
+        ...(calibration ? { calibration } : {}),
+        ...(scorerReport ? { scorer: scorerReport } : {}),
+      };
       const view: CompiledView = {
         epoch,
         head: ctx.head,
@@ -238,17 +299,7 @@ export function contextCompiler(opts: {
           { afterMessage: end },
           { afterMessage: last },
         ],
-        manifest: {
-          epoch,
-          turn: ctx.turn,
-          budget,
-          claims: chosen.records,
-          chunks: chosen.chunkRecords,
-          anomalies: base.manifest.anomalies,
-          epochDecision: decision,
-          cache,
-          ...(calibration ? { calibration } : {}),
-        },
+        manifest,
       };
       if (epochStart) view.epochStart = epochStart;
       if (Object.keys(chosen.claimContent).length > 0) {
@@ -335,6 +386,14 @@ export function contextCompiler(opts: {
           keepRecent,
           Math.max(0, opts.budget - claimUsed),
         );
+        if (mode.prior) {
+          const notes = loggedSummaries(ctx.path, base.epoch);
+          for (const decision of decided.decisions) {
+            if (decision.tier !== "summary") continue;
+            const note = notes.get(decision.id);
+            if (note !== undefined) decision.summary = note;
+          }
+        }
         const expansions = expandStamps(ctx.path);
         const messages = applyDecisions(
           base.messages,
@@ -355,6 +414,17 @@ export function contextCompiler(opts: {
               originalTokens: original,
             };
           }
+          if (decision.tier === "summary" && chunk?.kind === "tool") {
+            const summary = decision.summary ?? "";
+            return {
+              id: decision.id,
+              tier: decision.tier,
+              reason,
+              tokens: count(renderSummary(chunk, summary)),
+              originalTokens: original,
+              summary,
+            };
+          }
           return {
             id: decision.id,
             tier: decision.tier,
@@ -362,6 +432,14 @@ export function contextCompiler(opts: {
             tokens: original,
           };
         });
+        let chunkUsed = decided.used;
+        for (const decision of decided.decisions) {
+          if (decision.tier !== "summary") continue;
+          const chunk = chunks.find((item) => item.id === decision.id);
+          if (chunk?.kind !== "tool") continue;
+          chunkUsed +=
+            count(renderSummary(chunk, decision.summary ?? "")) - chunk.tokens;
+        }
         let epochStart: { reason: string } | undefined;
         if (frozen) {
           messages.unshift(frozen);
@@ -377,7 +455,7 @@ export function contextCompiler(opts: {
           messages,
           records: [...records, ...collected.errors],
           chunkRecords,
-          used: claimUsed + decided.used,
+          used: claimUsed + chunkUsed,
           claimContent,
           ...(epochStart ? { epochStart } : {}),
           hasEpochHead: frozen !== undefined || epochStart !== undefined,
@@ -1023,4 +1101,278 @@ function isTierName(value: unknown): value is Tier {
     value === "summary" ||
     value === "full"
   );
+}
+
+const SCORE_TIERS = new Set<Tier>(["none", "summary", "full"]);
+const SUMMARY_LIMIT = 200;
+const EMPTY_USAGE: Usage = {
+  inputOther: 0,
+  inputCacheRead: 0,
+  inputCacheCreation: 0,
+  output: 0,
+};
+
+async function runScorer(input: {
+  scorer: Scorer;
+  chunks: Chunk[];
+  rows: ChunkRow[];
+  messages: Message[];
+  used: number;
+  count: TokenCounter;
+  prevRequest: Request | undefined;
+  query: string;
+}): Promise<{
+  rows: ChunkRow[];
+  messages: Message[];
+  used: number;
+  fallback?: string;
+  report?: { calls: number; usage: Usage; fallback: boolean };
+}> {
+  const candidates = keptToolChunks(input.rows, input.chunks);
+  if (candidates.length === 0) {
+    return { rows: input.rows, messages: input.messages, used: input.used };
+  }
+  let result: {
+    decisions: ScoreDecision[];
+    usage?: Usage;
+    fallback?: string;
+  };
+  try {
+    result = await input.scorer.score({
+      candidates,
+      prevRequest: input.prevRequest,
+      query: input.query,
+    });
+  } catch {
+    result = { decisions: [], fallback: "error" };
+  }
+  const report = reportOf(result);
+  if (result.fallback !== undefined || input.scorer.name === "rule") {
+    return {
+      rows: input.rows,
+      messages: input.messages,
+      used: input.used,
+      ...(result.fallback !== undefined ? { fallback: result.fallback } : {}),
+      ...(report ? { report } : {}),
+    };
+  }
+  const merged = mergeScore(
+    input.rows,
+    input.chunks,
+    result.decisions,
+    input.count,
+  );
+  const decisions = merged.rows.map((row) => ({
+    id: row.id,
+    tier: row.tier,
+    reason: row.reason,
+    ...(row.summary !== undefined ? { summary: row.summary } : {}),
+  }));
+  return {
+    rows: merged.rows,
+    messages: applyDecisions(input.messages, input.chunks, decisions),
+    used: input.used + merged.usedDelta,
+    ...(report ? { report } : {}),
+  };
+}
+
+function keptToolChunks(
+  rows: readonly ChunkRow[],
+  chunks: readonly Chunk[],
+): Chunk[] {
+  const byId = new Map(chunks.map((chunk) => [chunk.id, chunk]));
+  const kept: Chunk[] = [];
+  for (const row of rows) {
+    if (rootReason(row.reason) !== "kept") continue;
+    const chunk = byId.get(row.id);
+    if (chunk?.kind !== "tool") continue;
+    kept.push(chunk);
+  }
+  return kept;
+}
+
+function mergeScore(
+  rows: readonly ChunkRow[],
+  chunks: readonly Chunk[],
+  decisions: readonly ScoreDecision[],
+  count: TokenCounter,
+): { rows: ChunkRow[]; usedDelta: number } {
+  const byId = new Map(decisions.map((decision) => [decision.id, decision]));
+  const chunksById = new Map(chunks.map((chunk) => [chunk.id, chunk]));
+  let usedDelta = 0;
+  const next = rows.map((row) => {
+    if (rootReason(row.reason) !== "kept") return row;
+    const chunk = chunksById.get(row.id);
+    if (chunk?.kind !== "tool") return row;
+    const scored = byId.get(row.id);
+    if (!scored || !SCORE_TIERS.has(scored.tier)) return row;
+    const reason = modelReason(row.reason);
+    if (scored.tier === "full") {
+      return {
+        id: row.id,
+        tier: "full" as const,
+        reason,
+        tokens: chunk.tokens,
+      };
+    }
+    if (scored.tier === "none") {
+      usedDelta -= chunk.tokens;
+      return {
+        id: row.id,
+        tier: "none" as const,
+        reason,
+        tokens: count(renderStub(chunk)),
+        originalTokens: chunk.tokens,
+      };
+    }
+    const summary = clampSummary(scored.summary ?? "");
+    const rendered = renderSummary(chunk, summary);
+    usedDelta += count(rendered) - chunk.tokens;
+    return {
+      id: row.id,
+      tier: "summary" as const,
+      reason,
+      tokens: count(rendered),
+      originalTokens: chunk.tokens,
+      summary,
+    };
+  });
+  return { rows: next, usedDelta };
+}
+
+function reportOf(result: {
+  usage?: Usage;
+  fallback?: string;
+}): { calls: number; usage: Usage; fallback: boolean } | undefined {
+  if (result.usage === undefined && result.fallback === undefined)
+    return undefined;
+  const preCall =
+    result.fallback === "no-previous-request" ||
+    result.fallback === "no-adapter";
+  return {
+    calls: preCall ? 0 : 1,
+    usage: result.usage ?? EMPTY_USAGE,
+    fallback: result.fallback !== undefined,
+  };
+}
+
+function rootReason(reason: string): string {
+  return reason.split(";")[0] ?? reason;
+}
+
+function modelReason(reason: string): string {
+  const extra = reason
+    .split(";")
+    .slice(1)
+    .filter((part) => part.length > 0);
+  if (extra.length === 0) return "scorer:model";
+  return `scorer:model;${extra.join(";")}`;
+}
+
+function clampSummary(summary: string): string {
+  if (summary.length <= SUMMARY_LIMIT) return summary;
+  return summary.slice(0, SUMMARY_LIMIT);
+}
+
+function previousRequest(ctx: ViewContext): Request | undefined {
+  const manifest = latestManifest(ctx.path);
+  const turn = manifestTurn(manifest);
+  if (!manifest || turn === undefined) return undefined;
+  const header = latestHeader(ctx.path);
+  if (!header) return undefined;
+  try {
+    const rebuilt = rebuildFromLog(ctx.path, turn);
+    const last = Math.max(0, rebuilt.messages.length - 1);
+    return {
+      model: { provider: header.provider, model: header.model },
+      head: rebuilt.head,
+      messages: rebuilt.messages,
+      cacheBreakpoints: ["head", { afterMessage: last }],
+      sampling: header.sampling,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function latestHeader(
+  path: ViewContext["path"],
+): { provider: string; model: string; sampling: Sampling } | undefined {
+  for (let index = path.length - 1; index >= 0; index -= 1) {
+    const entry = path[index];
+    if (entry?.kind !== "request_header" || !isRecord(entry.payload)) continue;
+    const provider = entry.payload.provider;
+    const model = entry.payload.model;
+    if (typeof provider !== "string" || typeof model !== "string") continue;
+    return { provider, model, sampling: samplingOf(entry.payload.sampling) };
+  }
+  return undefined;
+}
+
+function samplingOf(value: unknown): Sampling {
+  if (!isRecord(value)) return {};
+  const sampling: Sampling = {};
+  if (typeof value.maxTokens === "number") sampling.maxTokens = value.maxTokens;
+  if (typeof value.temperature === "number")
+    sampling.temperature = value.temperature;
+  return sampling;
+}
+
+function latestQuery(path: ViewContext["path"]): string {
+  for (let index = path.length - 1; index >= 0; index -= 1) {
+    const entry = path[index];
+    if (entry?.kind !== "message" || !isMessage(entry.payload)) continue;
+    if (entry.payload.role !== "user") continue;
+    const text = entry.payload.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n");
+    if (text.length > 0) return text;
+  }
+  return "";
+}
+
+function loggedSummaries(
+  path: ViewContext["path"],
+  epoch: number,
+): Map<string, string> {
+  const entry = epochManifest(path, epoch);
+  const notes = new Map<string, string>();
+  if (
+    !entry ||
+    !isRecord(entry.payload) ||
+    !Array.isArray(entry.payload.chunks)
+  ) {
+    return notes;
+  }
+  for (const chunk of entry.payload.chunks) {
+    if (!isRecord(chunk) || typeof chunk.id !== "string") continue;
+    if (chunk.tier !== "summary" || typeof chunk.summary !== "string") continue;
+    notes.set(chunk.id, chunk.summary);
+  }
+  return notes;
+}
+
+function epochManifest(
+  path: ViewContext["path"],
+  epoch: number,
+): ViewContext["path"][number] | undefined {
+  let start = -1;
+  let opened = false;
+  for (let index = 0; index < path.length; index += 1) {
+    const entry = path[index];
+    if (entry?.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
+    if (entry.payload.epoch !== epoch) continue;
+    start = index;
+    opened = true;
+    break;
+  }
+  if (!opened && epoch !== 0) return undefined;
+  for (let index = start + 1; index < path.length; index += 1) {
+    const entry = path[index];
+    if (!entry) continue;
+    if (entry.kind === "view_epoch") break;
+    if (entry.kind === "manifest") return entry;
+  }
+  return undefined;
 }

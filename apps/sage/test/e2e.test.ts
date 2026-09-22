@@ -15,12 +15,27 @@ import {
   stopScript,
   toolScript,
 } from "../../../packages/core/test/support/faux.ts";
-import { createCodingSession, runCli } from "../src/main.ts";
+import { createCodingSession, parseArgs, runCli } from "../src/main.ts";
 
 let dir = "";
 
 afterEach(() => {
   if (dir) rmSync(dir, { recursive: true, force: true });
+});
+
+describe("scorer flag", () => {
+  it("parses --scorer model and rejects an unknown scorer", () => {
+    expect(parseArgs(["--print", "hi", "--scorer", "model"])).toMatchObject({
+      ok: true,
+      task: "hi",
+      scorer: "model",
+    });
+    expect(parseArgs(["--print", "hi", "--scorer=rule"])).toMatchObject({
+      ok: true,
+      scorer: "rule",
+    });
+    expect(parseArgs(["--print", "hi", "--scorer", "nope"]).ok).toBe(false);
+  });
 });
 
 function capture() {

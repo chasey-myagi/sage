@@ -283,3 +283,53 @@ it("protects the six most recent tool chunks when keepRecent is omitted", async 
   ]);
   expect(view.manifest.anomalies).toEqual([]);
 });
+
+it("renders a summary tier as the stub plus a model note", () => {
+  const messages: Message[] = [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "b1",
+          name: "bash",
+          input: { cmd: "ls" },
+          rawInput: '{"cmd":"ls"}',
+        },
+      ],
+    },
+    {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          toolUseId: "b1",
+          content: "ORIGINAL",
+          isError: false,
+        },
+      ],
+    },
+  ];
+  const chunks: Chunk[] = indexChunks(messages, [12, 13], [], () => 1);
+  const next = applyDecisions(messages, chunks, [
+    {
+      id: "seq:12#b1",
+      tier: "summary",
+      reason: "scorer:model",
+      summary: "listed the workspace",
+    },
+  ]);
+  expect(resultsOf(next, "b1")).toEqual([
+    {
+      type: "tool_result",
+      toolUseId: "b1",
+      content: [
+        '[#seq:12#b1 · bash · {"cmd":"ls"} · 0.0k tokens · omitted · expand("seq:12#b1") to retrieve]',
+        "summary (model notes, not evidence): listed the workspace",
+      ].join("\n"),
+      isError: false,
+    },
+  ]);
+  expect(resultsOf(messages, "b1")[0]).toMatchObject({ content: "ORIGINAL" });
+  assertPaired(next);
+});
