@@ -3,8 +3,13 @@
  * assemble the view, and attach a manifest.
  *
  * Contract: head is the session-injected head. History is the passthrough
- * projection, including its repair and anomalies. Epoch stays whatever the
- * path already says; this compiler never opens a new epoch on its own.
+ * projection, including its repair and anomalies, then indexed into chunks:
+ * one tool call plus its result, or one prose message. Decisions follow
+ * recent, superseded, retry, then oldest-first budget. `keepRecent` defaults
+ * to 6. A none tool chunk keeps its tool_use and replaces the tool_result
+ * content with `[omitted]`. Manifest chunks carry that id, tier, reason, and
+ * the chunk's token estimate. Epoch stays whatever the path already says;
+ * this compiler never opens a new epoch on its own.
  * An epoch-head message is rendered once. Later turns of that epoch copy
  * `view_epoch.details.epochHead` and ignore fresh provider text. Tail blocks
  * are recomputed every turn and appended to the last message when it is a
@@ -19,8 +24,11 @@
 import type { ClaimRecord, CompiledView, ViewContext } from "@sage/core";
 import { passthroughView } from "@sage/core";
 import type { Message } from "@sage/provider/contract";
+import { applyDecisions } from "./apply.js";
 import { allocate, defaultTokenCount, type TokenCounter } from "./budget.js";
+import { indexChunks } from "./chunks.js";
 import type { Claim, ClaimProvider, Placement, Tier } from "./claim.js";
+import { eliminate } from "./eliminate.js";
 import { contentHash, parseClaimMessage, renderClaim } from "./format.js";
 
 type ManifestClaim = ClaimRecord & {
@@ -33,8 +41,10 @@ export function contextCompiler(opts: {
   budget: number;
   claims: ClaimProvider[];
   count?: TokenCounter;
+  keepRecent?: number;
 }): { view(ctx: ViewContext): Promise<CompiledView> } {
   const count = opts.count ?? defaultTokenCount;
+  const keepRecent = opts.keepRecent ?? 6;
 
   return {
     async view(ctx: ViewContext): Promise<CompiledView> {
@@ -100,10 +110,28 @@ export function contextCompiler(opts: {
         if (prior !== hash) claimContent[claim.id] = rendered;
       }
 
-      const messages = base.messages.map((message) => ({
-        role: message.role,
-        content: [...message.content],
-      }));
+      const allocatedUsed = allocation.records.reduce(
+        (sum, record) => sum + (record.tokens ?? 0),
+        0,
+      );
+      const claimUsed = frozenUsed + allocatedUsed;
+      const seqs = projectionSeqs(ctx.path);
+      if (seqs.length !== base.messages.length) {
+        throw new Error(
+          `projected seqs (${seqs.length}) do not match passthrough messages (${base.messages.length})`,
+        );
+      }
+      const chunks = indexChunks(base.messages, seqs, ctx.tools, count);
+      const eliminated = eliminate(chunks, {
+        keepRecent,
+        remainingBudget: Math.max(0, opts.budget - claimUsed),
+      });
+      const used = claimUsed + eliminated.used;
+      const messages = applyDecisions(
+        base.messages,
+        chunks,
+        eliminated.decisions,
+      );
       let epochStart: { reason: string } | undefined;
       if (frozen) {
         messages.unshift(frozen);
@@ -115,12 +143,6 @@ export function contextCompiler(opts: {
         }
       }
       appendTail(messages, tailBlocks(records, claimById));
-
-      const allocatedUsed = allocation.records.reduce(
-        (sum, record) => sum + (record.tokens ?? 0),
-        0,
-      );
-      const used = frozenUsed + allocatedUsed;
       const view: CompiledView = {
         epoch: base.epoch,
         head: ctx.head,
@@ -135,7 +157,13 @@ export function contextCompiler(opts: {
             overrun: Math.max(0, used - opts.budget),
           },
           claims: [...records, ...collected.errors],
-          chunks: base.manifest.chunks,
+          chunks: eliminated.decisions.map((decision) => ({
+            id: decision.id,
+            tier: decision.tier,
+            reason: decision.reason,
+            tokens:
+              chunks.find((chunk) => chunk.id === decision.id)?.tokens ?? 0,
+          })),
           anomalies: base.manifest.anomalies,
         },
       };
@@ -320,6 +348,38 @@ function previousHash(
       : undefined;
   }
   return undefined;
+}
+
+function projectionSeqs(path: ViewContext["path"]): number[] {
+  const seqs: number[] = [];
+  const open: string[] = [];
+  const flush = () => {
+    if (open.length === 0) return;
+    open.length = 0;
+    seqs.push(-1);
+  };
+  for (const entry of path) {
+    if (entry.kind !== "message" || !isMessage(entry.payload)) continue;
+    if (entry.payload.role === "assistant" && open.length > 0) flush();
+    let kept = 0;
+    const opened: string[] = [];
+    for (const block of entry.payload.content) {
+      if (block.type === "tool_result") {
+        const index = open.indexOf(block.toolUseId);
+        if (index === -1) continue;
+        open.splice(index, 1);
+        kept += 1;
+        continue;
+      }
+      kept += 1;
+      if (block.type === "tool_use") opened.push(block.id);
+    }
+    if (kept === 0) continue;
+    seqs.push(entry.seq);
+    open.push(...opened);
+  }
+  if (open.length > 0) flush();
+  return seqs;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

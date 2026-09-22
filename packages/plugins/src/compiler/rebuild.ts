@@ -6,7 +6,9 @@
  * with the same repair as passthrough. Tail text comes from
  * `manifest.details.claimContent`, walking backward to the manifest that
  * stored this content hash. System and tool text come from the latest
- * request_header that still carries them for the same hash.
+ * request_header that still carries them for the same hash. A manifest chunk
+ * at tier none whose id contains `#` rebuilds that tool_result as
+ * `[omitted]`.
  *
  * Intentionally not in the Log: this function. It only reads entries the
  * kernel already wrote.
@@ -15,6 +17,7 @@
 import type { StoredEntry, ViewContext } from "@sage/core";
 import { passthroughView } from "@sage/core";
 import type { Head, Message, ToolDef } from "@sage/provider/contract";
+import { omitToolResults } from "./apply.js";
 
 type LoggedClaim = {
   id: string;
@@ -36,13 +39,9 @@ export function rebuildFromLog(
   if (projected instanceof Promise) {
     throw new Error("passthrough projection must be synchronous");
   }
-  const history = projected.messages.map((message) => ({
-    role: message.role,
-    content: [...message.content],
-  }));
-
   const manifest = path[manifestIndex];
   if (!manifest) throw new Error(`no manifest for turn ${turn}`);
+  const history = omitToolResults(projected.messages, omittedToolIds(manifest));
   const epoch = epochOf(manifest);
   const epochHead = epochHeadFor(prefix, epoch);
   const messages = [...history];
@@ -69,6 +68,7 @@ function rebuildContext(
       adapterDefaults: {},
     },
     head,
+    tools: [],
   };
 }
 
@@ -241,6 +241,26 @@ function appendTail(
     return;
   }
   messages.push({ role: "user", content: blocks });
+}
+
+function omittedToolIds(entry: StoredEntry | undefined): Set<string> {
+  const ids = new Set<string>();
+  if (
+    !entry ||
+    !isRecord(entry.payload) ||
+    !Array.isArray(entry.payload.chunks)
+  ) {
+    return ids;
+  }
+  for (const value of entry.payload.chunks) {
+    if (!isRecord(value) || value.tier !== "none") continue;
+    if (typeof value.id !== "string") continue;
+    const mark = value.id.indexOf("#");
+    if (mark < 0) continue;
+    const toolUseId = value.id.slice(mark + 1);
+    if (toolUseId.length > 0) ids.add(toolUseId);
+  }
+  return ids;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

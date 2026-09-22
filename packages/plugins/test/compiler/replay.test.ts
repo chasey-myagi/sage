@@ -4,6 +4,22 @@ import { expect, it } from "vitest";
 import { caseDir, REPLAY_CASES } from "../../../core/test/replay/cases.ts";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
 
+function expectedChunks(name: string): Manifest["chunks"][] {
+  if (name === "text-only") {
+    return [[{ id: "seq:0", tier: "full", reason: "kept", tokens: 2 }]];
+  }
+  if (name === "tool-roundtrip") {
+    return [
+      [{ id: "seq:0", tier: "full", reason: "kept", tokens: 1 }],
+      [
+        { id: "seq:0", tier: "full", reason: "kept", tokens: 1 },
+        { id: "seq:3#call_1", tier: "full", reason: "recent", tokens: 5 },
+      ],
+    ];
+  }
+  throw new Error(`no chunk expectation for ${name}`);
+}
+
 function stabilize(manifest: Manifest, log: readonly StoredEntry[]): Manifest {
   const ids = new Map(log.map((entry) => [entry.id, entry.seq]));
   const swap = (value: string) => {
@@ -17,7 +33,7 @@ function stabilize(manifest: Manifest, log: readonly StoredEntry[]): Manifest {
 }
 
 for (const spec of REPLAY_CASES) {
-  it(`compiles replay case ${spec.name} to the passthrough request plus an empty budget`, async () => {
+  it(`compiles replay case ${spec.name} to the passthrough request and the new chunk index`, async () => {
     const dir = caseDir(spec.name);
     const plain = await replaySession(dir, {
       system: spec.system,
@@ -37,14 +53,23 @@ for (const spec of REPLAY_CASES) {
     compiled.manifests.forEach((manifest, index) => {
       const plainManifest = plain.manifests[index];
       if (!plainManifest) throw new Error(`missing manifest ${index}`);
-      const { budget, ...rest } = stabilize(manifest, compiled.log);
-      const { budget: plainBudget, ...plainRest } = stabilize(
-        plainManifest,
-        plain.log,
-      );
+      const { budget, chunks, ...rest } = stabilize(manifest, compiled.log);
+      const {
+        budget: plainBudget,
+        chunks: plainChunks,
+        ...plainRest
+      } = stabilize(plainManifest, plain.log);
       expect(plainBudget).toBeUndefined();
+      expect(plainChunks.every((chunk) => chunk.reason === "passthrough")).toBe(
+        true,
+      );
       expect(rest).toEqual(plainRest);
-      expect(budget).toEqual({ total: 8000, used: 0, overrun: 0 });
+      expect(chunks).toEqual(expectedChunks(spec.name)[index]);
+      const kept = chunks.reduce(
+        (sum, chunk) => sum + (chunk.tier === "none" ? 0 : (chunk.tokens ?? 0)),
+        0,
+      );
+      expect(budget).toEqual({ total: 8000, used: kept, overrun: 0 });
     });
   });
 }

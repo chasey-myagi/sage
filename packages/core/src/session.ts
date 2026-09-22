@@ -22,6 +22,7 @@
  *
  * Contract: the kernel does not compress. Hooks never receive the store.
  * ViewContext.path is a structured clone taken before view().
+ * ViewContext.tools is the tool list given to the constructor.
  *
  * Intentionally not in the Log: the hook list, the abort signal, observer
  * errors, and tool execute details. Model-visible text is the message and
@@ -236,6 +237,7 @@ export class AgentSession {
       model: this.model,
       prepared,
       head: this.injectedHead(),
+      tools: this.tools,
     });
     assertPaired(view.messages);
     this.assertEpoch(view);

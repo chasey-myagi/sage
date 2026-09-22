@@ -87,5 +87,6 @@ export function contextOf(
       adapterDefaults: {},
     },
     head: { system: "You are sage.", tools: [] },
+    tools: [],
   };
 }

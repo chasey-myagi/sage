@@ -17,8 +17,11 @@ export {
   systemReminder,
   toolCatalog,
 } from "./claims/index.js";
+export { applyDecisions } from "./compiler/apply.js";
 export type { TokenCounter } from "./compiler/budget.js";
 export { allocate, defaultTokenCount } from "./compiler/budget.js";
+export type { Chunk } from "./compiler/chunks.js";
+export { canSplitAfter, indexChunks } from "./compiler/chunks.js";
 export type {
   Claim,
   ClaimProvider,
@@ -26,4 +29,6 @@ export type {
   Tier,
 } from "./compiler/claim.js";
 export { contextCompiler } from "./compiler/compiler.js";
+export type { ChunkDecision } from "./compiler/eliminate.js";
+export { eliminate } from "./compiler/eliminate.js";
 export { rebuildFromLog } from "./compiler/rebuild.js";
