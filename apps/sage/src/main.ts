@@ -13,9 +13,13 @@
  * Two API keys assemble two adapters. One key routes only inside that
  * provider. stdout is one JSON RunSummary, including `health`. `--json`
  * asks for that same line. `stats <session.jsonl>` reads the file with
- * JsonlLogStore and prints `runHealth` without starting a run. The kernel
+ * JsonlLogStore and prints `runHealth` without starting a run.
+ * `bench run` clones each task, runs sage, then the task's test command,
+ * and writes `<out>/results.json` plus `<out>/sessions/<taskId>.jsonl`.
+ * It exits 2 when the selected provider has no API key. `bench report`
+ * prints JSON `{ a, b, delta }` for two result directories. The kernel
  * appends each turn's manifest. Exit 0 when the outcome is done, otherwise
- * 1. `stats` exits 0 after printing.
+ * 1. `stats` and a completed bench command exit 0 after printing.
  *
  * Intentionally not in the Log: argv, API keys, and the stderr progress
  * lines. The system prompt is model-visible and is stored on request_header.
@@ -58,6 +62,7 @@ import {
   type Sampling,
 } from "@sage/provider";
 import { type BashExec, createTools } from "@sage/tools";
+import { type BenchDeps, runBenchCli } from "./bench.js";
 
 export type CodingSession = {
   session: AgentSession;
@@ -153,6 +158,8 @@ export type CliIo = {
   stderr: { write(chunk: string): void };
   adapter?: ProviderAdapter;
   adapters?: Record<string, ProviderAdapter>;
+  /** Test seam. Production runs use git, the sage bin, and the test command. */
+  benchDeps?: BenchDeps;
 };
 
 export async function runCli(
@@ -165,6 +172,15 @@ export async function runCli(
   const env = io.env ?? process.env;
   if (argv[0] === "stats") {
     return runStats(argv.slice(1), { cwd, stdout, stderr });
+  }
+  if (argv[0] === "bench") {
+    return runBenchCli(argv.slice(1), {
+      env,
+      cwd,
+      stdout,
+      stderr,
+      ...(io.benchDeps ? { deps: io.benchDeps } : {}),
+    });
   }
   const parsed = parseArgs(argv);
   if (!parsed.ok) {
@@ -374,6 +390,8 @@ function usage(): string {
   return [
     "usage: sage [-p | --print] <task> [--provider anthropic|openai] [--model <id>] [--passthrough] [--scorer rule|model] [--json]",
     "       sage stats <session.jsonl>",
+    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider anthropic|openai] --out <dir>",
+    "       sage bench report <runA> <runB>",
   ].join("\n");
 }
 

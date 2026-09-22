@@ -16,7 +16,8 @@
     "check:readme": "node scripts/check-readme-model-experience.mjs",
     "test": "vitest run",
     "test:update": "UPDATE_EXPECTED=1 vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "bench:fetch": "node bench/tasks/fetch-swe-verified.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",

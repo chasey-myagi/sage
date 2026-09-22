@@ -3,6 +3,9 @@
  *
  * Contract: the context compiler is the only ViewProvider in this package.
  * Callers pass claim providers; they do not push text into the session.
+ * `replayOffline` recompiles a recorded log under another policy and does
+ * not append to that log. `compareOffline` reports numbers and the offline
+ * scorer note.
  *
  * Intentionally not in the Log: this barrel. Claim text reaches the Log only
  * through the manifest entry the kernel appends.
@@ -34,6 +37,8 @@ export { eliminate } from "./compiler/eliminate.js";
 export { expandTool } from "./compiler/expand.js";
 export { rebuildFromLog } from "./compiler/rebuild.js";
 export { renderStub, summarizeInput } from "./compiler/stub.js";
+export type { Policy, TurnDiff } from "./replay/offline.js";
+export { compareOffline, replayOffline } from "./replay/offline.js";
 export {
   composePolicies,
   costTierPolicy,
