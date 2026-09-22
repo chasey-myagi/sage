@@ -5,8 +5,9 @@
  * puts on the head. execute is the only side effect. ctx.toolUseId is the
  * tool_use id for this call. Only the tool_result content is model-visible.
  *
- * Intentionally not in the Log: Access lists, the tool object, and execute's
- * details field. Those are runtime facts, not a second copy of the result.
+ * Intentionally not in the Log: Access lists and the tool object. execute's
+ * `details` are not model-visible. The kernel stores them on the user
+ * message entry as `details.toolResults`, not on the tool_result block.
  */
 
 import type { ToolDef } from "@sage/provider/contract";

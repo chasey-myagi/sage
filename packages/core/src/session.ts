@@ -17,7 +17,8 @@
  * collect → append message(assistant) with details
  * {responseModel, responseId, api, usage, finish} → llm_end →
  * if finish.kind is tool_use, run the tool pipeline for each tool_use and
- * append one user message of results, then turn_end continue;
+ * append one user message of results (tool details on the entry, not the
+ * block), then turn_end continue;
  * otherwise turn_end done.
  * abort, an adapter finish error, or a throw appends terminal and stops.
  * Using up maxTurns appends terminal {outcome:"max_turns"}.
@@ -30,7 +31,10 @@
  * epochDecision.reason. Head bytes are not rewritten on a switch.
  * RunSummary.modelChanges counts model_change entries appended in this run.
  * RunSummary.health is runHealth of the path at finish, and the terminal
- * payload stores that same object.
+ * payload stores that same object. When a tool returns `details`, the user
+ * message that carries the results stores `details.toolResults`
+ * (`toolUseId`, `name`, `details`). Those fields are not on the
+ * model-visible tool_result block.
  * Constructor takes `adapters` (provider → adapter) or one `adapter`, which
  * is stored under the starting model's provider.
  * `parent`, when set, snapshots `store.path(parent.sessionId, parent.leafId)`
@@ -39,9 +43,9 @@
  * to this run's usage.
  *
  * Intentionally not in the Log: the hook list, the abort signal, observer
- * errors, the adapter table, and tool execute details. Model-visible text
- * is the message and request_header entries. The manifest entry is the
- * kernel's record of the view that produced that request.
+ * errors, and the adapter table. Model-visible text is the message and
+ * request_header entries. The manifest entry is the kernel's record of the
+ * view that produced that request.
  */
 
 import type {
@@ -53,6 +57,7 @@ import type {
   ProviderAdapter,
   Request,
   Sampling,
+  ToolResultBlock,
   ToolUseBlock,
   Usage,
 } from "@sage/provider/contract";
@@ -372,14 +377,20 @@ export class AgentSession {
       };
     }
     if (assistant.finish.kind === "tool_use") {
-      const results = await this.runTools(toolUses(assistant.content), signal);
+      const ran = await this.runTools(toolUses(assistant.content), signal);
       if (signal?.aborted) {
         await this.dispatcher.emit("turn_end", { turn, outcome: "aborted" });
         return { kind: "aborted", usage: assistant.usage, prepared: active };
       }
-      if (results.length > 0) {
-        const payload: Message = { role: "user", content: results };
-        this.store.append(this.sessionId, { kind: "message", payload });
+      if (ran.results.length > 0) {
+        const payload: Message = { role: "user", content: ran.results };
+        this.store.append(this.sessionId, {
+          kind: "message",
+          payload,
+          ...(ran.toolResults.length > 0
+            ? { details: { toolResults: ran.toolResults } }
+            : {}),
+        });
       }
       await this.dispatcher.emit("turn_end", { turn, outcome: "continue" });
       return { kind: "continue", usage: assistant.usage, prepared: active };
@@ -497,20 +508,55 @@ export class AgentSession {
   private async runTools(
     calls: ToolUseBlock[],
     signal: AbortSignal | undefined,
-  ) {
+  ): Promise<{
+    results: ToolResultBlock[];
+    toolResults: {
+      toolUseId: string;
+      name: string;
+      details: Record<string, unknown>;
+    }[];
+  }> {
     const results = [];
+    const toolResults: {
+      toolUseId: string;
+      name: string;
+      details: Record<string, unknown>;
+    }[] = [];
     for (const call of calls) {
       if (signal?.aborted) break;
       const tool = this.tools.find((item) => item.def.name === call.name);
+      const wrapped = tool
+        ? {
+            ...tool,
+            execute: async (
+              input: unknown,
+              ctx: {
+                sessionId: string;
+                toolUseId: string;
+                signal?: AbortSignal;
+              },
+            ) => {
+              const raw = await tool.execute(input, ctx);
+              if (raw.details) {
+                toolResults.push({
+                  toolUseId: call.id,
+                  name: call.name,
+                  details: raw.details,
+                });
+              }
+              return raw;
+            },
+          }
+        : undefined;
       results.push(
-        await this.dispatcher.runTool(call, tool, {
+        await this.dispatcher.runTool(call, wrapped, {
           sessionId: this.sessionId,
           toolUseId: call.id,
           signal,
         }),
       );
     }
-    return results;
+    return { results, toolResults };
   }
 
   private async finish(

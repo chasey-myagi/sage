@@ -91,6 +91,35 @@ describe("health output", () => {
   });
 });
 
+describe("ladder flag", () => {
+  it("parses --ladder and rejects a rung that is not provider/model", () => {
+    expect(
+      parseArgs([
+        "--print",
+        "hi",
+        "--ladder",
+        "openai/gpt-5.4-mini,anthropic/claude-sonnet-5",
+      ]),
+    ).toMatchObject({
+      ok: true,
+      ladder: [
+        { provider: "openai", model: "gpt-5.4-mini" },
+        { provider: "anthropic", model: "claude-sonnet-5" },
+      ],
+    });
+    expect(
+      parseArgs(["--print", "hi", "--ladder=anthropic/claude-sonnet-5"]),
+    ).toMatchObject({
+      ok: true,
+      ladder: [{ provider: "anthropic", model: "claude-sonnet-5" }],
+    });
+    expect(parseArgs(["--print", "hi", "--ladder", "gpt-5.4"]).ok).toBe(false);
+    const help = parseArgs(["--help"]);
+    if (help.ok) throw new Error("help should not parse");
+    expect(help.message).toContain("--ladder");
+  });
+});
+
 describe("scorer flag", () => {
   it("parses --scorer model and rejects an unknown scorer", () => {
     expect(parseArgs(["--print", "hi", "--scorer", "model"])).toMatchObject({
@@ -496,7 +525,7 @@ describe("scenario 6 expand an omitted chunk", () => {
 });
 
 describe("scenario 9 two adapters", () => {
-  it("switches to the cheapest model when both providers are assembled", async () => {
+  it("keeps the current model when both providers are assembled and no ladder is set", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "sage-route-"));
     const anthropic = routedFaux("anthropic-messages");
     const openai = routedFaux("openai-chat");
@@ -518,21 +547,20 @@ describe("scenario 9 two adapters", () => {
       if (!head) head = JSON.stringify(view.head);
     });
     const summary = await session.run("x".repeat(200));
-    expect(summary.modelChanges).toBe(1);
-    expect(openai.requests).toHaveLength(1);
-    expect(openai.requests[0]?.model).toEqual({
-      provider: "openai",
-      model: "gpt-5.4-mini",
+    expect(summary.modelChanges).toBe(0);
+    expect(openai.requests).toHaveLength(0);
+    expect(anthropic.requests).toHaveLength(1);
+    expect(anthropic.requests[0]?.model).toEqual({
+      provider: "anthropic",
+      model: "claude-sonnet-5",
     });
-    expect(anthropic.requests).toHaveLength(0);
-    expect(JSON.stringify(openai.requests[0]?.head)).toBe(head);
+    expect(JSON.stringify(anthropic.requests[0]?.head)).toBe(head);
     const kinds = store.path("route-both").map((entry) => entry.kind);
-    const changeAt = kinds.indexOf("model_change");
-    expect(changeAt).toBeGreaterThan(-1);
-    expect(kinds[changeAt + 1]).toBe("view_epoch");
+    expect(kinds).not.toContain("model_change");
+    expect(kinds).toContain("view_epoch");
   });
 
-  it("stays inside the only assembled provider", async () => {
+  it("stays on the current model inside the only assembled provider", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "sage-route-one-"));
     const anthropic = routedFaux("anthropic-messages");
     const { session } = createCodingSession({
@@ -542,10 +570,10 @@ describe("scenario 9 two adapters", () => {
       sessionId: "route-one",
     });
     const summary = await session.run("x".repeat(200));
-    expect(summary.modelChanges).toBe(1);
+    expect(summary.modelChanges).toBe(0);
     expect(anthropic.requests[0]?.model).toEqual({
       provider: "anthropic",
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-sonnet-5",
     });
   });
 
@@ -573,7 +601,10 @@ describe("scenario 9 two adapters", () => {
       budget: 100,
     };
     const open = policy({ ...base, viewChunks: [] });
-    expect(open?.model).toEqual({ provider: "openai", model: "gpt-5.4-mini" });
+    expect(open?.model).toEqual({
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+    });
     const closed = policy({
       ...base,
       viewChunks: [
@@ -588,7 +619,7 @@ describe("scenario 9 two adapters", () => {
     expect(closed?.model.provider).not.toBe("openai");
     expect(closed?.model).toEqual({
       provider: "anthropic",
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-sonnet-5",
     });
     expect(closed?.reason).toContain("sensitive:/work/.env");
     const secrets = policy({
@@ -615,7 +646,10 @@ describe("scenario 9 two adapters", () => {
         },
       ],
     });
-    expect(hidden?.model.provider).toBe("openai");
+    expect(hidden?.model).toEqual({
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+    });
     const only = defaultRoutePolicy(["openai"], "openai");
     const stayed = only({
       ...base,
@@ -631,7 +665,7 @@ describe("scenario 9 two adapters", () => {
     });
     expect(stayed?.model).toEqual({
       provider: "openai",
-      model: "gpt-5.4-mini",
+      model: "gpt-5.4",
     });
     const built = adaptersFromEnv({
       ANTHROPIC_API_KEY: "a",
@@ -643,6 +677,77 @@ describe("scenario 9 two adapters", () => {
     expect(Object.keys(adaptersFromEnv({ OPENAI_API_KEY: "b" }))).toEqual([
       "openai",
     ]);
+  });
+
+  it("picks the cheapest explicit ladder rung and still denies a non-home provider", async () => {
+    const { defaultRoutePolicy } = await import("../src/main.ts");
+    const policy = defaultRoutePolicy(["anthropic", "openai"], "anthropic", [
+      { provider: "openai", model: "gpt-5.4-mini" },
+      { provider: "anthropic", model: "claude-haiku-4-5-20251001" },
+      { provider: "anthropic", model: "claude-sonnet-5" },
+    ]);
+    const base = {
+      epoch: 1,
+      current: { provider: "anthropic", model: "claude-sonnet-5" },
+      candidates: [],
+      decision: {
+        rebuild: true,
+        oldTokens: 1,
+        newTokens: 1,
+        remainingTurns: 1,
+        readRate: 0.1,
+        writeRate: 1.25,
+        savingsPerTurn: 0,
+        extraCost: 0,
+        paybackTurns: 0,
+        reason: "immediate",
+      },
+      budget: 100,
+    };
+    expect(policy({ ...base, viewChunks: [] })?.model).toEqual({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+    });
+    const closed = policy({
+      ...base,
+      viewChunks: [
+        {
+          id: "env",
+          tier: "full",
+          reason: "kept",
+          accesses: [{ key: "/work/.env", mode: "read" }],
+        },
+      ],
+    });
+    expect(closed?.model).toEqual({
+      provider: "anthropic",
+      model: "claude-haiku-4-5-20251001",
+    });
+    expect(closed?.reason).toContain("sensitive:/work/.env");
+
+    dir = mkdtempSync(path.join(tmpdir(), "sage-route-ladder-"));
+    const anthropic = routedFaux("anthropic-messages");
+    const openai = routedFaux("openai-chat");
+    const { session } = createCodingSession({
+      cwd: dir,
+      adapters: {
+        anthropic: anthropic.adapter,
+        openai: openai.adapter,
+      },
+      model: { provider: "anthropic", model: "claude-sonnet-5" },
+      sessionId: "route-ladder",
+      ladder: [
+        { provider: "openai", model: "gpt-5.4-mini" },
+        { provider: "anthropic", model: "claude-sonnet-5" },
+      ],
+    });
+    const summary = await session.run("x".repeat(200));
+    expect(summary.modelChanges).toBe(1);
+    expect(openai.requests[0]?.model).toEqual({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+    });
+    expect(anthropic.requests).toHaveLength(0);
   });
 });
 

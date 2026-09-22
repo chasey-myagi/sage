@@ -15,3 +15,7 @@ system prompt 是固定的几行，同一轮里 head 不变时后续 `request_he
 ### KV cache effect
 
 同一次运行里 system prompt 与工具 schema 不改，head 前缀保持稳定。工具结果接在前缀之后。
+
+## 路由
+
+默认梯子只有当前型号。两家 key 都在时，阶段重开不会改跑更便宜的型号。要跨型号，显式传 `--ladder provider/model,provider/model`，在这些档里选目录 input 价最低、且这次视图允许的那一档。新视图碰到 `.env` 或 `secrets` 时，非当前 provider 的档会被拿掉。`--help` 里有同一行说明。

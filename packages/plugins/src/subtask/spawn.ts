@@ -1,9 +1,17 @@
 /**
  * Subtask tools. A child is another compile of the same Log.
  *
- * Contract: `spawn_subtask` takes `{ query, budget?, readOnly?, model? }`.
- * `spawn_subtasks` takes `{ tasks }` of those objects and runs only when
- * every task is `readOnly: true`. The child session gets a new id. Its first
+ * Contract: `spawn_subtask` takes `{ query, budget?, readOnly?, model? }` or
+ * `{ preset, args? }` plus those fields. `preset` is a file stem from
+ * `loadPresets`. Explicit query, budget, readOnly, and model override the
+ * preset. `{{args.name}}` placeholders are filled from `args`; a missing
+ * arg becomes empty. `spawn_subtasks` takes `{ tasks }` of those objects.
+ * The batch runs when every task is `readOnly: true`, or when no pair
+ * conflicts. A conflict is the same access key with a write on either side.
+ * Read-only tasks contribute no accesses. A task that is not read-only and
+ * does not declare `accesses` is an unknown write and conflicts with every
+ * other task. A conflict rejects the whole call and names each pair
+ * `(taskA, taskB, key)`. The child session gets a new id. Its first
  * entry is `subtask`. The first user message is the fixed Begin line; the
  * query is the tail claim `subtask-query`, not that message. The child uses
  * the same system string and tool list as the caller, so the head stays
@@ -15,13 +23,21 @@
  * Intentionally not in the Log: the semaphore, the per-session counters, and
  * the compiler closure. The `subtask` entry, the child's messages, and the
  * parent's tool_use / tool_result are the records. Child usage stays on the
- * tool result details and is not added to the parent run.
+ * tool result details. The kernel copies them onto the parent user message.
+ * They are not added to the parent run's usage. `runHealth` sums them under
+ * `subtasks`.
  */
 
 import { randomUUID } from "node:crypto";
-import type { HarnessTool, LogStore, ViewProvider } from "@sage/core";
+import type { Access, HarnessTool, LogStore, ViewProvider } from "@sage/core";
 import { AgentSession } from "@sage/core";
 import type { ModelRef, ProviderAdapter, Usage } from "@sage/provider/contract";
+import {
+  loadPresets,
+  type PresetFs,
+  renderPresetQuery,
+  type SubtaskPreset,
+} from "./presets.js";
 
 const BEGIN = 'Begin the subtask described in <claim id="subtask-query">.';
 const DEFAULT_BUDGET = 8000;
@@ -38,6 +54,9 @@ type TaskInput = {
   budget?: number;
   readOnly?: boolean;
   model?: ModelRef;
+  preset?: string;
+  args?: Record<string, string>;
+  accesses?: Access[];
 };
 
 type TaskResult = {
@@ -60,6 +79,9 @@ export function subtaskTools(opts: {
   maxDepth?: number;
   maxSubtasks?: number;
   maxConcurrent?: number;
+  cwd?: string;
+  home?: string;
+  fs?: PresetFs;
 }): { spawn: HarnessTool; spawnMany: HarnessTool } {
   const maxDepth = opts.maxDepth ?? 2;
   const maxSubtasks = opts.maxSubtasks ?? 8;
@@ -72,7 +94,30 @@ export function subtaskTools(opts: {
       query: {
         type: "string",
         description:
-          "Question for the child compile. It is appended after the shared prefix.",
+          "Question for the child compile. It is appended after the shared prefix. Overrides a preset template.",
+      },
+      preset: {
+        type: "string",
+        description:
+          "Stem of a .sage/subtasks markdown preset. Project files override the user directory.",
+      },
+      args: {
+        type: "object",
+        description: "Values substituted for {{args.name}} in the preset body.",
+      },
+      accesses: {
+        type: "array",
+        description:
+          "Resources this task reads or writes. Omitted on a task that is not read-only means an unknown write.",
+        items: {
+          type: "object",
+          properties: {
+            key: { type: "string" },
+            mode: { type: "string", enum: ["read", "write", "search"] },
+            recursive: { type: "boolean" },
+          },
+          required: ["key", "mode"],
+        },
       },
       budget: {
         type: "number",
@@ -92,7 +137,6 @@ export function subtaskTools(opts: {
         required: ["provider", "model"],
       },
     },
-    required: ["query"],
   };
 
   async function runTask(
@@ -188,7 +232,7 @@ export function subtaskTools(opts: {
     def: {
       name: "spawn_subtask",
       description:
-        "Recompile this session on one question and budget. The child shares the head and frozen prefix. readOnly denies tools that are not read-only without changing the tool list.",
+        "Recompile this session on one question and budget. Pass query, or a preset name plus args. Explicit fields override the preset. The child shares the head and frozen prefix. readOnly denies tools that are not read-only without changing the tool list.",
       inputSchema: taskSchema,
     },
     isReadOnly: false,
@@ -198,12 +242,16 @@ export function subtaskTools(opts: {
       return [];
     },
     async execute(input, ctx) {
-      const task = readTask(input);
-      if (!task || task.query.trim().length === 0) {
+      const raw = readTask(input);
+      if (!raw) {
         return {
           content: "spawn_subtask: query is required",
           isError: true,
         };
+      }
+      const task = applyPreset(raw, presetsOf(opts));
+      if (typeof task === "string") {
+        return { content: `spawn_subtask: ${task}`, isError: true };
       }
       if (depthOf(opts.store, ctx.sessionId) >= maxDepth) {
         return depthError();
@@ -217,7 +265,7 @@ export function subtaskTools(opts: {
     def: {
       name: "spawn_subtasks",
       description:
-        "Recompile several read-only questions in parallel. The pool rejects the call unless every task sets readOnly to true.",
+        "Recompile several questions in parallel. The pool accepts the call when every task is read-only, or when no pair shares a write key. A conflict rejects the whole call and names the pair.",
       inputSchema: {
         type: "object",
         properties: {
@@ -233,19 +281,23 @@ export function subtaskTools(opts: {
       return [];
     },
     async execute(input, ctx) {
-      const tasks = readTasks(input);
-      if (!tasks || tasks.length === 0) {
+      const rawTasks = readTasks(input);
+      if (!rawTasks || rawTasks.length === 0) {
         return { content: "spawn_subtasks: tasks are required", isError: true };
+      }
+      const tasks: TaskInput[] = [];
+      for (const raw of rawTasks) {
+        const task = applyPreset(raw, presetsOf(opts));
+        if (typeof task === "string") {
+          return { content: `spawn_subtasks: ${task}`, isError: true };
+        }
+        tasks.push(task);
       }
       if (tasks.some((task) => task.query.trim().length === 0)) {
         return { content: "spawn_subtasks: query is required", isError: true };
       }
-      if (tasks.some((task) => task.readOnly !== true)) {
-        return {
-          content: "Parallel pool only accepts read-only subtasks.",
-          isError: true,
-        };
-      }
+      const conflict = admissionError(tasks);
+      if (conflict) return { content: conflict, isError: true };
       if (depthOf(opts.store, ctx.sessionId) >= maxDepth) return depthError();
       if (!reserve(spawned, ctx.sessionId, tasks.length, maxSubtasks)) {
         return capError();
@@ -344,16 +396,157 @@ function readTasks(input: unknown): TaskInput[] | undefined {
   return tasks;
 }
 
+function presetsOf(opts: {
+  cwd?: string;
+  home?: string;
+  fs?: PresetFs;
+}): Map<string, SubtaskPreset> {
+  if (!opts.cwd) return new Map();
+  return loadPresets({
+    cwd: opts.cwd,
+    ...(opts.home ? { home: opts.home } : {}),
+    ...(opts.fs ? { fs: opts.fs } : {}),
+  });
+}
+
+function applyPreset(
+  task: TaskInput,
+  presets: Map<string, SubtaskPreset>,
+): TaskInput | string {
+  if (!task.preset) {
+    if (task.query.trim().length === 0) return "query is required";
+    return task;
+  }
+  const preset = presets.get(task.preset);
+  if (!preset) return `Unknown preset: ${task.preset}`;
+  const rendered = renderPresetQuery(preset.query, task.args ?? {});
+  const query = task.query.trim().length > 0 ? task.query : rendered;
+  if (query.trim().length === 0) return "query is required";
+  const resolved: TaskInput = { query };
+  if (task.budget !== undefined) resolved.budget = task.budget;
+  else if (preset.budget !== undefined) resolved.budget = preset.budget;
+  if (task.readOnly !== undefined) resolved.readOnly = task.readOnly;
+  else if (preset.readOnly !== undefined) resolved.readOnly = preset.readOnly;
+  if (task.model) resolved.model = task.model;
+  else if (preset.model) resolved.model = preset.model;
+  if (task.accesses) resolved.accesses = task.accesses;
+  return resolved;
+}
+
 function readTask(input: unknown): TaskInput | undefined {
-  if (!isRecord(input) || typeof input.query !== "string") return undefined;
-  const task: TaskInput = { query: input.query };
+  if (!isRecord(input)) return undefined;
+  const hasQuery = typeof input.query === "string";
+  const preset =
+    typeof input.preset === "string" && input.preset.length > 0
+      ? input.preset
+      : undefined;
+  if (!hasQuery && !preset) return undefined;
+  const task: TaskInput = { query: hasQuery ? String(input.query) : "" };
+  if (preset) task.preset = preset;
   if (typeof input.budget === "number" && Number.isFinite(input.budget)) {
     task.budget = input.budget;
   }
   if (typeof input.readOnly === "boolean") task.readOnly = input.readOnly;
   const model = readModel(input.model);
   if (model) task.model = model;
+  const args = readArgs(input.args);
+  if (args) task.args = args;
+  if ("accesses" in input) {
+    const accesses = readAccesses(input.accesses);
+    if (!accesses) return undefined;
+    task.accesses = accesses;
+  }
   return task;
+}
+
+function readAccesses(value: unknown): Access[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const accesses: Access[] = [];
+  for (const item of value) {
+    if (!isRecord(item) || typeof item.key !== "string") return undefined;
+    if (
+      item.mode !== "read" &&
+      item.mode !== "write" &&
+      item.mode !== "search"
+    ) {
+      return undefined;
+    }
+    const access: Access = { key: item.key, mode: item.mode };
+    if (typeof item.recursive === "boolean") access.recursive = item.recursive;
+    accesses.push(access);
+  }
+  return accesses;
+}
+
+function admissionError(tasks: readonly TaskInput[]): string | undefined {
+  if (tasks.every((task) => task.readOnly === true)) return undefined;
+  const conflicts: string[] = [];
+  for (let left = 0; left < tasks.length; left += 1) {
+    for (let right = left + 1; right < tasks.length; right += 1) {
+      const taskA = tasks[left];
+      const taskB = tasks[right];
+      if (!taskA || !taskB) continue;
+      for (const key of conflictKeys(taskA, taskB)) {
+        conflicts.push(
+          `(${taskLabel(taskA, left)}, ${taskLabel(taskB, right)}, ${key})`,
+        );
+      }
+    }
+  }
+  if (conflicts.length === 0) return undefined;
+  return `Access conflict ${conflicts.join("; ")}`;
+}
+
+function taskLabel(task: TaskInput, index: number): string {
+  const query = task.query.trim();
+  return query.length > 0 ? query : `task${index}`;
+}
+
+function conflictKeys(left: TaskInput, right: TaskInput): string[] {
+  const a = effectiveAccesses(left);
+  const b = effectiveAccesses(right);
+  if (a === "unknown" || b === "unknown") return ["unknown"];
+  if (a === "open" || b === "open") return [];
+  return sharedWriteKeys(a, b);
+}
+
+function effectiveAccesses(
+  task: TaskInput,
+): "open" | "unknown" | readonly Access[] {
+  if (task.readOnly === true) return "open";
+  if (task.accesses === undefined) return "unknown";
+  return task.accesses;
+}
+
+function sharedWriteKeys(
+  left: readonly Access[],
+  right: readonly Access[],
+): string[] {
+  const keys = new Set(left.map((access) => access.key));
+  const conflicts: string[] = [];
+  for (const key of keys) {
+    const leftModes = left
+      .filter((access) => access.key === key)
+      .map((access) => access.mode);
+    const rightModes = right
+      .filter((access) => access.key === key)
+      .map((access) => access.mode);
+    if (leftModes.length === 0 || rightModes.length === 0) continue;
+    if ([...leftModes, ...rightModes].includes("write")) conflicts.push(key);
+  }
+  return conflicts;
+}
+
+function readArgs(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  const args: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === "string") args[key] = item;
+    else if (typeof item === "number" && Number.isFinite(item)) {
+      args[key] = String(item);
+    } else if (typeof item === "boolean") args[key] = String(item);
+  }
+  return args;
 }
 
 function readModel(value: unknown): ModelRef | undefined {
