@@ -81,6 +81,7 @@
 | 不抄 | 谁家的 | 为什么 |
 |---|---|---|
 | 阈值触发、一刀切有损摘要的压缩 | 三家都有 | 备忘的病灶：这一刀划不划算和阈值无关；sage 由成本不等式批准阶段边界 |
+| 服务端阈值压缩（Anthropic Context Editing API） | Claude Code | 官方实现的「服务端清旧块」路线：不可审计、无清单、无法取回；清理点后缓存照样失效。sage 刻意不走 |
 | fork = 复制日志 / 事件 | dsh, kimi, pi `forkFrom` | 裁决①算过的放大；sage 的子 agent 是同一份 Log 再编译 |
 | 子 agent 另起进程、上下文从零、只回摘要 | pi, kimi | 检索不共享，块编号两边指不到同一份原文 |
 | 临时注入写进 Log | kimi | 撤销/退出/协议三处特判的利息 |
@@ -97,4 +98,4 @@
 - 三份侦察都是只读、未跑任何命令；`file:line` 基于各自 checkout 的快照。
 - pi-mono 本地停在 2026-05-21，备忘点名的 microcompact / deferredTools 等在该快照里不存在（那是 harness-pi 的东西）。
 - kimi 的「缓存断点跟着尾巴走、前缀无人保护」是读代码得出的判断，未做运行时验证。
-- Claude Code 的 `cache_editing_` 请求头（本机四 harness 对比文档提到）未核实；若属实，阶段内不重算前缀也能降档旧块，会影响 #12 的设计，列为 #12 的前置核实项。
+- ~~Claude Code 的 `cache_editing_` 请求头未核实~~ **已核实（2026-09-22，见 #12 评论）**：真实机制是 Anthropic 的 Context Editing API（`anthropic-beta: context-management-2025-06-27`，服务端清旧 tool 结果 / thinking 块）。官方文档明说清理点之后缓存前缀失效、要付一次写入，所以它不能让阶段内「不重算前缀就降档」；#12 的前提不变，不加档位。它的 `clear_at_least` 参数（清得够多才值得让缓存失效）是本设计成本不等式的朴素版。
