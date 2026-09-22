@@ -1,0 +1,23 @@
+{
+  "name": "sage-workspace",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.23.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "pnpm check:lint && pnpm check:types && pnpm check:layers && pnpm check:readme && pnpm test",
+    "check:lint": "biome check .",
+    "check:types": "tsc -b",
+    "check:layers": "node scripts/check-layers.mjs",
+    "check:readme": "node scripts/check-readme-model-experience.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@types/node": "^22.20.4",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

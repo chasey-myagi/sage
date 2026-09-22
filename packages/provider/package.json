@@ -1,0 +1,9 @@
+{
+  "name": "@sage/provider",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contract": "./src/contract/index.ts"
+  }
+}

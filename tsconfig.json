@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/provider" },
+    { "path": "packages/core" },
+    { "path": "packages/plugins" },
+    { "path": "packages/tools" },
+    { "path": "apps/sage" }
+  ]
+}
