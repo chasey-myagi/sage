@@ -16,6 +16,8 @@
  * `manifest.budget` is either a finite number or `{ total, used, overrun }`
  * with three finite numbers. Both shapes are valid. The kernel does not
  * interpret the object.
+ * `epochDecision`, `calibration`, and `cache` are optional objects. The
+ * kernel checks that shape and does not read the fields.
  *
  * Intentionally not in the Log: reducer functions, the registry, and any
  * high-water mark.
@@ -54,6 +56,9 @@ export type ManifestPayload = {
   claims: unknown[];
   chunks: unknown[];
   anomalies: unknown[];
+  epochDecision?: Record<string, unknown>;
+  calibration?: Record<string, unknown>;
+  cache?: Record<string, unknown>;
 };
 
 export type TargetPayload = {
@@ -123,6 +128,13 @@ function isManifest(payload: unknown): payload is ManifestPayload {
     return false;
   }
   if (payload.budget !== undefined && !isBudget(payload.budget)) return false;
+  if (payload.epochDecision !== undefined && !isRecord(payload.epochDecision)) {
+    return false;
+  }
+  if (payload.calibration !== undefined && !isRecord(payload.calibration)) {
+    return false;
+  }
+  if (payload.cache !== undefined && !isRecord(payload.cache)) return false;
   return (
     Array.isArray(payload.claims) &&
     Array.isArray(payload.chunks) &&

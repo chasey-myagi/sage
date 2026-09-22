@@ -13,14 +13,26 @@
  * and `expands` (assistant `expand` tool_use calls already on the path).
  * Each such call appends `;expanded_at:<turn>` to that chunk's reason, where
  * `<turn>` is the preceding manifest's turn. The tier is unchanged.
- * Epoch stays whatever the path already says; this compiler never opens a
- * new epoch on its own.
- * An epoch-head message is rendered once. Later turns of that epoch copy
- * `view_epoch.details.epochHead` and ignore fresh provider text. Tail blocks
- * are recomputed every turn and appended to the last message when it is a
- * user message. `tail-if-changed` text is stored in `details.claimContent`
- * only when its hash is new. `none` is omitted from the view. A provider
- * that throws becomes one manifest row and does not stop the compile.
+ * Inside an epoch, chunk decisions from that epoch's first manifest are
+ * reused. New chunks go through eliminate, and the recent window counts only
+ * those new chunks. The first turn of an epoch has no freeze record.
+ * A new epoch opens when `decideEpoch` says rebuild: the view is a full
+ * recompile, `epoch` is the previous epoch plus one, and `epochStart.reason`
+ * is `cost:<paybackTurns>`, `cost:immediate`, or `context-window-guard`.
+ * The context-window guard is the only rebuild allowed on an epoch's first
+ * turn. If that rebuilt view is still over 90% of the context window,
+ * `budget.overrun` records the excess when the compile budget itself did
+ * not, and a later turn of that epoch does not open another one for the
+ * same guard. `expectedTurns` defaults to 20. `minSavingsRatio` defaults
+ * to 0.2. Remaining turns are max(1, expectedTurns - turns already started).
+ * Cache breakpoints are `head`, the end of the frozen prefix, and the last
+ * message. An epoch-head message is rendered once. Later turns of that epoch
+ * copy `view_epoch.details.epochHead` when that message is not itself a
+ * logged history message, and ignore fresh provider text. Tail blocks are
+ * recomputed every turn and appended to the last message when it is a user
+ * message. `tail-if-changed` text is stored in `details.claimContent` only
+ * when its hash is new. `none` is omitted from the view. A provider that
+ * throws becomes one manifest row and does not stop the compile.
  *
  * Intentionally not in the Log: claim providers, the token counter, and the
  * live CompiledView. The kernel persists `view_epoch` and the manifest.
@@ -31,10 +43,20 @@ import { passthroughView } from "@sage/core";
 import type { Message } from "@sage/provider/contract";
 import { applyDecisions } from "./apply.js";
 import { allocate, defaultTokenCount, type TokenCounter } from "./budget.js";
+import { calibrationFor, measuredCacheRead } from "./calibrate.js";
+import type { Chunk } from "./chunks.js";
 import { indexChunks } from "./chunks.js";
 import type { Claim, ClaimProvider, Placement, Tier } from "./claim.js";
+import type { EpochDecision, Rates } from "./decide.js";
+import { decideEpoch, ratesFor } from "./decide.js";
+import type { ChunkDecision } from "./eliminate.js";
 import { eliminate } from "./eliminate.js";
 import { contentHash, parseClaimMessage, renderClaim } from "./format.js";
+import {
+  epochOpenReason,
+  frozenDecisions,
+  frozenSeqCeiling,
+} from "./freeze.js";
 import { renderStub } from "./stub.js";
 
 type ManifestClaim = ClaimRecord & {
@@ -43,84 +65,41 @@ type ManifestClaim = ClaimRecord & {
   priority?: number;
 };
 
+type ChunkRow = {
+  id: string;
+  tier: Tier;
+  reason: string;
+  tokens: number;
+  originalTokens?: number;
+};
+
+type Assembly = {
+  messages: Message[];
+  records: ManifestClaim[];
+  chunkRecords: ChunkRow[];
+  used: number;
+  claimContent: Record<string, string>;
+  epochStart?: { reason: string };
+  hasEpochHead: boolean;
+};
+
 export function contextCompiler(opts: {
   budget: number;
   claims: ClaimProvider[];
   count?: TokenCounter;
   keepRecent?: number;
+  expectedTurns?: number;
+  minSavingsRatio?: number;
 }): { view(ctx: ViewContext): Promise<CompiledView> } {
   const count = opts.count ?? defaultTokenCount;
   const keepRecent = opts.keepRecent ?? 6;
+  const expectedTurns = opts.expectedTurns ?? 20;
+  const minSavingsRatio = opts.minSavingsRatio ?? 0.2;
 
   return {
     async view(ctx: ViewContext): Promise<CompiledView> {
       const base = await passthroughView.view(ctx);
       const collected = await collect(opts.claims, ctx);
-      const frozen = epochHeadFor(ctx.path, base.epoch);
-      const frozenParts = frozen ? parseClaimMessage(frozen) : undefined;
-
-      const allocatable: Claim[] = [];
-      const frozenClaims: Claim[] = [];
-      for (const claim of collected.claims) {
-        if (frozen && claim.placement === "epoch-head")
-          frozenClaims.push(claim);
-        else allocatable.push(claim);
-      }
-
-      const frozenUsed = frozenParts ? tokensOf(frozenParts, count) : 0;
-      const remaining = Math.max(0, opts.budget - frozenUsed);
-      const allocation = allocate(allocatable, remaining, count);
-      const claimById = new Map(allocatable.map((claim) => [claim.id, claim]));
-
-      const records: ManifestClaim[] = [];
-      for (const claim of frozenClaims) {
-        records.push(frozenRecord(claim, frozenParts, count));
-      }
-      for (const record of allocation.records) {
-        const claim = claimById.get(record.id);
-        if (!claim) continue;
-        records.push({
-          ...record,
-          placement: claim.placement,
-          priority: claim.priority,
-        });
-      }
-      records.sort(byPriority);
-
-      const claimContent: Record<string, string> = {};
-      const previous = latestManifest(ctx.path);
-      for (const record of records) {
-        const claim = claimById.get(record.id);
-        if (!claim || record.tier === "none") continue;
-        if (claim.placement === "epoch-head") {
-          const body = claim.tiers[record.tier];
-          if (body === undefined) continue;
-          record.contentHash = contentHash(
-            renderClaim(claim.id, record.tier, body),
-          );
-          continue;
-        }
-        const body = claim.tiers[record.tier];
-        if (body === undefined) continue;
-        const rendered = renderClaim(claim.id, record.tier, body);
-        const hash = contentHash(rendered);
-        record.contentHash = hash;
-        const prior = previousHash(previous, claim.id);
-        if (claim.placement === "tail-if-changed" && prior === hash) {
-          record.reason = "unchanged";
-          continue;
-        }
-        if (claim.placement === "tail-if-changed" && prior !== undefined) {
-          record.reason = "changed";
-        }
-        if (prior !== hash) claimContent[claim.id] = rendered;
-      }
-
-      const allocatedUsed = allocation.records.reduce(
-        (sum, record) => sum + (record.tokens ?? 0),
-        0,
-      );
-      const claimUsed = frozenUsed + allocatedUsed;
       const seqs = projectionSeqs(ctx.path);
       if (seqs.length !== base.messages.length) {
         throw new Error(
@@ -128,82 +107,377 @@ export function contextCompiler(opts: {
         );
       }
       const chunks = indexChunks(base.messages, seqs, ctx.tools, count);
-      const eliminated = eliminate(chunks, {
-        keepRecent,
-        remainingBudget: Math.max(0, opts.budget - claimUsed),
+      const prior = frozenDecisions(ctx.path, base.epoch);
+      const ceiling = frozenSeqCeiling(ctx.path, base.epoch);
+      const stay = assemble({
+        freezeHead: true,
+        prior,
       });
-      const used = claimUsed + eliminated.used;
-      const expansions = expandStamps(ctx.path);
-      const messages = applyDecisions(
-        base.messages,
-        chunks,
-        eliminated.decisions,
+      const fresh = prior
+        ? assemble({ freezeHead: false, prior: undefined })
+        : stay;
+      const calibration = calibrationFor(ctx.path);
+      const ratio = calibration?.ratio ?? 1;
+      const rates = ratesFor(ctx.prepared.pricing);
+      const remainingTurns = Math.max(
+        1,
+        expectedTurns - Math.max(0, ctx.turn - 1),
       );
-      const chunkRecords = eliminated.decisions.map((decision) => {
-        const chunk = chunks.find((item) => item.id === decision.id);
-        const stamps = expansions.get(decision.id) ?? [];
-        const reason =
-          stamps.length > 0
-            ? `${decision.reason};${stamps.join(";")}`
-            : decision.reason;
-        const original = chunk?.tokens ?? 0;
-        if (decision.tier === "none" && chunk?.kind === "tool") {
+      const window = ctx.prepared.contextWindow;
+      const guarded =
+        epochOpenReason(ctx.path, base.epoch) === "context-window-guard";
+      const over = stay.used * ratio > window * 0.9;
+      let decision = tagPricing(
+        decideEpoch({
+          oldTokens: stay.used * ratio,
+          newTokens: fresh.used * ratio,
+          remainingTurns,
+          rates,
+          minSavingsRatio,
+          contextWindow: window,
+          overContext: over && !guarded,
+        }),
+        rates,
+      );
+      const guard = decision.reason.includes("context-window-guard");
+      if (!prior && !guard && decision.rebuild) {
+        decision = {
+          ...decision,
+          rebuild: false,
+          reason: tagReason("savings-too-small", rates),
+        };
+      }
+      const chosen = decision.rebuild && prior ? fresh : stay;
+      let epoch = base.epoch;
+      let epochStart = chosen.epochStart;
+      if (decision.rebuild) {
+        epoch = base.epoch + 1;
+        epochStart = { reason: openReason(decision) };
+      }
+      const end = prefixEndIndex(
+        chosen.messages.length,
+        base.messages.length,
+        chosen.hasEpochHead,
+        seqs,
+        decision.rebuild ? undefined : ceiling,
+      );
+      const last = Math.max(0, chosen.messages.length - 1);
+      const cache = {
+        expectedReadTokens: countMessages(chosen.messages, end, count),
+        measuredReadTokens: measuredCacheRead(ctx.path),
+      };
+      let overrun = Math.max(0, chosen.used - opts.budget);
+      const scaled = chosen.used * ratio;
+      const stillOver = scaled > window * 0.9;
+      if (
+        overrun === 0 &&
+        stillOver &&
+        (decision.reason.includes("context-window-guard") || (guarded && over))
+      ) {
+        overrun = Math.ceil(scaled - window * 0.9);
+      }
+      const budget = {
+        total: opts.budget,
+        used: chosen.used,
+        overrun,
+        omitted: chosen.chunkRecords.filter((record) => record.tier === "none")
+          .length,
+        expands: countExpands(ctx.path),
+      };
+      const view: CompiledView = {
+        epoch,
+        head: ctx.head,
+        messages: chosen.messages,
+        cacheBreakpoints: [
+          "head",
+          { afterMessage: end },
+          { afterMessage: last },
+        ],
+        manifest: {
+          epoch,
+          turn: ctx.turn,
+          budget,
+          claims: chosen.records,
+          chunks: chosen.chunkRecords,
+          anomalies: base.manifest.anomalies,
+          epochDecision: decision,
+          cache,
+          ...(calibration ? { calibration } : {}),
+        },
+      };
+      if (epochStart) view.epochStart = epochStart;
+      if (Object.keys(chosen.claimContent).length > 0) {
+        view.details = { claimContent: chosen.claimContent };
+      }
+      return view;
+
+      function assemble(mode: {
+        freezeHead: boolean;
+        prior: Map<string, ChunkDecision> | undefined;
+      }): Assembly {
+        const stored = mode.freezeHead
+          ? epochHeadFor(ctx.path, base.epoch)
+          : undefined;
+        const frozen =
+          stored && !loggedMessage(ctx.path, stored) ? stored : undefined;
+        const frozenParts = frozen ? parseClaimMessage(frozen) : undefined;
+        const allocatable: Claim[] = [];
+        const frozenClaims: Claim[] = [];
+        for (const claim of collected.claims) {
+          if (frozen && claim.placement === "epoch-head") {
+            frozenClaims.push(claim);
+          } else allocatable.push(claim);
+        }
+        const frozenUsed = frozenParts ? tokensOf(frozenParts, count) : 0;
+        const remaining = Math.max(0, opts.budget - frozenUsed);
+        const allocation = allocate(allocatable, remaining, count);
+        const claimById = new Map(
+          allocatable.map((claim) => [claim.id, claim]),
+        );
+        const records: ManifestClaim[] = [];
+        for (const claim of frozenClaims) {
+          records.push(frozenRecord(claim, frozenParts, count));
+        }
+        for (const record of allocation.records) {
+          const claim = claimById.get(record.id);
+          if (!claim) continue;
+          records.push({
+            ...record,
+            placement: claim.placement,
+            priority: claim.priority,
+          });
+        }
+        records.sort(byPriority);
+        const claimContent: Record<string, string> = {};
+        const previous = latestManifest(ctx.path);
+        for (const record of records) {
+          const claim = claimById.get(record.id);
+          if (!claim || record.tier === "none") continue;
+          if (claim.placement === "epoch-head") {
+            const body = claim.tiers[record.tier];
+            if (body === undefined) continue;
+            record.contentHash = contentHash(
+              renderClaim(claim.id, record.tier, body),
+            );
+            continue;
+          }
+          const body = claim.tiers[record.tier];
+          if (body === undefined) continue;
+          const rendered = renderClaim(claim.id, record.tier, body);
+          const hash = contentHash(rendered);
+          record.contentHash = hash;
+          const priorHash = previousHash(previous, claim.id);
+          if (claim.placement === "tail-if-changed" && priorHash === hash) {
+            record.reason = "unchanged";
+            continue;
+          }
+          if (
+            claim.placement === "tail-if-changed" &&
+            priorHash !== undefined
+          ) {
+            record.reason = "changed";
+          }
+          if (priorHash !== hash) claimContent[claim.id] = rendered;
+        }
+        const allocatedUsed = allocation.records.reduce(
+          (sum, record) => sum + (record.tokens ?? 0),
+          0,
+        );
+        const claimUsed = frozenUsed + allocatedUsed;
+        const decided = decideChunks(
+          chunks,
+          mode.prior,
+          keepRecent,
+          Math.max(0, opts.budget - claimUsed),
+        );
+        const expansions = expandStamps(ctx.path);
+        const messages = applyDecisions(
+          base.messages,
+          chunks,
+          decided.decisions,
+        );
+        const chunkRecords = decided.decisions.map((decision) => {
+          const chunk = chunks.find((item) => item.id === decision.id);
+          const stamps = expansions.get(decision.id) ?? [];
+          const reason = withStamps(decision.reason, stamps);
+          const original = chunk?.tokens ?? 0;
+          if (decision.tier === "none" && chunk?.kind === "tool") {
+            return {
+              id: decision.id,
+              tier: decision.tier,
+              reason,
+              tokens: count(renderStub(chunk)),
+              originalTokens: original,
+            };
+          }
           return {
             id: decision.id,
             tier: decision.tier,
             reason,
-            tokens: count(renderStub(chunk)),
-            originalTokens: original,
+            tokens: original,
           };
+        });
+        let epochStart: { reason: string } | undefined;
+        if (frozen) {
+          messages.unshift(frozen);
+        } else {
+          const head = renderEpochHead(records, claimById);
+          if (head) {
+            messages.unshift(head);
+            epochStart = { reason: "compiler:first-turn" };
+          }
         }
+        appendTail(messages, tailBlocks(records, claimById));
         return {
-          id: decision.id,
-          tier: decision.tier,
-          reason,
-          tokens: original,
+          messages,
+          records: [...records, ...collected.errors],
+          chunkRecords,
+          used: claimUsed + decided.used,
+          claimContent,
+          ...(epochStart ? { epochStart } : {}),
+          hasEpochHead: frozen !== undefined || epochStart !== undefined,
         };
-      });
-      const budget = {
-        total: opts.budget,
-        used,
-        overrun: Math.max(0, used - opts.budget),
-        omitted: eliminated.decisions.filter(
-          (decision) => decision.tier === "none",
-        ).length,
-        expands: countExpands(ctx.path),
-      };
-      let epochStart: { reason: string } | undefined;
-      if (frozen) {
-        messages.unshift(frozen);
-      } else {
-        const head = renderEpochHead(records, claimById);
-        if (head) {
-          messages.unshift(head);
-          epochStart = { reason: "compiler:first-turn" };
-        }
       }
-      appendTail(messages, tailBlocks(records, claimById));
-      const view: CompiledView = {
-        epoch: base.epoch,
-        head: ctx.head,
-        messages,
-        cacheBreakpoints: [...base.cacheBreakpoints],
-        manifest: {
-          epoch: base.epoch,
-          turn: ctx.turn,
-          budget,
-          claims: [...records, ...collected.errors],
-          chunks: chunkRecords,
-          anomalies: base.manifest.anomalies,
-        },
-      };
-      if (epochStart) view.epochStart = epochStart;
-      if (Object.keys(claimContent).length > 0) {
-        view.details = { claimContent };
-      }
-      return view;
     },
   };
+}
+
+function decideChunks(
+  chunks: Chunk[],
+  prior: Map<string, ChunkDecision> | undefined,
+  keepRecent: number,
+  remainingBudget: number,
+): { decisions: ChunkDecision[]; used: number } {
+  if (!prior) {
+    const eliminated = eliminate(chunks, { keepRecent, remainingBudget });
+    return { decisions: eliminated.decisions, used: eliminated.used };
+  }
+  const fresh = chunks.filter((chunk) => !prior.has(chunk.id));
+  let frozenKept = 0;
+  for (const chunk of chunks) {
+    const kept = prior.get(chunk.id);
+    if (!kept || kept.tier === "none") continue;
+    frozenKept += chunk.tokens;
+  }
+  const eliminated = eliminate(fresh, {
+    keepRecent,
+    remainingBudget: Math.max(0, remainingBudget - frozenKept),
+  });
+  const freshById = new Map(
+    eliminated.decisions.map((decision) => [decision.id, decision]),
+  );
+  const decisions = chunks.map((chunk) => {
+    const kept = prior.get(chunk.id);
+    if (kept) return { id: chunk.id, tier: kept.tier, reason: kept.reason };
+    return (
+      freshById.get(chunk.id) ?? {
+        id: chunk.id,
+        tier: "full" as const,
+        reason: "kept",
+      }
+    );
+  });
+  let used = 0;
+  for (let index = 0; index < chunks.length; index += 1) {
+    if (decisions[index]?.tier === "none") continue;
+    used += chunks[index]?.tokens ?? 0;
+  }
+  return { decisions, used };
+}
+
+function withStamps(reason: string, stamps: readonly string[]): string {
+  const extra = stamps.filter((stamp) => !reason.split(";").includes(stamp));
+  if (extra.length === 0) return reason;
+  return `${reason};${extra.join(";")}`;
+}
+
+function tagPricing(decision: EpochDecision, rates: Rates): EpochDecision {
+  return { ...decision, reason: tagReason(decision.reason, rates) };
+}
+
+function tagReason(reason: string, rates: Rates): string {
+  if (rates.source !== "fallback" || reason.includes("pricing:fallback")) {
+    return reason;
+  }
+  return `${reason};pricing:fallback`;
+}
+
+function openReason(decision: EpochDecision): string {
+  if (decision.reason.includes("context-window-guard")) {
+    return "context-window-guard";
+  }
+  if (decision.reason.includes("immediate")) return "cost:immediate";
+  if (decision.paybackTurns === null) return "cost:immediate";
+  return `cost:${decision.paybackTurns}`;
+}
+
+function prefixEndIndex(
+  messageCount: number,
+  historyCount: number,
+  hasEpochHead: boolean,
+  seqs: readonly number[],
+  ceiling: number | undefined,
+): number {
+  if (messageCount === 0) return 0;
+  const offset = hasEpochHead ? 1 : 0;
+  if (historyCount === 0) return Math.min(messageCount - 1, offset);
+  if (ceiling === undefined) {
+    return Math.min(messageCount - 1, offset + historyCount - 1);
+  }
+  let lastHistory = -1;
+  let prevReal: number | undefined;
+  for (let index = 0; index < historyCount; index += 1) {
+    const seq = seqs[index] ?? 0;
+    const included =
+      seq >= 0 ? seq <= ceiling : prevReal !== undefined && prevReal <= ceiling;
+    if (seq >= 0) prevReal = seq;
+    if (included) lastHistory = index;
+  }
+  if (lastHistory < 0) return Math.min(messageCount - 1, offset);
+  return Math.min(messageCount - 1, offset + lastHistory);
+}
+
+function countMessages(
+  messages: readonly Message[],
+  end: number,
+  count: TokenCounter,
+): number {
+  let total = 0;
+  const last = Math.min(end, messages.length - 1);
+  for (let index = 0; index <= last; index += 1) {
+    const message = messages[index];
+    if (message) total += countMessage(message, count);
+  }
+  return total;
+}
+
+function countMessage(message: Message, count: TokenCounter): number {
+  let total = 0;
+  for (const block of message.content) {
+    if (block.type === "text" || block.type === "thinking") {
+      total += count(block.text);
+      continue;
+    }
+    if (block.type === "tool_use") {
+      const raw =
+        block.rawInput.length > 0
+          ? block.rawInput
+          : (JSON.stringify(block.input ?? "") ?? "");
+      total += count(raw);
+      continue;
+    }
+    if (block.type === "tool_result") total += count(block.content);
+  }
+  return total;
+}
+
+function loggedMessage(path: ViewContext["path"], head: Message): boolean {
+  const rendered = JSON.stringify(head);
+  for (const entry of path) {
+    if (entry.kind !== "message") continue;
+    if (JSON.stringify(entry.payload) === rendered) return true;
+  }
+  return false;
 }
 
 async function collect(

@@ -174,7 +174,7 @@ describe("scenario 3 cache breakpoints", () => {
       apiKey: "test-key",
       fetchImpl,
     });
-    const req = cacheRequest("anthropic", "claude-sonnet-4-5");
+    const req = cacheRequest("anthropic", "claude-sonnet-5");
     await drain(adapter.stream(req, adapter.prepare(req.model)));
     const call = calls[0];
     expect(call?.method).toBe("POST");
@@ -237,7 +237,7 @@ describe("scenario 3 cache breakpoints", () => {
       readFixture("openai-text-tool.sse"),
     );
     const adapter = new OpenAIAdapter({ apiKey: "test-key", fetchImpl });
-    const req = cacheRequest("openai", "gpt-5");
+    const req = cacheRequest("openai", "gpt-5.4");
     await drain(adapter.stream(req, adapter.prepare(req.model)));
     const call = calls[0];
     expect(call?.method).toBe("POST");
@@ -248,7 +248,7 @@ describe("scenario 3 cache breakpoints", () => {
     expect(body.stream_options).toEqual({ include_usage: true });
     expect(body.max_tokens).toBe(8192);
     expect(body.temperature).toBe(0);
-    expect(body.model).toBe("gpt-5");
+    expect(body.model).toBe("gpt-5.4");
     const tools = body.tools as {
       type: string;
       function: { name: string; description: string; parameters: unknown };
@@ -374,7 +374,7 @@ describe("request encoding extras", () => {
       readFixture("anthropic-text-tool.sse"),
     );
     const adapter = new AnthropicAdapter({ apiKey: "k", fetchImpl });
-    const req = cacheRequest("anthropic", "claude-sonnet-4-5");
+    const req = cacheRequest("anthropic", "claude-sonnet-5");
     req.sampling = { maxTokens: 100 };
     await drain(adapter.stream(req, adapter.prepare(req.model)));
     expect(asRecord(calls[0]?.body).max_tokens).toBe(100);
