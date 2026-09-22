@@ -1,8 +1,10 @@
 /**
  * Pure cost check for opening a new view epoch.
  *
- * Contract: rates are cacheRead/input and cacheWrite/input. Null pricing
- * falls back to 0.1 and 1.25. savingsPerTurn = (old - new) * read.
+ * Contract: read = cacheRead/input. write = max(cacheWrite, input) / input.
+ * A zero cache-write surcharge is not free: the first fill still pays the
+ * miss price (无附加费 ≠ 免费，首次仍付未命中价). Null pricing falls back
+ * to 0.1 and 1.25. savingsPerTurn = (old - new) * read.
  * extraCost = new * write - old * read. paybackTurns is
  * ceil(extraCost / savingsPerTurn), or null when savings are not positive,
  * or 0 when extraCost is not positive. overContext rebuilds with reason
@@ -41,7 +43,9 @@ export function ratesFor(pricing: Pricing | null): Rates {
   if (!pricing || pricing.inputPerMTok === 0) return { ...FALLBACK };
   return {
     read: pricing.cacheReadPerMTok / pricing.inputPerMTok,
-    write: pricing.cacheWritePerMTok / pricing.inputPerMTok,
+    write:
+      Math.max(pricing.cacheWritePerMTok, pricing.inputPerMTok) /
+      pricing.inputPerMTok,
     source: "catalog",
   };
 }

@@ -116,7 +116,7 @@ const MODELS: readonly CatalogEntry[] = [
       source: OPENAI_SOURCE,
     },
   },
-  // 非峰时减半：01:00–04:00 与 06:00–10:00 UTC 工作日为峰时
+  // 非峰时减半：01:00–04:00 与 06:00–10:00 UTC 工作日为峰时。表内是峰时价。
   {
     provider: "deepseek",
     model: "deepseek-flash",

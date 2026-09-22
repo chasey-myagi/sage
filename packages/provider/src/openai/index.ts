@@ -1,9 +1,13 @@
 /**
  * OpenAI-compatible chat adapter. cacheBreakpoints are ignored: this wire
  * format has no cache field. Thinking blocks and foreign tool ids are
- * normalized before encode. Usage prefers prompt_cache_hit_tokens, then
- * prompt_tokens_details.cached_tokens, then the whole prompt_tokens.
- * inputCacheCreation stays 0. raw is the provider usage object unchanged.
+ * normalized before encode. SSE `delta.reasoning_content` string increments
+ * open their own thinking block and emit thinking_delta. block_end fires
+ * when content starts or the choice finishes. Encode still drops thinking
+ * through normalizeForApi and does not send reasoning_content back. Usage
+ * prefers prompt_cache_hit_tokens, then prompt_tokens_details.cached_tokens,
+ * then the whole prompt_tokens. inputCacheCreation stays 0. raw is the
+ * provider usage object unchanged.
  *
  * Deliberately not a Log entry: the API key, request bytes, and abort
  * signal stay here. adapterDefaults are returned so a later
@@ -29,7 +33,7 @@ type Trace = { responseId: string; responseModel: string };
 
 type OpenState = {
   nextIndex: number;
-  open?: { index: number; kind: "text" | "tool" };
+  open?: { index: number; kind: "text" | "tool" | "thinking" };
   toolBlocks: Map<number, number>;
   finishReason?: string;
 };
@@ -184,6 +188,9 @@ function interpret(
   const choice = firstRecord(record.choices);
   if (choice) {
     const delta = asRecord(choice.delta);
+    if (delta && typeof delta.reasoning_content === "string") {
+      applyReasoning(state, driver, delta.reasoning_content);
+    }
     if (delta && typeof delta.content === "string") {
       applyContent(state, driver, delta.content);
     }
@@ -199,12 +206,34 @@ function interpret(
   if (usage) driver.setUsage(mapUsage(usage));
 }
 
+function applyReasoning(state: OpenState, driver: Driver, text: string): void {
+  if (text.length === 0) {
+    if (!state.open) openThinking(state, driver);
+    return;
+  }
+  if (state.open?.kind !== "thinking") closeOpen(state, driver);
+  if (!state.open) openThinking(state, driver);
+  if (!state.open) return;
+  driver.push({
+    type: "thinking_delta",
+    index: state.open.index,
+    text,
+  });
+}
+
+function openThinking(state: OpenState, driver: Driver): void {
+  const index = state.nextIndex;
+  state.nextIndex += 1;
+  state.open = { index, kind: "thinking" };
+  driver.push(blockStart(index, "thinking"));
+}
+
 function applyContent(state: OpenState, driver: Driver, content: string): void {
   if (content.length === 0) {
     if (!state.open) openText(state, driver);
     return;
   }
-  if (state.open?.kind === "tool") closeOpen(state, driver);
+  if (state.open?.kind !== "text") closeOpen(state, driver);
   if (!state.open) openText(state, driver);
   if (!state.open) return;
   driver.push({ type: "text_delta", index: state.open.index, text: content });

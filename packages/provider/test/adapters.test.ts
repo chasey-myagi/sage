@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AnthropicAdapter } from "../src/anthropic/index.ts";
+import { collect } from "../src/contract/collect.ts";
 import type { Request } from "../src/contract/index.ts";
 import { OpenAIAdapter } from "../src/openai/index.ts";
 import { expectStreamInvariants, runContractSuite } from "./contract-suite.ts";
@@ -475,5 +476,68 @@ describe("finish reasons and transport errors", () => {
       });
       expectStreamInvariants(chunks);
     }
+  });
+});
+
+describe("deepseek reasoning_content", () => {
+  it("stores reasoning as a thinking block and omits it from the next request", async () => {
+    const { fetchImpl, calls } = fixtureFetch(
+      readFixture("deepseek-reasoner.sse"),
+    );
+    const adapter = new OpenAIAdapter({
+      apiKey: "k",
+      baseUrl: "https://api.deepseek.com",
+      fetchImpl,
+    });
+    const model = { provider: "deepseek", model: "deepseek-reasoner" };
+    const first: Request = {
+      model,
+      head: { system: "sys", tools: [] },
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      cacheBreakpoints: [],
+      sampling: { maxTokens: 16 },
+    };
+    const stream = adapter.stream(first, adapter.prepare(model));
+    const message = await collect(stream, {
+      responseModel: model.model,
+      responseId: "chatcmpl-reason",
+      api: adapter.api,
+    });
+    expect(message.content).toEqual([
+      { type: "thinking", text: "REASON_STEP" },
+      { type: "text", text: "Hi" },
+      {
+        type: "tool_use",
+        id: "call_1",
+        name: "bash",
+        input: { command: "true" },
+        rawInput: '{"command":"true"}',
+      },
+    ]);
+    expect(message.content[0]).not.toHaveProperty("signature");
+
+    const follow: Request = {
+      ...first,
+      messages: [
+        ...first.messages,
+        { role: "assistant", content: message.content },
+        {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              toolUseId: "call_1",
+              content: "ok",
+              isError: false,
+            },
+          ],
+        },
+      ],
+    };
+    await drain(adapter.stream(follow, adapter.prepare(model)));
+    const encoded = JSON.stringify(calls[1]?.body);
+    expect(encoded).not.toContain("REASON_STEP");
+    expect(encoded).not.toContain("reasoning_content");
+    expect(encoded).toContain("Hi");
   });
 });

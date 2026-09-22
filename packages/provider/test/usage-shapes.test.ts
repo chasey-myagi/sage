@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Usage } from "../src/contract/index.ts";
 import { OpenAIAdapter } from "../src/openai/index.ts";
-import { drain, fixtureFetch } from "./support.ts";
+import { drain, fixtureFetch, readFixture } from "./support.ts";
 
 function usageSse(usage: Record<string, unknown>): string {
   const frame = (payload: unknown): string =>
@@ -97,6 +97,48 @@ describe("openai-compatible usage shapes", () => {
       inputCacheCreation: 0,
       output: 4,
       raw,
+    });
+  });
+
+  it("maps DeepSeek reasoning_content into a thinking block and still reads hit tokens", async () => {
+    const raw = {
+      prompt_tokens: 100,
+      completion_tokens: 8,
+      prompt_cache_hit_tokens: 70,
+      prompt_cache_miss_tokens: 30,
+    };
+    const { fetchImpl } = fixtureFetch(readFixture("deepseek-reasoner.sse"));
+    const adapter = new OpenAIAdapter({ apiKey: "k", fetchImpl });
+    const model = { provider: "deepseek", model: "deepseek-v4-pro" };
+    const chunks = await drain(
+      adapter.stream(
+        {
+          model,
+          head: { system: "s", tools: [] },
+          messages: [],
+          cacheBreakpoints: [],
+          sampling: {},
+        },
+        adapter.prepare(model),
+      ),
+    );
+    const thinking = chunks.filter((chunk) => chunk.type === "thinking_delta");
+    expect(thinking).toEqual([
+      { type: "thinking_delta", index: 0, text: "REASON" },
+      { type: "thinking_delta", index: 0, text: "_STEP" },
+    ]);
+    const text = chunks.find((chunk) => chunk.type === "text_delta");
+    expect(text).toEqual({ type: "text_delta", index: 1, text: "Hi" });
+    const usage = chunks.find((chunk) => chunk.type === "usage");
+    expect(usage).toEqual({
+      type: "usage",
+      usage: {
+        inputOther: 30,
+        inputCacheRead: 70,
+        inputCacheCreation: 0,
+        output: 8,
+        raw,
+      },
     });
   });
 

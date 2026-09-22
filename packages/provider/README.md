@@ -24,7 +24,7 @@ DeepSeek、百炼（DashScope）、Kimi（Moonshot）和 OpenAI 共用 `OpenAIAd
 
 usage 按三种形状映射，`raw` 原样保留，`inputCacheCreation` 恒为 0（这些端点的报文不报缓存写入）：
 
-- DeepSeek：有 `prompt_cache_hit_tokens` 时，`inputCacheRead` 取命中，`inputOther` 取 `prompt_cache_miss_tokens`；缺 miss 时用 `prompt_tokens - hit`。
+- DeepSeek：有 `prompt_cache_hit_tokens` 时，`inputCacheRead` 取命中，`inputOther` 取 `prompt_cache_miss_tokens`；缺 miss 时用 `prompt_tokens - hit`。前缀缓存以 64 token 为一块，只对完全相同的前缀生效。目录里的单价是峰时价（工作日 01:00–04:00 与 06:00–10:00 UTC），非峰时半价。`decideEpoch` 只用读写倍率，半价不改变开不开新阶段。`bench report` 若把 token 换算成花费，要按实际时段，本仓现在不做这套换算。流式 `delta.reasoning_content` 收成没有 signature 的 thinking 块，写入 Log；下一轮编码时 `normalizeForApi` 把它剥掉，请求体不回传。
 - OpenAI、DashScope、Moonshot：有 `prompt_tokens_details.cached_tokens` 时，命中进 `inputCacheRead`，其余 `prompt_tokens` 进 `inputOther`。
 - 两种字段都没有：`inputOther = prompt_tokens`，`inputCacheRead = 0`。
 
