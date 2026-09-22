@@ -1,0 +1,26 @@
+{
+  "model": {
+    "provider": "anthropic",
+    "model": "claude-test"
+  },
+  "head": {
+    "system": "You are sage.",
+    "tools": []
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "hello"
+        }
+      ]
+    }
+  ],
+  "cacheBreakpoints": ["head"],
+  "sampling": {
+    "maxTokens": 64,
+    "temperature": 0
+  }
+}

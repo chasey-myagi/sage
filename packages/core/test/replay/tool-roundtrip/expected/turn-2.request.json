@@ -1,0 +1,64 @@
+{
+  "model": {
+    "provider": "anthropic",
+    "model": "claude-test"
+  },
+  "head": {
+    "system": "You are sage. Use tools when asked.",
+    "tools": [
+      {
+        "name": "echo",
+        "description": "Echo text",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "ping"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "call_1",
+          "name": "echo",
+          "input": {
+            "text": "hi"
+          },
+          "rawInput": "{\"text\":\"hi\"}"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "toolUseId": "call_1",
+          "content": "hi",
+          "isError": false
+        }
+      ]
+    }
+  ],
+  "cacheBreakpoints": ["head"],
+  "sampling": {
+    "maxTokens": 64,
+    "temperature": 0
+  }
+}
