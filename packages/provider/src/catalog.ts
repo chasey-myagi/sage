@@ -21,6 +21,8 @@ const DEEPSEEK_SOURCE = "https://api-docs.deepseek.com/quick_start/pricing";
 const MOONSHOT_SOURCE = "https://platform.kimi.com/docs/pricing/chat";
 const DASHSCOPE_SOURCE =
   "https://help.aliyun.com/zh/model-studio/model-pricing";
+const TYPESAFE_SOURCE =
+  "https://typesafe.ai/blog/introducing-system-one-models-and-jev";
 
 export type CatalogEntry = {
   provider: string;
@@ -232,6 +234,18 @@ const MODELS: readonly CatalogEntry[] = [
       cacheReadPerMTok: 0.015,
       source: DASHSCOPE_SOURCE,
       currency: "CNY",
+    },
+  },
+  {
+    provider: "typesafe",
+    model: "jev-latest",
+    contextWindow: 32_000,
+    pricing: {
+      inputPerMTok: 0.042,
+      outputPerMTok: 0,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0,
+      source: TYPESAFE_SOURCE,
     },
   },
 ];

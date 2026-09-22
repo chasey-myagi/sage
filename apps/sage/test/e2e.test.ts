@@ -131,7 +131,41 @@ describe("scorer flag", () => {
       ok: true,
       scorer: "rule",
     });
+    expect(parseArgs(["--print", "hi", "--scorer", "jev"])).toMatchObject({
+      ok: true,
+      scorer: "jev",
+    });
     expect(parseArgs(["--print", "hi", "--scorer", "nope"]).ok).toBe(false);
+    const help = parseArgs(["--help"]);
+    if (help.ok) throw new Error("help should not parse");
+    expect(help.message).toContain("jev");
+  });
+
+  it("exits 2 when --scorer jev has no TYPESAFE_API_KEY", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-jev-"));
+    const io = capture();
+    const code = await runCli(["--print", "hi", "--scorer", "jev"], {
+      cwd: dir,
+      env: {},
+      stdout: io.stdout,
+      stderr: io.stderr,
+    });
+    expect(code).toBe(2);
+    expect(io.text().stderr).toContain("TYPESAFE_API_KEY");
+  });
+
+  it("rejects --provider typesafe because it is not a chat endpoint", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-typesafe-"));
+    const io = capture();
+    const code = await runCli(["--print", "hi", "--provider", "typesafe"], {
+      cwd: dir,
+      env: { TYPESAFE_API_KEY: "k" },
+      stdout: io.stdout,
+      stderr: io.stderr,
+    });
+    expect(code).toBe(1);
+    expect(io.text().stderr).toContain("not a chat endpoint");
+    expect(io.text().stdout).toBe("");
   });
 });
 

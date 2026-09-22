@@ -24,7 +24,8 @@
  * `scorer` defaults to `ruleScorer` and runs only when this compile rebuilds
  * and at least one kept tool chunk remains. The rule scorer leaves tier and
  * reason untouched. Any other scorer may set a kept tool chunk to none,
- * summary, or full with reason `scorer:model`. recent, superseded, retry, and
+ * summary, or full. The chunk reason is the decision's `reason` when that
+ * string is non-empty, otherwise `scorer:model`. recent, superseded, retry, and
  * budget reasons win. Summary tool_result text is the stub, a newline, and
  * `summary (model notes, not evidence): `. That string is stored on the chunk
  * record. A fallback appends `;scorer:fallback:<reason>` and keeps the
@@ -1206,7 +1207,7 @@ function mergeScore(
     if (chunk?.kind !== "tool") return row;
     const scored = byId.get(row.id);
     if (!scored || !SCORE_TIERS.has(scored.tier)) return row;
-    const reason = modelReason(row.reason);
+    const reason = modelReason(row.reason, scored);
     if (scored.tier === "full") {
       return {
         id: row.id,
@@ -1260,13 +1261,17 @@ function rootReason(reason: string): string {
   return reason.split(";")[0] ?? reason;
 }
 
-function modelReason(reason: string): string {
+function modelReason(reason: string, decision: ScoreDecision): string {
+  const root =
+    decision.reason !== undefined && decision.reason.length > 0
+      ? decision.reason
+      : "scorer:model";
   const extra = reason
     .split(";")
     .slice(1)
     .filter((part) => part.length > 0);
-  if (extra.length === 0) return "scorer:model";
-  return `scorer:model;${extra.join(";")}`;
+  if (extra.length === 0) return root;
+  return `${root};${extra.join(";")}`;
 }
 
 function clampSummary(summary: string): string {

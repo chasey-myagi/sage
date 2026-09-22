@@ -50,6 +50,7 @@ export type {
   RoutePolicy,
   RouteResult,
 } from "./routing/types.js";
+export { jevScorer } from "./scorer/jev.js";
 export { modelScorer } from "./scorer/model.js";
 export { ruleScorer } from "./scorer/rule.js";
 export type { ScoreDecision, ScoreInput, Scorer } from "./scorer/types.js";

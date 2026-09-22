@@ -8,8 +8,10 @@
  * is contextCompiler with budget 40000, the four first-party claims, and
  * the default route policy, unless `--passthrough` selects passthroughView.
  * `--scorer model` installs a model scorer on the root compiler. It reuses
- * the assembled adapters and the session model. The default scorer is the
- * deterministic rule scorer.
+ * the assembled adapters and the session model. `--scorer jev` installs the
+ * TypeSafe Jev scorer and reads `TYPESAFE_API_KEY`; a missing key exits 2.
+ * The default scorer is the deterministic rule scorer. `--provider typesafe`
+ * is rejected: that catalog row prices Jev and is not a chat endpoint.
  * Each preset with its env key assembles an adapter. OpenAI-compatible
  * presets share one adapter class and differ by base URL. `--provider`
  * selects a preset. `--base-url` and `--api-key-env` override that preset.
@@ -51,6 +53,7 @@ import {
   contextCompiler,
   costTierPolicy,
   expandTool,
+  jevScorer,
   modelScorer,
   progressLedger,
   type RoutePolicy,
@@ -206,6 +209,10 @@ export async function runCli(
     stderr.write(`${parsed.message}\n`);
     return 1;
   }
+  if (parsed.scorer === "jev" && !env.TYPESAFE_API_KEY) {
+    stderr.write("Missing TYPESAFE_API_KEY\n");
+    return 2;
+  }
   const auth = resolveAuth(
     parsed.provider,
     parsed.model,
@@ -241,7 +248,9 @@ export async function runCli(
             adapters,
             model: { provider: auth.provider, model: auth.model },
           })
-        : undefined,
+        : parsed.scorer === "jev"
+          ? jevScorer({ apiKey: env.TYPESAFE_API_KEY })
+          : undefined,
   });
   let turn = 0;
   session.hooks.observe("turn_start", (payload) => {
@@ -378,7 +387,7 @@ type Parsed =
       apiKeyEnv?: string;
       passthrough: boolean;
       json: boolean;
-      scorer?: "rule" | "model";
+      scorer?: "rule" | "model" | "jev";
       ladder?: { provider: string; model: string }[];
     }
   | { ok: false; message: string };
@@ -391,7 +400,7 @@ export function parseArgs(argv: string[]): Parsed {
   let apiKeyEnv: string | undefined;
   let passthrough = false;
   let json = false;
-  let scorer: "rule" | "model" | undefined;
+  let scorer: "rule" | "model" | "jev" | undefined;
   let ladder: { provider: string; model: string }[] | undefined;
   const positional: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -423,7 +432,11 @@ export function parseArgs(argv: string[]): Parsed {
       if (taken.name === "provider") provider = taken.value;
       if (taken.name === "model") model = taken.value;
       if (taken.name === "scorer") {
-        if (taken.value !== "rule" && taken.value !== "model") {
+        if (
+          taken.value !== "rule" &&
+          taken.value !== "model" &&
+          taken.value !== "jev"
+        ) {
           return { ok: false, message: usage() };
         }
         scorer = taken.value;
@@ -460,7 +473,7 @@ export function parseArgs(argv: string[]): Parsed {
 
 function usage(): string {
   return [
-    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--passthrough] [--scorer rule|model] [--json]",
+    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--passthrough] [--scorer rule|model|jev] [--json]",
     "       sage stats <session.jsonl>",
     "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] --out <dir>",
     "       sage bench report <runA> <runB>",
@@ -572,6 +585,14 @@ function resolveAuth(
         message: "Missing ANTHROPIC_API_KEY or OPENAI_API_KEY",
       };
     }
+  }
+  if (selected === "typesafe") {
+    return {
+      ok: false,
+      exitCode: 1,
+      message:
+        "typesafe is not a chat endpoint; use --scorer jev with TYPESAFE_API_KEY",
+    };
   }
   const preset = resolvePreset(selected);
   if (!preset) {
