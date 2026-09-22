@@ -2,7 +2,7 @@
  * Kernel public surface.
  *
  * Contract: importing this module registers the built-in log kinds. Callers
- * see Log and, later, the View seam. This package does not import plugins.
+ * see Log and the View seam. This package does not import plugins.
  *
  * Intentionally not in the Log: package identity and the kind registry.
  */
@@ -11,6 +11,7 @@ import "./log/kinds.js";
 
 export const PACKAGE = "@sage/core" as const;
 
+export type { Decision, HookEvents, Hooks } from "./hooks/types.js";
 export {
   InvalidEntryError,
   LogCorruptedError,
@@ -32,7 +33,29 @@ export { type LogStore, replay } from "./log/store.js";
 export type {
   EntryId,
   EntryInput,
-  MessagePayload,
   ModelRef,
   StoredEntry,
 } from "./log/types.js";
+export { AgentSession, type RunSummary, type TurnOutcome } from "./session.js";
+export type { Access, HarnessTool } from "./tools.js";
+export {
+  assertHeadFrozen,
+  assertPaired,
+  headHash,
+  systemHash,
+  toolsHash,
+} from "./view/assert.js";
+export {
+  HeadChangedMidEpochError,
+  UnpairedToolCallError,
+} from "./view/errors.js";
+export { passthroughView } from "./view/passthrough.js";
+export type {
+  Anomaly,
+  ChunkRecord,
+  ClaimRecord,
+  CompiledView,
+  Manifest,
+  ViewContext,
+  ViewProvider,
+} from "./view/types.js";

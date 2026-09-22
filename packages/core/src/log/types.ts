@@ -33,17 +33,8 @@ export type EntryInput<K extends string = string, P = unknown> = {
 };
 
 /**
- * Structural stand-in for `Message` from `@sage/provider/contract`.
- * That package does not export `Message` on this branch (#3). Log checks the
- * `{ role, content }` shape only. No value import from provider.
- */
-export type MessagePayload = {
-  role: string;
-  content: unknown;
-};
-
-/**
- * Structural stand-in for `ModelRef` from `@sage/provider/contract` (#3).
+ * Structural stand-in for `ModelRef` from `@sage/provider/contract`.
+ * `message` payloads use `Message` from that contract directly.
  */
 export type ModelRef = {
   provider: string;
