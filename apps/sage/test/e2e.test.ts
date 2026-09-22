@@ -206,6 +206,7 @@ describe("scenario 8 faux read then edit", () => {
       adapter: adapter as ProviderAdapter,
       model: { provider: "anthropic", model: "claude-test" },
       sessionId: "e2e",
+      passthrough: true,
     });
     const summary = await session.run("rename greet to sayHello");
     expect(summary.outcome).toBe("done");
@@ -245,3 +246,99 @@ describe("scenario 8 faux read then edit", () => {
     }
   });
 });
+
+describe("first-party claims in the coding session", () => {
+  it("puts AGENTS.md on the epoch head and the ledger on the next turn's tail", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-claims-"));
+    writeFileSync(
+      path.join(dir, "AGENTS.md"),
+      "Workspace rule: prefer small steps.\n",
+    );
+    const { adapter, requests } = createFaux([
+      toolScript(
+        "led1",
+        "update_ledger",
+        JSON.stringify({ goal: "rename greet" }),
+      ),
+      stopScript("done"),
+    ]);
+    const { session } = createCodingSession({
+      cwd: dir,
+      adapter: adapter as ProviderAdapter,
+      model: { provider: "anthropic", model: "claude-test" },
+      sessionId: "claims-e2e",
+    });
+    const summary = await session.run("rename greet");
+    expect(summary.outcome).toBe("done");
+    expect(requests).toHaveLength(2);
+
+    const head = requests[0]?.messages[0];
+    expect(head?.role).toBe("user");
+    const headText = textBlocks(head?.content ?? []);
+    expect(headText).toContain("Workspace rule: prefer small steps.");
+    expect(headText).toContain('<claim id="agents-md"');
+    expect(headText).not.toContain("rename greet");
+
+    const last = requests[1]?.messages.at(-1);
+    expect(last?.role).toBe("user");
+    const tail = textBlocks(last?.content ?? []);
+    expect(tail).toContain("Goal: rename greet");
+    expect(tail).toContain('<claim id="progress-ledger"');
+    const result = (last?.content ?? []).find(
+      (block) =>
+        typeof block === "object" &&
+        block !== null &&
+        "type" in block &&
+        block.type === "tool_result",
+    ) as { content?: string } | undefined;
+    expect(result?.content).toBe("Ledger updated.");
+  });
+
+  it("keeps a passthrough view when --passthrough is set", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-pass-"));
+    writeFileSync(
+      path.join(dir, "AGENTS.md"),
+      "Workspace rule: prefer small steps.\n",
+    );
+    const { adapter, requests } = createFaux([stopScript("done")]);
+    const io = capture();
+    const code = await runCli(["--print", "hi", "--passthrough"], {
+      cwd: dir,
+      env: { ANTHROPIC_API_KEY: "test-key" },
+      stdout: io.stdout,
+      stderr: io.stderr,
+      adapter: adapter as ProviderAdapter,
+    });
+    expect(code).toBe(0);
+    const first = JSON.stringify(requests[0]?.messages[0]);
+    expect(first).toContain("hi");
+    expect(first).not.toContain("Workspace rule");
+    const sessions = readdirSync(path.join(dir, ".sage", "sessions"));
+    const logName = sessions.find((name) => name.endsWith(".jsonl"));
+    expect(logName).toBeDefined();
+    const log = readFileSync(
+      path.join(dir, ".sage", "sessions", logName ?? ""),
+      "utf8",
+    );
+    expect(log).not.toContain('"budget"');
+    expect(log).not.toContain("view_epoch");
+  });
+});
+
+function textBlocks(content: unknown[]): string {
+  return content
+    .map((block) => {
+      if (
+        typeof block === "object" &&
+        block !== null &&
+        "type" in block &&
+        block.type === "text" &&
+        "text" in block &&
+        typeof block.text === "string"
+      ) {
+        return block.text;
+      }
+      return "";
+    })
+    .join("\n");
+}

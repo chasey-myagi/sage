@@ -1,13 +1,16 @@
 /**
  * One-shot coding CLI.
  *
- * Contract: parse argv, assemble AgentSession with the seven tools,
- * passthroughView, and a JsonlLogStore under `<cwd>/.sage/sessions`.
- * stdout is one JSON RunSummary. The kernel appends each turn's manifest.
- * Exit 0 when the outcome is done, otherwise 1.
+ * Contract: parse argv, assemble AgentSession with the seven tools plus
+ * update_ledger, and a JsonlLogStore under `<cwd>/.sage/sessions`. The view
+ * is contextCompiler with budget 40000 and the four first-party claims,
+ * unless `--passthrough` selects passthroughView. stdout is one JSON
+ * RunSummary. The kernel appends each turn's manifest. Exit 0 when the
+ * outcome is done, otherwise 1.
  *
  * Intentionally not in the Log: argv, API keys, and the stderr progress
  * lines. The system prompt is model-visible and is stored on request_header.
+ * Claim text reaches the Log only through the manifest the kernel appends.
  */
 
 import { randomUUID } from "node:crypto";
@@ -19,6 +22,13 @@ import {
   type LogStore,
   passthroughView,
 } from "@sage/core";
+import {
+  agentsMd,
+  contextCompiler,
+  progressLedger,
+  systemReminder,
+  toolCatalog,
+} from "@sage/plugins";
 import {
   AnthropicAdapter,
   defaultModel,
@@ -45,6 +55,8 @@ export function createCodingSession(opts: {
   store?: LogStore;
   exec?: BashExec;
   sampling?: Sampling;
+  budget?: number;
+  passthrough?: boolean;
 }): CodingSession {
   const sessionId = opts.sessionId ?? randomUUID();
   const store =
@@ -52,14 +64,25 @@ export function createCodingSession(opts: {
     new JsonlLogStore({
       dir: opts.sessionsDir ?? path.join(opts.cwd, ".sage", "sessions"),
     });
+  const ledger = progressLedger();
   const session = new AgentSession({
     store,
     sessionId,
     adapter: opts.adapter,
     model: opts.model,
     system: opts.system ?? systemPrompt(opts.cwd),
-    tools: createTools({ cwd: opts.cwd, exec: opts.exec }),
-    viewProvider: passthroughView,
+    tools: [...createTools({ cwd: opts.cwd, exec: opts.exec }), ledger.tool],
+    viewProvider: opts.passthrough
+      ? passthroughView
+      : contextCompiler({
+          budget: opts.budget ?? 40000,
+          claims: [
+            systemReminder({ text: "Work in small verified steps." }),
+            agentsMd({ cwd: opts.cwd }),
+            toolCatalog({ deferred: [] }),
+            ledger.provider,
+          ],
+        }),
     sampling: opts.sampling,
   });
   return { session, store, sessionId };
@@ -96,6 +119,7 @@ export async function runCli(
     cwd,
     adapter,
     model: { provider: auth.provider, model: auth.model },
+    passthrough: parsed.passthrough,
   });
   let turn = 0;
   session.hooks.observe("turn_start", (payload) => {
@@ -134,18 +158,29 @@ function systemPrompt(cwd: string): string {
 }
 
 type Parsed =
-  | { ok: true; task: string; provider?: string; model?: string }
+  | {
+      ok: true;
+      task: string;
+      provider?: string;
+      model?: string;
+      passthrough: boolean;
+    }
   | { ok: false; message: string };
 
 export function parseArgs(argv: string[]): Parsed {
   let task: string | undefined;
   let provider: string | undefined;
   let model: string | undefined;
+  let passthrough = false;
   const positional: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? "";
     if (arg === "--help" || arg === "-h") {
       return { ok: false, message: usage() };
+    }
+    if (arg === "--passthrough") {
+      passthrough = true;
+      continue;
     }
     const taken = take(argv, index, arg);
     if (taken.kind === "unknown") return { ok: false, message: taken.message };
@@ -163,11 +198,11 @@ export function parseArgs(argv: string[]): Parsed {
   }
   if (task === undefined) task = positional.join(" ");
   if (!task) return { ok: false, message: usage() };
-  return { ok: true, task, provider, model };
+  return { ok: true, task, provider, model, passthrough };
 }
 
 function usage(): string {
-  return "usage: sage [-p | --print] <task> [--provider anthropic|openai] [--model <id>]";
+  return "usage: sage [-p | --print] <task> [--provider anthropic|openai] [--model <id>] [--passthrough]";
 }
 
 function take(

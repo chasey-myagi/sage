@@ -29,6 +29,9 @@ importers:
       '@sage/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@sage/plugins':
+        specifier: workspace:*
+        version: link:../../packages/plugins
       '@sage/provider':
         specifier: workspace:*
         version: link:../../packages/provider
