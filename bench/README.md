@@ -66,10 +66,11 @@ node apps/sage/bin/sage.mjs bench run \
   --tasks bench/tasks/swe-verified-mini-50.json \
   --policy compiler \
   --model <模型 id> \
+  --budget 6000 \
   --out bench/runs/<时间戳>-compiler
 ```
 
-`--policy passthrough` 给每个任务加上 `--passthrough`。`compiler` 用 CLI 默认编译器（预算 40000，规则打分）。可选 `--provider`，取值是预设名，例如 `deepseek`。
+`--policy passthrough` 给每个任务加上 `--passthrough`。`compiler` 用 CLI 默认编译器（预算 40000，规则打分）。可选 `--provider`，取值是预设名，例如 `deepseek`。可选 `--budget <tokens>`，透传给每个任务的 `sage -p`（passthrough 也透传，sage 会忽略并在 stderr 提示一句）。对照实验请显式压预算，默认 40000 在短任务上不会触发编译器。
 
 TS/JS 这 10 条：
 
@@ -86,7 +87,7 @@ node apps/sage/bin/sage.mjs bench run \
 
 1. clone 到临时目录，`checkout baseCommit`
 2. 有 `setupCommand` 时，在该目录 `sh -c` 执行，时限 `timeoutSec` 秒。退出码非 0 记 `error`，`reason` 为 `setup-failed`，不起 agent，不跑测试
-3. 在该目录执行 `sage -p <problem>`，时限 `timeoutSec` 秒
+3. 在该目录执行 `sage -p <problem>`。写了 `--budget` 时，argv 里同时有 `--budget <tokens>`。时限 `timeoutSec` 秒
 4. 复制 session。这一步在应用 `testPatch` 之前，session 里没有隐藏测试
 5. sage 超时记 `error`，`reason` 为 `timeout`
 6. `git status --porcelain` 为空则记 `empty-patch`，不应用 `testPatch`，不跑测试
@@ -116,7 +117,7 @@ node apps/sage/bin/sage.mjs bench run \
 <out>/sessions/<taskId>.jsonl
 ```
 
-`results.json` 只有 `policy`、`model`，以及每个任务的 `id`、`status`、可选 `reason`、`health`。`health` 是该 session 的 `runHealth`。问题陈述和块原文不写进这份文件。跑完的目录不要提交。
+`results.json` 有 `policy`、`model`、`budget`，以及每个任务的 `id`、`status`、可选 `reason`、`health`。compiler 组的 `budget` 是 `--budget` 的正整数；没写这个旗标，或策略是 passthrough，则为 `null`。`health` 是该 session 的 `runHealth`。问题陈述和块原文不写进这份文件。跑完的目录不要提交。
 
 ## 报表怎么读
 
@@ -124,7 +125,7 @@ node apps/sage/bin/sage.mjs bench run \
 node apps/sage/bin/sage.mjs bench report <runA> <runB>
 ```
 
-stdout 是一份 JSON：`a`、`b`、`delta`。`delta` 是 B 减 A。没有 key 也能打报表。
+stdout 是一份 JSON：`a`、`b`、`delta`。`a` 和 `b` 各带 `budget`，与该目录 `results.json` 的顶层 `budget` 相同。`delta` 是 B 减 A，不含 `budget`。没有 key 也能打报表。
 
 | 字段 | 口径 |
 |---|---|

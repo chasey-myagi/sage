@@ -174,6 +174,7 @@ it("bench report compares rates and the three numbers", async () => {
     tokensPerResolved: 10,
     cacheHitRatio: 0.5,
     expandRate: 0.25,
+    budget: null,
   });
   expect(json.b).toEqual({
     resolvedRate: 1,
@@ -182,6 +183,7 @@ it("bench report compares rates and the three numbers", async () => {
     tokensPerResolved: 5,
     cacheHitRatio: 0.5,
     expandRate: 0.5,
+    budget: null,
   });
   expect(json.delta).toEqual({
     resolvedRate: 0.5,
@@ -192,6 +194,110 @@ it("bench report compares rates and the three numbers", async () => {
     expandRate: 0.25,
   });
   expect(text).not.toContain("LEAKED_PROBLEM_TEXT");
+});
+
+it("bench run --budget 6000 forwards the flag and records it unless passthrough", async () => {
+  dir = mkdtempSync(path.join(tmpdir(), "sage-bench-budget-"));
+  const tasks = path.join(dir, "tasks.json");
+  writeFileSync(tasks, JSON.stringify([task("one")]));
+  const compilerOut = path.join(dir, "compiler");
+  const passthroughOut = path.join(dir, "passthrough");
+  const compilerArgv: string[][] = [];
+  const passthroughArgv: string[][] = [];
+  const compiler = await runCli(
+    [
+      "bench",
+      "run",
+      "--tasks",
+      tasks,
+      "--policy",
+      "compiler",
+      "--model",
+      "claude-test",
+      "--budget",
+      "6000",
+      "--out",
+      compilerOut,
+    ],
+    {
+      cwd: dir,
+      env: { ANTHROPIC_API_KEY: "test-key" },
+      stdout: capture().stdout,
+      stderr: capture().stderr,
+      benchDeps: {
+        async prepare() {},
+        async runSage(_spec, cwd, opts) {
+          compilerArgv.push(flagArgv(opts));
+          return { code: 0, sessionFile: writeSession(cwd, _spec.id) };
+        },
+        async diffEmpty() {
+          return false;
+        },
+        async runTests() {
+          return { code: 0 };
+        },
+      },
+    },
+  );
+  const passthrough = await runCli(
+    [
+      "bench",
+      "run",
+      "--tasks",
+      tasks,
+      "--policy",
+      "passthrough",
+      "--model",
+      "claude-test",
+      "--budget",
+      "6000",
+      "--out",
+      passthroughOut,
+    ],
+    {
+      cwd: dir,
+      env: { ANTHROPIC_API_KEY: "test-key" },
+      stdout: capture().stdout,
+      stderr: capture().stderr,
+      benchDeps: {
+        async prepare() {},
+        async runSage(_spec, cwd, opts) {
+          passthroughArgv.push(flagArgv(opts));
+          return { code: 0, sessionFile: writeSession(cwd, _spec.id) };
+        },
+        async diffEmpty() {
+          return false;
+        },
+        async runTests() {
+          return { code: 0 };
+        },
+      },
+    },
+  );
+  expect(compiler).toBe(0);
+  expect(passthrough).toBe(0);
+  expect(compilerArgv[0]).toEqual(expect.arrayContaining(["--budget", "6000"]));
+  expect(adjacentBudget(compilerArgv[0] ?? [])).toBe(true);
+  expect(adjacentBudget(passthroughArgv[0] ?? [])).toBe(true);
+  expect(readBudget(compilerOut)).toBe(6000);
+  expect(readBudget(passthroughOut)).toBe(null);
+  const report = capture();
+  const reportCode = await runCli(
+    ["bench", "report", compilerOut, passthroughOut],
+    {
+      cwd: dir,
+      env: {},
+      stdout: report.stdout,
+      stderr: report.stderr,
+    },
+  );
+  expect(reportCode).toBe(0);
+  const json = JSON.parse(report.text().stdout) as {
+    a: { budget?: number | null };
+    b: { budget?: number | null };
+  };
+  expect(json.a.budget).toBe(6000);
+  expect(json.b.budget).toBe(null);
 });
 
 it("fetch-swe-verified writes pytest commands from a fixture payload", () => {
@@ -621,6 +727,26 @@ function writeResults(
       tasks: spec.tasks,
     }),
   );
+}
+
+function flagArgv(opts: object): string[] {
+  if (!("argv" in opts) || !Array.isArray(opts.argv)) return [];
+  return opts.argv.filter((item): item is string => typeof item === "string");
+}
+
+function adjacentBudget(argv: string[]): boolean {
+  const index = argv.indexOf("--budget");
+  return index >= 0 && argv[index + 1] === "6000";
+}
+
+function readBudget(out: string): unknown {
+  const parsed: unknown = JSON.parse(
+    readFileSync(path.join(out, "results.json"), "utf8"),
+  );
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  return "budget" in parsed ? parsed.budget : undefined;
 }
 
 function capture() {
