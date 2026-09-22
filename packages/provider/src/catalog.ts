@@ -119,18 +119,6 @@ const MODELS: readonly CatalogEntry[] = [
   // 非峰时减半：01:00–04:00 与 06:00–10:00 UTC 工作日为峰时。表内是峰时价。
   {
     provider: "deepseek",
-    model: "deepseek-v4-pro",
-    contextWindow: 1_000_000,
-    pricing: {
-      inputPerMTok: 1.32,
-      outputPerMTok: 3.96,
-      cacheWritePerMTok: 0,
-      cacheReadPerMTok: 0.044,
-      source: DEEPSEEK_SOURCE,
-    },
-  },
-  {
-    provider: "deepseek",
     model: "deepseek-flash",
     contextWindow: 1_000_000,
     pricing: {
@@ -138,6 +126,18 @@ const MODELS: readonly CatalogEntry[] = [
       outputPerMTok: 1.2,
       cacheWritePerMTok: 0,
       cacheReadPerMTok: 0.006,
+      source: DEEPSEEK_SOURCE,
+    },
+  },
+  {
+    provider: "deepseek",
+    model: "deepseek-v4-pro",
+    contextWindow: 1_000_000,
+    pricing: {
+      inputPerMTok: 1.32,
+      outputPerMTok: 3.96,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.044,
       source: DEEPSEEK_SOURCE,
     },
   },

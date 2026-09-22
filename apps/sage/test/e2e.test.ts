@@ -378,7 +378,7 @@ describe("scenario 7 one-shot cli", () => {
     expect(missing.text().stderr).toContain("DEEPSEEK_API_KEY");
   });
 
-  it("picks deepseek-v4-pro when only DEEPSEEK_API_KEY is set", async () => {
+  it("picks deepseek-flash when only DEEPSEEK_API_KEY is set", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "sage-deepseek-default-"));
     const { adapter, requests } = createFaux([stopScript("ok")]);
     const io = capture();
@@ -392,7 +392,7 @@ describe("scenario 7 one-shot cli", () => {
     expect(code).toBe(0);
     expect(requests[0]?.model).toEqual({
       provider: "deepseek",
-      model: "deepseek-v4-pro",
+      model: "deepseek-flash",
     });
 
     const explicit = capture();

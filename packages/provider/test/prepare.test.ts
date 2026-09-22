@@ -215,7 +215,7 @@ describe("catalog export", () => {
       "gpt-5.4-mini",
     ]);
     expect(provider.listModels("deepseek").map((entry) => entry.model)).toEqual(
-      ["deepseek-v4-pro", "deepseek-flash"],
+      ["deepseek-flash", "deepseek-v4-pro"],
     );
     expect(provider.listModels("moonshot").map((entry) => entry.model)).toEqual(
       ["kimi-k2.6", "kimi-k2.7-code", "kimi-k3"],
@@ -243,7 +243,7 @@ describe("catalog export", () => {
     });
     expect(provider.defaultModel("deepseek")).toEqual({
       provider: "deepseek",
-      model: "deepseek-v4-pro",
+      model: "deepseek-flash",
     });
     expect(provider.defaultModel("moonshot")).toEqual({
       provider: "moonshot",
