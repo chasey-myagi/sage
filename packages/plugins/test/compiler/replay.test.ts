@@ -45,7 +45,18 @@ for (const spec of REPLAY_CASES) {
       viewProvider: contextCompiler({ budget: 8000, claims: [] }),
     });
 
-    expect(compiled.requests).toEqual(plain.requests);
+    compiled.requests.forEach((request, index) => {
+      const plainRequest = plain.requests[index];
+      if (!plainRequest) throw new Error(`missing request ${index}`);
+      expect(request.messages).toEqual(plainRequest.messages);
+      expect(request.head).toEqual(plainRequest.head);
+      expect(request.model).toEqual(plainRequest.model);
+      expect(request.sampling).toEqual(plainRequest.sampling);
+      const last = request.messages.length - 1;
+      expect(request.cacheBreakpoints[0]).toBe("head");
+      expect(request.cacheBreakpoints.at(-1)).toEqual({ afterMessage: last });
+      expect(request.cacheBreakpoints).toHaveLength(3);
+    });
     expect(compiled.log.some((entry) => entry.kind === "view_epoch")).toBe(
       false,
     );
@@ -53,7 +64,14 @@ for (const spec of REPLAY_CASES) {
     compiled.manifests.forEach((manifest, index) => {
       const plainManifest = plain.manifests[index];
       if (!plainManifest) throw new Error(`missing manifest ${index}`);
-      const { budget, chunks, ...rest } = stabilize(manifest, compiled.log);
+      const {
+        budget,
+        chunks,
+        epochDecision: _epochDecision,
+        calibration: _calibration,
+        cache: _cache,
+        ...rest
+      } = stabilize(manifest, compiled.log);
       const {
         budget: plainBudget,
         chunks: plainChunks,

@@ -378,10 +378,22 @@ it("matches passthrough messages when no claim is submitted and records chunk de
   expect(compiled.epoch).toBe(plain.epoch);
   expect(compiled.head).toEqual(plain.head);
   expect(compiled.messages).toEqual(plain.messages);
-  expect(compiled.cacheBreakpoints).toEqual(plain.cacheBreakpoints);
+  const last = compiled.messages.length - 1;
+  expect(compiled.cacheBreakpoints).toEqual([
+    "head",
+    { afterMessage: last },
+    { afterMessage: last },
+  ]);
   expect(compiled.epochStart).toBeUndefined();
   expect(compiled.details).toBeUndefined();
-  const { budget, chunks, ...rest } = compiled.manifest;
+  const {
+    budget,
+    chunks,
+    epochDecision: _epochDecision,
+    calibration: _calibration,
+    cache: _cache,
+    ...rest
+  } = compiled.manifest;
   const {
     budget: plainBudget,
     chunks: plainChunks,

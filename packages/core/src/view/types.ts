@@ -48,6 +48,30 @@ export type BudgetReport = {
   overrun: number;
 };
 
+export type EpochDecisionReport = {
+  rebuild: boolean;
+  oldTokens: number;
+  newTokens: number;
+  remainingTurns: number;
+  readRate: number;
+  writeRate: number;
+  savingsPerTurn: number;
+  extraCost: number;
+  paybackTurns: number | null;
+  reason: string;
+};
+
+export type CalibrationReport = {
+  measured: number;
+  estimated: number;
+  ratio: number;
+};
+
+export type CacheReport = {
+  expectedReadTokens: number;
+  measuredReadTokens: number;
+};
+
 export type Manifest = {
   epoch: number;
   turn: number;
@@ -56,6 +80,12 @@ export type Manifest = {
   claims: ClaimRecord[];
   chunks: ChunkRecord[];
   anomalies: Anomaly[];
+  /** Cost-inequality result for this compile. Optional for older manifests. */
+  epochDecision?: EpochDecisionReport;
+  /** Previous request: measured input tokens over the compiler's estimate. */
+  calibration?: CalibrationReport;
+  /** Frozen-prefix estimate against the previous turn's cache read. */
+  cache?: CacheReport;
 };
 
 export type CompiledView = {
