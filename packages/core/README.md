@@ -24,6 +24,20 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 
 `RunSummary.modelChanges` 等于这次 run 里追加的 `model_change` 条数。
 
+## 健康度
+
+一次 run 结束时，`RunSummary.health` 和 `terminal` entry 的 `health` 是同一份 `runHealth(path)`。三个数都从 Log 里已经有的 entry 算出来。
+
+| 数 | 口径 |
+| --- | --- |
+| token 总量 | `tokens.total` = input + cacheRead + cacheCreation + output。`input` 是各条 assistant `usage.inputOther` 之和，另外三项分别是 `inputCacheRead`、`inputCacheCreation`、`output`。每个 resolved 的 token 由基准层拿这个总量去除，本包只给这一次 run 的总量。 |
+| 缓存命中率 | `cacheHitRatio` = Σ cacheRead / Σ (cacheRead + inputOther + cacheCreation)。分子分母都按 token 加总，不是把每一轮的比率再平均。没有 assistant usage，或分母为 0 时，值为 null。 |
+| expand 率 | 最后一条 manifest 的 `budget.expands / budget.omitted`。这两个字段已经是累计值，只读最后一条。`omitted` 为 0 时值为 null。 |
+
+`turns` 是 assistant 消息条数。`epochs` 是最大 `view_epoch.epoch` 加 1，没有 `view_epoch` 时为 1。`modelChanges` 是路径上的 `model_change` 条数。`scorerCalls` 与 `scorerFallbacks` 把每条 manifest 的 `scorer.calls` 和 `scorer.fallback` 加起来；`fallback: true` 计 1。
+
+`health` 里只有这些数字和 null。块原文、claim 文本、路径都不进这个对象。离线看同一份数用 `sage stats <session.jsonl>`。
+
 构造可以传 `adapters`（provider 到适配器），也可以继续传单个 `adapter`。单个适配器记在起始型号的 provider 名下。
 
 ## 测试

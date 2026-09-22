@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { runHealth } from "../../src/health.ts";
 import {
   AgentSession,
   MemoryLogStore,
@@ -118,6 +119,26 @@ describe("scenario 3 request envelope and L4 rebuild", () => {
     });
     expect(canonicalJson({ head: view.head, messages: view.messages })).toBe(
       canonicalJson({ head: received.head, messages: received.messages }),
+    );
+
+    const health = runHealth(path);
+    expect(summary.health).toEqual(health);
+    expect(path.at(-1)?.payload).toMatchObject({ outcome: "done", health });
+    expect(health.turns).toBe(summary.turns);
+    expect(health.tokens).toEqual({
+      input: USAGE.inputOther,
+      cacheRead: USAGE.inputCacheRead,
+      cacheCreation: USAGE.inputCacheCreation,
+      output: USAGE.output,
+      total:
+        USAGE.inputOther +
+        USAGE.inputCacheRead +
+        USAGE.inputCacheCreation +
+        USAGE.output,
+    });
+    expect(health.cacheHitRatio).toBe(
+      USAGE.inputCacheRead /
+        (USAGE.inputCacheRead + USAGE.inputOther + USAGE.inputCacheCreation),
     );
   });
 });

@@ -23,6 +23,74 @@ afterEach(() => {
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
+describe("health output", () => {
+  it("parses --json", () => {
+    expect(parseArgs(["--print", "hi", "--json"])).toMatchObject({
+      ok: true,
+      task: "hi",
+      json: true,
+    });
+    expect(parseArgs(["-p", "--json", "hi"])).toMatchObject({
+      ok: true,
+      task: "hi",
+      json: true,
+    });
+  });
+
+  it("prints health on sage -p --json and the same object from stats", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-health-"));
+    const { adapter } = createFaux([stopScript("done")]);
+    const io = capture();
+    const code = await runCli(["-p", "--json", "hi", "--passthrough"], {
+      cwd: dir,
+      env: { ANTHROPIC_API_KEY: "test-key" },
+      stdout: io.stdout,
+      stderr: io.stderr,
+      adapter: adapter as ProviderAdapter,
+    });
+    expect(code).toBe(0);
+    const summary = JSON.parse(io.text().stdout.trim()) as {
+      health: {
+        tokens: {
+          input: number;
+          cacheRead: number;
+          cacheCreation: number;
+          output: number;
+          total: number;
+        };
+        cacheHitRatio: number | null;
+      };
+    };
+    expect(summary.health.tokens).toEqual({
+      input: 3,
+      cacheRead: 1,
+      cacheCreation: 0,
+      output: 2,
+      total: 6,
+    });
+    expect(summary.health.cacheHitRatio).toBe(0.25);
+    expect(onlyCounts(summary.health)).toBe(true);
+
+    const sessions = readdirSync(path.join(dir, ".sage", "sessions"));
+    const logName = sessions.find((name) => name.endsWith(".jsonl"));
+    expect(logName).toBeDefined();
+    const file = path.join(dir, ".sage", "sessions", logName ?? "");
+    const stats = capture();
+    const statsCode = await runCli(["stats", file], {
+      cwd: dir,
+      env: {},
+      stdout: stats.stdout,
+      stderr: stats.stderr,
+    });
+    expect(statsCode).toBe(0);
+    const printed = stats.text().stdout.trim();
+    expect(JSON.parse(printed)).toEqual(summary.health);
+    expect(printed).not.toContain("You are sage");
+    expect(printed).not.toContain(file);
+    expect(onlyCounts(JSON.parse(printed))).toBe(true);
+  });
+});
+
 describe("scorer flag", () => {
   it("parses --scorer model and rejects an unknown scorer", () => {
     expect(parseArgs(["--print", "hi", "--scorer", "model"])).toMatchObject({
@@ -636,6 +704,15 @@ function routedFaux(api: "anthropic-messages" | "openai-chat") {
       stream: adapter.stream.bind(adapter),
     },
   };
+}
+
+function onlyCounts(value: unknown): boolean {
+  if (value === null) return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return Object.values(value).every(onlyCounts);
+  }
+  return false;
 }
 
 function textBlocks(content: unknown[]): string {

@@ -11,9 +11,11 @@
  * the assembled adapters and the session model. The default scorer is the
  * deterministic rule scorer.
  * Two API keys assemble two adapters. One key routes only inside that
- * provider. stdout is one JSON
- * RunSummary. The kernel appends each turn's manifest. Exit 0 when the
- * outcome is done, otherwise 1.
+ * provider. stdout is one JSON RunSummary, including `health`. `--json`
+ * asks for that same line. `stats <session.jsonl>` reads the file with
+ * JsonlLogStore and prints `runHealth` without starting a run. The kernel
+ * appends each turn's manifest. Exit 0 when the outcome is done, otherwise
+ * 1. `stats` exits 0 after printing.
  *
  * Intentionally not in the Log: argv, API keys, and the stderr progress
  * lines. The system prompt is model-visible and is stored on request_header.
@@ -21,6 +23,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -28,6 +31,7 @@ import {
   JsonlLogStore,
   type LogStore,
   passthroughView,
+  runHealth,
 } from "@sage/core";
 import {
   agentsMd,
@@ -159,6 +163,9 @@ export async function runCli(
   const stderr = io.stderr ?? process.stderr;
   const cwd = io.cwd ?? process.cwd();
   const env = io.env ?? process.env;
+  if (argv[0] === "stats") {
+    return runStats(argv.slice(1), { cwd, stdout, stderr });
+  }
   const parsed = parseArgs(argv);
   if (!parsed.ok) {
     stderr.write(`${parsed.message}\n`);
@@ -252,6 +259,41 @@ export function adaptersFromEnv(
   return adapters;
 }
 
+function runStats(
+  argv: string[],
+  io: {
+    cwd: string;
+    stdout: { write(chunk: string): void };
+    stderr: { write(chunk: string): void };
+  },
+): number {
+  const file = argv[0];
+  if (argv.length !== 1 || !file || file.startsWith("-")) {
+    io.stderr.write(`${usage()}\n`);
+    return 1;
+  }
+  const resolved = path.resolve(io.cwd, file);
+  const sessionId = path.basename(resolved, ".jsonl");
+  if (!resolved.endsWith(".jsonl") || sessionId.length === 0) {
+    io.stderr.write(`${usage()}\n`);
+    return 1;
+  }
+  if (!existsSync(resolved)) {
+    io.stderr.write(`Missing session file: ${resolved}\n`);
+    return 1;
+  }
+  try {
+    const store = new JsonlLogStore({ dir: path.dirname(resolved) });
+    const health = runHealth(store.path(sessionId));
+    io.stdout.write(`${JSON.stringify(health)}\n`);
+    return 0;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    io.stderr.write(`${message}\n`);
+    return 1;
+  }
+}
+
 function systemPrompt(cwd: string): string {
   return [
     "You are sage, a coding agent.",
@@ -269,6 +311,7 @@ type Parsed =
       provider?: string;
       model?: string;
       passthrough: boolean;
+      json: boolean;
       scorer?: "rule" | "model";
     }
   | { ok: false; message: string };
@@ -278,6 +321,7 @@ export function parseArgs(argv: string[]): Parsed {
   let provider: string | undefined;
   let model: string | undefined;
   let passthrough = false;
+  let json = false;
   let scorer: "rule" | "model" | undefined;
   const positional: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -287,6 +331,18 @@ export function parseArgs(argv: string[]): Parsed {
     }
     if (arg === "--passthrough") {
       passthrough = true;
+      continue;
+    }
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
+    if (arg === "--print" || arg === "-p") {
+      const next = argv[index + 1];
+      if (next && !next.startsWith("-")) {
+        task = next;
+        index += 1;
+      }
       continue;
     }
     const taken = take(argv, index, arg);
@@ -311,11 +367,14 @@ export function parseArgs(argv: string[]): Parsed {
   }
   if (task === undefined) task = positional.join(" ");
   if (!task) return { ok: false, message: usage() };
-  return { ok: true, task, provider, model, passthrough, scorer };
+  return { ok: true, task, provider, model, passthrough, json, scorer };
 }
 
 function usage(): string {
-  return "usage: sage [-p | --print] <task> [--provider anthropic|openai] [--model <id>] [--passthrough] [--scorer rule|model]";
+  return [
+    "usage: sage [-p | --print] <task> [--provider anthropic|openai] [--model <id>] [--passthrough] [--scorer rule|model] [--json]",
+    "       sage stats <session.jsonl>",
+  ].join("\n");
 }
 
 function take(

@@ -11,6 +11,7 @@ import "./log/kinds.js";
 
 export const PACKAGE = "@sage/core" as const;
 
+export { type RunHealth, runHealth } from "./health.js";
 export type { Decision, HookEvents, Hooks } from "./hooks/types.js";
 export {
   InvalidEntryError,
