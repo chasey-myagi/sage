@@ -320,8 +320,18 @@ describe("first-party claims in the coding session", () => {
       path.join(dir, ".sage", "sessions", logName ?? ""),
       "utf8",
     );
-    expect(log).not.toContain('"budget"');
-    expect(log).not.toContain("view_epoch");
+    // spawn_subtask's schema includes a budget field, so the whole log
+    // contains that word. Passthrough still must not put budget on a manifest.
+    const entries = log
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as { kind?: string; payload?: unknown });
+    for (const entry of entries) {
+      expect(entry.kind).not.toBe("view_epoch");
+      if (entry.kind === "manifest") {
+        expect(entry.payload).not.toHaveProperty("budget");
+      }
+    }
   });
 });
 
@@ -550,6 +560,47 @@ describe("scenario 9 two adapters", () => {
     expect(Object.keys(adaptersFromEnv({ OPENAI_API_KEY: "b" }))).toEqual([
       "openai",
     ]);
+  });
+});
+
+describe("subtasks", () => {
+  it("spawns a read-only child that extends the parent request", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-subtask-"));
+    const { adapter, requests } = createFaux([
+      toolScript(
+        "s1",
+        "spawn_subtask",
+        JSON.stringify({
+          query: "find the bug",
+          budget: 2000,
+          readOnly: true,
+        }),
+      ),
+      stopScript("child-answer"),
+      stopScript("parent-done"),
+    ]);
+    const { session, store } = createCodingSession({
+      cwd: dir,
+      adapter: adapter as ProviderAdapter,
+      model: { provider: "anthropic", model: "claude-test" },
+      sessionId: "sub-e2e",
+    });
+    const summary = await session.run("look around");
+    expect(summary.outcome).toBe("done");
+    const parentReq = requests[0];
+    const childReq = requests[1];
+    if (!parentReq || !childReq) throw new Error("missing requests");
+    expect(childReq.head).toEqual(parentReq.head);
+    expect(childReq.messages.slice(0, parentReq.messages.length)).toEqual(
+      parentReq.messages,
+    );
+    const match = /Subtask ([0-9a-f-]+) done/.exec(
+      JSON.stringify(store.all("sub-e2e")),
+    );
+    const childId = match?.[1];
+    if (!childId) throw new Error("missing child session");
+    expect(store.all(childId)[0]?.kind).toBe("subtask");
+    expect(JSON.stringify(store.all(childId))).not.toContain("look around");
   });
 });
 

@@ -79,6 +79,7 @@ function rebuildContext(
     },
     head,
     tools: [],
+    depth: 0,
   };
 }
 

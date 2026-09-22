@@ -7,6 +7,10 @@
  * first turn, and `frozenDecisions` returns undefined. `frozenSeqCeiling` is
  * the highest message seq before that manifest. Later messages are new.
  *
+ * `currentEpoch` is the latest `view_epoch` on the path, or 0 when the path
+ * has none. A subtask recompile reads the freeze from that epoch on the
+ * parent path.
+ *
  * Intentionally not in the Log: the returned map. The manifest entry is the
  * record the next turn reads back.
  */
@@ -39,6 +43,16 @@ export function frozenSeqCeiling(
     if (entry.seq > max) max = entry.seq;
   }
   return max < 0 ? undefined : max;
+}
+
+export function currentEpoch(path: readonly StoredEntry[]): number {
+  let epoch = 0;
+  for (const entry of path) {
+    if (entry.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
+    const value = entry.payload.epoch;
+    if (typeof value === "number" && Number.isFinite(value)) epoch = value;
+  }
+  return epoch;
 }
 
 export function epochOpenReason(

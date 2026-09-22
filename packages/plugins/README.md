@@ -65,6 +65,16 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 选中的型号写在 `epochStart.model`。策略 reason 追加到清单的 `epochDecision.reason`，形如 `;route:<reason>`。适配器切换和 `model_change` 由内核落盘。
 
+## 子任务
+
+模型调用 `spawn_subtask`，参数是 `query`，可选 `budget`、`readOnly`、`model`。一次派多个只读子任务用 `spawn_subtasks`，参数是 `tasks`。三个都标了 `readOnly: true` 才会进并行池，默认同时最多 4 个；任何一个不是只读，这次调用整单拒绝。
+
+子任务不复制父会话的历史。它在同一份 Log 上另开一个 sessionId，第一条 entry 是 `subtask`，记下父会话和父 leaf。子会话的头（system 和工具 schema）与父上一次请求相同：工具列表不换。差异在尾部。父请求里已经冻结的前缀原样留在前面，子任务的问题作为尾部申领单 `subtask-query` 接在后面。子会话自己的块 id 带 `own:` 前缀；父块仍用 `seq:N` / `seq:N#id`，指的是同一份原文。
+
+只读不靠换掉工具集。`readOnly: true` 时工具 schema 不动，guard 否决所有 `isReadOnly === false` 的调用，结果是 `Denied: read-only subtask`。这样前缀的 tools 块不会因为少了一把工具而失效。
+
+子任务是一次性的。跑完把结果写进父会话的 tool_result，不保留一条可以接着聊的子会话。正文是 `Subtask <sid> <outcome>. <最后一条 assistant 文本>`，下一行是 `Chunks: child:<sid>#seq:N, …`。父会话之后调用 `expand`，id 用 `child:<sid>#<chunkId>`，取回的是那一块当时的原文。子会话的 usage 写在这次 tool_result 的 details 里，不累加进父会话的 RunSummary。纵向默认最多到孙会话（`maxDepth` 2），每个会话横向默认最多 8 个（`maxSubtasks`）。
+
 ## 第一方申领单
 
 - 系统提醒：模型在最后一条 user 消息末尾看到一行提醒；落点 `tail`；只有 line 档。

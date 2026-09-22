@@ -45,3 +45,4 @@ export type {
   RoutePolicy,
   RouteResult,
 } from "./routing/types.js";
+export { subtaskTools } from "./subtask/spawn.js";

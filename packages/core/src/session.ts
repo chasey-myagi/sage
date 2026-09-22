@@ -31,6 +31,10 @@
  * RunSummary.modelChanges counts model_change entries appended in this run.
  * Constructor takes `adapters` (provider → adapter) or one `adapter`, which
  * is stored under the starting model's provider.
+ * `parent`, when set, snapshots `store.path(parent.sessionId, parent.leafId)`
+ * onto `ViewContext.parentPath` and sets `ViewContext.depth`. The kernel
+ * does not copy those entries onto this session. Child usage is not added
+ * to this run's usage.
  *
  * Intentionally not in the Log: the hook list, the abort signal, observer
  * errors, the adapter table, and tool execute details. Model-visible text
@@ -54,7 +58,7 @@ import { HookDispatcher } from "./hooks/dispatcher.js";
 import type { Hooks } from "./hooks/types.js";
 import type { RequestHeaderPayload } from "./log/kinds.js";
 import type { LogStore } from "./log/store.js";
-import type { StoredEntry } from "./log/types.js";
+import type { EntryId, StoredEntry } from "./log/types.js";
 import type { HarnessTool } from "./tools.js";
 import {
   assertHeadFrozen,
@@ -190,6 +194,11 @@ export class AgentSession {
   private readonly tools: HarnessTool[];
   private readonly viewProvider: ViewProvider;
   private readonly sampling: Sampling | undefined;
+  private readonly parent?: {
+    sessionId: string;
+    leafId: EntryId;
+    depth: number;
+  };
 
   constructor(
     opts: {
@@ -200,6 +209,7 @@ export class AgentSession {
       tools: HarnessTool[];
       viewProvider?: ViewProvider;
       sampling?: Sampling;
+      parent?: { sessionId: string; leafId: EntryId; depth: number };
     } & (
       | { adapter: ProviderAdapter; adapters?: Record<string, ProviderAdapter> }
       | { adapters: Record<string, ProviderAdapter>; adapter?: ProviderAdapter }
@@ -224,6 +234,7 @@ export class AgentSession {
     this.tools = opts.tools;
     this.viewProvider = opts.viewProvider ?? passthroughView;
     this.sampling = opts.sampling;
+    this.parent = opts.parent;
     this.dispatcher = new HookDispatcher(this.observerErrors);
     this.hooks = this.dispatcher;
   }
@@ -276,6 +287,7 @@ export class AgentSession {
       }
   > {
     await this.dispatcher.emit("turn_start", { turn });
+    const parentPath = this.parentSnapshot();
     const view = await this.viewProvider.view({
       sessionId: this.sessionId,
       turn,
@@ -284,6 +296,8 @@ export class AgentSession {
       prepared,
       head: this.injectedHead(),
       tools: this.tools,
+      depth: this.parent?.depth ?? 0,
+      ...(parentPath ? { parentPath } : {}),
     });
     assertPaired(view.messages);
     this.assertEpoch(view);
@@ -388,6 +402,13 @@ export class AgentSession {
     this.adapter = adapter;
     this.model = { provider: to.provider, model: to.model };
     return { prepared: adapter.prepare(this.model) };
+  }
+
+  private parentSnapshot(): StoredEntry[] | undefined {
+    if (!this.parent) return undefined;
+    return structuredClone(
+      this.store.path(this.parent.sessionId, this.parent.leafId),
+    ) as StoredEntry[];
   }
 
   private injectedHead(): Head {

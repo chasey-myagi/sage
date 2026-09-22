@@ -8,8 +8,12 @@
  * `epochStart` is a signal, not a log field: the kernel turns it into a
  * `view_epoch` entry. `details` is copied onto that turn's manifest entry.
  *
- * Intentionally not in the Log: the live CompiledView object. The kernel
- * appends the manifest as its own entry; this module does not.
+ * `parentPath` is a snapshot of another session's chain. `depth` is 0 on a
+ * root session. Neither is stored by the kernel.
+ *
+ * Intentionally not in the Log: the live CompiledView object, parentPath,
+ * and depth. The kernel appends the manifest as its own entry; this module
+ * does not. A child session's `subtask` entry is written by the caller.
  */
 
 import type {
@@ -117,6 +121,13 @@ export type ViewContext = {
   head: Head;
   /** Tools registered on the session. Passthrough does not read them. */
   tools: readonly HarnessTool[];
+  /**
+   * Parent chain frozen at `parent.leafId`. Set only for a child session.
+   * The compiler reads it and does not append those entries here.
+   */
+  parentPath?: readonly StoredEntry[];
+  /** 0 for a root session. A child is its parent's depth plus one. */
+  depth: number;
 };
 
 export interface ViewProvider {
