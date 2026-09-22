@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { ProviderAdapter } from "@sage/provider";
+import { OpenAIAdapter, type ProviderAdapter } from "@sage/provider";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createFaux,
@@ -270,7 +270,7 @@ describe("scenario 7 one-shot cli", () => {
       stderr: io.stderr,
       adapter: adapter as ProviderAdapter,
     });
-    expect(requests[0]?.model).toEqual(defaultModel("anthropic"));
+    expect(requests[0]?.model).toEqual(defaultModel("openai"));
 
     const open = capture();
     const faux = createFaux([stopScript("ok")]);
@@ -376,6 +376,102 @@ describe("scenario 7 one-shot cli", () => {
     expect(missingCode).toBe(2);
     expect(missing.text().stdout).toBe("");
     expect(missing.text().stderr).toContain("DEEPSEEK_API_KEY");
+  });
+
+  it("picks deepseek-v4-pro when only DEEPSEEK_API_KEY is set", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-deepseek-default-"));
+    const { adapter, requests } = createFaux([stopScript("ok")]);
+    const io = capture();
+    const code = await runCli(["-p", "hi"], {
+      cwd: dir,
+      env: { DEEPSEEK_API_KEY: "sk-deepseek" },
+      stdout: io.stdout,
+      stderr: io.stderr,
+      adapter: adapter as ProviderAdapter,
+    });
+    expect(code).toBe(0);
+    expect(requests[0]?.model).toEqual({
+      provider: "deepseek",
+      model: "deepseek-v4-pro",
+    });
+
+    const explicit = capture();
+    const explicitFaux = createFaux([stopScript("ok")]);
+    const explicitCode = await runCli(["-p", "hi", "--provider", "anthropic"], {
+      cwd: dir,
+      env: {
+        DEEPSEEK_API_KEY: "sk-deepseek",
+        ANTHROPIC_API_KEY: "sk-anthropic",
+      },
+      stdout: explicit.stdout,
+      stderr: explicit.stderr,
+      adapter: explicitFaux.adapter as ProviderAdapter,
+    });
+    expect(explicitCode).toBe(0);
+    expect(explicitFaux.requests[0]?.model.provider).toBe("anthropic");
+  });
+
+  it("logs reasoning_content and leaves it out of the next request", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-reason-"));
+    const fixture = readFileSync(
+      new URL(
+        "../../../packages/provider/test/fixtures/deepseek-reasoner.sse",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const calls: unknown[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      calls.push(JSON.parse(String(init?.body ?? "null")));
+      const sse =
+        calls.length === 1
+          ? fixture
+          : [
+              'data: {"id":"chatcmpl-2","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"done"},"finish_reason":null}]}',
+              "",
+              'data: {"id":"chatcmpl-2","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+              "",
+              'data: {"id":"chatcmpl-2","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":1,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":4}}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n");
+      return new Response(sse, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    };
+    const adapter = new OpenAIAdapter({
+      apiKey: "sk-deepseek",
+      baseUrl: "https://api.deepseek.com",
+      fetchImpl,
+    });
+    const { session, store } = createCodingSession({
+      cwd: dir,
+      adapter,
+      model: { provider: "deepseek", model: "deepseek-v4-pro" },
+      sessionId: "reason",
+      passthrough: true,
+    });
+    const summary = await session.run("hi");
+    expect(summary.outcome).toBe("done");
+    const assistant = store
+      .path("reason")
+      .filter((entry) => entry.kind === "message")
+      .map((entry) => entry.payload)
+      .find(
+        (payload): payload is { role: string; content: { type: string }[] } =>
+          typeof payload === "object" &&
+          payload !== null &&
+          (payload as { role?: string }).role === "assistant",
+      );
+    expect(assistant?.content).toContainEqual({
+      type: "thinking",
+      text: "REASON_STEP",
+    });
+    expect(assistant?.content[0]).not.toHaveProperty("signature");
+    expect(JSON.stringify(calls[1])).not.toContain("REASON_STEP");
+    expect(JSON.stringify(calls[1])).not.toContain("reasoning_content");
   });
 });
 

@@ -53,7 +53,9 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 - 回本轮数 = 额外成本 ÷ 每轮节省，向上取整
 - 额外成本不大于 0 就是立即回本
 
-读价、写价来自目录里该模型的 `cacheRead / input` 与 `cacheWrite / input`。目录没有定价时退回 0.1 与 1.25。旧视图 token 用上一轮 usage 实测锚定，新视图先估算再乘以 measured/estimated。省下的比例小于 `minSavingsRatio`（默认 0.2）就不开新阶段。视图估算超过上下文窗口的 0.9 时强制重开一次；这是安全阀，不是策略。重开后仍然超限就记在 `budget.overrun`，不再为同一道安全阀重复重开。
+读价是 `cacheRead / input`。写价是 `max(cacheWrite, input) / input`。缓存写价为 0 不是免费：新前缀第一次仍按未命中的输入价付一遍（无附加费 ≠ 免费，首次仍付未命中价）。Anthropic 的写价倍率是 1.25，DeepSeek 和 OpenAI 是 1.0。目录没有定价时退回 0.1 与 1.25。旧视图 token 用上一轮 usage 实测锚定，新视图先估算再乘以 measured/estimated。省下的比例小于 `minSavingsRatio`（默认 0.2）就不开新阶段。视图估算超过上下文窗口的 0.9 时强制重开一次；这是安全阀，不是策略。重开后仍然超限就记在 `budget.overrun`，不再为同一道安全阀重复重开。
+
+`cacheHitRatio` 仍是实测读 token 除以 `cache.expectedReadTokens`，口径不改，代码也不把差值抹平。DeepSeek 的前缀缓存以 64 token 为一块，而且只认完全相同的前缀。人工比对估算和实测时，相差不到一块是块对齐，不是没命中。
 
 ## 路由
 

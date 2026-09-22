@@ -16,7 +16,9 @@
  * presets share one adapter class and differ by base URL. `--provider`
  * selects a preset. `--base-url` and `--api-key-env` override that preset.
  * A named preset with no key exits 2 and names the env var. With no
- * `--provider` and neither Anthropic nor OpenAI key, the process exits 1.
+ * `--provider`, the first of deepseek, dashscope, moonshot, openai,
+ * anthropic whose env key is set is used. If none of those keys are set,
+ * the process exits 1. `--provider` still overrides that order.
  * The default route ladder is only the current model, so a rebuild does not
  * switch models. `--ladder` takes `provider/model` rungs separated by commas
  * and opts into cheapest-allowed across that list. `.env` and `secrets`
@@ -559,6 +561,22 @@ function parseLadder(
   return ladder;
 }
 
+const AUTO_PROVIDERS = [
+  "deepseek",
+  "dashscope",
+  "moonshot",
+  "openai",
+  "anthropic",
+] as const;
+
+function autoProvider(env: NodeJS.ProcessEnv): string | undefined {
+  for (const name of AUTO_PROVIDERS) {
+    const preset = resolvePreset(name);
+    if (preset && env[preset.envKey]) return name;
+  }
+  return undefined;
+}
+
 function resolveAuth(
   provider: string | undefined,
   model: string | undefined,
@@ -576,13 +594,13 @@ function resolveAuth(
   | { ok: false; message: string; exitCode: number } {
   let selected = provider;
   if (!selected) {
-    if (env.ANTHROPIC_API_KEY) selected = "anthropic";
-    else if (env.OPENAI_API_KEY) selected = "openai";
-    else {
+    selected = autoProvider(env);
+    if (!selected) {
       return {
         ok: false,
         exitCode: 1,
-        message: "Missing ANTHROPIC_API_KEY or OPENAI_API_KEY",
+        message:
+          "Missing DEEPSEEK_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY",
       };
     }
   }

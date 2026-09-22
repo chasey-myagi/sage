@@ -19,6 +19,14 @@ const SONNET: Pricing = {
   source: "https://platform.claude.com/docs/en/about-claude/pricing",
 };
 
+const DEEPSEEK: Pricing = {
+  inputPerMTok: 0.3,
+  outputPerMTok: 1.2,
+  cacheWritePerMTok: 0,
+  cacheReadPerMTok: 0.006,
+  source: "https://api-docs.deepseek.com/quick_start/pricing",
+};
+
 const RATES = { read: 0.1, write: 1.25, source: "catalog" as const };
 
 function baseDecision(over: Partial<Parameters<typeof decideEpoch>[0]> = {}) {
@@ -53,7 +61,52 @@ it("derives read and write rates from catalog pricing", () => {
       cacheWritePerMTok: 0,
       source: "https://developers.openai.com/api/docs/pricing",
     }),
-  ).toEqual({ read: 0.1, write: 0, source: "catalog" });
+  ).toEqual({ read: 0.1, write: 1, source: "catalog" });
+});
+
+it("uses max(cacheWrite, input) so a zero write surcharge still pays the miss price", () => {
+  expect(ratesFor(DEEPSEEK)).toEqual({
+    read: 0.02,
+    write: 1,
+    source: "catalog",
+  });
+  expect(ratesFor(SONNET)).toEqual({
+    read: 0.1,
+    write: 1.25,
+    source: "catalog",
+  });
+});
+
+it("rebuilds a DeepSeek epoch when 20 turns remain and refuses when 10 remain", () => {
+  const rates = ratesFor(DEEPSEEK);
+  const open = decideEpoch({
+    oldTokens: 150000,
+    newTokens: 40000,
+    remainingTurns: 20,
+    rates,
+    minSavingsRatio: 0.2,
+    contextWindow: 1_000_000,
+    overContext: false,
+  });
+  expect(open.savingsPerTurn).toBe(2200);
+  expect(open.extraCost).toBe(37000);
+  expect(open.paybackTurns).toBe(17);
+  expect(open.rebuild).toBe(true);
+  expect(open.reason).toBe("payback:17<=20");
+
+  const hold = decideEpoch({
+    oldTokens: 150000,
+    newTokens: 40000,
+    remainingTurns: 10,
+    rates,
+    minSavingsRatio: 0.2,
+    contextWindow: 1_000_000,
+    overContext: false,
+  });
+  expect(hold.extraCost).toBe(37000);
+  expect(hold.paybackTurns).toBe(17);
+  expect(hold.rebuild).toBe(false);
+  expect(hold.reason).toBe("payback:17>10");
 });
 
 it("pays back in 4 turns when 20 remain and refuses when 3 remain", () => {

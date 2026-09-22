@@ -1,0 +1,17 @@
+: keep-alive
+
+data: {"id":"chatcmpl-reason","object":"chat.completion.chunk","model":"deepseek-reasoner","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-reason","object":"chat.completion.chunk","model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"REASON"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-reason","object":"chat.completion.chunk","model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"_STEP"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-reason","object":"chat.completion.chunk","model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-reason","object":"chat.completion.chunk","model":"deepseek-reasoner","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"true\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-reason","object":"chat.completion.chunk","model":"deepseek-reasoner","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl-reason","object":"chat.completion.chunk","model":"deepseek-reasoner","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":8,"prompt_cache_hit_tokens":70,"prompt_cache_miss_tokens":30}}
+
+data: [DONE]
