@@ -7,7 +7,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "pnpm check:lint && pnpm check:types && pnpm check:layers && pnpm check:readme && pnpm test",
+    "check": "pnpm check:lint && pnpm check:types && pnpm check:layers && pnpm check:readme && pnpm check:log-manifest && pnpm test",
+    "gen:log-manifest": "node scripts/gen-log-manifest.mjs",
+    "check:log-manifest": "node scripts/gen-log-manifest.mjs --check",
     "check:lint": "biome check .",
     "check:types": "tsc -b",
     "check:layers": "node scripts/check-layers.mjs",
