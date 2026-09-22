@@ -36,3 +36,5 @@ export type {
 } from "./contract/index.js";
 export { normalizeForApi } from "./normalize.js";
 export { OpenAIAdapter } from "./openai/index.js";
+export type { ProviderPreset } from "./presets.js";
+export { PRESETS, resolvePreset } from "./presets.js";

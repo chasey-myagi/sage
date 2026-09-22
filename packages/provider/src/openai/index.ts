@@ -1,7 +1,9 @@
 /**
  * OpenAI-compatible chat adapter. cacheBreakpoints are ignored: this wire
  * format has no cache field. Thinking blocks and foreign tool ids are
- * normalized before encode.
+ * normalized before encode. Usage prefers prompt_cache_hit_tokens, then
+ * prompt_tokens_details.cached_tokens, then the whole prompt_tokens.
+ * inputCacheCreation stays 0. raw is the provider usage object unchanged.
  *
  * Deliberately not a Log entry: the API key, request bytes, and abort
  * signal stay here. adapterDefaults are returned so a later
@@ -256,13 +258,37 @@ function firstRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function mapUsage(raw: Record<string, unknown>): Usage {
+  const output = num(raw.completion_tokens);
+  if ("prompt_cache_hit_tokens" in raw) {
+    const hit = num(raw.prompt_cache_hit_tokens);
+    const miss =
+      "prompt_cache_miss_tokens" in raw
+        ? num(raw.prompt_cache_miss_tokens)
+        : num(raw.prompt_tokens) - hit;
+    return {
+      inputOther: miss,
+      inputCacheRead: hit,
+      inputCacheCreation: 0,
+      output,
+      raw,
+    };
+  }
   const details = asRecord(raw.prompt_tokens_details);
-  const cached = details ? num(details.cached_tokens) : 0;
+  if (details && "cached_tokens" in details) {
+    const cached = num(details.cached_tokens);
+    return {
+      inputOther: num(raw.prompt_tokens) - cached,
+      inputCacheRead: cached,
+      inputCacheCreation: 0,
+      output,
+      raw,
+    };
+  }
   return {
-    inputOther: num(raw.prompt_tokens) - cached,
-    inputCacheRead: cached,
+    inputOther: num(raw.prompt_tokens),
+    inputCacheRead: 0,
     inputCacheCreation: 0,
-    output: num(raw.completion_tokens),
+    output,
     raw,
   };
 }
