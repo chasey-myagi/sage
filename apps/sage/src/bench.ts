@@ -11,8 +11,10 @@
  * `setupCommand`, when present, runs with `sh -c` in that directory before
  * sage and under `timeoutSec`. A non-zero exit is `error` with reason
  * `setup-failed`: sage is not started and the test command is not run.
- * Then `sage -p <problem>` runs there. The session is copied next. An empty
- * `git status` is `empty-patch` and the test command is not run. `testPatch`,
+ * Then `sage -p <problem>` runs there. When `--budget <tokens>` is set, that
+ * flag is appended to the argv, including under passthrough. The session is
+ * copied next. An empty `git status` is `empty-patch` and the test command
+ * is not run. `testPatch`,
  * when present, is a unified diff applied only after that copy and only when
  * status is non-empty. Each path in a `diff --git` header is restored from
  * `baseCommit` (`git checkout`, or `rm -f` when the blob is absent), then
@@ -24,7 +26,10 @@
  * of the copied session, or null. The result directory is `<out>/results.json`
  * and `<out>/sessions/<taskId>.jsonl`. Those files hold ids, statuses,
  * reasons, and health numbers. They do not copy the problem text.
- * `bench report <runA> <runB>` prints one JSON object `{ a, b, delta }`.
+ * `results.json` also has top-level `budget`: the positive integer from
+ * `--budget` for a compiler run, or null when the flag is omitted or the
+ * policy is passthrough. `bench report <runA> <runB>` prints one JSON
+ * object `{ a, b, delta }`. `a` and `b` each include that `budget`.
  * Rates are counts over the task list. `tokensPerResolved` is the sum of
  * `health.tokens.total` divided by the resolved count, or null when nothing
  * resolved. `cacheHitRatio` and `expandRate` are the mean of the non-null
@@ -80,6 +85,7 @@ export type BenchTaskResult = {
 export type BenchResults = {
   policy: BenchPolicy;
   model: string;
+  budget: number | null;
   tasks: BenchTaskResult[];
 };
 
@@ -102,6 +108,8 @@ export type BenchDeps = {
       model: string;
       provider?: string;
       env: NodeJS.ProcessEnv;
+      budget: number | null;
+      argv: string[];
     },
   ): Promise<{ code: number; sessionFile?: string; timedOut?: boolean }>;
   diffEmpty(task: BenchTask, cwd: string): Promise<boolean>;
@@ -119,7 +127,14 @@ type BenchIo = {
   deps?: BenchDeps;
 };
 
-const FLAGS = new Set(["tasks", "policy", "model", "provider", "out"]);
+const FLAGS = new Set([
+  "tasks",
+  "policy",
+  "model",
+  "provider",
+  "out",
+  "budget",
+]);
 
 export async function runBenchCli(
   argv: string[],
@@ -134,7 +149,7 @@ export async function runBenchCli(
   const parsed = parseRun(argv.slice(1));
   if ("message" in parsed) {
     io.stderr.write(`${parsed.message}\n`);
-    return 1;
+    return parsed.exitCode ?? 1;
   }
   const missing = missingKey(parsed.provider, io.env);
   if (missing) {
@@ -154,6 +169,7 @@ export async function runBenchCli(
   const results: BenchResults = {
     policy: parsed.policy,
     model: parsed.model,
+    budget: parsed.policy === "passthrough" ? null : parsed.budget,
     tasks: [],
   };
   for (const task of tasks) {
@@ -163,6 +179,7 @@ export async function runBenchCli(
         model: parsed.model,
         ...(parsed.provider ? { provider: parsed.provider } : {}),
         env: io.env,
+        budget: parsed.budget,
       }),
     );
     writeResults(out, results);
@@ -214,8 +231,8 @@ function reportCommand(argv: string[], io: BenchIo): number {
     io.stdout.write(
       `${JSON.stringify(
         {
-          a: metricsA,
-          b: metricsB,
+          a: { ...metricsA, budget: a.budget },
+          b: { ...metricsB, budget: b.budget },
           delta: deltaOf(metricsA, metricsB),
         },
         null,
@@ -239,8 +256,12 @@ function loadResults(dir: string): BenchResults {
   }
   const policy = parsed.policy === "passthrough" ? "passthrough" : "compiler";
   const model = typeof parsed.model === "string" ? parsed.model : "";
+  const budget =
+    typeof parsed.budget === "number" && Number.isFinite(parsed.budget)
+      ? parsed.budget
+      : null;
   const tasks = parsed.tasks.map((item) => readTaskResult(item));
-  return { policy, model, tasks };
+  return { policy, model, budget, tasks };
 }
 
 function readTaskResult(value: unknown): BenchTaskResult {
@@ -308,6 +329,7 @@ async function runTask(
     model: string;
     provider?: string;
     env: NodeJS.ProcessEnv;
+    budget: number | null;
   },
 ): Promise<BenchTaskResult> {
   const work = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
@@ -347,7 +369,10 @@ async function runTask(
     }
     let sage: { code: number; sessionFile?: string; timedOut?: boolean };
     try {
-      sage = await deps.runSage(task, work, opts);
+      sage = await deps.runSage(task, work, {
+        ...opts,
+        argv: sageArgv(task, opts),
+      });
     } catch {
       return {
         id: task.id,
@@ -429,6 +454,7 @@ function writeResults(out: string, results: BenchResults): void {
   const body = {
     policy: results.policy,
     model: results.model,
+    budget: results.budget,
     tasks: results.tasks.map((task) => ({
       id: task.id,
       status: task.status,
@@ -446,10 +472,7 @@ function defaultDeps(): BenchDeps {
   return {
     prepare: defaultPrepare,
     async runSage(task, cwd, opts) {
-      const args = [sageBin(), "-p", task.problem, "--model", opts.model];
-      if (opts.provider) args.push("--provider", opts.provider);
-      if (opts.policy === "passthrough") args.push("--passthrough");
-      const result = await exec(process.execPath, args, {
+      const result = await exec(process.execPath, opts.argv, {
         cwd,
         env: opts.env,
         timeoutMs: task.timeoutSec * 1000,
@@ -593,6 +616,33 @@ function exec(
   });
 }
 
+function sageArgv(
+  task: BenchTask,
+  opts: {
+    policy: BenchPolicy;
+    model: string;
+    provider?: string;
+    budget: number | null;
+  },
+): string[] {
+  const args = [sageBin(), "-p", task.problem, "--model", opts.model];
+  if (opts.provider) args.push("--provider", opts.provider);
+  if (opts.budget !== null) args.push("--budget", String(opts.budget));
+  if (opts.policy === "passthrough") args.push("--passthrough");
+  return args;
+}
+
+function positiveInt(value: string): number | undefined {
+  if (!/^[0-9]+$/.test(value)) return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
+function invalidBudget(value: string): string {
+  return `Invalid --budget ${JSON.stringify(value)}: expected a positive integer`;
+}
+
 function parseRun(argv: string[]):
   | {
       tasks: string;
@@ -600,8 +650,9 @@ function parseRun(argv: string[]):
       model: string;
       provider?: string;
       out: string;
+      budget: number | null;
     }
-  | { message: string } {
+  | { message: string; exitCode?: number } {
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? "";
@@ -633,11 +684,21 @@ function parseRun(argv: string[]):
   if (provider && !resolvePreset(provider)) {
     return { message: benchUsage() };
   }
+  const rawBudget = values.get("budget");
+  let budget: number | null = null;
+  if (rawBudget !== undefined) {
+    const parsed = positiveInt(rawBudget);
+    if (parsed === undefined) {
+      return { message: invalidBudget(rawBudget), exitCode: 2 };
+    }
+    budget = parsed;
+  }
   return {
     tasks,
     policy,
     model,
     out,
+    budget,
     ...(provider ? { provider } : {}),
   };
 }
@@ -722,7 +783,7 @@ function requiredString(
 
 function benchUsage(): string {
   return [
-    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] --out <dir>",
+    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }

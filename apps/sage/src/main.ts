@@ -7,6 +7,9 @@
  * `<cwd>/.sage/subtasks` and, on the CLI, from `homedir()`. The view
  * is contextCompiler with budget 40000, the four first-party claims, and
  * the default route policy, unless `--passthrough` selects passthroughView.
+ * `--budget <tokens>` replaces 40000. The value must be a positive integer;
+ * anything else exits 2 with one stderr line. `--passthrough` ignores a
+ * valid `--budget` and writes one stderr line.
  * `--scorer model` installs a model scorer on the root compiler. It reuses
  * the assembled adapters and the session model. `--scorer jev` installs the
  * TypeSafe Jev scorer and reads `TYPESAFE_API_KEY`; a missing key exits 2.
@@ -28,13 +31,17 @@
  * `runHealth` without starting a run.
  * `bench run` clones each task, runs sage, then the task's test command,
  * and writes `<out>/results.json` plus `<out>/sessions/<taskId>.jsonl`.
+ * `--budget` on `bench run` is forwarded on each `sage -p` argv.
+ * `results.json` records that number, or null when the flag is omitted
+ * or the policy is passthrough. `bench report` copies it onto `a` and `b`.
  * It exits 2 when the selected provider has no API key. `bench report`
  * prints JSON `{ a, b, delta }` for two result directories. The kernel
  * appends each turn's manifest. Exit 0 when the outcome is done, otherwise
  * 1. `stats` and a completed bench command exit 0 after printing.
  *
- * Intentionally not in the Log: argv, API keys, and the stderr progress
- * lines. The system prompt is model-visible and is stored on request_header.
+ * Intentionally not in the Log: argv, API keys, the stderr progress
+ * lines, and the stderr note that `--passthrough` ignored `--budget`.
+ * The system prompt is model-visible and is stored on request_header.
  * Claim text reaches the Log only through the manifest the kernel appends.
  */
 
@@ -209,7 +216,7 @@ export async function runCli(
   const parsed = parseArgs(argv);
   if (!parsed.ok) {
     stderr.write(`${parsed.message}\n`);
-    return 1;
+    return parsed.exitCode ?? 1;
   }
   if (parsed.scorer === "jev" && !env.TYPESAFE_API_KEY) {
     stderr.write("Missing TYPESAFE_API_KEY\n");
@@ -237,12 +244,20 @@ export async function runCli(
       auth.baseUrl,
     );
   }
+  if (parsed.passthrough && parsed.budget !== undefined) {
+    stderr.write(
+      "Ignoring --budget because --passthrough does not compile a context\n",
+    );
+  }
   const { session } = createCodingSession({
     cwd,
     adapters,
     model: { provider: auth.provider, model: auth.model },
     passthrough: parsed.passthrough,
     home: homedir(),
+    ...(parsed.budget !== undefined && !parsed.passthrough
+      ? { budget: parsed.budget }
+      : {}),
     ...(parsed.ladder ? { ladder: parsed.ladder } : {}),
     scorer:
       parsed.scorer === "model"
@@ -377,7 +392,8 @@ type FlagName =
   | "scorer"
   | "ladder"
   | "base-url"
-  | "api-key-env";
+  | "api-key-env"
+  | "budget";
 
 type Parsed =
   | {
@@ -391,8 +407,9 @@ type Parsed =
       json: boolean;
       scorer?: "rule" | "model" | "jev";
       ladder?: { provider: string; model: string }[];
+      budget?: number;
     }
-  | { ok: false; message: string };
+  | { ok: false; message: string; exitCode?: number };
 
 export function parseArgs(argv: string[]): Parsed {
   let task: string | undefined;
@@ -404,6 +421,7 @@ export function parseArgs(argv: string[]): Parsed {
   let json = false;
   let scorer: "rule" | "model" | "jev" | undefined;
   let ladder: { provider: string; model: string }[] | undefined;
+  let budget: number | undefined;
   const positional: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? "";
@@ -450,6 +468,17 @@ export function parseArgs(argv: string[]): Parsed {
       }
       if (taken.name === "base-url") baseUrl = taken.value;
       if (taken.name === "api-key-env") apiKeyEnv = taken.value;
+      if (taken.name === "budget") {
+        const parsedBudget = positiveInt(taken.value);
+        if (parsedBudget === undefined) {
+          return {
+            ok: false,
+            exitCode: 2,
+            message: invalidBudget(taken.value),
+          };
+        }
+        budget = parsedBudget;
+      }
       continue;
     }
     positional.push(arg);
@@ -470,14 +499,15 @@ export function parseArgs(argv: string[]): Parsed {
     json,
     scorer,
     ladder,
+    ...(budget !== undefined ? { budget } : {}),
   };
 }
 
 function usage(): string {
   return [
-    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--passthrough] [--scorer rule|model|jev] [--json]",
+    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--passthrough] [--scorer rule|model|jev] [--json]",
     "       sage stats <session.jsonl>",
-    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] --out <dir>",
+    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }
@@ -515,6 +545,7 @@ function flagName(arg: string): FlagName | "unknown" | undefined {
   if (arg === "--ladder") return "ladder";
   if (arg === "--base-url") return "base-url";
   if (arg === "--api-key-env") return "api-key-env";
+  if (arg === "--budget") return "budget";
   if (arg.startsWith("-")) return "unknown";
   return undefined;
 }
@@ -530,6 +561,7 @@ function inlineFlag(
     "ladder",
     "base-url",
     "api-key-env",
+    "budget",
   ] as const;
   for (const name of names) {
     const prefix = `--${name}=`;
@@ -539,6 +571,17 @@ function inlineFlag(
     return { name, value };
   }
   return undefined;
+}
+
+function positiveInt(value: string): number | undefined {
+  if (!/^[0-9]+$/.test(value)) return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
+function invalidBudget(value: string): string {
+  return `Invalid --budget ${JSON.stringify(value)}: expected a positive integer`;
 }
 
 function parseLadder(
