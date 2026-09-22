@@ -32,4 +32,4 @@
 
 ## Testing
 
-`pnpm check` 退出码 0（lint、tsc、分层、README、log manifest、286 个测试）。覆盖分档与 `scorer:jev:<p>`、200 块至少两批、429 两次后成功、529 退避、三次重试仍失败、超时、无 key、非法 JSON、非 2xx、缺答案保持 kept、usage 求和，以及 `--scorer jev` 无 key 退出 2、`--provider typesafe` 拒绝。
+`pnpm check` 退出码 0（lint、tsc、分层、README、log manifest、291 个测试）。合入 `origin/main` 的第三方端点改动后复跑，仍是 0。覆盖分档与 `scorer:jev:<p>`、200 块至少两批、429 两次后成功、529 退避、三次重试仍失败、超时、无 key、非法 JSON、非 2xx、缺答案保持 kept、usage 求和，以及 `--scorer jev` 无 key 退出 2、`--provider typesafe` 拒绝。

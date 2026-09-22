@@ -16,6 +16,20 @@
 
 断点只按 `Request.cacheBreakpoints` 打，适配器不自作主张。丢掉 thinking 或重写 tool id 会改变发出去的消息字节；换 provider 发生在阶段边界，那一轮前缀本来就要重建。
 
+## 第三方 OpenAI 兼容端点
+
+DeepSeek、百炼（DashScope）、Kimi（Moonshot）和 OpenAI 共用 `OpenAIAdapter`，只换 `baseUrl`。预设表在 `resolvePreset`：`openai`、`deepseek`、`dashscope`、`moonshot` 走 `openai-chat`，`anthropic` 走 `anthropic-messages`。
+
+这些兼容端点的缓存是服务端自动前缀缓存。请求体没有 cache 字段，`cacheBreakpoints` 在这里无操作。
+
+usage 按三种形状映射，`raw` 原样保留，`inputCacheCreation` 恒为 0（这些端点的报文不报缓存写入）：
+
+- DeepSeek：有 `prompt_cache_hit_tokens` 时，`inputCacheRead` 取命中，`inputOther` 取 `prompt_cache_miss_tokens`；缺 miss 时用 `prompt_tokens - hit`。
+- OpenAI、DashScope、Moonshot：有 `prompt_tokens_details.cached_tokens` 时，命中进 `inputCacheRead`，其余 `prompt_tokens` 进 `inputOther`。
+- 两种字段都没有：`inputOther = prompt_tokens`，`inputCacheRead = 0`。
+
+目录 `Pricing.currency` 可选，缺省 USD。百炼和 Kimi 标 `CNY`，价格不换算成美元。缓存读写比率只除四个单价，不看币种。
+
 ## 跨模型规整
 
 `normalizeForApi(messages, api)` 是纯函数。两个适配器在编码前各调用一次，只改发出去的副本，不改 Log 里的消息。

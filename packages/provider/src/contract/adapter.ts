@@ -16,6 +16,11 @@ export type Pricing = {
   cacheReadPerMTok: number;
   cacheWritePerMTok: number;
   source: string;
+  /**
+   * Billing currency of the per-MTok prices. Absent means USD.
+   * Cache rate ratios use only the four prices, never this field.
+   */
+  currency?: "USD" | "CNY";
 };
 
 export type PreparedCall = {

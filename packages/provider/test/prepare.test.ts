@@ -7,6 +7,10 @@ import { drain, fixtureFetch, readFixture } from "./support.ts";
 const ANTHROPIC_SOURCE =
   "https://platform.claude.com/docs/en/about-claude/pricing";
 const OPENAI_SOURCE = "https://developers.openai.com/api/docs/pricing";
+const DEEPSEEK_SOURCE = "https://api-docs.deepseek.com/quick_start/pricing";
+const MOONSHOT_SOURCE = "https://platform.kimi.com/docs/pricing/chat";
+const DASHSCOPE_SOURCE =
+  "https://help.aliyun.com/zh/model-studio/model-pricing";
 
 const known: { ref: ModelRef; contextWindow: number; pricing: Pricing }[] = [
   {
@@ -86,6 +90,112 @@ const known: { ref: ModelRef; contextWindow: number; pricing: Pricing }[] = [
       source: OPENAI_SOURCE,
     },
   },
+  {
+    ref: { provider: "deepseek", model: "deepseek-flash" },
+    contextWindow: 1_000_000,
+    pricing: {
+      inputPerMTok: 0.3,
+      outputPerMTok: 1.2,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.006,
+      source: DEEPSEEK_SOURCE,
+    },
+  },
+  {
+    ref: { provider: "deepseek", model: "deepseek-v4-pro" },
+    contextWindow: 1_000_000,
+    pricing: {
+      inputPerMTok: 1.32,
+      outputPerMTok: 3.96,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.044,
+      source: DEEPSEEK_SOURCE,
+    },
+  },
+  {
+    ref: { provider: "moonshot", model: "kimi-k2.6" },
+    contextWindow: 262_144,
+    pricing: {
+      inputPerMTok: 6.5,
+      outputPerMTok: 27,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 1.1,
+      source: MOONSHOT_SOURCE,
+      currency: "CNY",
+    },
+  },
+  {
+    ref: { provider: "moonshot", model: "kimi-k2.7-code" },
+    contextWindow: 262_144,
+    pricing: {
+      inputPerMTok: 6.5,
+      outputPerMTok: 27,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 1.3,
+      source: MOONSHOT_SOURCE,
+      currency: "CNY",
+    },
+  },
+  {
+    ref: { provider: "moonshot", model: "kimi-k3" },
+    contextWindow: 1_048_576,
+    pricing: {
+      inputPerMTok: 20,
+      outputPerMTok: 100,
+      cacheWritePerMTok: 20,
+      cacheReadPerMTok: 2,
+      source: MOONSHOT_SOURCE,
+      currency: "CNY",
+    },
+  },
+  {
+    ref: { provider: "dashscope", model: "qwen-plus" },
+    contextWindow: 1_000_000,
+    pricing: {
+      inputPerMTok: 0.8,
+      outputPerMTok: 2,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.08,
+      source: DASHSCOPE_SOURCE,
+      currency: "CNY",
+    },
+  },
+  {
+    ref: { provider: "dashscope", model: "qwen-max" },
+    contextWindow: 32_768,
+    pricing: {
+      inputPerMTok: 2.4,
+      outputPerMTok: 9.6,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.24,
+      source: DASHSCOPE_SOURCE,
+      currency: "CNY",
+    },
+  },
+  {
+    ref: { provider: "dashscope", model: "qwen3.8-max" },
+    contextWindow: 32_768,
+    pricing: {
+      inputPerMTok: 12,
+      outputPerMTok: 36,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 1.2,
+      source: DASHSCOPE_SOURCE,
+      currency: "CNY",
+    },
+  },
+  {
+    ref: { provider: "dashscope", model: "qwen-flash" },
+    contextWindow: 1_000_000,
+    pricing: {
+      inputPerMTok: 0.15,
+      outputPerMTok: 1.5,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.015,
+      source: DASHSCOPE_SOURCE,
+      currency: "CNY",
+    },
+  },
 ];
 
 describe("catalog export", () => {
@@ -104,9 +214,21 @@ describe("catalog export", () => {
       "gpt-5.5",
       "gpt-5.4-mini",
     ]);
+    expect(provider.listModels("deepseek").map((entry) => entry.model)).toEqual(
+      ["deepseek-flash", "deepseek-v4-pro"],
+    );
+    expect(provider.listModels("moonshot").map((entry) => entry.model)).toEqual(
+      ["kimi-k2.6", "kimi-k2.7-code", "kimi-k3"],
+    );
+    expect(
+      provider.listModels("dashscope").map((entry) => entry.model),
+    ).toEqual(["qwen-plus", "qwen-max", "qwen3.8-max", "qwen-flash"]);
     for (const entry of [
       ...provider.listModels("anthropic"),
       ...provider.listModels("openai"),
+      ...provider.listModels("deepseek"),
+      ...provider.listModels("moonshot"),
+      ...provider.listModels("dashscope"),
     ]) {
       expect(entry.pricing).not.toBeNull();
       expect(entry.pricing.source).toMatch(/^https:\/\//);
@@ -119,6 +241,25 @@ describe("catalog export", () => {
       provider: "openai",
       model: "gpt-5.4",
     });
+    expect(provider.defaultModel("deepseek")).toEqual({
+      provider: "deepseek",
+      model: "deepseek-flash",
+    });
+    expect(provider.defaultModel("moonshot")).toEqual({
+      provider: "moonshot",
+      model: "kimi-k2.6",
+    });
+    expect(provider.defaultModel("dashscope")).toEqual({
+      provider: "dashscope",
+      model: "qwen-plus",
+    });
+    const deepseek = provider.listModels("deepseek")[0];
+    expect(deepseek?.pricing.currency ?? "USD").toBe("USD");
+    const kimi = provider.listModels("moonshot")[0];
+    expect(kimi?.pricing.currency).toBe("CNY");
+    expect(kimi?.pricing.cacheReadPerMTok / kimi.pricing.inputPerMTok).toBe(
+      1.1 / 6.5,
+    );
     expect(provider.listModels("missing")).toEqual([]);
   });
 });
