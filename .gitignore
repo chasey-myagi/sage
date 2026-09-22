@@ -50,3 +50,6 @@ Thumbs.db
 # local scratch
 .tmp/
 tmp/
+
+# agent workspace (sessions and spilled tool output)
+.sage/

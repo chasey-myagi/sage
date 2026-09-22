@@ -1,1 +1,296 @@
-console.log("0.0.0");
+/**
+ * One-shot coding CLI.
+ *
+ * Contract: parse argv, assemble AgentSession with the seven tools,
+ * passthroughView, and a JsonlLogStore under `<cwd>/.sage/sessions`.
+ * Each compiled view appends a manifest. stdout is one JSON RunSummary.
+ * Exit 0 when the outcome is done, otherwise 1.
+ *
+ * Intentionally not in the Log: argv, API keys, and the stderr progress
+ * lines. The system prompt is model-visible and is stored on request_header.
+ */
+
+import { randomUUID } from "node:crypto";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+  AgentSession,
+  JsonlLogStore,
+  type LogStore,
+  passthroughView,
+} from "@sage/core";
+import {
+  AnthropicAdapter,
+  type ModelRef,
+  OpenAIAdapter,
+  type ProviderAdapter,
+  type Sampling,
+} from "@sage/provider";
+import { type BashExec, createTools, withToolUseId } from "@sage/tools";
+
+const DEFAULT_MODELS: Record<string, string> = {
+  anthropic: "claude-sonnet-4-5",
+  openai: "gpt-5",
+};
+
+export type CodingSession = {
+  session: AgentSession;
+  store: LogStore;
+  sessionId: string;
+};
+
+export function createCodingSession(opts: {
+  cwd: string;
+  adapter: ProviderAdapter;
+  model: ModelRef;
+  system?: string;
+  sessionId?: string;
+  sessionsDir?: string;
+  store?: LogStore;
+  exec?: BashExec;
+  sampling?: Sampling;
+}): CodingSession {
+  const sessionId = opts.sessionId ?? randomUUID();
+  const store =
+    opts.store ??
+    new JsonlLogStore({
+      dir: opts.sessionsDir ?? path.join(opts.cwd, ".sage", "sessions"),
+    });
+  const session = new AgentSession({
+    store,
+    sessionId,
+    adapter: opts.adapter,
+    model: opts.model,
+    system: opts.system ?? systemPrompt(opts.cwd),
+    tools: createTools({ cwd: opts.cwd, exec: opts.exec }),
+    viewProvider: passthroughView,
+    sampling: opts.sampling,
+  });
+  session.hooks.observe("view_compiled", ({ view }) => {
+    store.append(sessionId, {
+      kind: "manifest",
+      payload: {
+        epoch: view.manifest.epoch,
+        turn: view.manifest.turn,
+        budget: view.manifest.budget ?? null,
+        claims: view.manifest.claims,
+        chunks: view.manifest.chunks,
+      },
+    });
+  });
+  session.hooks.around((call, next) => withToolUseId(call.id, next));
+  return { session, store, sessionId };
+}
+
+export type CliIo = {
+  env: NodeJS.ProcessEnv;
+  cwd: string;
+  stdout: { write(chunk: string): void };
+  stderr: { write(chunk: string): void };
+  adapter?: ProviderAdapter;
+};
+
+export async function runCli(
+  argv: string[],
+  io: Partial<CliIo> = {},
+): Promise<number> {
+  const stdout = io.stdout ?? process.stdout;
+  const stderr = io.stderr ?? process.stderr;
+  const cwd = io.cwd ?? process.cwd();
+  const env = io.env ?? process.env;
+  const parsed = parseArgs(argv);
+  if (!parsed.ok) {
+    stderr.write(`${parsed.message}\n`);
+    return 1;
+  }
+  const auth = resolveAuth(parsed.provider, parsed.model, env);
+  if (!auth.ok) {
+    stderr.write(`${auth.message}\n`);
+    return 1;
+  }
+  const adapter = io.adapter ?? createAdapter(auth.provider, auth.apiKey);
+  const { session } = createCodingSession({
+    cwd,
+    adapter,
+    model: { provider: auth.provider, model: auth.model },
+  });
+  let turn = 0;
+  session.hooks.observe("turn_start", (payload) => {
+    turn = payload.turn;
+  });
+  session.hooks.observe("llm_end", ({ assistant }) => {
+    const usage = assistant.usage;
+    const input =
+      usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation;
+    const calls = assistant.content.filter(
+      (block) => block.type === "tool_use",
+    ).length;
+    stderr.write(
+      `turn ${turn} · tokens ${input}/${usage.output} · tool calls ${calls}\n`,
+    );
+  });
+  try {
+    const summary = await session.run(parsed.task);
+    stdout.write(`${JSON.stringify(summary)}\n`);
+    return summary.outcome === "done" ? 0 : 1;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    stderr.write(`${message}\n`);
+    return 1;
+  }
+}
+
+function systemPrompt(cwd: string): string {
+  return [
+    "You are sage, a coding agent.",
+    "Complete the task in the workspace using the provided tools.",
+    "Read before editing. Use edit for a single exact replacement.",
+    "Stop when the task is done.",
+    `Workspace: ${cwd}`,
+  ].join("\n");
+}
+
+type Parsed =
+  | { ok: true; task: string; provider?: string; model?: string }
+  | { ok: false; message: string };
+
+export function parseArgs(argv: string[]): Parsed {
+  let task: string | undefined;
+  let provider: string | undefined;
+  let model: string | undefined;
+  const positional: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index] ?? "";
+    if (arg === "--help" || arg === "-h") {
+      return { ok: false, message: usage() };
+    }
+    const taken = take(argv, index, arg);
+    if (taken.kind === "unknown") return { ok: false, message: taken.message };
+    if (taken.kind === "flag") {
+      index = taken.next;
+      if (taken.name === "print") task = taken.value;
+      if (taken.name === "provider") provider = taken.value;
+      if (taken.name === "model") model = taken.value;
+      continue;
+    }
+    positional.push(arg);
+  }
+  if (task !== undefined && positional.length > 0) {
+    return { ok: false, message: usage() };
+  }
+  if (task === undefined) task = positional.join(" ");
+  if (!task) return { ok: false, message: usage() };
+  return { ok: true, task, provider, model };
+}
+
+function usage(): string {
+  return "usage: sage [-p | --print] <task> [--provider anthropic|openai] [--model <id>]";
+}
+
+function take(
+  argv: string[],
+  index: number,
+  arg: string,
+):
+  | {
+      kind: "flag";
+      name: "print" | "provider" | "model";
+      value: string;
+      next: number;
+    }
+  | { kind: "positional" }
+  | { kind: "unknown"; message: string } {
+  const inline = inlineFlag(arg);
+  if (inline) return { kind: "flag", ...inline, next: index };
+  const name = flagName(arg);
+  if (name === "unknown") return { kind: "unknown", message: usage() };
+  if (!name) return { kind: "positional" };
+  const value = argv[index + 1];
+  if (!value || value.startsWith("-")) {
+    return { kind: "unknown", message: usage() };
+  }
+  return { kind: "flag", name, value, next: index + 1 };
+}
+
+function flagName(
+  arg: string,
+): "print" | "provider" | "model" | "unknown" | undefined {
+  if (arg === "--print" || arg === "-p") return "print";
+  if (arg === "--provider") return "provider";
+  if (arg === "--model") return "model";
+  if (arg.startsWith("-")) return "unknown";
+  return undefined;
+}
+
+function inlineFlag(
+  arg: string,
+): { name: "print" | "provider" | "model"; value: string } | undefined {
+  const names = ["print", "provider", "model"] as const;
+  for (const name of names) {
+    const prefix = `--${name}=`;
+    if (!arg.startsWith(prefix)) continue;
+    const value = arg.slice(prefix.length);
+    if (!value) return undefined;
+    return { name, value };
+  }
+  return undefined;
+}
+
+function resolveAuth(
+  provider: string | undefined,
+  model: string | undefined,
+  env: NodeJS.ProcessEnv,
+):
+  | { ok: true; provider: string; model: string; apiKey: string }
+  | { ok: false; message: string } {
+  let selected = provider;
+  if (!selected) {
+    if (env.ANTHROPIC_API_KEY) selected = "anthropic";
+    else if (env.OPENAI_API_KEY) selected = "openai";
+    else {
+      return {
+        ok: false,
+        message: "Missing ANTHROPIC_API_KEY or OPENAI_API_KEY",
+      };
+    }
+  }
+  if (selected !== "anthropic" && selected !== "openai") {
+    return { ok: false, message: `Unknown provider: ${selected}` };
+  }
+  const apiKey =
+    selected === "anthropic" ? env.ANTHROPIC_API_KEY : env.OPENAI_API_KEY;
+  if (!apiKey) {
+    const name =
+      selected === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+    return { ok: false, message: `Missing ${name}` };
+  }
+  return {
+    ok: true,
+    provider: selected,
+    model: model ?? DEFAULT_MODELS[selected] ?? "",
+    apiKey,
+  };
+}
+
+function createAdapter(provider: string, apiKey: string): ProviderAdapter {
+  if (provider === "openai") return new OpenAIAdapter({ apiKey });
+  return new AnthropicAdapter({ apiKey });
+}
+
+function isDirectRun(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return import.meta.url === pathToFileURL(path.resolve(entry)).href;
+}
+
+if (isDirectRun()) {
+  runCli(process.argv.slice(2))
+    .then((code) => {
+      process.exit(code);
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`${message}\n`);
+      process.exit(1);
+    });
+}

@@ -3,7 +3,15 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "sage": "./bin/sage.mjs"
+  },
   "exports": {
     ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@sage/core": "workspace:*",
+    "@sage/provider": "workspace:*",
+    "@sage/tools": "workspace:*"
   }
 }
