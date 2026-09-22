@@ -12,10 +12,10 @@ import path from "node:path";
 import type { HarnessTool } from "@sage/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { searchWithoutRg } from "../src/grep.ts";
-import { type BashExec, createTools, withToolUseId } from "../src/index.ts";
+import { type BashExec, createTools } from "../src/index.ts";
 import { READ_MAX_BYTES } from "../src/read.ts";
 
-const ctx = { sessionId: "s" };
+const ctx = { sessionId: "s", toolUseId: "tool-default" };
 let dir = "";
 const outsidePaths: string[] = [];
 
@@ -219,8 +219,9 @@ describe("scenario 4 bash spill", () => {
       code: 0,
     });
     const bash = tool(createTools({ cwd, exec }), "bash");
-    const result = await withToolUseId("toolu_spill", () =>
-      bash.execute({ command: "ignored" }, ctx),
+    const result = await bash.execute(
+      { command: "ignored" },
+      { sessionId: "s", toolUseId: "toolu_spill" },
     );
     const saved = path.join(cwd, ".sage", "tool-output", "toolu_spill.txt");
     expect(result.isError).toBe(false);
@@ -258,7 +259,7 @@ describe("scenario 5 bash exec injection", () => {
     const bash = tool(createTools({ cwd, exec }), "bash");
     const result = await bash.execute(
       { command: "echo should-not-run", timeout_ms: 5000 },
-      { sessionId: "s", signal: controller.signal },
+      { sessionId: "s", toolUseId: "exec-inject", signal: controller.signal },
     );
     expect(result.isError).toBe(false);
     expect(result.content).toBe("[bash exit code 0]\nfrom-exec\n");

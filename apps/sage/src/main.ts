@@ -3,7 +3,7 @@
  *
  * Contract: parse argv, assemble AgentSession with the seven tools,
  * passthroughView, and a JsonlLogStore under `<cwd>/.sage/sessions`.
- * Each compiled view appends a manifest. stdout is one JSON RunSummary.
+ * stdout is one JSON RunSummary. The kernel appends each turn's manifest.
  * Exit 0 when the outcome is done, otherwise 1.
  *
  * Intentionally not in the Log: argv, API keys, and the stderr progress
@@ -21,17 +21,13 @@ import {
 } from "@sage/core";
 import {
   AnthropicAdapter,
+  defaultModel,
   type ModelRef,
   OpenAIAdapter,
   type ProviderAdapter,
   type Sampling,
 } from "@sage/provider";
-import { type BashExec, createTools, withToolUseId } from "@sage/tools";
-
-const DEFAULT_MODELS: Record<string, string> = {
-  anthropic: "claude-sonnet-4-5",
-  openai: "gpt-5",
-};
+import { type BashExec, createTools } from "@sage/tools";
 
 export type CodingSession = {
   session: AgentSession;
@@ -66,19 +62,6 @@ export function createCodingSession(opts: {
     viewProvider: passthroughView,
     sampling: opts.sampling,
   });
-  session.hooks.observe("view_compiled", ({ view }) => {
-    store.append(sessionId, {
-      kind: "manifest",
-      payload: {
-        epoch: view.manifest.epoch,
-        turn: view.manifest.turn,
-        budget: view.manifest.budget ?? null,
-        claims: view.manifest.claims,
-        chunks: view.manifest.chunks,
-      },
-    });
-  });
-  session.hooks.around((call, next) => withToolUseId(call.id, next));
   return { session, store, sessionId };
 }
 
@@ -267,7 +250,7 @@ function resolveAuth(
   return {
     ok: true,
     provider: selected,
-    model: model ?? DEFAULT_MODELS[selected] ?? "",
+    model: model ?? defaultModel(selected).model,
     apiKey,
   };
 }

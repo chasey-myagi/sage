@@ -21,6 +21,24 @@ const known: { ref: ModelRef; contextWindow: number }[] = [
   { ref: { provider: "openai", model: "gpt-5-mini" }, contextWindow: 400_000 },
 ];
 
+describe("catalog export", () => {
+  it("defaults to the first catalog entry for that provider", async () => {
+    const provider = await import("../src/index.ts");
+    expect(
+      provider.listModels("anthropic").map((entry) => entry.model),
+    ).toEqual(["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"]);
+    expect(provider.defaultModel("anthropic")).toEqual({
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+    });
+    expect(provider.defaultModel("openai")).toEqual({
+      provider: "openai",
+      model: "gpt-5",
+    });
+    expect(provider.listModels("missing")).toEqual([]);
+  });
+});
+
 describe("scenario 6 prepare", () => {
   it("returns the static window, null pricing, and maxTokens default", () => {
     const anthropic = new AnthropicAdapter({ apiKey: "k" });

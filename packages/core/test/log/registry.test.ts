@@ -156,9 +156,10 @@ describe("entry kinds", () => {
       payload: {
         epoch: 1,
         turn: 1,
-        budget: { tokens: 10 },
+        budget: 10,
         claims: [],
         chunks: [],
+        anomalies: [],
       },
     });
     store.append(sessionId, { kind: "undo", payload: { target: message.id } });
@@ -177,6 +178,33 @@ describe("entry kinds", () => {
     });
     expect(() =>
       store.append(sessionId, { kind: "terminal", payload: {} }),
+    ).toThrow(InvalidEntryError);
+  });
+
+  it("accepts a Manifest-shaped payload and rejects one without anomalies", () => {
+    const store = new MemoryLogStore();
+    const sessionId = "manifest-shape";
+    store.append(sessionId, {
+      kind: "manifest",
+      payload: {
+        epoch: 1,
+        turn: 2,
+        claims: [],
+        chunks: [],
+        anomalies: [],
+      },
+    });
+    expect(() =>
+      store.append(sessionId, {
+        kind: "manifest",
+        payload: {
+          epoch: 1,
+          turn: 1,
+          budget: null,
+          claims: [],
+          chunks: [],
+        },
+      }),
     ).toThrow(InvalidEntryError);
   });
 

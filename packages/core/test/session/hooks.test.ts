@@ -8,7 +8,13 @@ import {
   toolScript,
 } from "../support/faux.ts";
 
-function harness(name: string, onExecute?: (input: unknown) => void) {
+function harness(
+  name: string,
+  onExecute?: (
+    input: unknown,
+    ctx: { sessionId: string; toolUseId: string; signal?: AbortSignal },
+  ) => void,
+) {
   return {
     def: { name, description: name, inputSchema: { type: "object" } },
     isReadOnly: true,
@@ -17,8 +23,11 @@ function harness(name: string, onExecute?: (input: unknown) => void) {
     accesses() {
       return [];
     },
-    async execute(input: unknown) {
-      onExecute?.(input);
+    async execute(
+      input: unknown,
+      ctx: { sessionId: string; toolUseId: string; signal?: AbortSignal },
+    ) {
+      onExecute?.(input, ctx);
       return { content: `ran:${name}`, isError: false };
     },
   };
@@ -282,6 +291,32 @@ describe("scenario 5 tool pipeline", () => {
       "a",
       "b",
     ]);
+  });
+
+  it("passes the tool use id on execute context", async () => {
+    const store = new MemoryLogStore();
+    const sessionId = "tool-id";
+    const seen: string[] = [];
+    const { adapter } = createFaux([
+      toolScript("c1", "echo"),
+      stopScript("stop"),
+    ]);
+    const session = new AgentSession({
+      store,
+      sessionId,
+      adapter,
+      model: MODEL,
+      system: SYSTEM,
+      tools: [
+        harness("echo", (_input, ctx) => {
+          seen.push(ctx.toolUseId);
+        }),
+      ],
+    });
+
+    const summary = await session.run("go");
+    expect(summary.outcome).toBe("done");
+    expect(seen).toEqual(["c1"]);
   });
 });
 

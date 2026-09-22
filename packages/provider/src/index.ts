@@ -8,6 +8,8 @@
 export const PACKAGE = "@sage/provider" as const;
 
 export { AnthropicAdapter } from "./anthropic/index.js";
+export type { CatalogEntry } from "./catalog.js";
+export { defaultModel, listModels } from "./catalog.js";
 export { collect } from "./contract/collect.js";
 export type {
   AssistantMessage,

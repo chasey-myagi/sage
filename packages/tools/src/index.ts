@@ -21,7 +21,6 @@ import { createWrite } from "./write.js";
 
 export const PACKAGE = "@sage/tools" as const;
 
-export { withToolUseId } from "./tool-use.js";
 export type { BashExec };
 
 export function createTools(opts: { cwd: string; exec?: BashExec }) {

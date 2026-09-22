@@ -5,8 +5,8 @@
  * The kernel checks pairing and epoch freeze, then logs the envelope. It does
  * not score, drop, or rewrite blocks.
  *
- * Intentionally not in the Log: the live CompiledView object. Manifest rows
- * are the view's own record; the kernel does not append them.
+ * Intentionally not in the Log: the live CompiledView object. The kernel
+ * appends the manifest as its own entry; this module does not.
  */
 
 import type {
