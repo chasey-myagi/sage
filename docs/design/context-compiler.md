@@ -5,6 +5,7 @@
 > 设计提案 v2，未实现。成稿 2026-09-22。
 > 姊妹篇：[再造一个 Agent 的理由](https://claude.ai/artifact/LryCkH3a43e23qAHfFfFKC)。
 > 总纲 issue：[#1](https://github.com/chasey-myagi/sage/issues/1)。
+> 契约条款以 [`references.md`](./references.md) §1 为准；本文与之冲突处以 references 为准。
 
 sage 是重写，不是对 harness-pi 的改造。harness-pi 在本文里只有一个身份：**取材源**。凡是写「从 harness-pi 搬」的地方，指的是搬那条设计决断或那份实现骨架；凡是写「harness-pi 里今天是怎样」的地方，是在说明一个已经被证实会咬人的做法，sage 不重复它。
 
