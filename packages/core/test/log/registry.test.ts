@@ -238,6 +238,21 @@ describe("entry kinds", () => {
     ).toThrow(InvalidEntryError);
   });
 
+  it("accepts an optional terminal health object and rejects a non-object", () => {
+    const store = new MemoryLogStore();
+    store.append("health-ok", {
+      kind: "terminal",
+      payload: { outcome: "done", health: { turns: 1, cacheHitRatio: null } },
+    });
+    expect(store.path("health-ok")).toHaveLength(1);
+    expect(() =>
+      store.append("health-bad", {
+        kind: "terminal",
+        payload: { outcome: "done", health: "nope" },
+      }),
+    ).toThrow(InvalidEntryError);
+  });
+
   it("throws when the same kind is registered twice", () => {
     expect(() =>
       registerEntryKind({

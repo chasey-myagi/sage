@@ -29,6 +29,8 @@
  * model_change.reason is `route:` plus the text after `;route:` in
  * epochDecision.reason. Head bytes are not rewritten on a switch.
  * RunSummary.modelChanges counts model_change entries appended in this run.
+ * RunSummary.health is runHealth of the path at finish, and the terminal
+ * payload stores that same object.
  * Constructor takes `adapters` (provider → adapter) or one `adapter`, which
  * is stored under the starting model's provider.
  * `parent`, when set, snapshots `store.path(parent.sessionId, parent.leafId)`
@@ -54,6 +56,7 @@ import type {
   ToolUseBlock,
   Usage,
 } from "@sage/provider/contract";
+import { type RunHealth, runHealth } from "./health.js";
 import { HookDispatcher } from "./hooks/dispatcher.js";
 import type { Hooks } from "./hooks/types.js";
 import type { RequestHeaderPayload } from "./log/kinds.js";
@@ -83,6 +86,7 @@ export type RunSummary = {
   usage: Usage;
   modelChanges: number;
   observerErrors: { event: string; error: string }[];
+  health: RunHealth;
   error?: string;
 };
 
@@ -515,17 +519,25 @@ export class AgentSession {
     usage: Usage,
     error?: string,
   ): Promise<RunSummary> {
+    const health = runHealth(this.store.path(this.sessionId));
     const summary: RunSummary = {
       outcome,
       turns,
       usage,
       modelChanges: this.modelChanges,
       observerErrors: this.observerErrors,
+      health,
     };
     if (error !== undefined) summary.error = error;
-    const payload: { outcome: string; usage: Usage; error?: string } = {
+    const payload: {
+      outcome: string;
+      usage: Usage;
+      health: RunHealth;
+      error?: string;
+    } = {
       outcome,
       usage,
+      health,
     };
     if (error !== undefined) payload.error = error;
     this.store.append(this.sessionId, { kind: "terminal", payload });

@@ -19,6 +19,9 @@
  * `epochDecision`, `calibration`, and `cache` are optional objects. The
  * kernel checks that shape and does not read the fields.
  *
+ * `terminal.health`, when present, is an object. The kernel does not read
+ * its fields. A missing health is valid. A non-object health is rejected.
+ *
  * `subtask` records that a child session recompiles a parent leaf. The
  * payload is `{ parentSessionId, parentLeaf, query, budget, readOnly }`.
  * The kernel does not copy the parent path onto the child.
@@ -73,6 +76,8 @@ export type TerminalPayload = {
   outcome: string;
   usage?: unknown;
   error?: unknown;
+  /** Opaque run-health object. Counts only; the kernel does not read it. */
+  health?: Record<string, unknown>;
 };
 
 function isMessage(payload: unknown): payload is Message {
@@ -166,7 +171,9 @@ function isTarget(payload: unknown): payload is TargetPayload {
 }
 
 function isTerminal(payload: unknown): payload is TerminalPayload {
-  return isRecord(payload) && typeof payload.outcome === "string";
+  if (!isRecord(payload) || typeof payload.outcome !== "string") return false;
+  if (payload.health !== undefined && !isRecord(payload.health)) return false;
+  return true;
 }
 
 export type SubtaskPayload = {
