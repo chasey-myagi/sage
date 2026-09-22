@@ -1,4 +1,10 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,16 +98,24 @@ describe("issue 51 grep line cap", () => {
   });
 
   it("replays the issue-46 grep call under 8000 characters", async () => {
+    // Hermetic: the real call swept the whole repo, and later fixtures
+    // (issue-50 and beyond) add more hits. Only the long-line fixture matters
+    // for the cap, so copy that one file into an empty directory.
     expect(existsSync(fixture)).toBe(true);
-    const grep = tool(createTools({ cwd: repoRoot }), "grep");
+    const cwd = freshDir();
+    copyFileSync(fixture, path.join(cwd, "long-deepseek-flash.jsonl"));
+    const grep = tool(createTools({ cwd }), "grep");
     const result = await grep.execute(
       { pattern: "formatHits|optionalBool|searchWithoutRg" },
       ctx,
     );
     expect(result.isError).toBe(false);
-    expect(result.content).toContain(
-      "packages/plugins/test/replay/fixtures/issue-46/long-deepseek-flash.jsonl",
-    );
+    const lines = result.content.split("\n");
+    expect(lines.length).toBe(9);
+    for (const line of lines) {
+      expect(line.startsWith("long-deepseek-flash.jsonl:")).toBe(true);
+      expect(line).toContain("[+");
+    }
     expect(result.content.length).toBeLessThan(8000);
   });
 });
