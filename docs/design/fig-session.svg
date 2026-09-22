@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 400" role="img" aria-label="示意图：同一段长会话里，发给模型的上下文 token 随轮次的变化。现状是一路上涨、撞到压缩阈值就骤降的锯齿；目标是阶段内前缀冻结、只在尾部追加的平缓上行，只在阶段边界小幅回落。">
+  <style>
+    .c2-bg { fill: oklch(0.998 0.003 265); }
+    .c2-grid { fill: none; stroke: oklch(0.905 0.010 265); stroke-width: 1; }
+    .c2-axis { stroke: oklch(0.815 0.014 265); stroke-width: 1.2; }
+    .c2-num { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; font-variant-numeric: tabular-nums; fill: oklch(0.575 0.016 265); }
+    .c2-lbl { font-size: 12.5px; fill: oklch(0.575 0.016 265); }
+    .c2-thr { stroke: oklch(0.545 0.170 25); stroke-width: 1.2; stroke-dasharray: 6 6; opacity: 0.65; }
+    .c2-thr-t { font-size: 12px; font-weight: 650; fill: oklch(0.545 0.170 25); }
+    .c2-now { fill: none; stroke: oklch(0.545 0.170 25); stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
+    .c2-goal { fill: none; stroke: oklch(0.48 0.148 252); stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
+    .c2-dot-now { fill: oklch(0.998 0.003 265); stroke: oklch(0.545 0.170 25); stroke-width: 2; }
+    .c2-dot-goal { fill: oklch(0.998 0.003 265); stroke: oklch(0.48 0.148 252); stroke-width: 2; }
+    .c2-note-now { font-size: 12.5px; font-weight: 650; fill: oklch(0.545 0.170 25); }
+    .c2-note-goal { font-size: 12.5px; font-weight: 650; fill: oklch(0.48 0.148 252); }
+    .c2-note { font-size: 12.5px; fill: oklch(0.575 0.016 265); }
+    .c2-key { font-size: 12.5px; font-weight: 650; }
+    .c2-sim-box { fill: oklch(0.950 0.042 80); }
+    .c2-sim-t { font-size: 11px; font-weight: 650; letter-spacing: 0.08em; fill: oklch(0.52 0.110 72); }
+    svg { font-family: -apple-system, "PingFang SC", "Noto Sans CJK SC", "Segoe UI", sans-serif; }
+  </style>
+
+  <rect class="c2-bg" width="880" height="400"/>
+
+  <g>
+    <line x1="548" y1="22" x2="570" y2="22" stroke="oklch(0.545 0.170 25)" stroke-width="2.5"/>
+    <text class="c2-key" x="578" y="26" fill="oklch(0.545 0.170 25)">现状</text>
+    <line x1="622" y1="22" x2="644" y2="22" stroke="oklch(0.48 0.148 252)" stroke-width="2.5"/>
+    <text class="c2-key" x="652" y="26" fill="oklch(0.48 0.148 252)">目标</text>
+    <rect class="c2-sim-box" x="700" y="12" width="96" height="20" rx="10"/>
+    <text class="c2-sim-t" x="748" y="26" text-anchor="middle">示意，非实测</text>
+  </g>
+
+  <g class="c2-grid">
+    <line x1="70" y1="55.5" x2="850" y2="55.5"/>
+    <line x1="70" y1="121.5" x2="850" y2="121.5"/>
+    <line x1="70" y1="187" x2="850" y2="187"/>
+    <line x1="70" y1="252.5" x2="850" y2="252.5"/>
+  </g>
+  <line class="c2-axis" x1="70" y1="318" x2="850" y2="318"/>
+
+  <g class="c2-num" text-anchor="end">
+    <text x="60" y="59.5">200</text>
+    <text x="60" y="125.5">150</text>
+    <text x="60" y="191">100</text>
+    <text x="60" y="256.5">50</text>
+    <text x="60" y="322">0</text>
+  </g>
+  <g class="c2-num" text-anchor="middle">
+    <text x="70" y="338">0</text>
+    <text x="265" y="338">10</text>
+    <text x="460" y="338">20</text>
+    <text x="655" y="338">30</text>
+    <text x="850" y="338">40</text>
+  </g>
+  <text class="c2-lbl" x="70" y="34">纵轴：发给模型的上下文（千 token）</text>
+  <text class="c2-lbl" x="460" y="362" text-anchor="middle">横轴：轮次</text>
+
+  <line class="c2-thr" x1="70" y1="108.4" x2="850" y2="108.4"/>
+  <text class="c2-thr-t" x="74" y="100">压缩阈值</text>
+
+  <polyline class="c2-now"
+    points="70,310.1 109,286.6 148,259.0 187,226.3 226,192.2 265,158.2 304,126.7 333.2,108.4 333.2,260.4 362.5,242.0 401.5,215.8 440.5,187.0 479.5,158.2 518.5,129.4 549.7,108.4 549.7,257.7 577,242.0 616,215.8 655,187.0 694,158.2 733,129.4 764.2,108.4 764.2,255.1 791.5,239.4 830.5,213.2 850,200.1"/>
+
+  <polyline class="c2-goal"
+    points="70,310.1 109,294.4 148,281.3 187,270.8 226,261.7 265,253.8 304,247.3 323.5,244.6 323.5,265.6 362.5,259.0 421,251.2 479.5,243.3 538,236.8 577,231.5 596.5,228.9 596.5,255.1 635.5,249.9 694,242.0 752.5,235.5 811,228.9 850,225.0"/>
+
+  <g class="c2-dot-now">
+    <circle cx="333.2" cy="108.4" r="4"/>
+    <circle cx="549.7" cy="108.4" r="4"/>
+    <circle cx="764.2" cy="108.4" r="4"/>
+  </g>
+  <g class="c2-dot-goal">
+    <circle cx="323.5" cy="255.1" r="4"/>
+    <circle cx="596.5" cy="242.0" r="4"/>
+  </g>
+
+  <text class="c2-note-now" x="162" y="288">现状：撞阈值就整段压缩</text>
+  <text class="c2-note" x="162" y="305">摘要有损，压缩点之后前缀全变，缓存作废</text>
+  <text class="c2-note-goal" x="520" y="288">目标：阶段内前缀冻结，只往尾部追加</text>
+  <text class="c2-note" x="520" y="305">边界处小幅回落，由成本不等式批准</text>
+</svg>
