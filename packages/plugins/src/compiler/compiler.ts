@@ -21,9 +21,13 @@
  * unless oldest-first budget drops a new chunk; that drop is frozen too.
  * Frozen kept tokens are spent before that budget runs, so a frozen chunk
  * is not demoted. The first turn of an epoch has no freeze record.
- * `oldTokens` is the frozen view's used times the calibration ratio.
- * `newTokens` is a from-scratch eliminate of every chunk, plus claims, times
- * the same ratio. `budget.frozenTokens` sums tokens of frozen chunks that
+ * `oldTokens` is `head + used × min(ratio, 1)` for the frozen view. `head`
+ * is the fixed overhead from the epoch's first measured input. `ratio` is
+ * `(measured − head) / budget.used`. A ratio above 1 is not applied: that
+ * residual comes from a small denominator and would scale the head back
+ * into the blocks. No calibration uses head 0 and ratio 1. `newTokens` is
+ * the same projection of a from-scratch eliminate of every chunk, plus
+ * claims. `budget.frozenTokens` sums tokens of frozen chunks that
  * are not none. `budget.staleOmittable` is the part a from-scratch eliminate
  * would set to none. Both describe the frozen view even on a rebuild turn.
  * A new epoch opens when `decideEpoch` says rebuild: the view is a full
@@ -88,7 +92,11 @@ import { ruleScorer } from "../scorer/rule.js";
 import type { ScoreDecision, Scorer } from "../scorer/types.js";
 import { applyDecisions, renderSummary } from "./apply.js";
 import { allocate, defaultTokenCount, type TokenCounter } from "./budget.js";
-import { calibrationFor, measuredCacheRead } from "./calibrate.js";
+import {
+  calibrationFor,
+  expectedFrozenPrefix,
+  measuredCacheRead,
+} from "./calibrate.js";
 import type { Chunk } from "./chunks.js";
 import { indexChunks } from "./chunks.js";
 import type { Claim, ClaimProvider, Placement, Tier } from "./claim.js";
@@ -182,7 +190,9 @@ export function contextCompiler(opts: {
         fresh.chunkRecords,
       );
       const calibration = calibrationFor(ctx.path);
-      const ratio = calibration?.ratio ?? 1;
+      const head = calibration?.head ?? 0;
+      const scale = Math.min(calibration?.ratio ?? 1, 1);
+      const project = (used: number) => head + used * scale;
       const rates = ratesFor(ctx.prepared.pricing);
       const remainingTurns = Math.max(
         1,
@@ -191,11 +201,11 @@ export function contextCompiler(opts: {
       const window = ctx.prepared.contextWindow;
       const guarded =
         epochOpenReason(ctx.path, base.epoch) === "context-window-guard";
-      const over = stay.used * ratio > window * 0.9;
+      const over = project(stay.used) > window * 0.9;
       let decision = tagPricing(
         decideEpoch({
-          oldTokens: stay.used * ratio,
-          newTokens: fresh.used * ratio,
+          oldTokens: project(stay.used),
+          newTokens: project(fresh.used),
           remainingTurns,
           rates,
           minSavingsRatio,
@@ -274,11 +284,11 @@ export function contextCompiler(opts: {
       );
       const last = Math.max(0, chosen.messages.length - 1);
       const cache = {
-        expectedReadTokens: countMessages(chosen.messages, end, count),
+        expectedReadTokens: expectedFrozenPrefix(ctx.path, head, scale),
         measuredReadTokens: measuredCacheRead(ctx.path),
       };
       let overrun = Math.max(0, chosen.used - opts.budget);
-      const scaled = chosen.used * ratio;
+      const scaled = project(chosen.used);
       const stillOver = scaled > window * 0.9;
       if (
         overrun === 0 &&
@@ -607,40 +617,6 @@ function prefixEndIndex(
   }
   if (lastHistory < 0) return Math.min(messageCount - 1, offset);
   return Math.min(messageCount - 1, offset + lastHistory);
-}
-
-function countMessages(
-  messages: readonly Message[],
-  end: number,
-  count: TokenCounter,
-): number {
-  let total = 0;
-  const last = Math.min(end, messages.length - 1);
-  for (let index = 0; index <= last; index += 1) {
-    const message = messages[index];
-    if (message) total += countMessage(message, count);
-  }
-  return total;
-}
-
-function countMessage(message: Message, count: TokenCounter): number {
-  let total = 0;
-  for (const block of message.content) {
-    if (block.type === "text" || block.type === "thinking") {
-      total += count(block.text);
-      continue;
-    }
-    if (block.type === "tool_use") {
-      const raw =
-        block.rawInput.length > 0
-          ? block.rawInput
-          : (JSON.stringify(block.input ?? "") ?? "");
-      total += count(raw);
-      continue;
-    }
-    if (block.type === "tool_result") total += count(block.content);
-  }
-  return total;
 }
 
 function loggedMessage(path: ViewContext["path"], head: Message): boolean {

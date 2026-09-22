@@ -18,7 +18,9 @@
  * present, are finite numbers. Other fields are left unchecked. The kernel
  * does not interpret the object.
  * `epochDecision`, `calibration`, and `cache` are optional objects. The
- * kernel checks that shape and does not read the fields.
+ * kernel checks that shape and does not read the fields. When `calibration`
+ * is present, `measured`, `estimated`, `ratio`, and `head` are finite
+ * numbers if they are present. Older manifests may omit `head`.
  *
  * `terminal.health`, when present, is an object. The kernel does not read
  * its fields. A missing health is valid. A non-object health is rejected.
@@ -149,7 +151,10 @@ function isManifest(payload: unknown): payload is ManifestPayload {
   if (payload.epochDecision !== undefined && !isRecord(payload.epochDecision)) {
     return false;
   }
-  if (payload.calibration !== undefined && !isRecord(payload.calibration)) {
+  if (
+    payload.calibration !== undefined &&
+    !isCalibration(payload.calibration)
+  ) {
     return false;
   }
   if (payload.cache !== undefined && !isRecord(payload.cache)) return false;
@@ -157,6 +162,16 @@ function isManifest(payload: unknown): payload is ManifestPayload {
     Array.isArray(payload.claims) &&
     Array.isArray(payload.chunks) &&
     Array.isArray(payload.anomalies)
+  );
+}
+
+function isCalibration(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    isOptionalFinite(value.measured) &&
+    isOptionalFinite(value.estimated) &&
+    isOptionalFinite(value.ratio) &&
+    isOptionalFinite(value.head)
   );
 }
 

@@ -1,7 +1,7 @@
-import { MemoryLogStore } from "@sage/core";
+import { InvalidEntryError, MemoryLogStore } from "@sage/core";
 import type { Message } from "@sage/provider/contract";
 import { expect, it } from "vitest";
-import { measuredInput } from "../../src/compiler/calibrate.ts";
+import { calibrationFor, measuredInput } from "../../src/compiler/calibrate.ts";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
 
 const MODEL = { provider: "anthropic", model: "claude-sonnet-5" };
@@ -58,7 +58,7 @@ it("reads the previous assistant input total", () => {
   expect(measuredInput(store.path("s"))).toBe(120000);
 });
 
-it("records calibration and scales later newTokens by the ratio", async () => {
+it("records a fixed head and projects old and new tokens as head plus used", async () => {
   const compiler = contextCompiler({
     budget: 8000,
     claims: [],
@@ -92,15 +92,97 @@ it("records calibration and scales later newTokens by the ratio", async () => {
 
   const second = await compiler.view(context(store, 2));
   const calibration = second.manifest.calibration;
+  const head = 120000 - estimated.used;
   expect(calibration?.measured).toBe(120000);
   expect(calibration?.estimated).toBe(estimated.used);
-  expect(calibration?.ratio).toBe(120000 / estimated.used);
+  expect(calibration?.head).toBe(head);
+  expect(calibration?.ratio).toBe(1);
   const decision = second.manifest.epochDecision;
-  expect(calibration?.ratio).not.toBe(1);
-  expect(decision?.newTokens).toBeCloseTo(
-    (typeof second.manifest.budget === "object" && second.manifest.budget
+  const secondUsed =
+    typeof second.manifest.budget === "object" && second.manifest.budget
       ? second.manifest.budget.used
-      : 0) * (calibration?.ratio ?? 1),
+      : 0;
+  expect(decision?.newTokens).toBeCloseTo(head + secondUsed, 5);
+  expect(decision?.oldTokens).toBeCloseTo(head + secondUsed, 5);
+
+  store.append("s", { kind: "manifest", payload: second.manifest });
+  store.append("s", {
+    kind: "message",
+    payload: {
+      role: "assistant",
+      content: [{ type: "text", text: "next-ok" }],
+    },
+    details: {
+      usage: {
+        inputOther: head + secondUsed + 4,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+        output: 4,
+      },
+    },
+  });
+  store.append("s", { kind: "message", payload: user("after") });
+  const third = await compiler.view(context(store, 3));
+  const later = third.manifest.calibration;
+  const laterRatio = 4 / secondUsed + 1;
+  expect(later?.head).toBe(head);
+  expect(later?.ratio).toBeCloseTo(laterRatio, 5);
+  expect(laterRatio).toBeGreaterThan(1);
+  const thirdUsed =
+    typeof third.manifest.budget === "object" && third.manifest.budget
+      ? third.manifest.budget.used
+      : 0;
+  expect(third.manifest.epochDecision?.oldTokens).toBeCloseTo(
+    head + thirdUsed,
     5,
   );
+});
+
+it("floors head at 0 when the counter already exceeds the measured input", () => {
+  const store = new MemoryLogStore();
+  store.append("s", {
+    kind: "manifest",
+    payload: {
+      epoch: 0,
+      turn: 1,
+      budget: { total: 100, used: 100, overrun: 0 },
+      claims: [],
+      chunks: [],
+      anomalies: [],
+    },
+  });
+  store.append("s", {
+    kind: "message",
+    payload: { role: "assistant", content: [{ type: "text", text: "ok" }] },
+    details: {
+      usage: {
+        inputOther: 20,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+        output: 1,
+      },
+    },
+  });
+  const calibration = calibrationFor(store.path("s"));
+  expect(calibration?.head).toBe(0);
+  expect(calibration?.measured).toBe(20);
+  expect(calibration?.estimated).toBe(100);
+  expect(calibration?.ratio).toBe(0.2);
+});
+
+it("rejects a calibration head that is not a finite number", () => {
+  const store = new MemoryLogStore();
+  expect(() =>
+    store.append("s", {
+      kind: "manifest",
+      payload: {
+        epoch: 0,
+        turn: 1,
+        claims: [],
+        chunks: [],
+        anomalies: [],
+        calibration: { measured: 1, estimated: 1, ratio: 1, head: "nope" },
+      },
+    }),
+  ).toThrow(InvalidEntryError);
 });

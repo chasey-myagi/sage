@@ -29,7 +29,7 @@ it("reads per-turn cache hit ratios from manifest cache fields", async () => {
     tools: [],
   });
   expect(first.manifest.cache?.measuredReadTokens).toBe(0);
-  expect(first.manifest.cache?.expectedReadTokens).toBeGreaterThan(0);
+  expect(first.manifest.cache?.expectedReadTokens).toBe(0);
   store.append("s", { kind: "manifest", payload: first.manifest });
   store.append("s", {
     kind: "message",

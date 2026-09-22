@@ -4,9 +4,16 @@
  * Contract: `measuredInput` is the latest assistant message's
  * `details.usage` input total (`inputOther + inputCacheRead +
  * inputCacheCreation`). `calibrationFor` pairs that total with the previous
- * manifest's `budget.used`. The ratio is measured/estimated. Callers scale
- * later new-view estimates by it. No usage, or a zero estimate, yields
- * undefined.
+ * manifest's `budget.used`. `head` is the first computable turn of the
+ * current epoch: that turn's measured input minus its `budget.used`,
+ * floored at 0. When that turn has no usage, `head` is the most recent
+ * computable value on the path. Later turns set `ratio` to
+ * `(measured − head) / estimated`. No usage, or a zero estimate, yields
+ * undefined; callers then use ratio 1 and head 0. Callers scale block
+ * tokens by `min(ratio, 1)`: a ratio above 1 is the anchor residual on a
+ * small denominator and is not applied. `expectedFrozenPrefix` is `head`
+ * plus that scale times the previous manifest's frozen chunks and
+ * epoch-head claim tokens.
  *
  * Intentionally not in the Log: these functions. The manifest stores the
  * resulting calibration object.
@@ -18,6 +25,7 @@ import type { Message } from "@sage/provider/contract";
 export type Calibration = {
   measured: number;
   estimated: number;
+  head: number;
   ratio: number;
 };
 
@@ -26,13 +34,7 @@ export function measuredInput(
 ): number | undefined {
   const usage = latestUsage(path);
   if (!usage) return undefined;
-  const other = finite(usage.inputOther);
-  const read = finite(usage.inputCacheRead);
-  const created = finite(usage.inputCacheCreation);
-  if (other === undefined || read === undefined || created === undefined) {
-    return undefined;
-  }
-  return other + read + created;
+  return inputTotal(usage);
 }
 
 export function measuredCacheRead(path: readonly StoredEntry[]): number {
@@ -49,18 +51,136 @@ export function calibrationFor(
   if (measured === undefined || estimated === undefined || estimated === 0) {
     return undefined;
   }
-  return { measured, estimated, ratio: measured / estimated };
+  const head = anchorHead(path) ?? 0;
+  return { measured, estimated, head, ratio: (measured - head) / estimated };
+}
+
+export function expectedFrozenPrefix(
+  path: readonly StoredEntry[],
+  head: number,
+  scale = 1,
+): number {
+  const manifest = previousManifest(path);
+  if (!manifest || !isRecord(manifest.payload)) return 0;
+  const blocks =
+    frozenTokens(manifest.payload) + epochHeadTokens(manifest.payload);
+  return head + blocks * scale;
+}
+
+function anchorHead(path: readonly StoredEntry[]): number | undefined {
+  const epoch = currentEpoch(path);
+  const range = epochRange(path, epoch);
+  const slice = path.slice(range.start, range.end);
+  const first = firstHead(slice);
+  if (first !== undefined) return first;
+  return latestHead(path.slice(0, range.end));
+}
+
+function firstHead(path: readonly StoredEntry[]): number | undefined {
+  return headFromPairs(path, false);
+}
+
+function latestHead(path: readonly StoredEntry[]): number | undefined {
+  return headFromPairs(path, true);
+}
+
+function headFromPairs(
+  path: readonly StoredEntry[],
+  latest: boolean,
+): number | undefined {
+  let pending: number | undefined;
+  let found: number | undefined;
+  for (const entry of path) {
+    if (entry.kind === "manifest") {
+      pending = budgetUsed(entry);
+      continue;
+    }
+    if (entry.kind !== "message" || !isAssistant(entry)) continue;
+    const usage = entry.details?.usage;
+    if (!isRecord(usage) || pending === undefined || pending === 0) continue;
+    const measured = inputTotal(usage);
+    if (measured === undefined) continue;
+    found = Math.max(0, measured - pending);
+    if (!latest) return found;
+    pending = undefined;
+  }
+  return found;
+}
+
+function currentEpoch(path: readonly StoredEntry[]): number {
+  let epoch = 0;
+  for (const entry of path) {
+    if (entry.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
+    const value = finite(entry.payload.epoch);
+    if (value !== undefined) epoch = value;
+  }
+  return epoch;
+}
+
+function epochRange(
+  path: readonly StoredEntry[],
+  epoch: number,
+): { start: number; end: number } {
+  let start = 0;
+  let opened = epoch === 0;
+  for (let index = 0; index < path.length; index += 1) {
+    const entry = path[index];
+    if (entry?.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
+    if (entry.payload.epoch !== epoch) continue;
+    start = index;
+    opened = true;
+    break;
+  }
+  if (!opened) return { start: path.length, end: path.length };
+  let end = path.length;
+  for (let index = start + 1; index < path.length; index += 1) {
+    if (path[index]?.kind === "view_epoch") {
+      end = index;
+      break;
+    }
+  }
+  return { start, end };
 }
 
 function previousEstimate(path: readonly StoredEntry[]): number | undefined {
+  const manifest = previousManifest(path);
+  if (!manifest) return undefined;
+  return budgetUsed(manifest);
+}
+
+function previousManifest(
+  path: readonly StoredEntry[],
+): StoredEntry | undefined {
   for (let index = path.length - 1; index >= 0; index -= 1) {
     const entry = path[index];
-    if (entry?.kind !== "manifest" || !isRecord(entry.payload)) continue;
-    const budget = entry.payload.budget;
-    if (!isRecord(budget)) continue;
-    return finite(budget.used);
+    if (entry?.kind === "manifest") return entry;
   }
   return undefined;
+}
+
+function budgetUsed(entry: StoredEntry): number | undefined {
+  if (!isRecord(entry.payload)) return undefined;
+  const budget = entry.payload.budget;
+  if (typeof budget === "number") return finite(budget);
+  if (!isRecord(budget)) return undefined;
+  return finite(budget.used);
+}
+
+function frozenTokens(payload: Record<string, unknown>): number {
+  const budget = payload.budget;
+  if (!isRecord(budget)) return 0;
+  return finite(budget.frozenTokens) ?? 0;
+}
+
+function epochHeadTokens(payload: Record<string, unknown>): number {
+  if (!Array.isArray(payload.claims)) return 0;
+  let total = 0;
+  for (const claim of payload.claims) {
+    if (!isRecord(claim) || claim.placement !== "epoch-head") continue;
+    if (claim.tier === "none") continue;
+    total += finite(claim.tokens) ?? 0;
+  }
+  return total;
 }
 
 function latestUsage(
@@ -68,14 +188,29 @@ function latestUsage(
 ): Record<string, unknown> | undefined {
   for (let index = path.length - 1; index >= 0; index -= 1) {
     const entry = path[index];
-    if (entry?.kind !== "message" || !isMessage(entry.payload)) {
-      continue;
-    }
-    if (entry.payload.role !== "assistant") continue;
+    if (!entry || !isAssistant(entry)) continue;
     const usage = entry.details?.usage;
     return isRecord(usage) ? usage : undefined;
   }
   return undefined;
+}
+
+function isAssistant(entry: StoredEntry): boolean {
+  return (
+    entry.kind === "message" &&
+    isMessage(entry.payload) &&
+    entry.payload.role === "assistant"
+  );
+}
+
+function inputTotal(usage: Record<string, unknown>): number | undefined {
+  const other = finite(usage.inputOther);
+  const read = finite(usage.inputCacheRead);
+  const created = finite(usage.inputCacheCreation);
+  if (other === undefined || read === undefined || created === undefined) {
+    return undefined;
+  }
+  return other + read + created;
 }
 
 function finite(value: unknown): number | undefined {
