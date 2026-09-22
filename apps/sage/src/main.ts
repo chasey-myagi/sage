@@ -8,8 +8,10 @@
  * is contextCompiler with budget 40000, the four first-party claims, and
  * the default route policy, unless `--passthrough` selects passthroughView.
  * `--scorer model` installs a model scorer on the root compiler. It reuses
- * the assembled adapters and the session model. The default scorer is the
- * deterministic rule scorer.
+ * the assembled adapters and the session model. `--scorer jev` installs the
+ * TypeSafe Jev scorer and reads `TYPESAFE_API_KEY`; a missing key exits 2.
+ * The default scorer is the deterministic rule scorer. `--provider typesafe`
+ * is rejected: that catalog row prices Jev and is not a chat endpoint.
  * Two API keys assemble two adapters. The default route ladder is only the
  * current model, so a rebuild does not switch models. `--ladder` takes
  * `provider/model` rungs separated by commas and opts into cheapest-allowed
@@ -46,6 +48,7 @@ import {
   contextCompiler,
   costTierPolicy,
   expandTool,
+  jevScorer,
   modelScorer,
   progressLedger,
   type RoutePolicy,
@@ -199,6 +202,10 @@ export async function runCli(
     stderr.write(`${parsed.message}\n`);
     return 1;
   }
+  if (parsed.scorer === "jev" && !env.TYPESAFE_API_KEY) {
+    stderr.write("Missing TYPESAFE_API_KEY\n");
+    return 2;
+  }
   const auth = resolveAuth(parsed.provider, parsed.model, env);
   if (!auth.ok) {
     stderr.write(`${auth.message}\n`);
@@ -223,7 +230,9 @@ export async function runCli(
             adapters,
             model: { provider: auth.provider, model: auth.model },
           })
-        : undefined,
+        : parsed.scorer === "jev"
+          ? jevScorer({ apiKey: env.TYPESAFE_API_KEY })
+          : undefined,
   });
   let turn = 0;
   session.hooks.observe("turn_start", (payload) => {
@@ -352,7 +361,7 @@ type Parsed =
       model?: string;
       passthrough: boolean;
       json: boolean;
-      scorer?: "rule" | "model";
+      scorer?: "rule" | "model" | "jev";
       ladder?: { provider: string; model: string }[];
     }
   | { ok: false; message: string };
@@ -363,7 +372,7 @@ export function parseArgs(argv: string[]): Parsed {
   let model: string | undefined;
   let passthrough = false;
   let json = false;
-  let scorer: "rule" | "model" | undefined;
+  let scorer: "rule" | "model" | "jev" | undefined;
   let ladder: { provider: string; model: string }[] | undefined;
   const positional: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -395,7 +404,11 @@ export function parseArgs(argv: string[]): Parsed {
       if (taken.name === "provider") provider = taken.value;
       if (taken.name === "model") model = taken.value;
       if (taken.name === "scorer") {
-        if (taken.value !== "rule" && taken.value !== "model") {
+        if (
+          taken.value !== "rule" &&
+          taken.value !== "model" &&
+          taken.value !== "jev"
+        ) {
           return { ok: false, message: usage() };
         }
         scorer = taken.value;
@@ -428,7 +441,7 @@ export function parseArgs(argv: string[]): Parsed {
 
 function usage(): string {
   return [
-    "usage: sage [-p | --print] <task> [--provider anthropic|openai] [--model <id>] [--ladder provider/model,provider/model] [--passthrough] [--scorer rule|model] [--json]",
+    "usage: sage [-p | --print] <task> [--provider anthropic|openai] [--model <id>] [--ladder provider/model,provider/model] [--passthrough] [--scorer rule|model|jev] [--json]",
     "       sage stats <session.jsonl>",
     "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider anthropic|openai] --out <dir>",
     "       sage bench report <runA> <runB>",
@@ -533,6 +546,13 @@ function resolveAuth(
         message: "Missing ANTHROPIC_API_KEY or OPENAI_API_KEY",
       };
     }
+  }
+  if (selected === "typesafe") {
+    return {
+      ok: false,
+      message:
+        "typesafe is not a chat endpoint; use --scorer jev with TYPESAFE_API_KEY",
+    };
   }
   if (selected !== "anthropic" && selected !== "openai") {
     return { ok: false, message: `Unknown provider: ${selected}` };

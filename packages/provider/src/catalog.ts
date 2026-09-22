@@ -16,6 +16,8 @@ const KNOWN_MAX_TOKENS = 8192;
 const ANTHROPIC_SOURCE =
   "https://platform.claude.com/docs/en/about-claude/pricing";
 const OPENAI_SOURCE = "https://developers.openai.com/api/docs/pricing";
+const TYPESAFE_SOURCE =
+  "https://typesafe.ai/blog/introducing-system-one-models-and-jev";
 
 export type CatalogEntry = {
   provider: string;
@@ -107,6 +109,18 @@ const MODELS: readonly CatalogEntry[] = [
       cacheWritePerMTok: 0,
       cacheReadPerMTok: 0.075,
       source: OPENAI_SOURCE,
+    },
+  },
+  {
+    provider: "typesafe",
+    model: "jev-latest",
+    contextWindow: 32_000,
+    pricing: {
+      inputPerMTok: 0.042,
+      outputPerMTok: 0,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0,
+      source: TYPESAFE_SOURCE,
     },
   },
 ];
