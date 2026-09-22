@@ -156,6 +156,24 @@ describe("scenario 5 cost tier", () => {
     });
   });
 
+  it("stays on the current model when that model is the only ladder rung", () => {
+    const current = { provider: "anthropic", model: "claude-sonnet-5" };
+    const result = costTierPolicy({
+      ladder: [current],
+      pick: "cheapest-allowed",
+    })(
+      input({
+        viewChunks: [],
+        current,
+      }),
+    );
+    expect(result?.model).toEqual(current);
+    expect(result?.model).not.toEqual({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+    });
+  });
+
   it("ignores cheaper catalog models that are not on the ladder", () => {
     const result = costTierPolicy({
       ladder: [{ provider: "openai", model: "gpt-5.4" }],

@@ -59,7 +59,7 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 `contextCompiler({ route })` 只在本轮决定重开阶段时调用。策略没装，或者 `rebuild` 为 false，一次都不会进策略。
 
-传给策略的候选默认是当前 provider 的 `listModels`。要跨 provider，调用方在策略里换成已装配 provider 的目录并集。`costTierPolicy` 只看 ladder 上的型号，目录里定不了价的跳过。
+传给策略的候选默认是当前 provider 的 `listModels`。要跨 provider，调用方在策略里换成已装配 provider 的目录并集。`costTierPolicy` 只看 ladder 上的型号，目录里定不了价的跳过。梯子只有当前型号时，阶段重开不换型号。`apps/sage` 的默认就是这一档；跨型号要显式传入 ladder。
 
 `sensitivePolicy` 看的是这次新视图的块，不是整段历史。tier 为 `none` 的块不触发规则。命中的 access key 写成 `sensitive:<key>`，对应 provider 从候选里拿掉。`withSensitiveFilter` 先裁候选，再跑里面的策略。`costTierPolicy({ pick: "cheapest-allowed" })` 在剩下的 ladder 里选 input 价最低的。
 
@@ -67,13 +67,13 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 ## 子任务
 
-模型调用 `spawn_subtask`，参数是 `query`，可选 `budget`、`readOnly`、`model`。一次派多个只读子任务用 `spawn_subtasks`，参数是 `tasks`。三个都标了 `readOnly: true` 才会进并行池，默认同时最多 4 个；任何一个不是只读，这次调用整单拒绝。
+模型调用 `spawn_subtask`，参数是 `query`，可选 `budget`、`readOnly`、`model`。也可以传 `preset` 和 `args`：预设是 `<cwd>/.sage/subtasks/<name>.md` 与 `<home>/.sage/subtasks/<name>.md`，项目文件盖住同名的用户文件。名字是文件名去掉 `.md`。frontmatter 只认 `name`、`budget`、`readOnly`、`model`（`provider/model`）；`name` 不改注册名。正文是 query 模板，`{{args.xxx}}` 用 args 替换，缺的参数换成空串。调用里写明的 query、budget、readOnly、model 盖住预设。一次派多个子任务用 `spawn_subtasks`，参数是 `tasks`。全部 `readOnly: true` 时直接并行。否则看每个任务声明的 `accesses`：同一 key 上任一方是 write 就冲突；只读任务的 accesses 当空；没声明 accesses 且不是只读，视为未知写，和任何其他任务冲突。冲突则整单拒绝，正文点名 `(taskA, taskB, key)`。默认同时最多 4 个。
 
 子任务不复制父会话的历史。它在同一份 Log 上另开一个 sessionId，第一条 entry 是 `subtask`，记下父会话和父 leaf。子会话的头（system 和工具 schema）与父上一次请求相同：工具列表不换。差异在尾部。父请求里已经冻结的前缀原样留在前面，子任务的问题作为尾部申领单 `subtask-query` 接在后面。子会话自己的块 id 带 `own:` 前缀；父块仍用 `seq:N` / `seq:N#id`，指的是同一份原文。
 
 只读不靠换掉工具集。`readOnly: true` 时工具 schema 不动，guard 否决所有 `isReadOnly === false` 的调用，结果是 `Denied: read-only subtask`。这样前缀的 tools 块不会因为少了一把工具而失效。
 
-子任务是一次性的。跑完把结果写进父会话的 tool_result，不保留一条可以接着聊的子会话。正文是 `Subtask <sid> <outcome>. <最后一条 assistant 文本>`，下一行是 `Chunks: child:<sid>#seq:N, …`。父会话之后调用 `expand`，id 用 `child:<sid>#<chunkId>`，取回的是那一块当时的原文。子会话的 usage 写在这次 tool_result 的 details 里，不累加进父会话的 RunSummary。纵向默认最多到孙会话（`maxDepth` 2），每个会话横向默认最多 8 个（`maxSubtasks`）。
+子任务是一次性的。跑完把结果写进父会话的 tool_result，不保留一条可以接着聊的子会话。正文是 `Subtask <sid> <outcome>. <最后一条 assistant 文本>`，下一行是 `Chunks: child:<sid>#seq:N, …`。父会话之后调用 `expand`，id 用 `child:<sid>#<chunkId>`，取回的是那一块当时的原文。子会话的 usage 写在这次 tool_result 的 details 里。内核把它记到父用户消息的 `details.toolResults`，不累加进父会话的 `RunSummary.usage`。`health.subtasks` 汇总这些 usage；`cacheHitRatio` 和 `expandRate` 仍只算父会话。纵向默认最多到孙会话（`maxDepth` 2），每个会话横向默认最多 8 个（`maxSubtasks`）。
 
 ## 打分器
 

@@ -3,15 +3,18 @@
  *
  * Contract: parse argv, assemble AgentSession with the seven tools plus
  * update_ledger, expand, spawn_subtask, and spawn_subtasks, and a
- * JsonlLogStore under
- * `<cwd>/.sage/sessions`. The view
+ * JsonlLogStore under `<cwd>/.sage/sessions`. Subtask presets load from
+ * `<cwd>/.sage/subtasks` and, on the CLI, from `homedir()`. The view
  * is contextCompiler with budget 40000, the four first-party claims, and
  * the default route policy, unless `--passthrough` selects passthroughView.
  * `--scorer model` installs a model scorer on the root compiler. It reuses
  * the assembled adapters and the session model. The default scorer is the
  * deterministic rule scorer.
- * Two API keys assemble two adapters. One key routes only inside that
- * provider. stdout is one JSON RunSummary, including `health`. `--json`
+ * Two API keys assemble two adapters. The default route ladder is only the
+ * current model, so a rebuild does not switch models. `--ladder` takes
+ * `provider/model` rungs separated by commas and opts into cheapest-allowed
+ * across that list. `.env` and `secrets` still drop every non-home provider
+ * on that ladder. stdout is one JSON RunSummary, including `health`. `--json`
  * asks for that same line. `stats <session.jsonl>` reads the file with
  * JsonlLogStore and prints `runHealth` without starting a run.
  * `bench run` clones each task, runs sage, then the task's test command,
@@ -28,6 +31,7 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -84,6 +88,8 @@ export function createCodingSession(opts: {
   budget?: number;
   passthrough?: boolean;
   scorer?: Scorer;
+  ladder?: readonly { provider: string; model: string }[];
+  home?: string;
 }): CodingSession {
   if (!opts.adapter && !opts.adapters) {
     throw new Error("createCodingSession requires adapter or adapters");
@@ -110,7 +116,11 @@ export function createCodingSession(opts: {
     toolCatalog({ deferred: [] }),
     ledger.provider,
   ];
-  const route = defaultRoutePolicy(Object.keys(adapters), opts.model.provider);
+  const route = defaultRoutePolicy(
+    Object.keys(adapters),
+    opts.model.provider,
+    opts.ladder,
+  );
   const tools = [
     ...createTools({ cwd: opts.cwd, exec: opts.exec }),
     ledger.tool,
@@ -121,6 +131,8 @@ export function createCodingSession(opts: {
     adapters,
     tools,
     system,
+    cwd: opts.cwd,
+    ...(opts.home ? { home: opts.home } : {}),
     makeCompiler: ({ budget, query }) =>
       contextCompiler({
         budget,
@@ -203,6 +215,8 @@ export async function runCli(
     adapters,
     model: { provider: auth.provider, model: auth.model },
     passthrough: parsed.passthrough,
+    home: homedir(),
+    ...(parsed.ladder ? { ladder: parsed.ladder } : {}),
     scorer:
       parsed.scorer === "model"
         ? modelScorer({
@@ -242,22 +256,32 @@ const SENSITIVE = /(^|\/)\.env$|\/secrets\//;
 export function defaultRoutePolicy(
   providers: readonly string[],
   home: string,
+  ladder?: readonly { provider: string; model: string }[],
 ): RoutePolicy {
   const unique = [...new Set(providers)];
   const candidates = unique.flatMap((provider) => [...listModels(provider)]);
-  const ladder = candidates.map((entry) => ({
-    provider: entry.provider,
-    model: entry.model,
-  }));
   const deny = unique.filter((provider) => provider !== home);
-  const policy = withSensitiveFilter(
-    costTierPolicy({ ladder, pick: "cheapest-allowed" }),
-    sensitivePolicy({
-      rules:
-        deny.length === 0 ? [] : [{ pattern: SENSITIVE, denyProviders: deny }],
-    }),
-  );
-  return (input) => policy({ ...input, candidates });
+  const filter = sensitivePolicy({
+    rules:
+      deny.length === 0 ? [] : [{ pattern: SENSITIVE, denyProviders: deny }],
+  });
+  const explicit =
+    ladder && ladder.length > 0
+      ? ladder.map((entry) => ({
+          provider: entry.provider,
+          model: entry.model,
+        }))
+      : undefined;
+  return (input) => {
+    const policy = withSensitiveFilter(
+      costTierPolicy({
+        ladder: explicit ?? [input.current],
+        pick: "cheapest-allowed",
+      }),
+      filter,
+    );
+    return policy({ ...input, candidates });
+  };
 }
 
 export function adaptersFromEnv(
@@ -329,6 +353,7 @@ type Parsed =
       passthrough: boolean;
       json: boolean;
       scorer?: "rule" | "model";
+      ladder?: { provider: string; model: string }[];
     }
   | { ok: false; message: string };
 
@@ -339,6 +364,7 @@ export function parseArgs(argv: string[]): Parsed {
   let passthrough = false;
   let json = false;
   let scorer: "rule" | "model" | undefined;
+  let ladder: { provider: string; model: string }[] | undefined;
   const positional: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? "";
@@ -374,6 +400,11 @@ export function parseArgs(argv: string[]): Parsed {
         }
         scorer = taken.value;
       }
+      if (taken.name === "ladder") {
+        const parsed = parseLadder(taken.value);
+        if (!parsed) return { ok: false, message: usage() };
+        ladder = parsed;
+      }
       continue;
     }
     positional.push(arg);
@@ -383,12 +414,21 @@ export function parseArgs(argv: string[]): Parsed {
   }
   if (task === undefined) task = positional.join(" ");
   if (!task) return { ok: false, message: usage() };
-  return { ok: true, task, provider, model, passthrough, json, scorer };
+  return {
+    ok: true,
+    task,
+    provider,
+    model,
+    passthrough,
+    json,
+    scorer,
+    ladder,
+  };
 }
 
 function usage(): string {
   return [
-    "usage: sage [-p | --print] <task> [--provider anthropic|openai] [--model <id>] [--passthrough] [--scorer rule|model] [--json]",
+    "usage: sage [-p | --print] <task> [--provider anthropic|openai] [--model <id>] [--ladder provider/model,provider/model] [--passthrough] [--scorer rule|model] [--json]",
     "       sage stats <session.jsonl>",
     "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider anthropic|openai] --out <dir>",
     "       sage bench report <runA> <runB>",
@@ -402,7 +442,7 @@ function take(
 ):
   | {
       kind: "flag";
-      name: "print" | "provider" | "model" | "scorer";
+      name: "print" | "provider" | "model" | "scorer" | "ladder";
       value: string;
       next: number;
     }
@@ -422,21 +462,30 @@ function take(
 
 function flagName(
   arg: string,
-): "print" | "provider" | "model" | "scorer" | "unknown" | undefined {
+):
+  | "print"
+  | "provider"
+  | "model"
+  | "scorer"
+  | "ladder"
+  | "unknown"
+  | undefined {
   if (arg === "--print" || arg === "-p") return "print";
   if (arg === "--provider") return "provider";
   if (arg === "--model") return "model";
   if (arg === "--scorer") return "scorer";
+  if (arg === "--ladder") return "ladder";
   if (arg.startsWith("-")) return "unknown";
   return undefined;
 }
 
-function inlineFlag(
-  arg: string,
-):
-  | { name: "print" | "provider" | "model" | "scorer"; value: string }
+function inlineFlag(arg: string):
+  | {
+      name: "print" | "provider" | "model" | "scorer" | "ladder";
+      value: string;
+    }
   | undefined {
-  const names = ["print", "provider", "model", "scorer"] as const;
+  const names = ["print", "provider", "model", "scorer", "ladder"] as const;
   for (const name of names) {
     const prefix = `--${name}=`;
     if (!arg.startsWith(prefix)) continue;
@@ -445,6 +494,26 @@ function inlineFlag(
     return { name, value };
   }
   return undefined;
+}
+
+function parseLadder(
+  value: string,
+): { provider: string; model: string }[] | undefined {
+  const parts = value
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (parts.length === 0) return undefined;
+  const ladder: { provider: string; model: string }[] = [];
+  for (const part of parts) {
+    const slash = part.indexOf("/");
+    if (slash <= 0 || slash === part.length - 1) return undefined;
+    ladder.push({
+      provider: part.slice(0, slash),
+      model: part.slice(slash + 1),
+    });
+  }
+  return ladder;
 }
 
 function resolveAuth(

@@ -1,6 +1,14 @@
 import { expect, it } from "vitest";
 import { runHealth } from "../src/health.ts";
+import { AgentSession, MemoryLogStore } from "../src/index.ts";
 import type { StoredEntry } from "../src/log/types.ts";
+import {
+  createFaux,
+  MODEL,
+  SYSTEM,
+  stopScript,
+  toolScript,
+} from "./support/faux.ts";
 
 const LEAK = "LEAK_SENTINEL_claim_/tmp/secret.txt";
 
@@ -45,6 +53,90 @@ function manifest(seq: number, payload: Record<string, unknown>): StoredEntry {
   });
 }
 
+it("sums child usage from spawn tool results and leaves parent rates alone", async () => {
+  const store = new MemoryLogStore();
+  const { adapter } = createFaux([
+    toolScript("s1", "spawn_subtask", "{}"),
+    toolScript("s2", "spawn_subtasks", "{}"),
+    stopScript("done"),
+  ]);
+  const session = new AgentSession({
+    store,
+    sessionId: "parent",
+    adapter,
+    model: MODEL,
+    system: SYSTEM,
+    tools: [
+      spawnTool("spawn_subtask", {
+        sessionId: "c1",
+        outcome: "done",
+        usage: {
+          inputOther: 40,
+          inputCacheRead: 50,
+          inputCacheCreation: 6,
+          output: 7,
+        },
+        chunks: [],
+      }),
+      spawnTool("spawn_subtasks", {
+        results: [
+          {
+            sessionId: "c2",
+            outcome: "done",
+            usage: {
+              inputOther: 1,
+              inputCacheRead: 2,
+              inputCacheCreation: 0,
+              output: 3,
+            },
+            chunks: [],
+          },
+          {
+            sessionId: "c3",
+            outcome: "done",
+            usage: {
+              inputOther: 4,
+              inputCacheRead: 0,
+              inputCacheCreation: 1,
+              output: 1,
+            },
+            chunks: [],
+          },
+        ],
+      }),
+    ],
+  });
+  const summary = await session.run("go");
+  const health = summary.health;
+  expect(health.subtasks).toEqual({
+    count: 3,
+    tokens: {
+      input: 45,
+      cacheRead: 52,
+      cacheCreation: 7,
+      output: 11,
+      total: 115,
+    },
+  });
+  expect(health.tokens).toEqual({
+    input: 9,
+    cacheRead: 3,
+    cacheCreation: 0,
+    output: 6,
+    total: 18,
+  });
+  expect(health.cacheHitRatio).toBe(3 / 12);
+  expect(health.expandRate).toBeNull();
+  expect(JSON.stringify(health)).not.toContain("c1");
+  for (const entry of store.path("parent")) {
+    if (entry.kind !== "message") continue;
+    const payload = entry.payload as { content?: { type?: string }[] };
+    for (const block of payload.content ?? []) {
+      expect(block).not.toHaveProperty("details");
+    }
+  }
+});
+
 it("returns zeros and null rates for an empty path", () => {
   expect(runHealth([])).toEqual({
     turns: 0,
@@ -57,6 +149,16 @@ it("returns zeros and null rates for an empty path", () => {
     modelChanges: 0,
     scorerCalls: 0,
     scorerFallbacks: 0,
+    subtasks: {
+      count: 0,
+      tokens: {
+        input: 0,
+        cacheRead: 0,
+        cacheCreation: 0,
+        output: 0,
+        total: 0,
+      },
+    },
   });
 });
 
@@ -196,6 +298,21 @@ it("sums numeric scorer fallbacks and ignores non-finite usage", () => {
   expect(health.scorerCalls).toBe(1);
   expect(health.scorerFallbacks).toBe(2);
 });
+
+function spawnTool(name: string, details: Record<string, unknown>) {
+  return {
+    def: { name, description: name, inputSchema: { type: "object" } },
+    isReadOnly: false,
+    isDestructive: false,
+    isOpenWorld: false,
+    accesses() {
+      return [];
+    },
+    async execute() {
+      return { content: name, isError: false, details };
+    },
+  };
+}
 
 function valuesAreCounts(value: unknown): boolean {
   if (value === null) return true;

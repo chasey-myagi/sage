@@ -11,10 +11,13 @@
  * `expandRate` is expands/omitted, or null when omitted is 0. `epochs` is
  * one more than the highest `view_epoch.epoch`, or 1 when none exist.
  * `scorerCalls` sums `scorer.calls`. `scorerFallbacks` sums numeric
- * `scorer.fallback`, and counts `true` as 1.
+ * `scorer.fallback`, and counts `true` as 1. `subtasks` sums usage from
+ * `spawn_subtask` and `spawn_subtasks` tool results stored on the user
+ * message as `details.toolResults`. `spawn_subtasks` counts each item in
+ * `details.results`. `cacheHitRatio` and `expandRate` ignore that usage.
  *
  * Intentionally not in the Log: this function. It does not copy claim
- * text, chunk text, reasons, or paths.
+ * text, chunk text, reasons, paths, or child session ids.
  */
 
 import { isRecord, type StoredEntry } from "./log/types.js";
@@ -36,6 +39,16 @@ export type RunHealth = {
   modelChanges: number;
   scorerCalls: number;
   scorerFallbacks: number;
+  subtasks: {
+    count: number;
+    tokens: {
+      input: number;
+      cacheRead: number;
+      cacheCreation: number;
+      output: number;
+      total: number;
+    };
+  };
 };
 
 export function runHealth(path: readonly StoredEntry[]): RunHealth {
@@ -101,7 +114,90 @@ export function runHealth(path: readonly StoredEntry[]): RunHealth {
     modelChanges,
     scorerCalls,
     scorerFallbacks,
+    subtasks: subtaskHealth(path),
   };
+}
+
+function subtaskHealth(path: readonly StoredEntry[]): RunHealth["subtasks"] {
+  const tokens = {
+    input: 0,
+    cacheRead: 0,
+    cacheCreation: 0,
+    output: 0,
+  };
+  let count = 0;
+  const names = new Map<string, string>();
+  for (const entry of path) {
+    if (entry.kind !== "message" || !isRecord(entry.payload)) continue;
+    const content = entry.payload.content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (!isRecord(block) || block.type !== "tool_use") continue;
+        if (typeof block.id !== "string" || typeof block.name !== "string") {
+          continue;
+        }
+        names.set(block.id, block.name);
+      }
+    }
+    const listed = entry.details?.toolResults;
+    if (!Array.isArray(listed)) continue;
+    for (const item of listed) {
+      if (!isRecord(item)) continue;
+      const named =
+        typeof item.name === "string"
+          ? item.name
+          : typeof item.toolUseId === "string"
+            ? names.get(item.toolUseId)
+            : undefined;
+      if (named !== "spawn_subtask" && named !== "spawn_subtasks") continue;
+      const details = isRecord(item.details) ? item.details : undefined;
+      if (!details) continue;
+      count += absorbSpawn(named, details, tokens);
+    }
+  }
+  const total =
+    tokens.input + tokens.cacheRead + tokens.cacheCreation + tokens.output;
+  return { count, tokens: { ...tokens, total } };
+}
+
+function absorbSpawn(
+  name: string,
+  details: Record<string, unknown>,
+  tokens: {
+    input: number;
+    cacheRead: number;
+    cacheCreation: number;
+    output: number;
+  },
+): number {
+  if (name === "spawn_subtasks" && Array.isArray(details.results)) {
+    let count = 0;
+    for (const result of details.results) {
+      if (!isRecord(result)) continue;
+      addUsage(tokens, result.usage);
+      count += 1;
+    }
+    return count;
+  }
+  if (!isRecord(details.usage)) return 0;
+  addUsage(tokens, details.usage);
+  return 1;
+}
+
+function addUsage(
+  tokens: {
+    input: number;
+    cacheRead: number;
+    cacheCreation: number;
+    output: number;
+  },
+  usage: unknown,
+): void {
+  if (!isRecord(usage)) return;
+  tokens.input += finite(usage.inputOther) ?? 0;
+  tokens.cacheRead += finite(usage.inputCacheRead) ?? 0;
+  tokens.cacheCreation += finite(usage.inputCacheCreation) ?? 0;
+  tokens.output += finite(usage.output) ?? 0;
 }
 
 function isAssistant(entry: StoredEntry): boolean {

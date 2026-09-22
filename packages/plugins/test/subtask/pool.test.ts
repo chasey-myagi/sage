@@ -198,7 +198,114 @@ it("keeps at most maxConcurrent children in flight", async () => {
   );
 });
 
-it("rejects the whole batch when any task is not read-only", async () => {
+it("rejects a pair that writes the same key and names the conflict", async () => {
+  const store = new MemoryLogStore();
+  seed(store, "parent");
+  const pooled = poolAdapter(0);
+  const spawnMany = toolsFor(store, pooled.adapter);
+  const result = await spawnMany.execute(
+    {
+      tasks: [
+        {
+          query: "taskA",
+          accesses: [{ key: "src/a.ts", mode: "write" }],
+        },
+        {
+          query: "taskB",
+          accesses: [{ key: "src/a.ts", mode: "write" }],
+        },
+      ],
+    },
+    { sessionId: "parent", toolUseId: "pool" },
+  );
+  expect(result.isError).toBe(true);
+  expect(result.content).toContain("(taskA, taskB, src/a.ts)");
+  expect(pooled.stats().childCalls).toBe(0);
+
+  const mixed = await spawnMany.execute(
+    {
+      tasks: [
+        {
+          query: "writer",
+          accesses: [{ key: "src/a.ts", mode: "write" }],
+        },
+        {
+          query: "reader",
+          accesses: [{ key: "src/a.ts", mode: "read" }],
+        },
+      ],
+    },
+    { sessionId: "parent", toolUseId: "pool-mixed" },
+  );
+  expect(mixed.isError).toBe(true);
+  expect(mixed.content).toContain("(writer, reader, src/a.ts)");
+  expect(pooled.stats().childCalls).toBe(0);
+
+  const disjoint = await spawnMany.execute(
+    {
+      tasks: [
+        {
+          query: "left",
+          accesses: [{ key: "src/a.ts", mode: "write" }],
+        },
+        {
+          query: "right",
+          accesses: [{ key: "src/b.ts", mode: "write" }],
+        },
+      ],
+    },
+    { sessionId: "parent", toolUseId: "pool-ok" },
+  );
+  expect(disjoint.isError).toBe(false);
+  expect(pooled.stats().childCalls).toBe(2);
+
+  const reads = await spawnMany.execute(
+    {
+      tasks: [
+        {
+          query: "read-a",
+          accesses: [{ key: "src/a.ts", mode: "read" }],
+        },
+        {
+          query: "read-b",
+          accesses: [{ key: "src/a.ts", mode: "search" }],
+        },
+      ],
+    },
+    { sessionId: "parent", toolUseId: "pool-read" },
+  );
+  expect(reads.isError).toBe(false);
+
+  const unknown = await spawnMany.execute(
+    {
+      tasks: [{ query: "safe", readOnly: true }, { query: "writes" }],
+    },
+    { sessionId: "parent", toolUseId: "pool-unknown" },
+  );
+  expect(unknown.isError).toBe(true);
+  expect(unknown.content).toContain("(safe, writes, unknown)");
+
+  const ignored = await spawnMany.execute(
+    {
+      tasks: [
+        {
+          query: "ro-a",
+          readOnly: true,
+          accesses: [{ key: "src/a.ts", mode: "write" }],
+        },
+        {
+          query: "ro-b",
+          readOnly: true,
+          accesses: [{ key: "src/a.ts", mode: "write" }],
+        },
+      ],
+    },
+    { sessionId: "parent", toolUseId: "pool-ro" },
+  );
+  expect(ignored.isError).toBe(false);
+});
+
+it("rejects an undeclared write beside any other task", async () => {
   const store = new MemoryLogStore();
   seed(store, "parent");
   const pooled = poolAdapter(0);
@@ -213,7 +320,7 @@ it("rejects the whole batch when any task is not read-only", async () => {
     { sessionId: "parent", toolUseId: "pool" },
   );
   expect(result.isError).toBe(true);
-  expect(result.content).toMatch(/read-only/i);
+  expect(result.content).toContain("(safe, writes, unknown)");
   expect(pooled.stats().childCalls).toBe(0);
 });
 
