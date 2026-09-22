@@ -291,6 +291,58 @@ describe("scenario 7 one-shot cli", () => {
     expect(io.text().stdout).toBe("");
     expect(io.text().stderr).toMatch(/API_KEY/);
   });
+
+  it("posts --provider deepseek to the preset URL and exits 2 without a key", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-deepseek-"));
+    const calls: { url: string; authorization: string | null }[] = [];
+    const disabled = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const headers = new Headers(init?.headers);
+      calls.push({
+        url: String(input),
+        authorization: headers.get("authorization"),
+      });
+      const sse = [
+        'data: {"id":"chatcmpl-s","object":"chat.completion.chunk","model":"deepseek-flash","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}',
+        "",
+        'data: {"id":"chatcmpl-s","object":"chat.completion.chunk","model":"deepseek-flash","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+        "",
+        'data: {"id":"chatcmpl-s","object":"chat.completion.chunk","model":"deepseek-flash","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1,"prompt_cache_hit_tokens":1,"prompt_cache_miss_tokens":2}}',
+        "",
+        "data: [DONE]",
+        "",
+      ].join("\n");
+      return new Response(sse, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }) as typeof fetch;
+    try {
+      const io = capture();
+      const code = await runCli(["--provider", "deepseek", "--print", "hi"], {
+        cwd: dir,
+        env: { DEEPSEEK_API_KEY: "sk-deepseek" },
+        stdout: io.stdout,
+        stderr: io.stderr,
+      });
+      expect(code).toBe(0);
+      expect(calls[0]?.url).toBe("https://api.deepseek.com/chat/completions");
+      expect(calls[0]?.authorization).toBe("Bearer sk-deepseek");
+    } finally {
+      globalThis.fetch = disabled;
+    }
+
+    const missing = capture();
+    const missingCode = await runCli(["--provider", "deepseek", "hi"], {
+      cwd: dir,
+      env: {},
+      stdout: missing.stdout,
+      stderr: missing.stderr,
+    });
+    expect(missingCode).toBe(2);
+    expect(missing.text().stdout).toBe("");
+    expect(missing.text().stderr).toContain("DEEPSEEK_API_KEY");
+  });
 });
 
 describe("scenario 8 faux read then edit", () => {

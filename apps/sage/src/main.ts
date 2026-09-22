@@ -10,13 +10,18 @@
  * `--scorer model` installs a model scorer on the root compiler. It reuses
  * the assembled adapters and the session model. The default scorer is the
  * deterministic rule scorer.
- * Two API keys assemble two adapters. The default route ladder is only the
- * current model, so a rebuild does not switch models. `--ladder` takes
- * `provider/model` rungs separated by commas and opts into cheapest-allowed
- * across that list. `.env` and `secrets` still drop every non-home provider
- * on that ladder. stdout is one JSON RunSummary, including `health`. `--json`
- * asks for that same line. `stats <session.jsonl>` reads the file with
- * JsonlLogStore and prints `runHealth` without starting a run.
+ * Each preset with its env key assembles an adapter. OpenAI-compatible
+ * presets share one adapter class and differ by base URL. `--provider`
+ * selects a preset. `--base-url` and `--api-key-env` override that preset.
+ * A named preset with no key exits 2 and names the env var. With no
+ * `--provider` and neither Anthropic nor OpenAI key, the process exits 1.
+ * The default route ladder is only the current model, so a rebuild does not
+ * switch models. `--ladder` takes `provider/model` rungs separated by commas
+ * and opts into cheapest-allowed across that list. `.env` and `secrets`
+ * still drop every non-home provider on that ladder. stdout is one JSON
+ * RunSummary, including `health`. `--json` asks for that same line.
+ * `stats <session.jsonl>` reads the file with JsonlLogStore and prints
+ * `runHealth` without starting a run.
  * `bench run` clones each task, runs sage, then the task's test command,
  * and writes `<out>/results.json` plus `<out>/sessions/<taskId>.jsonl`.
  * It exits 2 when the selected provider has no API key. `bench report`
@@ -62,7 +67,9 @@ import {
   listModels,
   type ModelRef,
   OpenAIAdapter,
+  PRESETS,
   type ProviderAdapter,
+  resolvePreset,
   type Sampling,
 } from "@sage/provider";
 import { type BashExec, createTools } from "@sage/tools";
@@ -199,16 +206,27 @@ export async function runCli(
     stderr.write(`${parsed.message}\n`);
     return 1;
   }
-  const auth = resolveAuth(parsed.provider, parsed.model, env);
+  const auth = resolveAuth(
+    parsed.provider,
+    parsed.model,
+    env,
+    parsed.baseUrl,
+    parsed.apiKeyEnv,
+  );
   if (!auth.ok) {
     stderr.write(`${auth.message}\n`);
-    return 1;
+    return auth.exitCode;
   }
+  const injected = Boolean(io.adapters || io.adapter);
   const adapters =
     io.adapters ??
     (io.adapter ? { [auth.provider]: io.adapter } : adaptersFromEnv(env));
-  if (!adapters[auth.provider]) {
-    adapters[auth.provider] = createAdapter(auth.provider, auth.apiKey);
+  if (!injected || !adapters[auth.provider]) {
+    adapters[auth.provider] = createAdapter(
+      auth.provider,
+      auth.apiKey,
+      auth.baseUrl,
+    );
   }
   const { session } = createCodingSession({
     cwd,
@@ -288,13 +306,10 @@ export function adaptersFromEnv(
   env: NodeJS.ProcessEnv,
 ): Record<string, ProviderAdapter> {
   const adapters: Record<string, ProviderAdapter> = {};
-  if (env.ANTHROPIC_API_KEY) {
-    adapters.anthropic = new AnthropicAdapter({
-      apiKey: env.ANTHROPIC_API_KEY,
-    });
-  }
-  if (env.OPENAI_API_KEY) {
-    adapters.openai = new OpenAIAdapter({ apiKey: env.OPENAI_API_KEY });
+  for (const preset of PRESETS) {
+    const apiKey = env[preset.envKey];
+    if (!apiKey) continue;
+    adapters[preset.name] = createAdapter(preset.name, apiKey, preset.baseUrl);
   }
   return adapters;
 }
@@ -344,12 +359,23 @@ function systemPrompt(cwd: string): string {
   ].join("\n");
 }
 
+type FlagName =
+  | "print"
+  | "provider"
+  | "model"
+  | "scorer"
+  | "ladder"
+  | "base-url"
+  | "api-key-env";
+
 type Parsed =
   | {
       ok: true;
       task: string;
       provider?: string;
       model?: string;
+      baseUrl?: string;
+      apiKeyEnv?: string;
       passthrough: boolean;
       json: boolean;
       scorer?: "rule" | "model";
@@ -361,6 +387,8 @@ export function parseArgs(argv: string[]): Parsed {
   let task: string | undefined;
   let provider: string | undefined;
   let model: string | undefined;
+  let baseUrl: string | undefined;
+  let apiKeyEnv: string | undefined;
   let passthrough = false;
   let json = false;
   let scorer: "rule" | "model" | undefined;
@@ -405,6 +433,8 @@ export function parseArgs(argv: string[]): Parsed {
         if (!parsed) return { ok: false, message: usage() };
         ladder = parsed;
       }
+      if (taken.name === "base-url") baseUrl = taken.value;
+      if (taken.name === "api-key-env") apiKeyEnv = taken.value;
       continue;
     }
     positional.push(arg);
@@ -419,6 +449,8 @@ export function parseArgs(argv: string[]): Parsed {
     task,
     provider,
     model,
+    ...(baseUrl ? { baseUrl } : {}),
+    ...(apiKeyEnv ? { apiKeyEnv } : {}),
     passthrough,
     json,
     scorer,
@@ -428,9 +460,9 @@ export function parseArgs(argv: string[]): Parsed {
 
 function usage(): string {
   return [
-    "usage: sage [-p | --print] <task> [--provider anthropic|openai] [--model <id>] [--ladder provider/model,provider/model] [--passthrough] [--scorer rule|model] [--json]",
+    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--passthrough] [--scorer rule|model] [--json]",
     "       sage stats <session.jsonl>",
-    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider anthropic|openai] --out <dir>",
+    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }
@@ -442,7 +474,7 @@ function take(
 ):
   | {
       kind: "flag";
-      name: "print" | "provider" | "model" | "scorer" | "ladder";
+      name: FlagName;
       value: string;
       next: number;
     }
@@ -460,32 +492,30 @@ function take(
   return { kind: "flag", name, value, next: index + 1 };
 }
 
-function flagName(
-  arg: string,
-):
-  | "print"
-  | "provider"
-  | "model"
-  | "scorer"
-  | "ladder"
-  | "unknown"
-  | undefined {
+function flagName(arg: string): FlagName | "unknown" | undefined {
   if (arg === "--print" || arg === "-p") return "print";
   if (arg === "--provider") return "provider";
   if (arg === "--model") return "model";
   if (arg === "--scorer") return "scorer";
   if (arg === "--ladder") return "ladder";
+  if (arg === "--base-url") return "base-url";
+  if (arg === "--api-key-env") return "api-key-env";
   if (arg.startsWith("-")) return "unknown";
   return undefined;
 }
 
-function inlineFlag(arg: string):
-  | {
-      name: "print" | "provider" | "model" | "scorer" | "ladder";
-      value: string;
-    }
-  | undefined {
-  const names = ["print", "provider", "model", "scorer", "ladder"] as const;
+function inlineFlag(
+  arg: string,
+): { name: FlagName; value: string } | undefined {
+  const names = [
+    "print",
+    "provider",
+    "model",
+    "scorer",
+    "ladder",
+    "base-url",
+    "api-key-env",
+  ] as const;
   for (const name of names) {
     const prefix = `--${name}=`;
     if (!arg.startsWith(prefix)) continue;
@@ -520,9 +550,17 @@ function resolveAuth(
   provider: string | undefined,
   model: string | undefined,
   env: NodeJS.ProcessEnv,
+  baseUrl: string | undefined,
+  apiKeyEnv: string | undefined,
 ):
-  | { ok: true; provider: string; model: string; apiKey: string }
-  | { ok: false; message: string } {
+  | {
+      ok: true;
+      provider: string;
+      model: string;
+      apiKey: string;
+      baseUrl: string;
+    }
+  | { ok: false; message: string; exitCode: number } {
   let selected = provider;
   if (!selected) {
     if (env.ANTHROPIC_API_KEY) selected = "anthropic";
@@ -530,31 +568,39 @@ function resolveAuth(
     else {
       return {
         ok: false,
+        exitCode: 1,
         message: "Missing ANTHROPIC_API_KEY or OPENAI_API_KEY",
       };
     }
   }
-  if (selected !== "anthropic" && selected !== "openai") {
-    return { ok: false, message: `Unknown provider: ${selected}` };
+  const preset = resolvePreset(selected);
+  if (!preset) {
+    return { ok: false, exitCode: 1, message: `Unknown provider: ${selected}` };
   }
-  const apiKey =
-    selected === "anthropic" ? env.ANTHROPIC_API_KEY : env.OPENAI_API_KEY;
+  const envKey = apiKeyEnv ?? preset.envKey;
+  const apiKey = env[envKey];
   if (!apiKey) {
-    const name =
-      selected === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
-    return { ok: false, message: `Missing ${name}` };
+    return { ok: false, exitCode: 2, message: `Missing ${envKey}` };
   }
   return {
     ok: true,
     provider: selected,
     model: model ?? defaultModel(selected).model,
     apiKey,
+    baseUrl: baseUrl ?? preset.baseUrl,
   };
 }
 
-function createAdapter(provider: string, apiKey: string): ProviderAdapter {
-  if (provider === "openai") return new OpenAIAdapter({ apiKey });
-  return new AnthropicAdapter({ apiKey });
+function createAdapter(
+  provider: string,
+  apiKey: string,
+  baseUrl: string,
+): ProviderAdapter {
+  const preset = resolvePreset(provider);
+  if (preset?.api === "anthropic-messages") {
+    return new AnthropicAdapter({ apiKey, baseUrl });
+  }
+  return new OpenAIAdapter({ apiKey, baseUrl });
 }
 
 function isDirectRun(): boolean {

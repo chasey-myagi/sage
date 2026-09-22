@@ -41,6 +41,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JsonlLogStore, type RunHealth, runHealth } from "@sage/core";
+import { resolvePreset } from "@sage/provider";
 
 export type BenchPolicy = "passthrough" | "compiler";
 
@@ -522,7 +523,7 @@ function parseRun(argv: string[]):
     return { message: benchUsage() };
   }
   const provider = values.get("provider");
-  if (provider && provider !== "anthropic" && provider !== "openai") {
+  if (provider && !resolvePreset(provider)) {
     return { message: benchUsage() };
   }
   return {
@@ -538,11 +539,10 @@ function missingKey(
   provider: string | undefined,
   env: NodeJS.ProcessEnv,
 ): string | undefined {
-  if (provider === "anthropic") {
-    return env.ANTHROPIC_API_KEY ? undefined : "Missing ANTHROPIC_API_KEY";
-  }
-  if (provider === "openai") {
-    return env.OPENAI_API_KEY ? undefined : "Missing OPENAI_API_KEY";
+  if (provider) {
+    const preset = resolvePreset(provider);
+    if (!preset) return `Unknown provider: ${provider}`;
+    return env[preset.envKey] ? undefined : `Missing ${preset.envKey}`;
   }
   if (env.ANTHROPIC_API_KEY || env.OPENAI_API_KEY) return undefined;
   return "Missing ANTHROPIC_API_KEY or OPENAI_API_KEY";
@@ -582,7 +582,7 @@ function requiredString(
 
 function benchUsage(): string {
   return [
-    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider anthropic|openai] --out <dir>",
+    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }
