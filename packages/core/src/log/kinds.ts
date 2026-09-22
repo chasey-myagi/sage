@@ -13,6 +13,10 @@
  * they differ from the default. The kernel does not decide that; it only
  * checks the shape.
  *
+ * `manifest.budget` is either a finite number or `{ total, used, overrun }`
+ * with three finite numbers. Both shapes are valid. The kernel does not
+ * interpret the object.
+ *
  * Intentionally not in the Log: reducer functions, the registry, and any
  * high-water mark.
  */
@@ -46,7 +50,7 @@ export type ModelChangePayload = {
 export type ManifestPayload = {
   epoch: number;
   turn: number;
-  budget?: number;
+  budget?: number | { total: number; used: number; overrun: number };
   claims: unknown[];
   chunks: unknown[];
   anomalies: unknown[];
@@ -118,16 +122,26 @@ function isManifest(payload: unknown): payload is ManifestPayload {
   if (typeof payload.turn !== "number" || !Number.isFinite(payload.turn)) {
     return false;
   }
-  if (
-    payload.budget !== undefined &&
-    (typeof payload.budget !== "number" || !Number.isFinite(payload.budget))
-  ) {
-    return false;
-  }
+  if (payload.budget !== undefined && !isBudget(payload.budget)) return false;
   return (
     Array.isArray(payload.claims) &&
     Array.isArray(payload.chunks) &&
     Array.isArray(payload.anomalies)
+  );
+}
+
+function isBudget(
+  value: unknown,
+): value is number | { total: number; used: number; overrun: number } {
+  if (typeof value === "number") return Number.isFinite(value);
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.total === "number" &&
+    Number.isFinite(value.total) &&
+    typeof value.used === "number" &&
+    Number.isFinite(value.used) &&
+    typeof value.overrun === "number" &&
+    Number.isFinite(value.overrun)
   );
 }
 

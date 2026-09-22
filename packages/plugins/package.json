@@ -4,5 +4,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@sage/core": "workspace:*",
+    "@sage/provider": "workspace:*"
   }
 }

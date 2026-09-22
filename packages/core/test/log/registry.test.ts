@@ -208,6 +208,36 @@ describe("entry kinds", () => {
     ).toThrow(InvalidEntryError);
   });
 
+  it("accepts a budget report object and rejects one missing overrun", () => {
+    const store = new MemoryLogStore();
+    const sessionId = "budget-report";
+    store.append(sessionId, {
+      kind: "manifest",
+      payload: {
+        epoch: 0,
+        turn: 1,
+        budget: { total: 10000, used: 12000, overrun: 2000 },
+        claims: [],
+        chunks: [],
+        anomalies: [],
+      },
+    });
+    expect(store.path(sessionId)).toHaveLength(1);
+    expect(() =>
+      store.append(sessionId, {
+        kind: "manifest",
+        payload: {
+          epoch: 0,
+          turn: 1,
+          budget: { total: 10000, used: 12000 },
+          claims: [],
+          chunks: [],
+          anomalies: [],
+        },
+      }),
+    ).toThrow(InvalidEntryError);
+  });
+
   it("throws when the same kind is registered twice", () => {
     expect(() =>
       registerEntryKind({

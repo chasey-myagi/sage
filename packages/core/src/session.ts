@@ -5,9 +5,13 @@
  * turn_start → prepared = adapter.prepare(model) once per run →
  * view = await viewProvider.view(ctx) → assertPaired → assertHeadFrozen →
  * structuredClone(view) is what observe("view_compiled") receives →
+ * if view.epochStart is set, or view.epoch is greater than the latest
+ * view_epoch on the path (0 when none exists), append view_epoch
+ * { epoch, reason } with details.epochHead = messages[0] →
  * append request_header (system and tools text only when that hash differs
  * from the previous request_header, or there is none) →
- * append manifest (payload is view.manifest) → adapter.stream →
+ * append manifest (payload is view.manifest, details is view.details) →
+ * adapter.stream →
  * collect → append message(assistant) with details
  * {responseModel, responseId, api, usage, finish} → llm_end →
  * if finish.kind is tool_use, run the tool pipeline for each tool_use and
@@ -246,10 +250,12 @@ export class AgentSession {
     await this.dispatcher.emit("view_compiled", {
       view: structuredClone(view),
     });
+    this.appendViewEpoch(view);
     this.appendHeader(view, sampling, prepared);
     this.store.append(this.sessionId, {
       kind: "manifest",
       payload: view.manifest,
+      ...(view.details ? { details: view.details } : {}),
     });
     // Dynamic so dist/index.js can load under plain Node for the log manifest.
     // The contract barrel is TypeScript source; a static import breaks that load.
@@ -332,6 +338,30 @@ export class AgentSession {
       content: [{ type: "text", text }],
     };
     this.store.append(this.sessionId, { kind: "message", payload });
+  }
+
+  private appendViewEpoch(view: CompiledView): void {
+    const path = this.store.path(this.sessionId);
+    let latest = 0;
+    let seen = false;
+    for (const entry of path) {
+      if (entry.kind !== "view_epoch") continue;
+      const epoch = (entry.payload as { epoch?: unknown }).epoch;
+      if (typeof epoch !== "number") continue;
+      latest = epoch;
+      seen = true;
+    }
+    const baseline = seen ? latest : 0;
+    if (!view.epochStart && view.epoch <= baseline) return;
+    const epochHead = view.messages[0];
+    this.store.append(this.sessionId, {
+      kind: "view_epoch",
+      payload: {
+        epoch: view.epoch,
+        reason: view.epochStart?.reason ?? "epoch-advanced",
+      },
+      ...(epochHead ? { details: { epochHead } } : {}),
+    });
   }
 
   private appendHeader(
