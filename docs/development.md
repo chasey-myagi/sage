@@ -77,9 +77,10 @@ packages/<name>/
 1. `check:lint`：biome 格式与 lint。
 2. `check:types`：`tsc -b`。
 3. `check:layers`：分层规则表。
-4. `check:readme`：每个包 README 的 Model Experience 三小节；豁免写在 `scripts/readme-exemptions.json`，必须给理由。
-5. `check:log-manifest`：`docs/log-manifest.md` 与注册表一致。
-6. `test`：vitest。
+4. `check:export-docs`：`packages/*/src` 与 `apps/*/src` 里每个导出声明上方有 `/** */`；re-export 不查。
+5. `check:readme`：每个包 README 的 Model Experience 三小节；豁免写在 `scripts/readme-exemptions.json`，必须给理由。
+6. `check:log-manifest`：`docs/log-manifest.md` 与注册表一致。
+7. `test`：vitest。
 
 整套约 20 秒，推送前直接跑全量。迭代时先跑相关的单个测试文件：`pnpm vitest run packages/core/test/session/loop.test.ts`。
 
