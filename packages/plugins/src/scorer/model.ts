@@ -19,10 +19,15 @@ import {
   type ProviderAdapter,
   type Request,
 } from "@sage/provider/contract";
+import {
+  clampSummary,
+  SCORE_TIERS,
+  SUMMARY_LIMIT,
+} from "../compiler/score-common.js";
 import { summarizeInput } from "../compiler/stub.js";
+import { isTier } from "../guards.js";
 import type { ScoreDecision, ScoreRaw, Scorer } from "./types.js";
 
-const SUMMARY_LIMIT = 200;
 const RAW_LIMIT = 300;
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_CANDIDATES = 60;
@@ -46,8 +51,6 @@ const INSTRUCTION = [
   "Example:",
   '[{"id":"seq:1#a","tier":"none"},{"id":"seq:2#b","tier":"summary","summary":"src/utils/url.ts: isURLMatched, isURLInList (L12-40)"}]',
 ].join("\n");
-
-const TIERS = new Set(["none", "summary", "full"]);
 
 /**
  * Creates the model scorer. Its `name` is `model`.
@@ -339,7 +342,7 @@ function readItem(
     return { kind: "fail" };
   }
   if (!allowed.has(item.id)) return { kind: "drop" };
-  if (typeof item.tier !== "string" || !TIERS.has(item.tier)) {
+  if (!isTier(item.tier) || !SCORE_TIERS.has(item.tier)) {
     return { kind: "fail" };
   }
   if (item.summary !== undefined && typeof item.summary !== "string") {
@@ -347,15 +350,10 @@ function readItem(
   }
   const decision: ScoreDecision = {
     id: item.id,
-    tier: item.tier as ScoreDecision["tier"],
+    tier: item.tier,
   };
   if (typeof item.summary === "string") {
     decision.summary = clampSummary(item.summary);
   }
   return { kind: "keep", decision };
-}
-
-function clampSummary(summary: string): string {
-  if (summary.length <= SUMMARY_LIMIT) return summary;
-  return summary.slice(0, SUMMARY_LIMIT);
 }

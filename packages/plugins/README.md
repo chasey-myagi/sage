@@ -129,7 +129,7 @@ replayOffline(store, sessionId, policy, { tools, system })
 compareOffline(diffsA, diffsB) // { markdown, json }
 ```
 
-`policy` 是 `{ budget?, keepRecent?, scorer?, expectedTurns?, passthrough? }`。每一轮只用该轮视图提交之前的 path 前缀。编译器策略会把上一轮自己写下的清单放进影子 Log，后面的轮次冻结的是这套策略，不是录制时的清单。
+`policy` 是 `{ budget?, keepRecent?, scorer?, expectedTurns?, passthrough? }`。`budget` 缺省为导出常量 `DEFAULT_COMPILER_BUDGET`（40000），sage CLI 不带 `--budget` 时用的是同一个常量。每一轮只用该轮视图提交之前的 path 前缀。编译器策略会把上一轮自己写下的清单放进影子 Log，后面的轮次冻结的是这套策略，不是录制时的清单。
 
 `recordedTokens` 是该轮 assistant `details.usage` 的输入合计（`inputOther + inputCacheRead + inputCacheCreation`）。`passthrough: true` 时 `policyTokens` 等于这个数，`saved` 为 0，已有回放 case 的 `prefixStable` 全为 true。编译器策略的 `policyTokens` 是该轮 `budget.used × calibration.ratio`，路径上没有校准则倍率是 1。这个乘积跟的是块和申领单；固定开销在 `calibration.overheadTokens` 里，不进 `policyTokens`。阶段决策的 old/new 是 `overheadTokens + used × ratio`，ratio 大于 1 也照乘。Log 不存上下文窗口和定价，回放用 8000 和 `pricing: null`，与无 key 回放相同。
 

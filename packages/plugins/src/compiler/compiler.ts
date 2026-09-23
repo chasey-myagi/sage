@@ -82,6 +82,13 @@ import { compileSubtask } from "./subtask-view.js";
  */
 export const DEFAULT_KEEP_RECENT = 6;
 
+/**
+ * Token budget callers use when none is configured: the sage CLI without
+ * `--budget` and `replayOffline` without `policy.budget`. Short tasks rarely
+ * reach it, so A/B runs should set a lower budget.
+ */
+export const DEFAULT_COMPILER_BUDGET = 40_000;
+
 /** Options of `contextCompiler`. Token counts are estimates from `count`. */
 export type ContextCompilerOptions = {
   /** Token budget for claims plus history chunks. */

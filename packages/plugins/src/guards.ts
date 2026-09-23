@@ -7,6 +7,20 @@
  * Intentionally not in the Log: these helpers. They only read values.
  */
 
+import type { Tier } from "@sage/core";
+
+const TIERS: ReadonlySet<unknown> = new Set<Tier>([
+  "none",
+  "line",
+  "summary",
+  "full",
+]);
+
+/** Whether `value` is one of the four tier names. */
+export function isTier(value: unknown): value is Tier {
+  return TIERS.has(value);
+}
+
 /** `value` when it is a finite number, else undefined. */
 export function finite(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)

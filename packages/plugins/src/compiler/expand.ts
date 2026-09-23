@@ -16,7 +16,7 @@
  */
 
 import {
-  type EntryId,
+  asEntryId,
   type HarnessTool,
   isRecord,
   type LogStore,
@@ -109,7 +109,7 @@ function parentPath(
   const parentLeaf = entry.payload.parentLeaf;
   if (typeof parentSessionId !== "string") return undefined;
   if (typeof parentLeaf !== "string") return store.path(parentSessionId);
-  return store.path(parentSessionId, parentLeaf as EntryId);
+  return store.path(parentSessionId, asEntryId(parentLeaf));
 }
 
 function locate(path: readonly StoredEntry[], id: string): string | undefined {

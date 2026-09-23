@@ -6,7 +6,8 @@
  * update_ledger, expand, spawn_subtask, and spawn_subtasks, and logs to a
  * JsonlLogStore under `<cwd>/.sage/sessions` unless a store is given.
  * Subtask presets load from `<cwd>/.sage/subtasks` and, when `home` is set,
- * from there too. The view is contextCompiler with {@link DEFAULT_BUDGET},
+ * from there too. The view is contextCompiler with
+ * {@link DEFAULT_COMPILER_BUDGET},
  * the four first-party claims, and {@link defaultRoutePolicy}, unless
  * `passthrough` selects passthroughView. Subtasks always compile.
  *
@@ -32,6 +33,7 @@ import {
   type ClaimProvider,
   contextCompiler,
   costTierPolicy,
+  DEFAULT_COMPILER_BUDGET,
   expandTool,
   progressLedger,
   type RoutePolicy,
@@ -51,12 +53,6 @@ import {
 import { type BashExec, createTools, type ToolSandbox } from "@sage/tools";
 import { BENCH_WORKSPACE_PREFIX } from "./bench/types.js";
 import type { LadderRung, ScorerApply } from "./options.js";
-
-/**
- * Token budget of the root context compiler when `--budget` is absent.
- * Short tasks rarely reach it, so A/B runs should set `--budget` lower.
- */
-export const DEFAULT_BUDGET = 40_000;
 
 /** Paths the route policy keeps on the home provider. */
 const SENSITIVE = /(^|\/)\.env$|\/secrets\//;
@@ -92,7 +88,7 @@ export type CodingSessionOptions = {
   /** Test seam. Production probes `unshare -n` on linux. */
   unshareAvailable?: boolean;
   sampling?: Sampling;
-  /** Root compiler budget in tokens; defaults to {@link DEFAULT_BUDGET}. */
+  /** Root compiler budget in tokens; defaults to {@link DEFAULT_COMPILER_BUDGET}. */
   budget?: number;
   passthrough?: boolean;
   scorer?: Scorer;
@@ -234,7 +230,7 @@ function rootView(
 ): ViewProvider {
   if (opts.passthrough) return passthroughView;
   return contextCompiler({
-    budget: opts.budget ?? DEFAULT_BUDGET,
+    budget: opts.budget ?? DEFAULT_COMPILER_BUDGET,
     claims,
     route,
     ...(opts.scorer ? { scorer: opts.scorer } : {}),

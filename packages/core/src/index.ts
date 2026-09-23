@@ -44,6 +44,7 @@ export type {
   ModelRef,
   StoredEntry,
 } from "./log/types.js";
+export { asEntryId } from "./log/types.js";
 export {
   AgentSession,
   DEFAULT_MAX_TURNS,
