@@ -10,13 +10,16 @@
  * (default 60) drop the oldest. The instruction says this is a side
  * judgment of earlier tool results, not a continuation of the task, and
  * that the reply is a JSON array of `{id, tier, summary?}`. `timeoutMs`
- * defaults to 20000. The parser strips one fenced json block, wraps a single
- * object that has `id` into a one-item array, drops items whose id is not
- * in the listed candidates (`dropped`), and treats `[]` as keep-all.
- * A malformed item fails the parse. Invalid JSON, timeout, a missing
- * adapter, and a finish error resolve `fallback` and no decisions. When
- * that fallback follows a model reply, `raw` is `{ text, finish }` with at
- * most 300 characters of text. A completed call returns the parsed
+ * defaults to 20000. The parser strips one fenced json block, then takes the
+ * first top-level JSON value (`[` or `{`). Brackets pair, and brackets
+ * inside strings do not count. Text before or after that value is ignored.
+ * It wraps a single object that has `id` into a one-item array, drops items
+ * whose id is not in the listed candidates (`dropped`), and treats `[]` as
+ * keep-all. A malformed item fails the parse. No extractable value, invalid
+ * JSON, timeout, a missing adapter, and a finish error resolve `fallback`
+ * and no decisions. When that fallback follows a model reply, `raw` is
+ * `{ text, finish }` with at most 300 characters of text. A completed call,
+ * including one whose reply has surrounding prose, returns the parsed
  * decisions and the stream usage, and does not set `raw`.
  *
  * Intentionally not in the Log: this call, and `dropped`. The compiler
@@ -211,9 +214,11 @@ function parseDecisions(
   text: string,
   allowed: ReadonlySet<string>,
 ): { decisions: ScoreDecision[]; dropped: number } | undefined {
+  const extracted = extractFirstJsonValue(stripFence(text));
+  if (extracted === undefined) return undefined;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(stripFence(text));
+    parsed = JSON.parse(extracted);
   } catch {
     return undefined;
   }
@@ -238,6 +243,47 @@ function stripFence(text: string): string {
   const fenced = /^```(?:json)?\s*([\s\S]*?)```$/i.exec(trimmed);
   if (!fenced || fenced[1] === undefined) return trimmed;
   return fenced[1].trim();
+}
+
+function extractFirstJsonValue(text: string): string | undefined {
+  const start = text.search(/[[{]/);
+  if (start < 0) return undefined;
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === undefined) return undefined;
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "[") {
+      stack.push("]");
+      continue;
+    }
+    if (ch === "{") {
+      stack.push("}");
+      continue;
+    }
+    if (ch !== "]" && ch !== "}") continue;
+    if (stack.at(-1) !== ch) return undefined;
+    stack.pop();
+    if (stack.length === 0) return text.slice(start, i + 1);
+  }
+  return undefined;
 }
 
 function asItems(parsed: unknown): unknown[] | undefined {
