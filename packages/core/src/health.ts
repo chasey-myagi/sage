@@ -56,7 +56,7 @@ export type RunHealth = {
   epochs: number;
   /** model_change entries on the path. */
   modelChanges: number;
-  /** Sum of manifest `scorer.calls`. */
+  /** Sum of manifest `scorer.calls`: scorer requests actually sent. */
   scorerCalls: number;
   /** Sum of numeric manifest `scorer.fallback`; `true` counts as 1. */
   scorerFallbacks: number;

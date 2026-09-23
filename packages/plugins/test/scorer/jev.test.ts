@@ -387,7 +387,44 @@ it("falls back when the api key is missing and does not fetch", async () => {
     prevRequest: undefined,
     query: "q",
   });
-  expect(result).toEqual({ decisions: [], fallback: "no-api-key" });
+  expect(result).toEqual({
+    decisions: [],
+    fallback: "no-api-key",
+    requested: false,
+  });
+  expect(attempts).toBe(0);
+});
+
+it("records zero rebuild scorer calls when the api key is missing", async () => {
+  const store = new MemoryLogStore();
+  seed(store);
+  let attempts = 0;
+  const view = await contextCompiler({
+    budget: 100_000,
+    claims: [],
+    keepRecent: 1,
+    scorer: jevScorer({
+      fetchImpl: async () => {
+        attempts += 1;
+        return jsonResponse({});
+      },
+    }),
+  }).view(context(store));
+
+  expect(view.manifest.epochDecision?.rebuild).toBe(true);
+  const manifest = view.manifest as typeof view.manifest & {
+    scorer?: { calls: number; usage: Usage; fallback: boolean };
+  };
+  expect(manifest.scorer).toEqual({
+    calls: 0,
+    usage: {
+      inputOther: 0,
+      inputCacheRead: 0,
+      inputCacheCreation: 0,
+      output: 0,
+    },
+    fallback: true,
+  });
   expect(attempts).toBe(0);
 });
 

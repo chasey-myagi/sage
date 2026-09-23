@@ -4,8 +4,9 @@
  *
  * Contract: a chunk's tier is fixed when it first enters the view and the
  * cumulative freeze keeps it, so the bytes before it never change inside
- * an epoch. Every failure leaves the candidates full and still counts the
- * call. A scorer with `isNoop` (the rule scorer) is never called in entry
+ * an epoch. Every failure leaves the candidates full. `calls` counts only
+ * a request actually sent: a fallback with `requested: false` records 0,
+ * as rebuild scoring does; a throw still counts 1. A scorer with `isNoop` (the rule scorer) is never called in entry
  * mode.
  *
  * Intentionally not in the Log: the scorer function and its request. The
@@ -14,7 +15,7 @@
 
 import type { EntryScoredReport } from "@sage/core";
 import type { Request, Usage } from "@sage/provider/contract";
-import type { ScoreDecision, Scorer } from "../scorer/types.js";
+import type { ScoreDecision, ScoreResult, Scorer } from "../scorer/types.js";
 import { applyDecisions } from "./apply.js";
 import type { TokenCounter } from "./budget.js";
 import type { Chunk } from "./chunks.js";
@@ -29,7 +30,12 @@ import {
   stubRow,
   summaryRow,
 } from "./rows.js";
-import { clampSummary, finiteUsage, SCORE_TIERS } from "./score-common.js";
+import {
+  clampSummary,
+  finiteUsage,
+  requestCount,
+  SCORE_TIERS,
+} from "./score-common.js";
 import type { ScoredView } from "./score-rebuild.js";
 
 /**
@@ -66,7 +72,8 @@ export function resolveMinScoreTokens(value: number | undefined): number {
  * `scorer:entry:full;summary-rejected` and counts in both `full` and
  * `summaryRejected`. `full` keeps the text. The reason is
  * `scorer:entry:<tier>`. A throw, a fallback, or an id the reply omits
- * leaves that chunk full. `report` is set whenever a call was made.
+ * leaves that chunk full. `report` is set whenever the scorer was invoked;
+ * its `calls` is 0 when the scorer fell back with `requested: false`.
  * `prevRequest` is this turn's compiled view.
  */
 export async function runEntryScorer(input: {
@@ -83,7 +90,7 @@ export async function runEntryScorer(input: {
   if (input.scorer.isNoop) return unchanged;
   const candidates = entryCandidates(input);
   if (candidates.length === 0) return unchanged;
-  let result: { decisions: ScoreDecision[]; usage?: Usage; fallback?: string };
+  let result: ScoreResult;
   try {
     result = await input.scorer.score({
       candidates,
@@ -97,7 +104,7 @@ export async function runEntryScorer(input: {
   if (result.fallback !== undefined) {
     return {
       ...unchanged,
-      report: entryReport(1, 0, 0, 0, result.usage),
+      report: entryReport(requestCount(result), 0, 0, 0, result.usage),
     };
   }
   const accepted = acceptedDecisions(candidates, result.decisions);

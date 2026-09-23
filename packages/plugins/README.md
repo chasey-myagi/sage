@@ -90,13 +90,13 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 指令说明这是旁路判定，不是继续任务。每个候选是早先某次工具调用的结果。模型只返回 JSON 数组，每项 `{"id","tier":"none"|"summary"|"full","summary"?}`，summary 最长 200 字符。摘要必须让后面的轮次不用重读就能定位：文件读取写路径、关键符号或导出、以及行号范围；grep 或 ls 写命中路径与行号；命令输出写命令和结论性数字或状态，例如 `tests 23 passed 1 failed: name`。不要只写判断（已看过、不再需要、和之前一样），那种情况改判 `none` 或 `full`。示例里的 summary 是路径、符号和行号。正文可以包在一层 json 代码围栏里。围栏去掉之后，从第一个 `[` 或 `{` 起按括号配对取出一个 JSON 值，字符串内部的括号不计入配对，这个值前后的文字都忽略。取不到值，或取出的文本不是 JSON，整次解析失败。这样解析成功时，即使原文前后还有解释，也不算 fallback，不写 `raw`。顶层如果是带 `id` 的单个对象，会包成一项。`id` 不在这份候选清单里的项丢掉并计数，其余照用。空数组 `[]` 表示全部保留，不是失败。某一项缺 `id` 或 tier 非法，整次解析失败。`summary` 档在视图里是桩行，换行，然后 `summary (model notes, not evidence): ` 加上那段笔记。`none` 仍是原来的桩。`full` 保持原文。返回里没有的块保持 `kept`。打分器若把 `recent` 块判成 none，以 recent 为准。
 
-非法 JSON、超时、adapter 的 finish error，或者还没有上一轮请求，全部退回规则打分，本轮照常发出。清单 `epochDecision.reason` 追加 `;scorer:fallback:<原因>`。这次调用写在清单字段 `scorer: { calls, usage, fallback, raw? }` 里。`raw` 只在 fallback 且已经拿到模型回复时出现：`text` 是原文前 300 字，`finish` 是结束种类。成功不写 `raw`。
+非法 JSON、超时、adapter 的 finish error，或者还没有上一轮请求，全部退回规则打分，本轮照常发出。清单 `epochDecision.reason` 追加 `;scorer:fallback:<原因>`。这次调用写在清单字段 `scorer: { calls, usage, fallback, raw? }` 里。`calls` 只数真正发出的打分请求：打分器在发请求前就放弃（没有上一轮请求、没有 adapter、jev 没有 key）时记 0，其余记 1。`raw` 只在 fallback 且已经拿到模型回复时出现：`text` 是原文前 300 字，`finish` 是结束种类。成功不写 `raw`。
 
 CLI `--scorer model` 给根编译器装上模型打分，沿用已装配的 adapter 和当前模型。不写这个参数就是规则打分。
 
 `jevScorer` 调用 TypeSafe System One。`model` 缺省 `jev-latest`；传入 `model` 就改用那个名字，用来对准 LLM2Jev 的 `--served-model-name`。它不读上一轮请求，请求里也不带历史。`POST <baseUrl>/v1/systemone`（默认 `https://api.typesafe.ai`），header 为 `Authorization: Bearer <key>` 和 `Content-Type: application/json`。`state` 是 `{ query, chunks: [{ id, tool, summary, tokens }] }`，`summary` 是那一行桩摘要，不是原文。`questions` 里每块一个 `choice`，标准是 `full`（需要原文）和 `none`（一行摘要够用）。`probabilities.full` 不低于 `minConfidence`（默认 0.5）判 full，否则 none。清单上的 reason 是 `scorer:jev:<p>`，p 为 full 的概率，保留两位。不写 summary。回答里没有的块保持 `kept`。
 
-每批最多 `batchSize` 块（默认 40）。state 字符数按 `query.length + Σ(tokens × 4)` 估算，不超过 24000；单块超了也单独发出。没有 key、非 2xx、超时（默认 10000ms）或正文不是 answers 对象时，返回 `{ decisions: [], fallback }`，不抛。429 和 529 最多再试 3 次，间隔 `500ms × 2^n`。各批 `usage.input_tokens` 相加，写入返回 usage 的 `inputOther`，其余三项为 0。
+每批最多 `batchSize` 块（默认 40）。state 字符数按 `query.length + Σ(tokens × 4)` 估算，不超过 24000；单块超了也单独发出。没有 key、非 2xx、超时（默认 10000ms）或正文不是 answers 对象时，返回 `{ decisions: [], fallback }`，不抛。没有 key 时不发请求，结果带 `requested: false`，清单上的 `calls` 记 0。429 和 529 最多再试 3 次，间隔 `500ms × 2^n`。各批 `usage.input_tokens` 相加，写入返回 usage 的 `inputOther`，其余三项为 0。
 
 CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https://api.typesafe.ai`）、`JEV_API_KEY`（缺省回退 `TYPESAFE_API_KEY`）和 `JEV_MODEL`（缺省 `jev-latest`）。两个 key 都没有时进程以退出码 2 结束，stderr 点名这两个变量。接到本地 LLM2Jev 时，例如 `JEV_BASE_URL=http://127.0.0.1:30000 JEV_API_KEY=local JEV_MODEL=<served-model-name>`。目录里的 provider `typesafe` 只有 `jev-latest` 的定价（输入 $0.042/MTok，输出和缓存读写都是 0），`listModels("typesafe")` 可见。`--provider typesafe` 会报错：它不是聊天端点。
 
@@ -112,7 +112,7 @@ CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https:
 
 `contextCompiler({ scorerApply: "rebuild" | "entry", minScoreTokens })`。默认 `"rebuild"`，也就是上面那条：只在阶段重开时给仍然 `kept` 的工具块打分。`minScoreTokens` 默认 300。
 
-`"entry"` 改在工具结果**进入视图的那一轮**定档。本轮新出现、当前仍是 full、token 不少于 `minScoreTokens` 的工具块，打分器调用一次。`expand` 的结果不进候选，否则刚取回的原文会在同一轮被桩掉。`none` 写成可 expand 的桩。`summary` 用打分器给的笔记，最长 200 字；没给笔记就保持 full。写了笔记但不足 20 字（含空串），或不含路径、符号或数字（斜杠、扩展名、数字、驼峰或下划线标识符）时，该块按 full 处理，reason 为 `scorer:entry:full;summary-rejected`。`full` 原文不动。清单上这块的 reason 是 `scorer:entry:<tier>`。打分抛错、返回 `fallback`、或回答里没有这个 id，这块保持 full，编译照常，这次调用仍记 1。没有候选就不调用，清单上也不写 `entryScored`。
+`"entry"` 改在工具结果**进入视图的那一轮**定档。本轮新出现、当前仍是 full、token 不少于 `minScoreTokens` 的工具块，打分器调用一次。`expand` 的结果不进候选，否则刚取回的原文会在同一轮被桩掉。`none` 写成可 expand 的桩。`summary` 用打分器给的笔记，最长 200 字；没给笔记就保持 full。写了笔记但不足 20 字（含空串），或不含路径、符号或数字（斜杠、扩展名、数字、驼峰或下划线标识符）时，该块按 full 处理，reason 为 `scorer:entry:full;summary-rejected`。`full` 原文不动。清单上这块的 reason 是 `scorer:entry:<tier>`。打分抛错、返回 `fallback`、或回答里没有这个 id，这块保持 full，编译照常。`calls` 与重建打分同一口径，只数真正发出的请求：打分器在发请求前就放弃（`requested: false`，例如没有 adapter）记 0，其余情况包括抛错都记 1。没有候选就不调用，清单上也不写 `entryScored`。
 
 判定写进当轮清单，下一轮起由累积冻结保住，不再被 `keepRecent` 抬回 full。已打分的块也不再占最近窗口的名额。`entry` 不再跑重建路径上的那次打分，也不再跑影子：同一次调用的结果既写清单又改视图。`scorerApply` 仍是 `"rebuild"` 时，重建打分和影子都跟以前一样。
 

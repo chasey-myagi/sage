@@ -35,7 +35,7 @@ import {
   stubRow,
   summaryRow,
 } from "./rows.js";
-import { clampSummary, SCORE_TIERS } from "./score-common.js";
+import { clampSummary, requestCount, SCORE_TIERS } from "./score-common.js";
 
 /** `manifest.scorer`: one rebuild scorer call. */
 export type RebuildScorerReport = {
@@ -165,16 +165,13 @@ function mergeScore(
   return { rows: next, usedDelta };
 }
 
-/**
- * `calls` is 0 when the scorer says it fell back before sending anything
- * (`requested: false`); otherwise 1.
- */
+/** `calls` comes from `requestCount`. */
 function reportOf(result: ScoreResult): RebuildScorerReport | undefined {
   if (result.usage === undefined && result.fallback === undefined)
     return undefined;
   const fallback = result.fallback !== undefined;
   return {
-    calls: result.requested === false ? 0 : 1,
+    calls: requestCount(result),
     usage: result.usage ?? emptyUsage(),
     fallback,
     ...(fallback && result.raw ? { raw: result.raw } : {}),

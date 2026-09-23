@@ -13,6 +13,7 @@
 
 import type { CompiledView, ViewContext } from "@sage/core";
 import type { Message, Request, Usage } from "@sage/provider/contract";
+import type { ScoreResult } from "../scorer/types.js";
 import type { Tier } from "./claim.js";
 import { latestHeader } from "./log-read.js";
 
@@ -25,6 +26,15 @@ export const SCORE_TIERS: ReadonlySet<Tier> = new Set<Tier>([
 
 /** Maximum characters of a scorer's summary note kept on the chunk. */
 export const SUMMARY_LIMIT = 200;
+
+/**
+ * Scorer calls to report for one `score` result: 0 when the scorer fell back
+ * before sending any request (`requested: false`), otherwise 1. Rebuild and
+ * entry scoring both count with this.
+ */
+export function requestCount(result: Pick<ScoreResult, "requested">): number {
+  return result.requested === false ? 0 : 1;
+}
 
 /** Cuts a summary note to `SUMMARY_LIMIT` characters. */
 export function clampSummary(summary: string): string {

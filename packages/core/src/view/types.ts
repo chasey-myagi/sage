@@ -165,6 +165,7 @@ export type ShadowReport = {
 
 /** Scorer calls made while rebuilding an epoch. `raw` only on fallback. */
 export type ScorerReport = {
+  /** Requests actually sent: 0 when the scorer gave up before sending. */
   calls: number;
   usage: TokenCounts;
   fallback: boolean;
@@ -175,8 +176,9 @@ export type ScorerReport = {
  * Entry scoring: one scorer call that sets the tier of each tool chunk the
  * first time it enters the view, and the tier is then frozen, so scoring
  * never rewrites bytes already in the prefix (unlike shadow scoring, the
- * tiers are applied). `calls` is 1 even when the scorer throws or omits an
- * id. Tier counts are decisions that were applied. `summaryRejected`
+ * tiers are applied). `calls` counts requests actually sent: 1 even when
+ * the scorer throws or omits an id, 0 when it fell back before sending
+ * (for example no adapter or no API key). Tier counts are decisions that were applied. `summaryRejected`
  * counts summary notes demoted to full; those chunks are included in
  * `full`. `usage` is omitted when the call reported none. An applied
  * decision's chunk reason is `scorer:entry:<tier>`; a rejected summary's is

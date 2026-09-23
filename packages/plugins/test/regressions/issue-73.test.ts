@@ -9,6 +9,7 @@ import type { Message, Request } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
 import { expandTool } from "../../src/compiler/expand.ts";
+import { modelScorer } from "../../src/scorer/model.ts";
 import type { Scorer } from "../../src/scorer/types.ts";
 
 const MODEL = { provider: "anthropic", model: "claude-sonnet-5" };
@@ -319,6 +320,23 @@ it("keeps the block full when the scorer omits its id and still counts the call"
   });
   expect(resultOf(view.view.messages, "big")).toBe(BODY);
   expect(runHealth(view.store.path("s")).entryScored.calls).toBe(1);
+});
+
+it("records zero entry calls when the model scorer has no adapter, as rebuild does", async () => {
+  const view = await compileBig(modelScorer({ adapters: {}, model: MODEL }));
+  expect(chunkOf(view.view, "big")).toMatchObject({
+    tier: "full",
+    reason: "recent",
+  });
+  expect(resultOf(view.view.messages, "big")).toBe(BODY);
+  expect(view.view.manifest.entryScored).toEqual({
+    calls: 0,
+    none: 0,
+    summary: 0,
+    full: 0,
+    summaryRejected: 0,
+  });
+  expect(runHealth(view.store.path("s")).entryScored.calls).toBe(0);
 });
 
 async function compileBig(scorer: Scorer): Promise<{
