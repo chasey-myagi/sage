@@ -17,8 +17,11 @@
  * sage and under `timeoutSec`. A non-zero exit is `error` with reason
  * `setup-failed`: sage is not started and the test command is not run.
  * Then `sage -p <problem>` runs there. When `--budget <tokens>` is set, that
- * flag is appended to the argv, including under passthrough. The session is
- * copied next. An empty `git status` is `empty-patch` and the test command
+ * flag is appended to the argv, including under passthrough. `--max-turns <n>`
+ * is appended the same way, including under passthrough. Omitting it still
+ * appends `--max-turns 80`. A value that is not a positive integer exits 2
+ * before any task runs. The session is copied next. An empty `git status`
+ * is `empty-patch` and the test command
  * is not run. `testPatch`,
  * when present, is a unified diff applied only after that copy and only when
  * status is non-empty. Each path in a `diff --git` header is restored from
@@ -36,7 +39,9 @@
  * `--budget` for a compiler run, or null when the flag is omitted or the
  * policy is passthrough. Top-level `toolNetwork` is `none` unless
  * `--tool-network full` is set. The default `none` is always forwarded on
- * the sage argv. `bench report <runA> <runB>` prints one JSON
+ * the sage argv. Top-level `maxTurns` is the positive integer from
+ * `--max-turns`, or 80 when that flag is omitted. Both policies record it.
+ * `bench report <runA> <runB>` prints one JSON
  * object `{ a, b, delta }`. `a` and `b` each include that `budget`.
  * Rates are counts over the task list. `tokensPerResolved` is the sum of
  * `health.tokens.total` divided by the resolved count, or null when nothing
@@ -96,6 +101,7 @@ export type BenchResults = {
   model: string;
   budget: number | null;
   toolNetwork: ToolNetwork;
+  maxTurns: number;
   tasks: BenchTaskResult[];
 };
 
@@ -120,6 +126,7 @@ export type BenchDeps = {
       env: NodeJS.ProcessEnv;
       budget: number | null;
       toolNetwork: ToolNetwork;
+      maxTurns: number;
       argv: string[];
     },
   ): Promise<{ code: number; sessionFile?: string; timedOut?: boolean }>;
@@ -145,6 +152,7 @@ const FLAGS = new Set([
   "provider",
   "out",
   "budget",
+  "max-turns",
   "tool-network",
 ]);
 
@@ -183,6 +191,7 @@ export async function runBenchCli(
     model: parsed.model,
     budget: parsed.policy === "passthrough" ? null : parsed.budget,
     toolNetwork: parsed.toolNetwork,
+    maxTurns: parsed.maxTurns,
     tasks: [],
   };
   for (const task of tasks) {
@@ -194,6 +203,7 @@ export async function runBenchCli(
         env: io.env,
         budget: parsed.budget,
         toolNetwork: parsed.toolNetwork,
+        maxTurns: parsed.maxTurns,
       }),
     );
     writeResults(out, results);
@@ -275,8 +285,14 @@ function loadResults(dir: string): BenchResults {
       ? parsed.budget
       : null;
   const toolNetwork = parsed.toolNetwork === "full" ? "full" : "none";
+  const maxTurns =
+    typeof parsed.maxTurns === "number" &&
+    Number.isSafeInteger(parsed.maxTurns) &&
+    parsed.maxTurns > 0
+      ? parsed.maxTurns
+      : 80;
   const tasks = parsed.tasks.map((item) => readTaskResult(item));
-  return { policy, model, budget, toolNetwork, tasks };
+  return { policy, model, budget, toolNetwork, maxTurns, tasks };
 }
 
 function readTaskResult(value: unknown): BenchTaskResult {
@@ -346,6 +362,7 @@ async function runTask(
     env: NodeJS.ProcessEnv;
     budget: number | null;
     toolNetwork: ToolNetwork;
+    maxTurns: number;
   },
 ): Promise<BenchTaskResult> {
   const work = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
@@ -473,6 +490,7 @@ function writeResults(out: string, results: BenchResults): void {
     model: results.model,
     budget: results.budget,
     toolNetwork: results.toolNetwork,
+    maxTurns: results.maxTurns,
     tasks: results.tasks.map((task) => ({
       id: task.id,
       status: task.status,
@@ -675,11 +693,13 @@ function sageArgv(
     provider?: string;
     budget: number | null;
     toolNetwork: ToolNetwork;
+    maxTurns: number;
   },
 ): string[] {
   const args = [sageBin(), "-p", task.problem, "--model", opts.model];
   if (opts.provider) args.push("--provider", opts.provider);
   if (opts.budget !== null) args.push("--budget", String(opts.budget));
+  args.push("--max-turns", String(opts.maxTurns));
   if (opts.policy === "passthrough") args.push("--passthrough");
   args.push("--tool-network", opts.toolNetwork);
   return args;
@@ -696,6 +716,10 @@ function invalidBudget(value: string): string {
   return `Invalid --budget ${JSON.stringify(value)}: expected a positive integer`;
 }
 
+function invalidMaxTurns(value: string): string {
+  return `Invalid --max-turns ${JSON.stringify(value)}: expected a positive integer`;
+}
+
 function invalidToolNetwork(value: string): string {
   return `Invalid --tool-network ${JSON.stringify(value)}: expected none or full`;
 }
@@ -709,6 +733,7 @@ function parseRun(argv: string[]):
       out: string;
       budget: number | null;
       toolNetwork: ToolNetwork;
+      maxTurns: number;
     }
   | { message: string; exitCode?: number } {
   const values = new Map<string, string>();
@@ -751,6 +776,15 @@ function parseRun(argv: string[]):
     }
     budget = parsed;
   }
+  const rawMaxTurns = values.get("max-turns");
+  let maxTurns = 80;
+  if (rawMaxTurns !== undefined) {
+    const parsed = positiveInt(rawMaxTurns);
+    if (parsed === undefined) {
+      return { message: invalidMaxTurns(rawMaxTurns), exitCode: 2 };
+    }
+    maxTurns = parsed;
+  }
   const rawNetwork = values.get("tool-network");
   let toolNetwork: ToolNetwork = "none";
   if (rawNetwork !== undefined) {
@@ -766,6 +800,7 @@ function parseRun(argv: string[]):
     out,
     budget,
     toolNetwork,
+    maxTurns,
     ...(provider ? { provider } : {}),
   };
 }
@@ -850,7 +885,7 @@ function requiredString(
 
 function benchUsage(): string {
   return [
-    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--tool-network none|full] --out <dir>",
+    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }
