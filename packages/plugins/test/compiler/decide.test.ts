@@ -373,7 +373,7 @@ it("records overrun and does not reopen after a guard that is still over", async
   store.append("s", {
     kind: "view_epoch",
     payload: { epoch: 1, reason: "context-window-guard" },
-    details: { epochHead: structuredClone(first.messages[0]) },
+    details: { prefixMessage: structuredClone(first.messages[0]) },
   });
   store.append("s", { kind: "manifest", payload: first.manifest });
   const second = await compiler.view({

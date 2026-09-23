@@ -210,14 +210,14 @@ function commitView(
   }
   const baseline = seen ? latest : 0;
   if (view.epochStart || view.epoch > baseline) {
-    const epochHead = view.messages[0];
+    const prefixMessage = view.messages[0];
     shadow.append(sessionId, {
       kind: "view_epoch",
       payload: {
         epoch: view.epoch,
         reason: view.epochStart?.reason ?? "epoch-advanced",
       },
-      ...(epochHead ? { details: { epochHead } } : {}),
+      ...(prefixMessage ? { details: { prefixMessage } } : {}),
     });
   }
   shadow.append(sessionId, {

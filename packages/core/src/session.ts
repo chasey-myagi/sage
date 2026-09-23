@@ -479,7 +479,7 @@ export class AgentSession {
    * Appends `view_epoch {epoch, reason}` when `view.epochStart` is set, or
    * when `view.epoch` is greater than the latest view_epoch on the path
    * (0 when there is none). `reason` is `epochStart.reason`, else
-   * `epoch-advanced`. `details.epochHead` is the view's first message.
+   * `epoch-advanced`. `details.prefixMessage` is the view's first message.
    */
   private appendViewEpoch(view: CompiledView): void {
     const latest = latestViewEpoch(this.store.path(this.sessionId));
@@ -491,7 +491,7 @@ export class AgentSession {
         epoch: view.epoch,
         reason: view.epochStart?.reason ?? "epoch-advanced",
       },
-      ...(firstMessage ? { details: { epochHead: firstMessage } } : {}),
+      ...(firstMessage ? { details: { prefixMessage: firstMessage } } : {}),
     });
   }
 

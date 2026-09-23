@@ -89,10 +89,10 @@ export function previousHash(
 }
 
 /**
- * Returns a clone of the last `view_epoch.details.epochHead` recorded for
+ * Returns a clone of the last `view_epoch.details.prefixMessage` recorded for
  * `epoch`, or undefined when that epoch stored none.
  */
-export function epochHeadFor(
+export function prefixMessageFor(
   path: SessionPath,
   epoch: number,
 ): Message | undefined {
@@ -100,9 +100,9 @@ export function epochHeadFor(
   for (const entry of path) {
     if (entry.kind !== "view_epoch") continue;
     if (!isRecord(entry.payload) || entry.payload.epoch !== epoch) continue;
-    const head = entry.details?.epochHead;
-    if (!isMessage(head)) continue;
-    found = structuredClone(head);
+    const stored = entry.details?.prefixMessage;
+    if (!isMessage(stored)) continue;
+    found = structuredClone(stored);
   }
   return found;
 }

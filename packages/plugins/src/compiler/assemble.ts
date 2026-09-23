@@ -24,11 +24,11 @@ import type { Claim, ClaimProvider, Tier } from "./claim.js";
 import type { ChunkDecision } from "./eliminate.js";
 import { contentHash, parseClaimMessage, renderClaim } from "./format.js";
 import {
-  epochHeadFor,
   expandStamps,
   isLoggedMessage,
   latestManifest,
   loggedSummaries,
+  prefixMessageFor,
   previousHash,
   type SessionPath,
 } from "./log-read.js";
@@ -126,7 +126,7 @@ export async function collectClaims(
  * Builds one candidate view.
  *
  * The epoch-head message is rendered once per epoch. With `freezeHead`,
- * later turns reuse `view_epoch.details.epochHead` unless that message is
+ * later turns reuse `view_epoch.details.prefixMessage` unless that message is
  * itself a logged history message, and ignore the providers' current
  * epoch-head text. Otherwise a non-empty head is rendered and
  * `epochStart.reason` is `compiler:first-turn`. Claims get the budget
@@ -138,8 +138,10 @@ export function assembleView(
   input: AssembleInput,
   mode: AssembleMode,
 ): Assembly {
-  const epochHead = mode.freezeHead ? reusableEpochHead(input) : undefined;
-  const claims = placeClaims(input, epochHead);
+  const prefixMessage = mode.freezeHead
+    ? reusablePrefixMessage(input)
+    : undefined;
+  const claims = placeClaims(input, prefixMessage);
   const decided = decideChunks(
     input.chunks,
     mode.frozen,
@@ -160,8 +162,8 @@ export function assembleView(
   const chunkRecords = chunkRows(input, decided.decisions);
   const chunkUsed = decided.used + summaryTokenDelta(input, decided.decisions);
   let epochStart: { reason: string } | undefined;
-  if (epochHead) {
-    messages.unshift(epochHead);
+  if (prefixMessage) {
+    messages.unshift(prefixMessage);
   } else {
     const head = renderEpochHead(claims.records, claims.claimById);
     if (head) {
@@ -177,12 +179,12 @@ export function assembleView(
     used: claims.used + chunkUsed,
     claimContent: claims.claimContent,
     ...(epochStart ? { epochStart } : {}),
-    hasEpochHead: epochHead !== undefined || epochStart !== undefined,
+    hasEpochHead: prefixMessage !== undefined || epochStart !== undefined,
   };
 }
 
-function reusableEpochHead(input: AssembleInput): Message | undefined {
-  const stored = epochHeadFor(input.path, input.epoch);
+function reusablePrefixMessage(input: AssembleInput): Message | undefined {
+  const stored = prefixMessageFor(input.path, input.epoch);
   if (!stored || isLoggedMessage(input.path, stored)) return undefined;
   return stored;
 }
@@ -202,13 +204,15 @@ type ClaimPlacement = {
  */
 function placeClaims(
   input: AssembleInput,
-  epochHead: Message | undefined,
+  prefixMessage: Message | undefined,
 ): ClaimPlacement {
-  const headParts = epochHead ? parseClaimMessage(epochHead) : undefined;
+  const headParts = prefixMessage
+    ? parseClaimMessage(prefixMessage)
+    : undefined;
   const allocatable: Claim[] = [];
   const headClaims: Claim[] = [];
   for (const claim of input.collected.claims) {
-    if (epochHead && claim.placement === "epoch-head") {
+    if (prefixMessage && claim.placement === "epoch-head") {
       headClaims.push(claim);
     } else allocatable.push(claim);
   }

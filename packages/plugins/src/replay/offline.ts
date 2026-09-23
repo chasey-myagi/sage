@@ -320,14 +320,14 @@ function commitView(
 ): void {
   const path = shadow.path(sessionId);
   if (view.epochStart || view.epoch > latestViewEpoch(path)) {
-    const epochHead = view.messages[0];
+    const prefixMessage = view.messages[0];
     shadow.append(sessionId, {
       kind: "view_epoch",
       payload: {
         epoch: view.epoch,
         reason: view.epochStart?.reason ?? "epoch-advanced",
       },
-      ...(epochHead ? { details: { epochHead } } : {}),
+      ...(prefixMessage ? { details: { prefixMessage } } : {}),
     });
   }
   shadow.append(sessionId, {

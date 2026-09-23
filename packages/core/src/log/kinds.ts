@@ -35,9 +35,9 @@ export type RequestHeaderPayload = {
 };
 
 /**
- * A new view epoch opened. The entry's `details.epochHead` is the first
- * message of the view that opened it (not the system+tools `Head`); the
- * field keeps that name because it is persisted.
+ * A new view epoch opened. The entry's `details.prefixMessage` is the
+ * first message of the view that opened it: the message in the frozen
+ * prefix that carries the epoch's claims.
  */
 export type ViewEpochPayload = {
   epoch: number;
@@ -56,8 +56,8 @@ export type ModelChangePayload = {
  * `total`, `used`, and `overrun` (and finite `frozenTokens` and
  * `staleOmittable` when present). `epochDecision`, `calibration`, and
  * `cache` are optional objects; `epochDecision.remainingTurns` must be
- * finite, and `calibration`'s `measured`, `estimated`, `ratio`, and `head`
- * are finite when present (older manifests omit `head`). `shadow` needs a
+ * finite, and `calibration`'s `measured`, `estimated`, `ratio`, and
+ * `overheadTokens` are finite when present. `shadow` needs a
  * string `scorer` and a `decisions` array of `{id, tier}` strings with
  * optional string `reason`; optional `fallback` is a string and `calls` is
  * finite when present (manifests written before it existed omit it). `entryScored`
@@ -267,7 +267,7 @@ function isCalibration(value: unknown): boolean {
     isOptionalFinite(value.measured) &&
     isOptionalFinite(value.estimated) &&
     isOptionalFinite(value.ratio) &&
-    isOptionalFinite(value.head)
+    isOptionalFinite(value.overheadTokens)
   );
 }
 

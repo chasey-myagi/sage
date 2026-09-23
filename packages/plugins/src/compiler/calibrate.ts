@@ -4,19 +4,21 @@
  * Contract: `measuredInput` is the latest assistant message's
  * `details.usage` input total (`inputOther + inputCacheRead +
  * inputCacheCreation`). `calibrationFor` pairs that total with the previous
- * manifest's `budget.used`. `head` is the first computable turn of the
- * current epoch: that turn's measured input minus its `budget.used`,
- * floored at 0. When that turn has no usage, `head` is the most recent
- * computable value on the path. Later turns set `ratio` to
- * `(measured − head) / estimated`. No usage, or a zero estimate, yields
- * undefined; callers then use ratio 1 and head 0. Callers scale block
- * tokens by the raw ratio, including when that ratio is above 1.
+ * manifest's `budget.used`. `overheadTokens` is the first computable turn
+ * of the current epoch: that turn's measured input minus its
+ * `budget.used`, floored at 0. When that turn has no usage, it is the most
+ * recent computable value on the path. Later turns set `ratio` to
+ * `(measured − overheadTokens) / estimated`. No usage, or a zero estimate,
+ * yields undefined; callers then use ratio 1 and overhead 0. Callers scale
+ * block tokens by the raw ratio, including when that ratio is above 1.
  * `expectedFrozenPrefix` reads the previous manifest's own calibration
- * and that manifest's `budget.frozenTokens`: `head + ratio × frozenTokens`.
- * No calibration on that manifest uses head 0 and ratio 1. The product is
- * the frozen-prefix estimate the previous turn emitted, so a later epoch's
- * re-anchored head is not applied to the earlier freeze. A head below 0
- * is stored as 0: a negative head makes new-view tokens negative and the
+ * and that manifest's `budget.frozenTokens`:
+ * `overheadTokens + ratio × frozenTokens`. No calibration on that manifest
+ * uses overhead 0 and ratio 1; a manifest whose calibration lacks
+ * `overheadTokens` also uses overhead 0. The product is the frozen-prefix
+ * estimate the previous turn emitted, so a later epoch's re-anchored
+ * overhead is not applied to the earlier freeze. An overhead below 0 is
+ * stored as 0: a negative overhead makes new-view tokens negative and the
  * cost check reopens immediately.
  *
  * Intentionally not in the Log: these functions. The manifest stores the
@@ -33,7 +35,8 @@ import type { Message } from "@sage/provider/contract";
 export type Calibration = {
   measured: number;
   estimated: number;
-  head: number;
+  /** Fixed overhead: epoch's first measured input minus its `budget.used`. */
+  overheadTokens: number;
   ratio: number;
 };
 
@@ -65,40 +68,45 @@ export function calibrationFor(
   if (measured === undefined || estimated === undefined || estimated === 0) {
     return undefined;
   }
-  const head = anchorHead(path) ?? 0;
-  return { measured, estimated, head, ratio: (measured - head) / estimated };
+  const overheadTokens = anchorOverhead(path) ?? 0;
+  return {
+    measured,
+    estimated,
+    overheadTokens,
+    ratio: (measured - overheadTokens) / estimated,
+  };
 }
 
 /**
  * The frozen-prefix read the previous manifest predicted:
- * `head + ratio × budget.frozenTokens` from that manifest's own
- * calibration, else head 0 and ratio 1. 0 without a previous manifest.
+ * `overheadTokens + ratio × budget.frozenTokens` from that manifest's own
+ * calibration, else overhead 0 and ratio 1. 0 without a previous manifest.
  */
 export function expectedFrozenPrefix(path: readonly StoredEntry[]): number {
   const manifest = previousManifest(path);
   if (!manifest || !isRecord(manifest.payload)) return 0;
   const prior = storedCalibration(manifest.payload);
-  return prior.head + frozenTokens(manifest.payload) * prior.ratio;
+  return prior.overheadTokens + frozenTokens(manifest.payload) * prior.ratio;
 }
 
-function anchorHead(path: readonly StoredEntry[]): number | undefined {
+function anchorOverhead(path: readonly StoredEntry[]): number | undefined {
   const epoch = latestViewEpoch(path);
   const range = epochRange(path, epoch);
   const slice = path.slice(range.start, range.end);
-  const first = firstHead(slice);
+  const first = firstOverhead(slice);
   if (first !== undefined) return first;
-  return latestHead(path.slice(0, range.end));
+  return latestOverhead(path.slice(0, range.end));
 }
 
-function firstHead(path: readonly StoredEntry[]): number | undefined {
-  return headFromPairs(path, false);
+function firstOverhead(path: readonly StoredEntry[]): number | undefined {
+  return overheadFromPairs(path, false);
 }
 
-function latestHead(path: readonly StoredEntry[]): number | undefined {
-  return headFromPairs(path, true);
+function latestOverhead(path: readonly StoredEntry[]): number | undefined {
+  return overheadFromPairs(path, true);
 }
 
-function headFromPairs(
+function overheadFromPairs(
   path: readonly StoredEntry[],
   latest: boolean,
 ): number | undefined {
@@ -177,13 +185,13 @@ function frozenTokens(payload: Record<string, unknown>): number {
 }
 
 function storedCalibration(payload: Record<string, unknown>): {
-  head: number;
+  overheadTokens: number;
   ratio: number;
 } {
   const calibration = payload.calibration;
-  if (!isRecord(calibration)) return { head: 0, ratio: 1 };
+  if (!isRecord(calibration)) return { overheadTokens: 0, ratio: 1 };
   return {
-    head: finite(calibration.head) ?? 0,
+    overheadTokens: finite(calibration.overheadTokens) ?? 0,
     ratio: finite(calibration.ratio) ?? 1,
   };
 }

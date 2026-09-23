@@ -122,11 +122,10 @@ export type CalibrationReport = {
   measured: number;
   estimated: number;
   /**
-   * Fixed overhead in tokens (not the system+tools `Head`): the epoch's
-   * first measured input minus that turn's budget. Persisted under this
-   * name; see docs/notes/proposed/2026-09-24-head-naming.md.
+   * Fixed overhead in tokens: the epoch's first measured input minus that
+   * turn's `budget.used`, floored at 0.
    */
-  head: number;
+  overheadTokens: number;
   ratio: number;
 };
 
@@ -219,7 +218,8 @@ export type Manifest = {
   epochDecision?: EpochDecisionReport;
   /**
    * Previous request: measured input, the compiler's `budget.used`, the
-   * fixed overhead `head`, and `(measured − head) / estimated`.
+   * fixed overhead `overheadTokens`, and
+   * `(measured − overheadTokens) / estimated`.
    */
   calibration?: CalibrationReport;
   /**
