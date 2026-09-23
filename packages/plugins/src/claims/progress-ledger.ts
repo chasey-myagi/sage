@@ -44,6 +44,12 @@ const inputSchema = {
   },
 };
 
+/**
+ * Model-visible name of the ledger tool; the claim reads its calls back
+ * from the Log by this name.
+ */
+export const LEDGER_TOOL_NAME = "update_ledger";
+
 export function progressLedger(opts?: { priority?: number }): {
   tool: HarnessTool;
   provider: ClaimProvider;
@@ -51,7 +57,7 @@ export function progressLedger(opts?: { priority?: number }): {
   const priority = opts?.priority ?? 100;
   const tool: HarnessTool = {
     def: {
-      name: "update_ledger",
+      name: LEDGER_TOOL_NAME,
       description:
         "Record the task frame. Fields included on a call replace the previous goal, plan, or decisions.",
       inputSchema,
@@ -77,7 +83,7 @@ export function progressLedger(opts?: { priority?: number }): {
       if (!Array.isArray(payload.content)) continue;
       for (const block of payload.content) {
         if (!isRecord(block) || block.type !== "tool_use") continue;
-        if (block.name !== "update_ledger") continue;
+        if (block.name !== LEDGER_TOOL_NAME) continue;
         seen = true;
         apply(frame, block.input);
       }

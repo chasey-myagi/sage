@@ -122,7 +122,7 @@ CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https:
 
 ## 离线回放
 
-离线重编译拿不到模型对新视图的反应，所以这一路不打模型。`policy.scorer.name` 不是 `rule` 时，`replayOffline` 换成 `ruleScorer`，并在返回数组上挂一个不可枚举的 `scorerNote`。`compareOffline` 读到它，就在 Markdown 和 JSON 里写上 `scorer:offline-rule`。
+离线重编译拿不到模型对新视图的反应，所以这一路不打模型。`policy.scorer` 没有 `isNoop`（只有 `ruleScorer` 设了它）时，`replayOffline` 换成 `ruleScorer`，并记住这次返回的数组。`compareOffline` 收到这个数组，就在 Markdown 和 JSON 里写上 `scorer:offline-rule`；数组的拷贝不带这个标记。
 
 ```ts
 replayOffline(store, sessionId, policy, { tools, system })

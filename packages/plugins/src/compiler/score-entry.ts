@@ -5,7 +5,8 @@
  * Contract: a chunk's tier is fixed when it first enters the view and the
  * cumulative freeze keeps it, so the bytes before it never change inside
  * an epoch. Every failure leaves the candidates full and still counts the
- * call. The rule scorer is never called in entry mode.
+ * call. A scorer with `isNoop` (the rule scorer) is never called in entry
+ * mode.
  *
  * Intentionally not in the Log: the scorer function and its request. The
  * re-tiered rows and `manifest.entryScored` are the record.
@@ -17,6 +18,7 @@ import type { ScoreDecision, Scorer } from "../scorer/types.js";
 import { applyDecisions } from "./apply.js";
 import type { TokenCounter } from "./budget.js";
 import type { Chunk } from "./chunks.js";
+import { EXPAND_TOOL_NAME } from "./expand.js";
 import { listedChunkIds, type SessionPath } from "./log-read.js";
 import { entryReason, summaryRejectedReason } from "./reasons.js";
 import {
@@ -78,7 +80,7 @@ export async function runEntryScorer(input: {
   query: string;
 }): Promise<ScoredView & { report?: EntryScoredReport }> {
   const unchanged = { ...input.view };
-  if (input.scorer.name === "rule") return unchanged;
+  if (input.scorer.isNoop) return unchanged;
   const candidates = entryCandidates(input);
   if (candidates.length === 0) return unchanged;
   let result: { decisions: ScoreDecision[]; usage?: Usage; fallback?: string };
@@ -128,7 +130,8 @@ function entryCandidates(input: {
   const listed = listedChunkIds(input.path);
   const rowById = firstById(input.view.rows);
   return input.chunks.filter((chunk) => {
-    if (chunk.kind !== "tool" || chunk.toolName === "expand") return false;
+    if (chunk.kind !== "tool" || chunk.toolName === EXPAND_TOOL_NAME)
+      return false;
     if (listed.has(chunk.id) || chunk.tokens < input.minScoreTokens) {
       return false;
     }

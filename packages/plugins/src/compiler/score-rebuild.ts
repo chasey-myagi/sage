@@ -4,8 +4,8 @@
  *
  * Contract: it runs only on a rebuild, and only when at least one tool
  * chunk still has reason `kept`; recent, superseded, retry, and budget
- * decisions always win. The rule scorer leaves every tier and reason
- * untouched. A scorer failure keeps the eliminate tiers and is reported,
+ * decisions always win. A scorer with `isNoop` (the rule scorer) leaves
+ * every tier and reason untouched. A scorer failure keeps the eliminate tiers and is reported,
  * never thrown.
  *
  * Intentionally not in the Log: the scorer function and its request. The
@@ -13,7 +13,12 @@
  */
 
 import type { Message, Request, Usage } from "@sage/provider/contract";
-import type { ScoreDecision, ScoreRaw, Scorer } from "../scorer/types.js";
+import type {
+  ScoreDecision,
+  ScoreRaw,
+  ScoreResult,
+  Scorer,
+} from "../scorer/types.js";
 import { applyDecisions } from "./apply.js";
 import type { TokenCounter } from "./budget.js";
 import type { Chunk } from "./chunks.js";
@@ -44,17 +49,10 @@ export type ScoredView = {
   used: number;
 };
 
-type ScoreReply = {
-  decisions: ScoreDecision[];
-  usage?: Usage;
-  fallback?: string;
-  raw?: ScoreRaw;
-};
-
 /**
  * Scores the kept tool chunks of the chosen view and applies the result.
  *
- * A non-rule scorer may set each candidate to none, summary, or full. The
+ * A scorer without `isNoop` may set each candidate to none, summary, or full. The
  * chunk reason becomes the decision's non-empty `reason`, else
  * `scorer:model`, keeping the previous suffixes. A summary's tool_result is
  * the stub, a newline, and `summary (model notes, not evidence): ` plus the
@@ -75,7 +73,7 @@ export async function runRebuildScorer(input: {
   const { view } = input;
   const candidates = keptToolChunks(view.rows, input.chunks);
   if (candidates.length === 0) return { ...view };
-  let result: ScoreReply;
+  let result: ScoreResult;
   try {
     result = await input.scorer.score({
       candidates,
@@ -87,7 +85,7 @@ export async function runRebuildScorer(input: {
     result = { decisions: [], fallback: "error" };
   }
   const report = reportOf(result);
-  if (result.fallback !== undefined || input.scorer.name === "rule") {
+  if (result.fallback !== undefined || input.scorer.isNoop) {
     return {
       ...view,
       ...(result.fallback !== undefined ? { fallback: result.fallback } : {}),
@@ -163,18 +161,15 @@ function mergeScore(
 }
 
 /**
- * `calls` is 0 when the fallback is `no-previous-request` or `no-adapter`,
- * which a scorer returns before sending anything; otherwise 1.
+ * `calls` is 0 when the scorer says it fell back before sending anything
+ * (`requested: false`); otherwise 1.
  */
-function reportOf(result: ScoreReply): RebuildScorerReport | undefined {
+function reportOf(result: ScoreResult): RebuildScorerReport | undefined {
   if (result.usage === undefined && result.fallback === undefined)
     return undefined;
-  const preCall =
-    result.fallback === "no-previous-request" ||
-    result.fallback === "no-adapter";
   const fallback = result.fallback !== undefined;
   return {
-    calls: preCall ? 0 : 1,
+    calls: result.requested === false ? 0 : 1,
     usage: result.usage ?? EMPTY_USAGE,
     fallback,
     ...(fallback && result.raw ? { raw: result.raw } : {}),

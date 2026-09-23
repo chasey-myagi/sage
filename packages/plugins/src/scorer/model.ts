@@ -2,8 +2,8 @@
  * Model scorer. One auxiliary call, only as a prefix extension.
  *
  * Contract: when `prevRequest` is missing, score resolves
- * `{ decisions: [], fallback: "no-previous-request" }` and does not call an
- * adapter. Otherwise the request copies that previous head and messages
+ * `{ decisions: [], fallback: "no-previous-request", requested: false }` and
+ * does not call an adapter; a missing adapter likewise sets `requested`. Otherwise the request copies that previous head and messages
  * byte for byte, keeps its tools, sets `toolChoice` to `"none"`, and
  * appends one user message: a fixed instruction, the query, and a JSON
  * list of `{id, tool, summary, tokens}`. Candidates beyond `maxCandidates`
@@ -80,10 +80,16 @@ export function modelScorer(opts: {
     name: "model",
     async score(input) {
       if (!input.prevRequest) {
-        return { decisions: [], fallback: "no-previous-request" };
+        return {
+          decisions: [],
+          fallback: "no-previous-request",
+          requested: false,
+        };
       }
       const adapter = opts.adapters[opts.model.provider];
-      if (!adapter) return { decisions: [], fallback: "no-adapter" };
+      if (!adapter) {
+        return { decisions: [], fallback: "no-adapter", requested: false };
+      }
 
       const limit = maxCandidates <= 0 ? 0 : maxCandidates;
       const selected =

@@ -13,6 +13,7 @@
 
 import type { ViewContext } from "@sage/core";
 import type { Message, Request, Sampling } from "@sage/provider/contract";
+import { EXPAND_TOOL_NAME } from "./expand.js";
 import { rebuildFromLog } from "./rebuild.js";
 
 /** A session path as the view provider receives it. */
@@ -193,7 +194,8 @@ export function expandStamps(path: SessionPath): Map<string, string[]> {
     if (entry.kind !== "message" || !isMessage(entry.payload)) continue;
     if (entry.payload.role !== "assistant") continue;
     for (const block of entry.payload.content) {
-      if (block.type !== "tool_use" || block.name !== "expand") continue;
+      if (block.type !== "tool_use" || block.name !== EXPAND_TOOL_NAME)
+        continue;
       const id = expandTarget(block.input);
       if (!id) continue;
       const list = stamps.get(id) ?? [];
@@ -211,7 +213,8 @@ export function countExpands(path: SessionPath): number {
     if (entry.kind !== "message" || !isMessage(entry.payload)) continue;
     if (entry.payload.role !== "assistant") continue;
     for (const block of entry.payload.content) {
-      if (block.type === "tool_use" && block.name === "expand") total += 1;
+      if (block.type === "tool_use" && block.name === EXPAND_TOOL_NAME)
+        total += 1;
     }
   }
   return total;
