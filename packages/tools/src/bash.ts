@@ -14,7 +14,8 @@
  * profile then denies file reads of other bench workspaces under the
  * realpath of os.tmpdir(): `(deny file-read* (regex #"^<tmpRoot>/<prefix>"))`.
  * Regex metacharacters in that path and prefix are escaped. `benchPrefix`
- * defaults to `sage-bench-`. The cwd realpath is allowed afterwards; later
+ * defaults to `sage-bench-`. `sandbox.allowRoot` is the directory tree the
+ * profile allows after that deny; it defaults to the cwd realpath. Later
  * rules win, so the deny is written first. macOS `/var` is stored as
  * `/private/var`. Ordinary files in the temp directory stay readable. linux
  * `unshare -n` cannot restrict files; fsIsolate does not change that argv
@@ -33,8 +34,8 @@
  * prints its own error. fsIsolate is not a details field.
  *
  * Intentionally not in the Log: the child process, the abort signal, the
- * sandbox profile, the temp root, and the spilled file. The preview the
- * model sees is the tool result.
+ * sandbox profile, the temp root, allowRoot, and the spilled file. The
+ * preview the model sees is the tool result.
  */
 
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
@@ -58,17 +59,27 @@ export type ToolNetwork = "full" | "none";
 
 const DEFAULT_BENCH_PREFIX = "sage-bench-";
 
+/** Child env bench uses to pass the run root. Not a CLI flag. */
+export const SANDBOX_ALLOW_ROOT_ENV = "SAGE_SANDBOX_ALLOW_ROOT";
+
 export type ToolSandbox = {
   network: ToolNetwork;
   fsIsolate: boolean;
+  /** Directory tree bash may read. Omitted means the cwd realpath. */
+  allowRoot?: string;
 };
 
 export function resolveToolSandbox(sandbox?: {
   network?: ToolNetwork;
   fsIsolate?: boolean;
+  allowRoot?: string;
 }): ToolSandbox {
   const network = sandbox?.network ?? "full";
   const fsIsolate = sandbox?.fsIsolate ?? network === "none";
+  const allowRoot = sandbox?.allowRoot;
+  if (typeof allowRoot === "string" && allowRoot.length > 0) {
+    return { network, fsIsolate, allowRoot };
+  }
   return { network, fsIsolate };
 }
 
@@ -159,7 +170,11 @@ export function createBash(
   execCwd: string,
   exec: BashExec,
   opts: {
-    sandbox?: { network?: ToolNetwork; fsIsolate?: boolean };
+    sandbox?: {
+      network?: ToolNetwork;
+      fsIsolate?: boolean;
+      allowRoot?: string;
+    };
     platform?: NodeJS.Platform;
     tmpRoot?: string;
     benchPrefix?: string;
@@ -329,11 +344,15 @@ function sandboxProfile(
     rules.push("(deny network*)", '(allow network* (local ip "localhost:*"))');
   }
   if (sandbox.fsIsolate) {
-    // Later rules win. Deny sibling bench workspaces, then allow this cwd.
+    // Later rules win. Deny other bench roots, then allow allowRoot.
+    // The default is the cwd. A wider root lets `cd` stat that parent.
+    const allowed = sandbox.allowRoot
+      ? realpathSync(sandbox.allowRoot)
+      : paths.cwd;
     const pattern = `^${escapeSandboxRegex(paths.tmpRoot)}/${escapeSandboxRegex(paths.benchPrefix)}`;
     rules.push(
       `(deny file-read* (regex #"${pattern}"))`,
-      `(allow file-read* (subpath ${JSON.stringify(paths.cwd)}))`,
+      `(allow file-read* (subpath ${JSON.stringify(allowed)}))`,
     );
   }
   return rules.join("");

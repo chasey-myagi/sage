@@ -202,6 +202,66 @@ describe("bash bench workspace isolation", () => {
     20_000,
   );
 
+  it.skipIf(process.platform !== "darwin")(
+    "cd to the absolute cwd succeeds when allowRoot is the bench run root",
+    async () => {
+      const root = realpathSync(tmpdir());
+      dir = mkdtempSync(path.join(root, "sage-bench-"));
+      const cwd = path.join(dir, "task");
+      mkdirSync(cwd);
+      writeFileSync(path.join(cwd, "f"), "mine-secret\n");
+      const bash = tool(
+        createTools({
+          cwd,
+          sandbox: {
+            network: "none",
+            fsIsolate: true,
+            allowRoot: dir,
+          },
+        }),
+        "bash",
+      );
+      const result = await bash.execute(
+        { command: `cd ${shQuote(realpathSync(cwd))} && cat f` },
+        ctx,
+      );
+      expect(result.isError, result.content).toBe(false);
+      expect(result.content).toContain("mine-secret");
+    },
+    20_000,
+  );
+
+  it.skipIf(process.platform !== "darwin")(
+    "denies a sibling bench file when allowRoot is this run root",
+    async () => {
+      const root = realpathSync(tmpdir());
+      dir = mkdtempSync(path.join(root, "sage-bench-"));
+      const cwd = path.join(dir, "task");
+      mkdirSync(cwd);
+      other = mkdtempSync(path.join(root, "sage-bench-"));
+      writeFileSync(path.join(other, "f"), "sibling-secret\n");
+      const bash = tool(
+        createTools({
+          cwd,
+          sandbox: {
+            network: "none",
+            fsIsolate: true,
+            allowRoot: dir,
+          },
+        }),
+        "bash",
+      );
+      const stolen = await bash.execute(
+        { command: `cat ${shQuote(path.join(other, "f"))}` },
+        ctx,
+      );
+      expect(stolen.isError).toBe(true);
+      expect(stolen.content).not.toContain("sibling-secret");
+      expect(bodyOf(stolen.content)).toMatch(/Operation not permitted/);
+    },
+    20_000,
+  );
+
   it("leaves linux on unshare because that cannot deny file reads", async () => {
     const cwd = freshDir();
     const seen: { argv?: readonly string[] }[] = [];

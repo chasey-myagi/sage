@@ -6,15 +6,17 @@
  * `sandbox.network` defaults to "full". "none" throws ToolNetworkError
  * unless this platform can enforce it (darwin, or linux with `unshare -n`).
  * `sandbox.fsIsolate` defaults to true when network is none. On darwin that
- * denies reads of other bench workspaces under the real temp root. `tmpRoot`
- * and `benchPrefix` are options; the prefix defaults to `sage-bench-`. linux
+ * denies reads of other bench workspaces under the real temp root, then
+ * allows `sandbox.allowRoot` (default: the cwd realpath). `tmpRoot` and
+ * `benchPrefix` are options; the prefix defaults to `sage-bench-`. linux
  * `unshare -n` cannot restrict files. A path outside the workspace returns
  * an isError tool result and does not throw from execute or accesses. The
  * kernel does not import this package.
  *
  * Intentionally not in the Log: Access lists, exec injection, the sandbox
- * profile, and spilled files under `.sage/tool-output`. Model-visible text
- * leaves only as tool results, which the session logs. When network is
+ * profile, allowRoot, and spilled files under `.sage/tool-output`.
+ * Model-visible text leaves only as tool results, which the session logs.
+ * When network is
  * none, bash details `{ network: "none" }` ride the kernel's
  * `details.toolResults` and are not model-visible. fsIsolate is not a
  * details field.
@@ -27,6 +29,7 @@ import {
   createBash,
   defaultExec,
   resolveToolSandbox,
+  SANDBOX_ALLOW_ROOT_ENV,
   type ToolNetwork,
   ToolNetworkError,
   type ToolSandbox,
@@ -45,6 +48,7 @@ export const PACKAGE = "@sage/tools" as const;
 export type { BashExec, ToolNetwork, ToolSandbox };
 export {
   resolveToolSandbox,
+  SANDBOX_ALLOW_ROOT_ENV,
   ToolNetworkError,
   toolNetworkSupport,
   toolSandboxSupport,
@@ -53,7 +57,11 @@ export {
 export function createTools(opts: {
   cwd: string;
   exec?: BashExec;
-  sandbox?: { network?: ToolNetwork; fsIsolate?: boolean };
+  sandbox?: {
+    network?: ToolNetwork;
+    fsIsolate?: boolean;
+    allowRoot?: string;
+  };
   platform?: NodeJS.Platform;
   unshareAvailable?: boolean;
   /** Realpath of the temp root. Defaults to realpath(os.tmpdir()). */

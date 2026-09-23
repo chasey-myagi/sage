@@ -18,7 +18,8 @@
  * denies reads of other bench workspaces under the real temp root. linux
  * `unshare -n` cannot restrict files. On a platform that cannot enforce
  * the network cut, sage exits 2 before the run. Provider calls stay in
- * this process.
+ * this process. `SAGE_SANDBOX_ALLOW_ROOT`, when set, is sandbox allowRoot.
+ * There is no CLI flag for it. Unset means bash allows the cwd realpath.
  * `--scorer model` installs a model scorer on the root compiler. It reuses
  * the assembled adapters and the session model. `--scorer jev` installs the
  * TypeSafe Jev scorer. `JEV_BASE_URL` defaults to `https://api.typesafe.ai`.
@@ -71,8 +72,9 @@
  * lines, and the stderr note that `--passthrough` ignored `--budget`.
  * `--tool-network` and `--tool-sandbox` are argv. bash records
  * `network: "none"` through the kernel's toolResults, not as its own
- * entry. The sibling-workspace deny is not a Log entry. The system prompt is
- * model-visible and is stored on request_header. Claim text reaches the
+ * entry. The sibling-workspace deny and allowRoot are not Log entries.
+ * The system prompt is model-visible and is stored on request_header.
+ * Claim text reaches the
  * Log only through the manifest the kernel appends.
  */
 
@@ -121,6 +123,7 @@ import {
   type BashExec,
   createTools,
   resolveToolSandbox,
+  SANDBOX_ALLOW_ROOT_ENV,
   type ToolNetwork,
   toolSandboxSupport,
 } from "@sage/tools";
@@ -146,7 +149,11 @@ export function createCodingSession(opts: {
   sessionsDir?: string;
   store?: LogStore;
   exec?: BashExec;
-  sandbox?: { network?: ToolNetwork; fsIsolate?: boolean };
+  sandbox?: {
+    network?: ToolNetwork;
+    fsIsolate?: boolean;
+    allowRoot?: string;
+  };
   /** Realpath of the temp root passed into the bash sandbox. */
   tmpRoot?: string;
   /** Bench workspace prefix passed into the bash sandbox. */
@@ -300,7 +307,13 @@ export async function runCli(
     stderr.write("entry scoring needs --scorer model|jev\n");
     return 2;
   }
-  const sandbox = resolveToolSandbox({ network: parsed.toolNetwork ?? "full" });
+  const allowRoot = env[SANDBOX_ALLOW_ROOT_ENV];
+  const sandbox = resolveToolSandbox({
+    network: parsed.toolNetwork ?? "full",
+    ...(typeof allowRoot === "string" && allowRoot.length > 0
+      ? { allowRoot }
+      : {}),
+  });
   const platform = io.platform ?? process.platform;
   let unshareAvailable = io.unshareAvailable;
   if (sandbox.network === "none" || sandbox.fsIsolate) {
