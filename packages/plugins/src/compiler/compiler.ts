@@ -50,6 +50,15 @@
  * eliminate tiers. When the call reports usage or a fallback, `manifest.scorer`
  * is `{ calls, usage, fallback }`. The score request reuses the previous
  * turn's head and messages rebuilt from the log.
+ * `shadowScorer`, when set, runs after tiers, freeze, and budget are fixed.
+ * It scores tool chunks whose ids are absent from the previous manifest.
+ * The first turn has no previous manifest, so every tool chunk is new.
+ * Prose chunks are not scored. `prevRequest` is this turn's compiled view
+ * (head, messages, cache breakpoints), not the previous turn's request.
+ * The result is stored on `manifest.shadow` and does not change tiers,
+ * freeze, or budget. A throw becomes `fallback` and the view still returns.
+ * No new tool chunk means no call and no `shadow` field. Subtask compiles
+ * do not run it.
  * Candidates are `listModels` of the current provider. Chunk accesses passed
  * to the policy come from the chunk index and are not copied onto the manifest.
  * The context-window guard is the only rebuild allowed on an epoch's first
@@ -79,8 +88,9 @@
  * `budget.staleOmittable` are 0; this compile does not compare a reopen.
  *
  * Intentionally not in the Log: claim providers, the token counter, the route
- * policy, the scorer function, and the live CompiledView. The kernel persists
- * `view_epoch`, `model_change`, and the manifest, including `scorer` when set.
+ * policy, the scorer function, the shadow scorer function, and the live
+ * CompiledView. The kernel persists `view_epoch`, `model_change`, and the
+ * manifest, including `scorer` and `shadow` when set.
  */
 
 import type { ClaimRecord, CompiledView, ViewContext } from "@sage/core";
@@ -156,6 +166,7 @@ export function contextCompiler(opts: {
   minSavingsRatio?: number;
   route?: RoutePolicy;
   scorer?: Scorer;
+  shadowScorer?: Scorer;
   subtask?: { query: string };
 }): { view(ctx: ViewContext): Promise<CompiledView> } {
   const count = opts.count ?? defaultTokenCount;
@@ -294,6 +305,11 @@ export function contextCompiler(opts: {
         decision.rebuild ? undefined : ceiling,
       );
       const last = Math.max(0, chosen.messages.length - 1);
+      const cacheBreakpoints: CompiledView["cacheBreakpoints"] = [
+        "head",
+        { afterMessage: end },
+        { afterMessage: last },
+      ];
       const cache = {
         expectedReadTokens: expectedFrozenPrefix(ctx.path),
         measuredReadTokens: measuredCacheRead(ctx.path),
@@ -318,6 +334,17 @@ export function contextCompiler(opts: {
         frozenTokens: freezeStats.frozenTokens,
         staleOmittable: freezeStats.staleOmittable,
       };
+      const shadow = opts.shadowScorer
+        ? await runShadow({
+            scorer: opts.shadowScorer,
+            chunks,
+            path: ctx.path,
+            ctx,
+            messages: chosen.messages,
+            cacheBreakpoints,
+            query: latestQuery(ctx.path),
+          })
+        : undefined;
       const manifest = {
         epoch,
         turn: ctx.turn,
@@ -329,16 +356,13 @@ export function contextCompiler(opts: {
         cache,
         ...(calibration ? { calibration } : {}),
         ...(scorerReport ? { scorer: scorerReport } : {}),
+        ...(shadow ? { shadow } : {}),
       };
       const view: CompiledView = {
         epoch,
         head: ctx.head,
         messages: chosen.messages,
-        cacheBreakpoints: [
-          "head",
-          { afterMessage: end },
-          { afterMessage: last },
-        ],
+        cacheBreakpoints,
         manifest,
       };
       if (epochStart) view.epochStart = epochStart;
@@ -1300,6 +1324,132 @@ function modelReason(reason: string, decision: ScoreDecision): string {
 function clampSummary(summary: string): string {
   if (summary.length <= SUMMARY_LIMIT) return summary;
   return summary.slice(0, SUMMARY_LIMIT);
+}
+
+type ShadowBody = NonNullable<CompiledView["manifest"]["shadow"]>;
+
+async function runShadow(input: {
+  scorer: Scorer;
+  chunks: readonly Chunk[];
+  path: ViewContext["path"];
+  ctx: ViewContext;
+  messages: Message[];
+  cacheBreakpoints: CompiledView["cacheBreakpoints"];
+  query: string;
+}): Promise<ShadowBody | undefined> {
+  try {
+    const seen = listedChunkIds(input.path);
+    const candidates = input.chunks.filter(
+      (chunk) => chunk.kind === "tool" && !seen.has(chunk.id),
+    );
+    if (candidates.length === 0) return undefined;
+    let result: {
+      decisions: ScoreDecision[];
+      usage?: Usage;
+      fallback?: string;
+    };
+    try {
+      result = await input.scorer.score({
+        candidates,
+        prevRequest: requestFromCompiled(
+          input.ctx,
+          input.messages,
+          input.cacheBreakpoints,
+        ),
+        query: input.query,
+      });
+    } catch (error) {
+      return {
+        scorer: input.scorer.name,
+        decisions: [],
+        fallback: errorText(error),
+      };
+    }
+    const usage = result.usage ? shadowUsage(result.usage) : undefined;
+    return {
+      scorer: input.scorer.name,
+      decisions: shadowDecisions(candidates, result.decisions),
+      ...(usage ? { usage } : {}),
+      ...(typeof result.fallback === "string"
+        ? { fallback: result.fallback }
+        : {}),
+    };
+  } catch (error) {
+    return {
+      scorer: input.scorer.name,
+      decisions: [],
+      fallback: errorText(error),
+    };
+  }
+}
+
+function listedChunkIds(path: ViewContext["path"]): Set<string> {
+  const ids = new Set<string>();
+  const manifest = latestManifest(path);
+  if (
+    !manifest ||
+    !isRecord(manifest.payload) ||
+    !Array.isArray(manifest.payload.chunks)
+  ) {
+    return ids;
+  }
+  for (const chunk of manifest.payload.chunks) {
+    if (!isRecord(chunk) || typeof chunk.id !== "string") continue;
+    ids.add(chunk.id);
+  }
+  return ids;
+}
+
+function requestFromCompiled(
+  ctx: ViewContext,
+  messages: Message[],
+  cacheBreakpoints: CompiledView["cacheBreakpoints"],
+): Request {
+  return {
+    model: { provider: ctx.model.provider, model: ctx.model.model },
+    head: structuredClone(ctx.head),
+    messages: structuredClone(messages),
+    cacheBreakpoints: structuredClone(cacheBreakpoints),
+    sampling: latestHeader(ctx.path)?.sampling ?? {},
+  };
+}
+
+function shadowDecisions(
+  candidates: readonly Chunk[],
+  decisions: readonly ScoreDecision[],
+): ShadowBody["decisions"] {
+  const allowed = new Set(candidates.map((chunk) => chunk.id));
+  const kept: ShadowBody["decisions"] = [];
+  for (const decision of decisions) {
+    if (!allowed.has(decision.id) || !SCORE_TIERS.has(decision.tier)) continue;
+    kept.push({
+      id: decision.id,
+      tier: decision.tier,
+      ...(decision.reason !== undefined && decision.reason.length > 0
+        ? { reason: decision.reason }
+        : {}),
+    });
+  }
+  return kept;
+}
+
+function shadowUsage(usage: Usage): NonNullable<ShadowBody["usage"]> {
+  return {
+    inputOther: finiteNumber(usage.inputOther),
+    inputCacheRead: finiteNumber(usage.inputCacheRead),
+    inputCacheCreation: finiteNumber(usage.inputCacheCreation),
+    output: finiteNumber(usage.output),
+  };
+}
+
+function finiteNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function errorText(error: unknown): string {
+  if (error instanceof Error && error.message.length > 0) return error.message;
+  const text = String(error);
+  return text.length > 0 && text !== "undefined" ? text : "error";
 }
 
 function previousRequest(ctx: ViewContext): Request | undefined {

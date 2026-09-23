@@ -84,7 +84,12 @@ describe("health output", () => {
     });
     expect(statsCode).toBe(0);
     const printed = stats.text().stdout.trim();
-    expect(JSON.parse(printed)).toEqual(summary.health);
+    expect(JSON.parse(printed)).toEqual({
+      ...summary.health,
+      shadowNone: 0,
+      laterNeeded: 0,
+      precision: null,
+    });
     expect(printed).not.toContain("You are sage");
     expect(printed).not.toContain(file);
     expect(onlyCounts(JSON.parse(printed))).toBe(true);
@@ -136,15 +141,42 @@ describe("scorer flag", () => {
       scorer: "jev",
     });
     expect(parseArgs(["--print", "hi", "--scorer", "nope"]).ok).toBe(false);
+    expect(
+      parseArgs(["--print", "hi", "--shadow-scorer", "model"]),
+    ).toMatchObject({
+      ok: true,
+      shadowScorer: "model",
+    });
+    expect(parseArgs(["--print", "hi", "--shadow-scorer=rule"])).toMatchObject({
+      ok: true,
+      shadowScorer: "rule",
+    });
+    expect(parseArgs(["--print", "hi", "--shadow-scorer", "nope"]).ok).toBe(
+      false,
+    );
     const help = parseArgs(["--help"]);
     if (help.ok) throw new Error("help should not parse");
     expect(help.message).toContain("jev");
+    expect(help.message).toContain("--shadow-scorer");
   });
 
   it("exits 2 when --scorer jev has no TYPESAFE_API_KEY", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "sage-jev-"));
     const io = capture();
     const code = await runCli(["--print", "hi", "--scorer", "jev"], {
+      cwd: dir,
+      env: {},
+      stdout: io.stdout,
+      stderr: io.stderr,
+    });
+    expect(code).toBe(2);
+    expect(io.text().stderr).toContain("TYPESAFE_API_KEY");
+  });
+
+  it("exits 2 when --shadow-scorer jev has no TYPESAFE_API_KEY", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-shadow-jev-"));
+    const io = capture();
+    const code = await runCli(["--print", "hi", "--shadow-scorer", "jev"], {
       cwd: dir,
       env: {},
       stdout: io.stdout,

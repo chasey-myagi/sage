@@ -19,7 +19,12 @@
  * `--scorer model` installs a model scorer on the root compiler. It reuses
  * the assembled adapters and the session model. `--scorer jev` installs the
  * TypeSafe Jev scorer and reads `TYPESAFE_API_KEY`; a missing key exits 2.
- * The default scorer is the deterministic rule scorer. `--provider typesafe`
+ * The default scorer is the deterministic rule scorer. `--shadow-scorer
+ * rule|model|jev` installs a second scorer that records `manifest.shadow`
+ * and does not change tiers. It is off unless the flag is set. `jev` for
+ * either flag reads `TYPESAFE_API_KEY`; a missing key exits 2.
+ * `--passthrough` does not compile, so a shadow scorer is not called.
+ * `--provider typesafe`
  * is rejected: that catalog row prices Jev and is not a chat endpoint.
  * Each preset with its env key assembles an adapter. OpenAI-compatible
  * presets share one adapter class and differ by base URL. `--provider`
@@ -34,7 +39,12 @@
  * still drop every non-home provider on that ladder. stdout is one JSON
  * RunSummary, including `health`. `--json` asks for that same line.
  * `stats <session.jsonl>` reads the file with JsonlLogStore and prints
- * `runHealth` without starting a run.
+ * `runHealth` plus `shadowNone`, `laterNeeded`, and `precision`, without
+ * starting a run. `shadowNone` is the number of distinct chunk ids a shadow
+ * decision marked `none`. `laterNeeded` counts those ids that later appear
+ * as an `expand` tool input `id`, or that are a `read` result whose `path`
+ * is read again on a strictly later turn. `precision` is
+ * `1 - laterNeeded / shadowNone`, or null when `shadowNone` is 0.
  * `bench run` clones each task, runs sage, then the task's test command,
  * and writes `<out>/results.json` plus `<out>/sessions/<taskId>.jsonl`.
  * `--budget` on `bench run` is forwarded on each `sage -p` argv.
@@ -66,6 +76,7 @@ import {
   type LogStore,
   passthroughView,
   runHealth,
+  type StoredEntry,
 } from "@sage/core";
 import {
   agentsMd,
@@ -76,6 +87,7 @@ import {
   modelScorer,
   progressLedger,
   type RoutePolicy,
+  ruleScorer,
   type Scorer,
   sensitivePolicy,
   subtaskTools,
@@ -125,6 +137,7 @@ export function createCodingSession(opts: {
   budget?: number;
   passthrough?: boolean;
   scorer?: Scorer;
+  shadowScorer?: Scorer;
   ladder?: readonly { provider: string; model: string }[];
   home?: string;
 }): CodingSession {
@@ -202,6 +215,7 @@ export function createCodingSession(opts: {
           claims,
           route,
           ...(opts.scorer ? { scorer: opts.scorer } : {}),
+          ...(opts.shadowScorer ? { shadowScorer: opts.shadowScorer } : {}),
         }),
     sampling: opts.sampling,
   });
@@ -263,7 +277,10 @@ export async function runCli(
     }
     if (platform === "linux") unshareAvailable = true;
   }
-  if (parsed.scorer === "jev" && !env.TYPESAFE_API_KEY) {
+  if (
+    (parsed.scorer === "jev" || parsed.shadowScorer === "jev") &&
+    !env.TYPESAFE_API_KEY
+  ) {
     stderr.write("Missing TYPESAFE_API_KEY\n");
     return 2;
   }
@@ -308,15 +325,18 @@ export async function runCli(
       ? { budget: parsed.budget }
       : {}),
     ...(parsed.ladder ? { ladder: parsed.ladder } : {}),
-    scorer:
-      parsed.scorer === "model"
-        ? modelScorer({
-            adapters,
-            model: { provider: auth.provider, model: auth.model },
-          })
-        : parsed.scorer === "jev"
-          ? jevScorer({ apiKey: env.TYPESAFE_API_KEY })
-          : undefined,
+    scorer: namedScorer(
+      parsed.scorer,
+      adapters,
+      { provider: auth.provider, model: auth.model },
+      env,
+    ),
+    shadowScorer: namedScorer(
+      parsed.shadowScorer,
+      adapters,
+      { provider: auth.provider, model: auth.model },
+      env,
+    ),
   });
   let turn = 0;
   session.hooks.observe("turn_start", (payload) => {
@@ -417,8 +437,10 @@ function runStats(
   }
   try {
     const store = new JsonlLogStore({ dir: path.dirname(resolved) });
-    const health = runHealth(store.path(sessionId));
-    io.stdout.write(`${JSON.stringify(health)}\n`);
+    const logged = store.path(sessionId);
+    const health = runHealth(logged);
+    const audit = shadowAudit(logged);
+    io.stdout.write(`${JSON.stringify({ ...health, ...audit })}\n`);
     return 0;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -437,11 +459,14 @@ function systemPrompt(cwd: string): string {
   ].join("\n");
 }
 
+type ScorerName = "rule" | "model" | "jev";
+
 type FlagName =
   | "print"
   | "provider"
   | "model"
   | "scorer"
+  | "shadow-scorer"
   | "ladder"
   | "base-url"
   | "api-key-env"
@@ -459,7 +484,8 @@ type Parsed =
       apiKeyEnv?: string;
       passthrough: boolean;
       json: boolean;
-      scorer?: "rule" | "model" | "jev";
+      scorer?: ScorerName;
+      shadowScorer?: ScorerName;
       ladder?: { provider: string; model: string }[];
       budget?: number;
       maxTurns?: number;
@@ -475,7 +501,8 @@ export function parseArgs(argv: string[]): Parsed {
   let apiKeyEnv: string | undefined;
   let passthrough = false;
   let json = false;
-  let scorer: "rule" | "model" | "jev" | undefined;
+  let scorer: ScorerName | undefined;
+  let shadowScorer: ScorerName | undefined;
   let ladder: { provider: string; model: string }[] | undefined;
   let budget: number | undefined;
   let maxTurns: number | undefined;
@@ -510,14 +537,16 @@ export function parseArgs(argv: string[]): Parsed {
       if (taken.name === "provider") provider = taken.value;
       if (taken.name === "model") model = taken.value;
       if (taken.name === "scorer") {
-        if (
-          taken.value !== "rule" &&
-          taken.value !== "model" &&
-          taken.value !== "jev"
-        ) {
+        if (!isScorerName(taken.value)) {
           return { ok: false, message: usage() };
         }
         scorer = taken.value;
+      }
+      if (taken.name === "shadow-scorer") {
+        if (!isScorerName(taken.value)) {
+          return { ok: false, message: usage() };
+        }
+        shadowScorer = taken.value;
       }
       if (taken.name === "ladder") {
         const parsed = parseLadder(taken.value);
@@ -577,6 +606,7 @@ export function parseArgs(argv: string[]): Parsed {
     passthrough,
     json,
     scorer,
+    shadowScorer,
     ladder,
     ...(budget !== undefined ? { budget } : {}),
     ...(maxTurns !== undefined ? { maxTurns } : {}),
@@ -586,9 +616,9 @@ export function parseArgs(argv: string[]): Parsed {
 
 function usage(): string {
   return [
-    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--passthrough] [--scorer rule|model|jev] [--json]",
+    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--passthrough] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--json]",
     "       sage stats <session.jsonl>",
-    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] --out <dir>",
+    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--shadow-scorer rule|model|jev] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }
@@ -623,6 +653,7 @@ function flagName(arg: string): FlagName | "unknown" | undefined {
   if (arg === "--provider") return "provider";
   if (arg === "--model") return "model";
   if (arg === "--scorer") return "scorer";
+  if (arg === "--shadow-scorer") return "shadow-scorer";
   if (arg === "--ladder") return "ladder";
   if (arg === "--base-url") return "base-url";
   if (arg === "--api-key-env") return "api-key-env";
@@ -641,6 +672,7 @@ function inlineFlag(
     "provider",
     "model",
     "scorer",
+    "shadow-scorer",
     "ladder",
     "base-url",
     "api-key-env",
@@ -776,6 +808,175 @@ function createAdapter(
     return new AnthropicAdapter({ apiKey, baseUrl });
   }
   return new OpenAIAdapter({ apiKey, baseUrl });
+}
+
+function isScorerName(value: string): value is ScorerName {
+  return value === "rule" || value === "model" || value === "jev";
+}
+
+function namedScorer(
+  name: ScorerName | undefined,
+  adapters: Record<string, ProviderAdapter>,
+  model: ModelRef,
+  env: NodeJS.ProcessEnv,
+): Scorer | undefined {
+  if (name === "model") return modelScorer({ adapters, model });
+  if (name === "jev") return jevScorer({ apiKey: env.TYPESAFE_API_KEY });
+  if (name === "rule") return ruleScorer;
+  return undefined;
+}
+
+function shadowAudit(entries: readonly StoredEntry[]): {
+  shadowNone: number;
+  laterNeeded: number;
+  precision: number | null;
+} {
+  const judgedTurn = new Map<string, number>();
+  const judgedAt = new Map<string, number>();
+  const calls: {
+    index: number;
+    turn: number;
+    name: string;
+    toolUseId: string;
+    input: unknown;
+  }[] = [];
+  let currentTurn = 0;
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (!entry) continue;
+    if (entry.kind === "manifest" && isRecord(entry.payload)) {
+      if (isFiniteNumber(entry.payload.turn)) currentTurn = entry.payload.turn;
+      rememberShadow(
+        entry.payload.shadow,
+        index,
+        currentTurn,
+        judgedTurn,
+        judgedAt,
+      );
+      continue;
+    }
+    if (entry.kind !== "message" || !isAssistantMessage(entry.payload))
+      continue;
+    for (const block of entry.payload.content) {
+      if (!isRecord(block) || block.type !== "tool_use") continue;
+      if (typeof block.name !== "string" || typeof block.id !== "string") {
+        continue;
+      }
+      calls.push({
+        index,
+        turn: currentTurn,
+        name: block.name,
+        toolUseId: block.id,
+        input: block.input,
+      });
+    }
+  }
+  let laterNeeded = 0;
+  for (const [id, turn] of judgedTurn) {
+    const at = judgedAt.get(id) ?? -1;
+    if (expandedLater(id, at, calls) || rereadLater(id, turn, calls)) {
+      laterNeeded += 1;
+    }
+  }
+  const shadowNone = judgedTurn.size;
+  return {
+    shadowNone,
+    laterNeeded,
+    precision: shadowNone === 0 ? null : 1 - laterNeeded / shadowNone,
+  };
+}
+
+function rememberShadow(
+  shadow: unknown,
+  index: number,
+  turn: number,
+  judgedTurn: Map<string, number>,
+  judgedAt: Map<string, number>,
+): void {
+  if (!isRecord(shadow) || !Array.isArray(shadow.decisions)) return;
+  for (const decision of shadow.decisions) {
+    if (!isRecord(decision) || decision.tier !== "none") continue;
+    if (typeof decision.id !== "string" || decision.id.length === 0) continue;
+    if (judgedTurn.has(decision.id)) continue;
+    judgedTurn.set(decision.id, turn);
+    judgedAt.set(decision.id, index);
+  }
+}
+
+function expandedLater(
+  chunkId: string,
+  at: number,
+  calls: readonly { index: number; name: string; input: unknown }[],
+): boolean {
+  return calls.some(
+    (call) =>
+      call.index > at &&
+      call.name === "expand" &&
+      expandId(call.input) === chunkId,
+  );
+}
+
+function rereadLater(
+  chunkId: string,
+  judgedTurn: number,
+  calls: readonly {
+    turn: number;
+    name: string;
+    toolUseId: string;
+    input: unknown;
+  }[],
+): boolean {
+  const toolUseId = toolUseIdOf(chunkId);
+  if (!toolUseId) return false;
+  const origin = calls.find((call) => call.toolUseId === toolUseId);
+  if (origin?.name !== "read") return false;
+  const file = readPath(origin.input);
+  if (!file) return false;
+  return calls.some(
+    (call) =>
+      call.name === "read" &&
+      call.turn > judgedTurn &&
+      call.toolUseId !== toolUseId &&
+      readPath(call.input) === file,
+  );
+}
+
+function toolUseIdOf(chunkId: string): string | undefined {
+  const hash = chunkId.indexOf("#");
+  if (hash <= 0 || hash === chunkId.length - 1) return undefined;
+  return chunkId.slice(hash + 1);
+}
+
+function expandId(input: unknown): string | undefined {
+  if (!isRecord(input)) return undefined;
+  if (typeof input.id !== "string" || input.id.length === 0) return undefined;
+  return input.id;
+}
+
+function readPath(input: unknown): string | undefined {
+  if (!isRecord(input)) return undefined;
+  if (typeof input.path !== "string" || input.path.length === 0) {
+    return undefined;
+  }
+  return input.path;
+}
+
+function isAssistantMessage(
+  value: unknown,
+): value is { role: string; content: unknown[] } {
+  return (
+    isRecord(value) &&
+    value.role === "assistant" &&
+    Array.isArray(value.content)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function isDirectRun(): boolean {

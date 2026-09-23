@@ -149,6 +149,16 @@ it("returns zeros and null rates for an empty path", () => {
     modelChanges: 0,
     scorerCalls: 0,
     scorerFallbacks: 0,
+    shadow: {
+      calls: 0,
+      usage: {
+        input: 0,
+        cacheRead: 0,
+        cacheCreation: 0,
+        output: 0,
+        total: 0,
+      },
+    },
     subtasks: {
       count: 0,
       tokens: {
@@ -297,6 +307,39 @@ it("sums numeric scorer fallbacks and ignores non-finite usage", () => {
   expect(health.cacheHitRatio).toBe(1);
   expect(health.scorerCalls).toBe(1);
   expect(health.scorerFallbacks).toBe(2);
+});
+
+it("counts each shadow manifest once and sums its usage quadruple", () => {
+  const health = runHealth([
+    manifest(0, {
+      shadow: {
+        scorer: "model",
+        decisions: [{ id: "a", tier: "none", reason: LEAK }],
+        usage: {
+          inputOther: 2,
+          inputCacheRead: 4,
+          inputCacheCreation: 1,
+          output: 3,
+          raw: LEAK,
+        },
+      },
+    }),
+    manifest(1, {
+      shadow: { scorer: "model", decisions: [], fallback: "boom" },
+    }),
+    manifest(2, {}),
+  ]);
+  expect(health.shadow).toEqual({
+    calls: 2,
+    usage: {
+      input: 2,
+      cacheRead: 4,
+      cacheCreation: 1,
+      output: 3,
+      total: 10,
+    },
+  });
+  expect(JSON.stringify(health)).not.toContain(LEAK);
 });
 
 function spawnTool(name: string, details: Record<string, unknown>) {

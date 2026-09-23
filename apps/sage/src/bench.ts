@@ -20,7 +20,10 @@
  * flag is appended to the argv, including under passthrough. `--max-turns <n>`
  * is appended the same way, including under passthrough. Omitting it still
  * appends `--max-turns 80`. A value that is not a positive integer exits 2
- * before any task runs. The session is copied next. An empty `git status`
+ * before any task runs. `--shadow-scorer rule|model|jev`, when set, is
+ * appended to that argv. Omitting it does not pass the flag. Any other
+ * value exits with the usage line before a task runs. The session is copied
+ * next. An empty `git status`
  * is `empty-patch` and the test command
  * is not run. `testPatch`,
  * when present, is a unified diff applied only after that copy and only when
@@ -127,6 +130,7 @@ export type BenchDeps = {
       budget: number | null;
       toolNetwork: ToolNetwork;
       maxTurns: number;
+      shadowScorer?: "rule" | "model" | "jev";
       argv: string[];
     },
   ): Promise<{ code: number; sessionFile?: string; timedOut?: boolean }>;
@@ -154,6 +158,7 @@ const FLAGS = new Set([
   "budget",
   "max-turns",
   "tool-network",
+  "shadow-scorer",
 ]);
 
 export async function runBenchCli(
@@ -204,6 +209,7 @@ export async function runBenchCli(
         budget: parsed.budget,
         toolNetwork: parsed.toolNetwork,
         maxTurns: parsed.maxTurns,
+        ...(parsed.shadowScorer ? { shadowScorer: parsed.shadowScorer } : {}),
       }),
     );
     writeResults(out, results);
@@ -363,6 +369,7 @@ async function runTask(
     budget: number | null;
     toolNetwork: ToolNetwork;
     maxTurns: number;
+    shadowScorer?: "rule" | "model" | "jev";
   },
 ): Promise<BenchTaskResult> {
   const work = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
@@ -694,6 +701,7 @@ function sageArgv(
     budget: number | null;
     toolNetwork: ToolNetwork;
     maxTurns: number;
+    shadowScorer?: "rule" | "model" | "jev";
   },
 ): string[] {
   const args = [sageBin(), "-p", task.problem, "--model", opts.model];
@@ -702,6 +710,9 @@ function sageArgv(
   args.push("--max-turns", String(opts.maxTurns));
   if (opts.policy === "passthrough") args.push("--passthrough");
   args.push("--tool-network", opts.toolNetwork);
+  if (opts.shadowScorer) {
+    args.push("--shadow-scorer", opts.shadowScorer);
+  }
   return args;
 }
 
@@ -734,6 +745,7 @@ function parseRun(argv: string[]):
       budget: number | null;
       toolNetwork: ToolNetwork;
       maxTurns: number;
+      shadowScorer?: "rule" | "model" | "jev";
     }
   | { message: string; exitCode?: number } {
   const values = new Map<string, string>();
@@ -785,6 +797,14 @@ function parseRun(argv: string[]):
     }
     maxTurns = parsed;
   }
+  const rawShadow = values.get("shadow-scorer");
+  let shadowScorer: "rule" | "model" | "jev" | undefined;
+  if (rawShadow !== undefined) {
+    if (rawShadow !== "rule" && rawShadow !== "model" && rawShadow !== "jev") {
+      return { message: benchUsage() };
+    }
+    shadowScorer = rawShadow;
+  }
   const rawNetwork = values.get("tool-network");
   let toolNetwork: ToolNetwork = "none";
   if (rawNetwork !== undefined) {
@@ -801,6 +821,7 @@ function parseRun(argv: string[]):
     budget,
     toolNetwork,
     maxTurns,
+    ...(shadowScorer ? { shadowScorer } : {}),
     ...(provider ? { provider } : {}),
   };
 }
@@ -885,7 +906,7 @@ function requiredString(
 
 function benchUsage(): string {
   return [
-    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] --out <dir>",
+    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--shadow-scorer rule|model|jev] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }

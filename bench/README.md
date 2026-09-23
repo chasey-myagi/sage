@@ -74,6 +74,8 @@ node apps/sage/bin/sage.mjs bench run \
 
 可选 `--max-turns <n>`，必须是正整数，否则退出 2，还没读任务文件。每个任务的 argv 里都有 `--max-turns`：写了旗标用那个数，没写则是 80。passthrough 也透传，不会忽略。`results.json` 顶层 `maxTurns` 是这个整数。
 
+可选 `--shadow-scorer rule|model|jev`。写了就原样放进每个任务的 `sage -p` argv，没写就不传。别的名字在开跑之前退出，并打印用法。影子只记不生效：档次、冻结和预算仍由原来的编译器决定。跑完对账用 `sage stats <session.jsonl>`，不在 `results.json` 里另记这个旗标。真机 `bench run --shadow-scorer model` 不进 CI。
+
 默认还给每个任务加上 `--tool-network none`。要让 bash 子进程上网，写 `--tool-network full`。`results.json` 顶层 `toolNetwork` 记下这次的值。断网只作用于工具子进程；父进程里的 provider 请求不受影响。评测必须默认断网：clone 只留 baseCommit 之后，agent 仍会 `curl` GitHub 上的上游提交，把修复抄进工作区，隐藏测试因此通过，这组结果作废。
 
 TS/JS 这 10 条：
