@@ -14,7 +14,8 @@ import {
   stopScript,
   toolScript,
 } from "../../../packages/core/test/support/faux.ts";
-import { parseArgs, runCli } from "../src/main.ts";
+import { parseArgs } from "../src/args.ts";
+import { runCli } from "../src/main.ts";
 
 let dir = "";
 let orphan = "";
