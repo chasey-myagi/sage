@@ -7,7 +7,8 @@
  * opens its own thinking block. The first parsed SSE object's `id` and
  * `model` become the response chunk. `toolChoice` is sent as
  * `tool_choice` unchanged; an absent toolChoice omits the field. Messages
- * and tools are otherwise sent unchanged.
+ * and tools are otherwise sent unchanged. A frame with an `error` object
+ * ends the call as a non-transport error finish carrying its message.
  *
  * Intentionally not in the Log: the API key, request bytes, and abort
  * signal. adapterDefaults are returned so the request_header can store what
@@ -171,6 +172,11 @@ function interpret(event: SseEvent, state: OpenState, driver: Driver): void {
   }
   const record = parseRecord(event.data);
   if (!record) return;
+  // An error frame inside a 200 response: the server gave up on this call.
+  if (asRecord(record.error)) {
+    driver.fail(record);
+    return;
+  }
   const choice = firstRecord(record.choices);
   // Announce on the first frame that names the response. A frame with a
   // choice may open a block, so announce before it even without an id: the

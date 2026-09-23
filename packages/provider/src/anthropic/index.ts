@@ -5,7 +5,8 @@
  * goes on the system block and the last tool). `message_start` becomes the
  * response chunk (message.id, message.model). `toolChoice` becomes
  * `tool_choice: { type }`; an absent toolChoice omits the field. Messages
- * and tools are otherwise sent unchanged.
+ * and tools are otherwise sent unchanged. An `error` event ends the call
+ * as a non-transport error finish carrying the server's message.
  *
  * Intentionally not in the Log: the API key, request bytes, and abort
  * signal. adapterDefaults are returned so the request_header can store what
@@ -204,6 +205,9 @@ function interpret(
       return;
     case "message_stop":
       driver.complete(mapStop(state.stopReason));
+      return;
+    case "error":
+      driver.fail(record);
       return;
     default:
       return;

@@ -153,7 +153,12 @@ async function readFailure(
   };
 }
 
-function messageFromPayload(raw: unknown): string | undefined {
+/**
+ * The provider's error text in a parsed payload: `error.message`, else a
+ * top-level `message`, else undefined. Shared by error bodies and
+ * in-stream error events, which use the same shape.
+ */
+export function messageFromPayload(raw: unknown): string | undefined {
   const record = asRecord(raw);
   if (!record) return undefined;
   const nested = asRecord(record.error);

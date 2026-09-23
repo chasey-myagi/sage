@@ -94,11 +94,13 @@ export function expectStreamInvariants(chunks: StreamChunk[]): void {
 
 type FailureCase = {
   name: string;
-  steps: (fixtures: { truncated: string }) => FetchStep[];
+  steps: (fixtures: { truncated: string; errorEvent: string }) => FetchStep[];
   /** The failure happened before the response body began. */
   preBody: boolean;
   transport: true | undefined;
   status?: number;
+  /** The finish error message, when the server supplied it. */
+  message?: string;
 };
 
 const ERROR_BODY = '{"error":{"message":"upstream said no"}}';
@@ -160,6 +162,15 @@ const FAILURES: FailureCase[] = [
     preBody: false,
     transport: true,
   },
+  {
+    name: "the stream carries an error event",
+    steps: ({ errorEvent }) => [
+      { action: "respond", status: 200, body: errorEvent },
+    ],
+    preBody: false,
+    transport: undefined,
+    message: "Overloaded",
+  },
 ];
 
 async function noSleep(): Promise<void> {}
@@ -184,6 +195,8 @@ export function runContractSuite(
   fixtures: {
     happy: string;
     truncated: string;
+    /** Streams `Hi`, then a server error event "Overloaded", then more text. */
+    errorEvent: string;
     response: Extract<StreamChunk, { type: "response" }>;
   },
 ): void {
@@ -231,6 +244,31 @@ export function runContractSuite(
         kind: "error",
         error: { message: "stream ended before completion" },
       });
+      expectStreamInvariants(chunks);
+    });
+
+    it("stops at an in-stream error event and keeps the deltas before it", async () => {
+      const { fetchImpl } = fixtureFetch(fixtures.errorEvent);
+      const adapter = makeAdapter(fetchImpl);
+      const chunks = await drain(
+        adapter.stream(request(), adapter.prepare(model)),
+      );
+      expect(
+        chunks
+          .filter((chunk) => chunk.type === "text_delta")
+          .map((chunk) => (chunk.type === "text_delta" ? chunk.text : "")),
+      ).toEqual(["Hi"]);
+      const finish = chunks.at(-1);
+      expect(finish).toMatchObject({
+        type: "finish",
+        kind: "error",
+        error: { message: "Overloaded" },
+      });
+      if (finish?.type === "finish") {
+        expect(finish.error?.raw).toMatchObject({
+          error: { message: "Overloaded" },
+        });
+      }
       expectStreamInvariants(chunks);
     });
 
@@ -288,6 +326,9 @@ export function runContractSuite(
         );
         expect(finish.error.transport).toBe(failure.transport);
         expect(finish.error.status).toBe(failure.status);
+        if (failure.message !== undefined) {
+          expect(finish.error.message).toBe(failure.message);
+        }
         expectStreamInvariants(chunks);
       });
     }
