@@ -71,7 +71,6 @@ export const OPTIONS = {
   scorer: { type: "string", hint: "--scorer rule|model|jev" },
   "shadow-scorer": { type: "string", hint: "--shadow-scorer rule|model|jev" },
   "scorer-apply": { type: "string", hint: "--scorer-apply entry|rebuild" },
-  json: { type: "boolean", hint: "--json" },
   tasks: { type: "string", hint: "--tasks <file>" },
   policy: { type: "string", hint: "--policy passthrough|compiler" },
   out: { type: "string", hint: "--out <dir>" },

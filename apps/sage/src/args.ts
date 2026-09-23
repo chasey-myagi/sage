@@ -46,7 +46,6 @@ const SAGE_FLAGS = [
   { name: "scorer", usage: "optional" },
   { name: "shadow-scorer", usage: "optional" },
   { name: "scorer-apply", usage: "optional" },
-  { name: "json", usage: "optional" },
   { name: "help", usage: "hidden" },
 ] as const satisfies CommandFlags<OptionName>;
 
@@ -60,7 +59,6 @@ export type PrintOptions = {
   baseUrl?: string;
   apiKeyEnv?: string;
   passthrough: boolean;
-  json: boolean;
   scorer?: ScorerName;
   shadowScorer?: ScorerName;
   scorerApply?: ScorerApply;
@@ -85,7 +83,7 @@ type Draft = Omit<PrintOptions, "task"> & {
  */
 export function parseArgs(argv: string[]): Parsed {
   const tokens = readFlags(argv, SAGE_FLAGS);
-  const draft: Draft = { passthrough: false, json: false, positional: [] };
+  const draft: Draft = { passthrough: false, positional: [] };
   for (let at = 0; at < tokens.length; at += 1) {
     const token = tokens[at];
     if (!token) continue;
@@ -109,7 +107,6 @@ export function parseArgs(argv: string[]): Parsed {
         continue;
       }
       if (token.name === "passthrough") draft.passthrough = true;
-      if (token.name === "json") draft.json = true;
       continue;
     }
     const error = applyValue(draft, token.name, token.value);
@@ -170,7 +167,6 @@ function applyValue(
     case "scorer-apply":
       return applyScoring(draft, name, value);
     case "passthrough":
-    case "json":
     case "help":
       // readFlags never yields a value for these; they take none.
       return usageError(usage());

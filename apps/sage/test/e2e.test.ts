@@ -26,24 +26,29 @@ afterEach(() => {
 });
 
 describe("health output", () => {
-  it("parses --json", () => {
-    expect(parseArgs(["--print", "hi", "--json"])).toMatchObject({
-      ok: true,
-      task: "hi",
-      json: true,
+  it("rejects --json like any unknown flag", async () => {
+    const unknown = parseArgs(["--print", "hi", "--nope"]);
+    expect(unknown.ok).toBe(false);
+    expect(parseArgs(["--print", "hi", "--json"])).toEqual(unknown);
+    expect(parseArgs(["-p", "--json", "hi"])).toEqual(unknown);
+    const io = capture();
+    const code = await runCli(["-p", "hi", "--json"], {
+      cwd: tmpdir(),
+      env: { ANTHROPIC_API_KEY: "test-key" },
+      stdout: io.stdout,
+      stderr: io.stderr,
     });
-    expect(parseArgs(["-p", "--json", "hi"])).toMatchObject({
-      ok: true,
-      task: "hi",
-      json: true,
-    });
+    expect(code).toBe(1);
+    expect(io.text().stdout).toBe("");
+    expect(io.text().stderr).toContain("usage: sage");
+    expect(io.text().stderr).not.toContain("--json");
   });
 
-  it("prints health on sage -p --json and the same object from stats", async () => {
+  it("prints health on sage -p and the same object from stats", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "sage-health-"));
     const { adapter } = createFaux([stopScript("done")]);
     const io = capture();
-    const code = await runCli(["-p", "--json", "hi", "--passthrough"], {
+    const code = await runCli(["-p", "hi", "--passthrough"], {
       cwd: dir,
       env: { ANTHROPIC_API_KEY: "test-key" },
       stdout: io.stdout,
