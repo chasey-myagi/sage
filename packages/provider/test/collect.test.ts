@@ -17,7 +17,7 @@ const usage = {
 };
 const finish = { type: "finish" as const, kind: "tool_use" as const };
 
-describe("scenario 7 collect", () => {
+describe("collect folds a chunk stream into one assistant message", () => {
   it("assembles blocks, parses tool input, and copies the envelope", async () => {
     const message = await collect(
       from([

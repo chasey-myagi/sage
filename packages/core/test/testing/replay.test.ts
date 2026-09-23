@@ -98,7 +98,7 @@ it("refuses the record lane without calling the network", async () => {
   try {
     await expect(
       replaySession(caseDir("text-only"), { system: "x", tools: [] }),
-    ).rejects.toThrow(/#16/);
+    ).rejects.toThrow(/never calls the network/);
   } finally {
     delete process.env.SAGE_RECORD;
   }

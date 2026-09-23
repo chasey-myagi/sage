@@ -29,7 +29,7 @@ function tool(name = "echo") {
   };
 }
 
-describe("scenario 1 unpaired view", () => {
+describe("a view with a tool call that has no result is rejected before sending", () => {
   it("throws before stream and appends a terminal error", async () => {
     const store = new MemoryLogStore();
     const { adapter, requests } = createFaux([stopScript("nope")]);
@@ -82,7 +82,7 @@ describe("scenario 1 unpaired view", () => {
   });
 });
 
-describe("scenario 2 head frozen inside an epoch", () => {
+describe("the head stays frozen inside an epoch", () => {
   it("throws on turn 3 when tools change without a new view_epoch and does not send", async () => {
     const store = new MemoryLogStore();
     const sessionId = "s2";
@@ -187,7 +187,7 @@ describe("scenario 2 head frozen inside an epoch", () => {
   });
 });
 
-describe("scenario 7 view handed to hooks is a copy", () => {
+describe("hooks receive a copy of the view", () => {
   it("ignores mutations the hook makes to the view it received", async () => {
     const store = new MemoryLogStore();
     const { adapter, requests } = createFaux([stopScript("plain")]);

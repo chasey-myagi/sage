@@ -17,7 +17,7 @@ const HEAD = {
   content: [{ type: "text" as const, text: "EPOCH HEAD" }],
 };
 
-describe("scenario 4 view_epoch", () => {
+describe("view_epoch is appended when the epoch advances", () => {
   it("appends view_epoch before request_header when a wrapper advances the epoch", async () => {
     const store = new MemoryLogStore();
     const sessionId = "epoch-advance";

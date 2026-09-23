@@ -54,7 +54,7 @@ function toolResultContent(
   return blocks;
 }
 
-describe("scenario 5 tool pipeline", () => {
+describe("the tool pipeline applies hooks around execute", () => {
   it("turns a tool_pre deny into an error result and does not execute", async () => {
     const store = new MemoryLogStore();
     const sessionId = "deny";
@@ -320,7 +320,7 @@ describe("scenario 5 tool pipeline", () => {
   });
 });
 
-describe("scenario 6 observer errors", () => {
+describe("a throwing observer does not stop the others", () => {
   it("runs later observers after one throws and records the error on the summary", async () => {
     const store = new MemoryLogStore();
     const { adapter } = createFaux([stopScript("ok")]);

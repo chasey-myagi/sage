@@ -54,7 +54,7 @@ function crossMessages(): Message[] {
   ];
 }
 
-describe("scenario 6 normalizeForApi", () => {
+describe("normalizeForApi reshapes messages for the target api", () => {
   it("rewrites Anthropic tool ids and drops thinking for OpenAI", () => {
     const messages = crossMessages();
     const snapshot = structuredClone(messages);
