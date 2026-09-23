@@ -14,7 +14,10 @@
  * `scorer.fallback`, and counts `true` as 1. `shadow.calls` counts
  * manifests that carry a `shadow` object. `shadow.usage` sums that
  * object's `usage` quadruple (`inputOther`, `inputCacheRead`,
- * `inputCacheCreation`, `output`). `subtasks` sums usage from
+ * `inputCacheCreation`, `output`). `entryScored` sums each manifest's
+ * `entryScored` object: `calls`, `none`, `summary`, `full`, and the same
+ * usage quadruple. A manifest without the object adds nothing. `subtasks`
+ * sums usage from
  * `spawn_subtask` and `spawn_subtasks` tool results stored on the user
  * message as `details.toolResults`. `spawn_subtasks` counts each item in
  * `details.results`. `cacheHitRatio` and `expandRate` ignore that usage.
@@ -44,6 +47,19 @@ export type RunHealth = {
   scorerFallbacks: number;
   shadow: {
     calls: number;
+    usage: {
+      input: number;
+      cacheRead: number;
+      cacheCreation: number;
+      output: number;
+      total: number;
+    };
+  };
+  entryScored: {
+    calls: number;
+    none: number;
+    summary: number;
+    full: number;
     usage: {
       input: number;
       cacheRead: number;
@@ -128,6 +144,7 @@ export function runHealth(path: readonly StoredEntry[]): RunHealth {
     scorerCalls,
     scorerFallbacks,
     shadow: shadowHealth(path),
+    entryScored: entryHealth(path),
     subtasks: subtaskHealth(path),
   };
 }
@@ -149,6 +166,32 @@ function shadowHealth(path: readonly StoredEntry[]): RunHealth["shadow"] {
   const total =
     tokens.input + tokens.cacheRead + tokens.cacheCreation + tokens.output;
   return { calls, usage: { ...tokens, total } };
+}
+
+function entryHealth(path: readonly StoredEntry[]): RunHealth["entryScored"] {
+  const tokens = {
+    input: 0,
+    cacheRead: 0,
+    cacheCreation: 0,
+    output: 0,
+  };
+  let calls = 0;
+  let none = 0;
+  let summary = 0;
+  let full = 0;
+  for (const entry of path) {
+    if (entry.kind !== "manifest" || !isRecord(entry.payload)) continue;
+    const body = entry.payload.entryScored;
+    if (!isRecord(body)) continue;
+    calls += finite(body.calls) ?? 0;
+    none += finite(body.none) ?? 0;
+    summary += finite(body.summary) ?? 0;
+    full += finite(body.full) ?? 0;
+    addUsage(tokens, body.usage);
+  }
+  const total =
+    tokens.input + tokens.cacheRead + tokens.cacheCreation + tokens.output;
+  return { calls, none, summary, full, usage: { ...tokens, total } };
 }
 
 function subtaskHealth(path: readonly StoredEntry[]): RunHealth["subtasks"] {

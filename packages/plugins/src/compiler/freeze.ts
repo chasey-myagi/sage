@@ -5,7 +5,9 @@
  * at that epoch's `view_epoch`. Epoch 0 with no `view_epoch` starts at the
  * first manifest and stops at the next `view_epoch`. Chunks merge in
  * appearance order. A later manifest does not override an id already
- * recorded; the first tier is the one that stays frozen. No manifest means
+ * recorded; the first tier is the one that stays frozen. A string
+ * `summary` on that first chunk is copied with the decision so a later
+ * turn can render the same note. No manifest means
  * this is the epoch's first turn, and `frozenDecisions` returns undefined.
  * `frozenSeqCeiling` is the highest message seq before the epoch's first
  * manifest. Later messages are new.
@@ -115,11 +117,13 @@ function mergeFirst(map: Map<string, ChunkDecision>, entry: StoredEntry): void {
   for (const chunk of entry.payload.chunks) {
     if (!isRecord(chunk) || typeof chunk.id !== "string") continue;
     if (!isTier(chunk.tier) || map.has(chunk.id)) continue;
-    map.set(chunk.id, {
+    const decision: ChunkDecision = {
       id: chunk.id,
       tier: chunk.tier,
       reason: typeof chunk.reason === "string" ? chunk.reason : "kept",
-    });
+    };
+    if (typeof chunk.summary === "string") decision.summary = chunk.summary;
+    map.set(chunk.id, decision);
   }
 }
 

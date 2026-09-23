@@ -287,6 +287,41 @@ describe("entry kinds", () => {
     ).toThrow(InvalidEntryError);
   });
 
+  it("accepts manifest entryScored and rejects an incomplete object", () => {
+    const store = new MemoryLogStore();
+    store.append("entry-ok", {
+      kind: "manifest",
+      payload: {
+        epoch: 0,
+        turn: 1,
+        claims: [],
+        chunks: [],
+        anomalies: [],
+        entryScored: {
+          calls: 1,
+          none: 1,
+          summary: 0,
+          full: 0,
+          usage: { inputOther: 1, output: 2 },
+        },
+      },
+    });
+    expect(store.path("entry-ok")).toHaveLength(1);
+    expect(() =>
+      store.append("entry-bad", {
+        kind: "manifest",
+        payload: {
+          epoch: 0,
+          turn: 1,
+          claims: [],
+          chunks: [],
+          anomalies: [],
+          entryScored: { calls: 1 },
+        },
+      }),
+    ).toThrow(InvalidEntryError);
+  });
+
   it("rejects shadow and scorer raw that is not text plus finish", () => {
     const store = new MemoryLogStore();
     expect(() =>

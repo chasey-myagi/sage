@@ -22,7 +22,11 @@
  * appends `--max-turns 80`. A value that is not a positive integer exits 2
  * before any task runs. `--shadow-scorer rule|model|jev`, when set, is
  * appended to that argv. Omitting it does not pass the flag. Any other
- * value exits with the usage line before a task runs. The session is copied
+ * value exits with the usage line before a task runs. `--scorer
+ * rule|model|jev` and `--scorer-apply entry|rebuild` are forwarded the
+ * same way when set. Omitting them does not pass the flag.
+ * `results.json` records `scorerApply` as `entry` or `rebuild`; omitting
+ * the flag records `rebuild`. The session is copied
  * next. An empty `git status`
  * is `empty-patch` and the test command
  * is not run. `testPatch`,
@@ -44,6 +48,8 @@
  * `--tool-network full` is set. The default `none` is always forwarded on
  * the sage argv. Top-level `maxTurns` is the positive integer from
  * `--max-turns`, or 80 when that flag is omitted. Both policies record it.
+ * Top-level `scorerApply` is `entry` or `rebuild`. Omitting the flag
+ * records `rebuild`.
  * `bench report <runA> <runB>` prints one JSON
  * object `{ a, b, delta }`. `a` and `b` each include that `budget`.
  * Rates are counts over the task list. `tokensPerResolved` is the sum of
@@ -105,6 +111,7 @@ export type BenchResults = {
   budget: number | null;
   toolNetwork: ToolNetwork;
   maxTurns: number;
+  scorerApply: "entry" | "rebuild";
   tasks: BenchTaskResult[];
 };
 
@@ -131,6 +138,8 @@ export type BenchDeps = {
       toolNetwork: ToolNetwork;
       maxTurns: number;
       shadowScorer?: "rule" | "model" | "jev";
+      scorer?: "rule" | "model" | "jev";
+      scorerApply?: "entry" | "rebuild";
       argv: string[];
     },
   ): Promise<{ code: number; sessionFile?: string; timedOut?: boolean }>;
@@ -159,6 +168,8 @@ const FLAGS = new Set([
   "max-turns",
   "tool-network",
   "shadow-scorer",
+  "scorer",
+  "scorer-apply",
 ]);
 
 export async function runBenchCli(
@@ -197,6 +208,7 @@ export async function runBenchCli(
     budget: parsed.policy === "passthrough" ? null : parsed.budget,
     toolNetwork: parsed.toolNetwork,
     maxTurns: parsed.maxTurns,
+    scorerApply: parsed.scorerApply,
     tasks: [],
   };
   for (const task of tasks) {
@@ -210,6 +222,10 @@ export async function runBenchCli(
         toolNetwork: parsed.toolNetwork,
         maxTurns: parsed.maxTurns,
         ...(parsed.shadowScorer ? { shadowScorer: parsed.shadowScorer } : {}),
+        ...(parsed.scorer ? { scorer: parsed.scorer } : {}),
+        ...(parsed.forwardScorerApply
+          ? { scorerApply: parsed.scorerApply }
+          : {}),
       }),
     );
     writeResults(out, results);
@@ -291,6 +307,7 @@ function loadResults(dir: string): BenchResults {
       ? parsed.budget
       : null;
   const toolNetwork = parsed.toolNetwork === "full" ? "full" : "none";
+  const scorerApply = parsed.scorerApply === "entry" ? "entry" : "rebuild";
   const maxTurns =
     typeof parsed.maxTurns === "number" &&
     Number.isSafeInteger(parsed.maxTurns) &&
@@ -298,7 +315,7 @@ function loadResults(dir: string): BenchResults {
       ? parsed.maxTurns
       : 80;
   const tasks = parsed.tasks.map((item) => readTaskResult(item));
-  return { policy, model, budget, toolNetwork, maxTurns, tasks };
+  return { policy, model, budget, toolNetwork, maxTurns, scorerApply, tasks };
 }
 
 function readTaskResult(value: unknown): BenchTaskResult {
@@ -370,6 +387,8 @@ async function runTask(
     toolNetwork: ToolNetwork;
     maxTurns: number;
     shadowScorer?: "rule" | "model" | "jev";
+    scorer?: "rule" | "model" | "jev";
+    scorerApply?: "entry" | "rebuild";
   },
 ): Promise<BenchTaskResult> {
   const work = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
@@ -498,6 +517,7 @@ function writeResults(out: string, results: BenchResults): void {
     budget: results.budget,
     toolNetwork: results.toolNetwork,
     maxTurns: results.maxTurns,
+    scorerApply: results.scorerApply,
     tasks: results.tasks.map((task) => ({
       id: task.id,
       status: task.status,
@@ -702,6 +722,8 @@ function sageArgv(
     toolNetwork: ToolNetwork;
     maxTurns: number;
     shadowScorer?: "rule" | "model" | "jev";
+    scorer?: "rule" | "model" | "jev";
+    scorerApply?: "entry" | "rebuild";
   },
 ): string[] {
   const args = [sageBin(), "-p", task.problem, "--model", opts.model];
@@ -713,6 +735,8 @@ function sageArgv(
   if (opts.shadowScorer) {
     args.push("--shadow-scorer", opts.shadowScorer);
   }
+  if (opts.scorer) args.push("--scorer", opts.scorer);
+  if (opts.scorerApply) args.push("--scorer-apply", opts.scorerApply);
   return args;
 }
 
@@ -746,6 +770,9 @@ function parseRun(argv: string[]):
       toolNetwork: ToolNetwork;
       maxTurns: number;
       shadowScorer?: "rule" | "model" | "jev";
+      scorer?: "rule" | "model" | "jev";
+      scorerApply: "entry" | "rebuild";
+      forwardScorerApply: boolean;
     }
   | { message: string; exitCode?: number } {
   const values = new Map<string, string>();
@@ -805,6 +832,24 @@ function parseRun(argv: string[]):
     }
     shadowScorer = rawShadow;
   }
+  const rawScorer = values.get("scorer");
+  let scorer: "rule" | "model" | "jev" | undefined;
+  if (rawScorer !== undefined) {
+    if (rawScorer !== "rule" && rawScorer !== "model" && rawScorer !== "jev") {
+      return { message: benchUsage() };
+    }
+    scorer = rawScorer;
+  }
+  const rawApply = values.get("scorer-apply");
+  let scorerApply: "entry" | "rebuild" = "rebuild";
+  let forwardScorerApply = false;
+  if (rawApply !== undefined) {
+    if (rawApply !== "entry" && rawApply !== "rebuild") {
+      return { message: benchUsage() };
+    }
+    scorerApply = rawApply;
+    forwardScorerApply = true;
+  }
   const rawNetwork = values.get("tool-network");
   let toolNetwork: ToolNetwork = "none";
   if (rawNetwork !== undefined) {
@@ -822,6 +867,9 @@ function parseRun(argv: string[]):
     toolNetwork,
     maxTurns,
     ...(shadowScorer ? { shadowScorer } : {}),
+    ...(scorer ? { scorer } : {}),
+    scorerApply,
+    forwardScorerApply,
     ...(provider ? { provider } : {}),
   };
 }
@@ -906,7 +954,7 @@ function requiredString(
 
 function benchUsage(): string {
   return [
-    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--shadow-scorer rule|model|jev] --out <dir>",
+    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }

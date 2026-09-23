@@ -76,6 +76,8 @@ node apps/sage/bin/sage.mjs bench run \
 
 可选 `--shadow-scorer rule|model|jev`。写了就原样放进每个任务的 `sage -p` argv，没写就不传。别的名字在开跑之前退出，并打印用法。影子只记不生效：档次、冻结和预算仍由原来的编译器决定。跑完对账用 `sage stats <session.jsonl>`，不在 `results.json` 里另记这个旗标。真机 `bench run --shadow-scorer model` 不进 CI。
 
+可选 `--scorer rule|model|jev` 和 `--scorer-apply entry|rebuild`。写了就原样透传，没写就不传。别的值在开跑之前退出，并打印用法。`results.json` 顶层 `scorerApply` 记下 `entry` 或 `rebuild`；没写旗标时是 `rebuild`。`entry` 要配 `--scorer model` 或 `--scorer jev`，否则每个任务里的 sage 以退出码 2 结束。对照是 `bench run --policy compiler --scorer model --scorer-apply entry`。真机对照不进 CI。
+
 默认还给每个任务加上 `--tool-network none`。要让 bash 子进程上网，写 `--tool-network full`。`results.json` 顶层 `toolNetwork` 记下这次的值。断网只作用于工具子进程；父进程里的 provider 请求不受影响。评测必须默认断网：clone 只留 baseCommit 之后，agent 仍会 `curl` GitHub 上的上游提交，把修复抄进工作区，隐藏测试因此通过，这组结果作废。
 
 TS/JS 这 10 条：
@@ -125,7 +127,7 @@ node apps/sage/bin/sage.mjs bench run \
 <out>/sessions/<taskId>.jsonl
 ```
 
-`results.json` 有 `policy`、`model`、`budget`、`toolNetwork`、`maxTurns`，以及每个任务的 `id`、`status`、可选 `reason`、`health`。compiler 组的 `budget` 是 `--budget` 的正整数；没写这个旗标，或策略是 passthrough，则为 `null`。`toolNetwork` 默认 `none`，写了 `--tool-network full` 时为 `full`。`maxTurns` 是 `--max-turns` 的正整数；没写这个旗标时为 80，两种策略都记。`health` 是该 session 的 `runHealth`。问题陈述和块原文不写进这份文件。跑完的目录不要提交。
+`results.json` 有 `policy`、`model`、`budget`、`toolNetwork`、`maxTurns`、`scorerApply`，以及每个任务的 `id`、`status`、可选 `reason`、`health`。compiler 组的 `budget` 是 `--budget` 的正整数；没写这个旗标，或策略是 passthrough，则为 `null`。`toolNetwork` 默认 `none`，写了 `--tool-network full` 时为 `full`。`maxTurns` 是 `--max-turns` 的正整数；没写这个旗标时为 80，两种策略都记。`health` 是该 session 的 `runHealth`。问题陈述和块原文不写进这份文件。跑完的目录不要提交。
 
 ## 报表怎么读
 

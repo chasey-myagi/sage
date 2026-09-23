@@ -61,6 +61,19 @@
  * and supplied it. A throw becomes `fallback` and the view still returns.
  * No new tool chunk means no call and no `shadow` field. Subtask compiles
  * do not run it.
+ * `scorerApply` defaults to `rebuild`. `entry` scores tool chunks that are
+ * new since the previous manifest, still tier full, and at least
+ * `minScoreTokens` (default 300). `expand` results are not candidates.
+ * One call per compile. `none` becomes a stub. `summary` keeps the
+ * scorer's note, at most 200 characters; a missing note stays full.
+ * `full` keeps the text. The chunk reason is `scorer:entry:<tier>`.
+ * A throw, a fallback, or a missing id leaves that chunk full and still
+ * records the call. Cumulative freeze keeps that first decision.
+ * `keepRecent` does not force an entry-scored chunk back to full, and
+ * that chunk does not consume a recent slot. `entry` does not run the
+ * rebuild scorer and does not run `shadowScorer`. The rebuild path is
+ * unchanged when `scorerApply` is `rebuild`. `manifest.entryScored` is
+ * `{ calls, none, summary, full, usage }` when a call was made.
  * Candidates are `listModels` of the current provider. Chunk accesses passed
  * to the policy come from the chunk index and are not copied onto the manifest.
  * The context-window guard is the only rebuild allowed on an epoch's first
@@ -95,7 +108,12 @@
  * manifest, including `scorer` and `shadow` when set.
  */
 
-import type { ClaimRecord, CompiledView, ViewContext } from "@sage/core";
+import type {
+  ClaimRecord,
+  CompiledView,
+  EntryScoredReport,
+  ViewContext,
+} from "@sage/core";
 import { passthroughView } from "@sage/core";
 import { listModels } from "@sage/provider";
 import type {
@@ -169,6 +187,8 @@ export function contextCompiler(opts: {
   route?: RoutePolicy;
   scorer?: Scorer;
   shadowScorer?: Scorer;
+  scorerApply?: "rebuild" | "entry";
+  minScoreTokens?: number;
   subtask?: { query: string };
 }): { view(ctx: ViewContext): Promise<CompiledView> } {
   const count = opts.count ?? defaultTokenCount;
@@ -177,6 +197,8 @@ export function contextCompiler(opts: {
   const alpha = opts.alpha ?? 0.5;
   const minSavingsRatio = opts.minSavingsRatio ?? 0.2;
   const scorer = opts.scorer ?? ruleScorer;
+  const applyEntry = opts.scorerApply === "entry";
+  const minScoreTokens = finiteMinScore(opts.minScoreTokens);
 
   return {
     async view(ctx: ViewContext): Promise<CompiledView> {
@@ -250,7 +272,7 @@ export function contextCompiler(opts: {
       let scorerReport:
         | { calls: number; usage: Usage; fallback: boolean; raw?: ScoreRaw }
         | undefined;
-      if (decision.rebuild) {
+      if (decision.rebuild && !applyEntry) {
         const scored = await runScorer({
           scorer,
           chunks,
@@ -312,6 +334,32 @@ export function contextCompiler(opts: {
         { afterMessage: end },
         { afterMessage: last },
       ];
+      let entryReport: EntryScoredReport | undefined;
+      if (applyEntry) {
+        const entered = await runEntry({
+          scorer,
+          chunks,
+          rows: chosen.chunkRecords,
+          messages: chosen.messages,
+          used: chosen.used,
+          count,
+          minScoreTokens,
+          path: ctx.path,
+          prevRequest: requestFromCompiled(
+            ctx,
+            chosen.messages,
+            cacheBreakpoints,
+          ),
+          query: latestQuery(ctx.path),
+        });
+        chosen = {
+          ...chosen,
+          messages: entered.messages,
+          chunkRecords: entered.rows,
+          used: entered.used,
+        };
+        entryReport = entered.report;
+      }
       const cache = {
         expectedReadTokens: expectedFrozenPrefix(ctx.path),
         measuredReadTokens: measuredCacheRead(ctx.path),
@@ -336,17 +384,18 @@ export function contextCompiler(opts: {
         frozenTokens: freezeStats.frozenTokens,
         staleOmittable: freezeStats.staleOmittable,
       };
-      const shadow = opts.shadowScorer
-        ? await runShadow({
-            scorer: opts.shadowScorer,
-            chunks,
-            path: ctx.path,
-            ctx,
-            messages: chosen.messages,
-            cacheBreakpoints,
-            query: latestQuery(ctx.path),
-          })
-        : undefined;
+      const shadow =
+        applyEntry || !opts.shadowScorer
+          ? undefined
+          : await runShadow({
+              scorer: opts.shadowScorer,
+              chunks,
+              path: ctx.path,
+              ctx,
+              messages: chosen.messages,
+              cacheBreakpoints,
+              query: latestQuery(ctx.path),
+            });
       const manifest = {
         epoch,
         turn: ctx.turn,
@@ -358,6 +407,7 @@ export function contextCompiler(opts: {
         cache,
         ...(calibration ? { calibration } : {}),
         ...(scorerReport ? { scorer: scorerReport } : {}),
+        ...(entryReport ? { entryScored: entryReport } : {}),
         ...(shadow ? { shadow } : {}),
       };
       const view: CompiledView = {
@@ -570,7 +620,7 @@ function decideChunks(
   });
   const decisions = chunks.map((chunk, index) => {
     const kept = prior.get(chunk.id);
-    if (kept) return { id: chunk.id, tier: kept.tier, reason: kept.reason };
+    if (kept) return copyFrozen(kept);
     return (
       eliminated.decisions[index] ?? {
         id: chunk.id,
@@ -579,12 +629,63 @@ function decideChunks(
       }
     );
   });
+  yieldRecent(chunks, prior, decisions, keepRecent);
   let used = 0;
   for (let index = 0; index < chunks.length; index += 1) {
     if (decisions[index]?.tier === "none") continue;
     used += chunks[index]?.tokens ?? 0;
   }
   return { decisions, used };
+}
+
+function copyFrozen(kept: ChunkDecision): ChunkDecision {
+  return {
+    id: kept.id,
+    tier: kept.tier,
+    reason: kept.reason,
+    ...(kept.summary !== undefined ? { summary: kept.summary } : {}),
+  };
+}
+
+function yieldRecent(
+  chunks: readonly Chunk[],
+  prior: Map<string, ChunkDecision>,
+  decisions: ChunkDecision[],
+  keepRecent: number,
+): void {
+  if (keepRecent <= 0) return;
+  const scored = new Set<string>();
+  for (const [id, decision] of prior) {
+    if (rootReason(decision.reason).startsWith("scorer:entry:")) {
+      scored.add(id);
+    }
+  }
+  if (scored.size === 0) return;
+  const open: number[] = [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    if (chunk?.kind !== "tool" || scored.has(chunk.id)) continue;
+    open.push(index);
+  }
+  const recent = new Set(open.slice(-keepRecent));
+  for (const index of recent) {
+    const chunk = chunks[index];
+    const decision = decisions[index];
+    if (!chunk || !decision || prior.has(chunk.id)) continue;
+    const root = rootReason(decision.reason);
+    if (root === "recent") continue;
+    if (root.startsWith("superseded_by:") || root === "retry_intermediate") {
+      continue;
+    }
+    decisions[index] = { id: chunk.id, tier: "full", reason: "recent" };
+  }
+}
+
+function finiteMinScore(value: number | undefined): number {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  return 300;
 }
 
 function freezeAccounting(
@@ -1332,6 +1433,148 @@ function modelReason(reason: string, decision: ScoreDecision): string {
 function clampSummary(summary: string): string {
   if (summary.length <= SUMMARY_LIMIT) return summary;
   return summary.slice(0, SUMMARY_LIMIT);
+}
+
+async function runEntry(input: {
+  scorer: Scorer;
+  chunks: Chunk[];
+  rows: ChunkRow[];
+  messages: Message[];
+  used: number;
+  count: TokenCounter;
+  minScoreTokens: number;
+  path: ViewContext["path"];
+  prevRequest: Request;
+  query: string;
+}): Promise<{
+  rows: ChunkRow[];
+  messages: Message[];
+  used: number;
+  report?: EntryScoredReport;
+}> {
+  const unchanged = {
+    rows: input.rows,
+    messages: input.messages,
+    used: input.used,
+  };
+  if (input.scorer.name === "rule") return unchanged;
+  const seen = listedChunkIds(input.path);
+  const candidates = input.chunks.filter((chunk) => {
+    if (chunk.kind !== "tool" || chunk.toolName === "expand") return false;
+    if (seen.has(chunk.id) || chunk.tokens < input.minScoreTokens) return false;
+    const row = input.rows.find((item) => item.id === chunk.id);
+    return row?.tier === "full";
+  });
+  if (candidates.length === 0) return unchanged;
+  let result: {
+    decisions: ScoreDecision[];
+    usage?: Usage;
+    fallback?: string;
+  };
+  try {
+    result = await input.scorer.score({
+      candidates,
+      prevRequest: input.prevRequest,
+      query: input.query,
+    });
+  } catch {
+    return { ...unchanged, report: entryReport(1, 0, 0, 0) };
+  }
+  if (result.fallback !== undefined) {
+    return {
+      ...unchanged,
+      report: entryReport(1, 0, 0, 0, result.usage),
+    };
+  }
+  const allowed = new Set(candidates.map((chunk) => chunk.id));
+  const byId = new Map<string, ScoreDecision>();
+  for (const decision of result.decisions) {
+    if (!allowed.has(decision.id) || byId.has(decision.id)) continue;
+    if (!SCORE_TIERS.has(decision.tier)) continue;
+    byId.set(decision.id, decision);
+  }
+  const chunksById = new Map(input.chunks.map((chunk) => [chunk.id, chunk]));
+  let usedDelta = 0;
+  let none = 0;
+  let summary = 0;
+  let full = 0;
+  const rows = input.rows.map((row) => {
+    const scored = byId.get(row.id);
+    const chunk = chunksById.get(row.id);
+    if (!scored || chunk?.kind !== "tool") return row;
+    const reason = entryReason(row.reason, scored.tier);
+    if (scored.tier === "full") {
+      full += 1;
+      return {
+        id: row.id,
+        tier: "full" as const,
+        reason,
+        tokens: chunk.tokens,
+      };
+    }
+    if (scored.tier === "none") {
+      none += 1;
+      usedDelta -= chunk.tokens;
+      return {
+        id: row.id,
+        tier: "none" as const,
+        reason,
+        tokens: input.count(renderStub(chunk)),
+        originalTokens: chunk.tokens,
+      };
+    }
+    const note = clampSummary(scored.summary ?? "");
+    if (note.length === 0) return row;
+    summary += 1;
+    const rendered = renderSummary(chunk, note);
+    usedDelta += input.count(rendered) - chunk.tokens;
+    return {
+      id: row.id,
+      tier: "summary" as const,
+      reason,
+      tokens: input.count(rendered),
+      originalTokens: chunk.tokens,
+      summary: note,
+    };
+  });
+  const decisions = rows.map((row) => ({
+    id: row.id,
+    tier: row.tier,
+    reason: row.reason,
+    ...(row.summary !== undefined ? { summary: row.summary } : {}),
+  }));
+  return {
+    rows,
+    messages: applyDecisions(input.messages, input.chunks, decisions),
+    used: input.used + usedDelta,
+    report: entryReport(1, none, summary, full, result.usage),
+  };
+}
+
+function entryReason(reason: string, tier: Tier): string {
+  const extra = reason
+    .split(";")
+    .slice(1)
+    .filter((part) => part.startsWith("expanded_at:"));
+  const root = `scorer:entry:${tier}`;
+  if (extra.length === 0) return root;
+  return `${root};${extra.join(";")}`;
+}
+
+function entryReport(
+  calls: number,
+  none: number,
+  summary: number,
+  full: number,
+  usage?: Usage,
+): EntryScoredReport {
+  return {
+    calls,
+    none,
+    summary,
+    full,
+    ...(usage ? { usage: shadowUsage(usage) } : {}),
+  };
 }
 
 type ShadowBody = NonNullable<CompiledView["manifest"]["shadow"]>;

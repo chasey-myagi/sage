@@ -5,7 +5,7 @@
 | kind | persisted | reduce | doc |
 | --- | --- | --- | --- |
 | leaf | true | 无 | Moves the leaf pointer to an existing entry. Does not copy history. |
-| manifest | true | 无 | Compile manifest snapshot. The kernel does not interpret claims or chunks. |
+| manifest | true | 无 | Compile manifest snapshot. The kernel does not interpret claims, chunks, or entryScored. |
 | message | true | 无 | Conversation message. Payload is { role, content }. |
 | model_change | true | 无 | Model switch recorded as an entry. History is not rewritten. |
 | request_header | true | 无 | Request envelope. system and tools are stored only when they differ from the default. |
