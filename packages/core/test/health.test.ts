@@ -159,6 +159,19 @@ it("returns zeros and null rates for an empty path", () => {
         total: 0,
       },
     },
+    entryScored: {
+      calls: 0,
+      none: 0,
+      summary: 0,
+      full: 0,
+      usage: {
+        input: 0,
+        cacheRead: 0,
+        cacheCreation: 0,
+        output: 0,
+        total: 0,
+      },
+    },
     subtasks: {
       count: 0,
       tokens: {
@@ -336,6 +349,44 @@ it("counts each shadow manifest once and sums its usage quadruple", () => {
       cacheRead: 4,
       cacheCreation: 1,
       output: 3,
+      total: 10,
+    },
+  });
+  expect(JSON.stringify(health)).not.toContain(LEAK);
+});
+
+it("sums entryScored calls, tiers, and usage across manifests", () => {
+  const health = runHealth([
+    manifest(0, {
+      entryScored: {
+        calls: 1,
+        none: 2,
+        summary: 1,
+        full: 0,
+        usage: {
+          inputOther: 3,
+          inputCacheRead: 4,
+          inputCacheCreation: 1,
+          output: 2,
+          raw: LEAK,
+        },
+      },
+    }),
+    manifest(1, {
+      entryScored: { calls: 1, none: 0, summary: 0, full: 1 },
+    }),
+    manifest(2, {}),
+  ]);
+  expect(health.entryScored).toEqual({
+    calls: 2,
+    none: 2,
+    summary: 1,
+    full: 1,
+    usage: {
+      input: 3,
+      cacheRead: 4,
+      cacheCreation: 1,
+      output: 2,
       total: 10,
     },
   });

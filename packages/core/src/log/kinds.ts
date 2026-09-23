@@ -29,6 +29,11 @@
  * `raw`, when present on `shadow` or `scorer`, is an object with string
  * `text` and string `finish`. Any other raw is rejected. A missing raw is
  * valid. The kernel does not apply shadow tiers.
+ * `entryScored`, when present, is an object with finite `calls`, `none`,
+ * `summary`, and `full`. `usage`, when present, is an object; its four
+ * token fields are finite numbers if they are present. Chunk `reason` may
+ * be `scorer:entry:<tier>` for a tier this call applied. The kernel does
+ * not read those fields.
  *
  * `terminal.health`, when present, is an object. The kernel does not read
  * its fields. A missing health is valid. A non-object health is rejected.
@@ -86,6 +91,7 @@ export type ManifestPayload = {
   calibration?: Record<string, unknown>;
   cache?: Record<string, unknown>;
   shadow?: unknown;
+  entryScored?: unknown;
 };
 
 export type TargetPayload = {
@@ -172,6 +178,12 @@ function isManifest(payload: unknown): payload is ManifestPayload {
   if (payload.cache !== undefined && !isRecord(payload.cache)) return false;
   if (payload.shadow !== undefined && !isShadow(payload.shadow)) return false;
   if (payload.scorer !== undefined && !rawFieldOk(payload.scorer)) return false;
+  if (
+    payload.entryScored !== undefined &&
+    !isEntryScored(payload.entryScored)
+  ) {
+    return false;
+  }
   return (
     Array.isArray(payload.claims) &&
     Array.isArray(payload.chunks) &&
@@ -208,6 +220,16 @@ function isShadowDecision(value: unknown): boolean {
   if (value.reason !== undefined && typeof value.reason !== "string") {
     return false;
   }
+  return true;
+}
+
+function isEntryScored(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (!isFiniteNumber(value.calls)) return false;
+  if (!isFiniteNumber(value.none)) return false;
+  if (!isFiniteNumber(value.summary)) return false;
+  if (!isFiniteNumber(value.full)) return false;
+  if (value.usage !== undefined && !isShadowUsage(value.usage)) return false;
   return true;
 }
 
@@ -324,7 +346,7 @@ registerEntryKind<ModelChangePayload>({
 registerEntryKind<ManifestPayload>({
   kind: "manifest",
   persisted: true,
-  doc: "Compile manifest snapshot. The kernel does not interpret claims or chunks.",
+  doc: "Compile manifest snapshot. The kernel does not interpret claims, chunks, or entryScored.",
   validate: isManifest,
 });
 

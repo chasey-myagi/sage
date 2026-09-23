@@ -108,6 +108,18 @@ CLI `--scorer jev` 读取 `TYPESAFE_API_KEY`。这个变量缺失时进程以退
 
 子任务重编译不跑影子打分。任务结束后用 `sage stats` 对账：被影子判为 `none` 的块，后来有没有被 `expand` 取回，或者作为 `read` 结果在后续轮次被同一路径再次读取。口径见 [`apps/sage/README.md`](../../apps/sage/README.md)。
 
+## 入口打分
+
+`contextCompiler({ scorerApply: "rebuild" | "entry", minScoreTokens })`。默认 `"rebuild"`，也就是上面那条：只在阶段重开时给仍然 `kept` 的工具块打分。`minScoreTokens` 默认 300。
+
+`"entry"` 改在工具结果**进入视图的那一轮**定档。本轮新出现、当前仍是 full、token 不少于 `minScoreTokens` 的工具块，打分器调用一次。`expand` 的结果不进候选，否则刚取回的原文会在同一轮被桩掉。`none` 写成可 expand 的桩。`summary` 用打分器给的笔记，最长 200 字；没给笔记就保持 full。`full` 原文不动。清单上这块的 reason 是 `scorer:entry:<tier>`。打分抛错、返回 `fallback`、或回答里没有这个 id，这块保持 full，编译照常，这次调用仍记 1。没有候选就不调用，清单上也不写 `entryScored`。
+
+判定写进当轮清单，下一轮起由累积冻结保住，不再被 `keepRecent` 抬回 full。已打分的块也不再占最近窗口的名额。`entry` 不再跑重建路径上的那次打分，也不再跑影子：同一次调用的结果既写清单又改视图。`scorerApply` 仍是 `"rebuild"` 时，重建打分和影子都跟以前一样。
+
+选入口而不是「滑出最近窗口时再改档」：DeepSeek 的缓存是前缀缓存。出窗口时改档，会让该位置之后的近期内容每轮重新全价编码。按写入价和缓存读价的差距，要很多轮才回本。入口定档则这块从第一次出现就是最终形态，前缀逐字节不动。代价是模型偶尔需要全文时多一次 `expand`。
+
+`manifest.entryScored` 是 `{ calls, none, summary, full, usage? }`。`runHealth` 把各轮加总成 `entryScored`，usage 四项与 `shadow.usage` 同一口径。
+
 ## 离线回放
 
 离线重编译拿不到模型对新视图的反应，所以这一路不打模型。`policy.scorer.name` 不是 `rule` 时，`replayOffline` 换成 `ruleScorer`，并在返回数组上挂一个不可枚举的 `scorerNote`。`compareOffline` 读到它，就在 Markdown 和 JSON 里写上 `scorer:offline-rule`。

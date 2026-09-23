@@ -56,6 +56,7 @@ export type {
   ChunkRecord,
   ClaimRecord,
   CompiledView,
+  EntryScoredReport,
   Manifest,
   ViewContext,
   ViewProvider,

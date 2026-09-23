@@ -23,7 +23,11 @@
  * rule|model|jev` installs a second scorer that records `manifest.shadow`
  * and does not change tiers. It is off unless the flag is set. `jev` for
  * either flag reads `TYPESAFE_API_KEY`; a missing key exits 2.
- * `--passthrough` does not compile, so a shadow scorer is not called.
+ * `--scorer-apply entry|rebuild` defaults to rebuild. `entry` scores a new
+ * tool chunk when it first enters the view and requires `--scorer model`
+ * or `--scorer jev`; otherwise the process exits 2. `entry` does not run
+ * a shadow scorer. `--passthrough` does not compile, so neither scorer
+ * is called.
  * `--provider typesafe`
  * is rejected: that catalog row prices Jev and is not a chat endpoint.
  * Each preset with its env key assembles an adapter. OpenAI-compatible
@@ -138,6 +142,7 @@ export function createCodingSession(opts: {
   passthrough?: boolean;
   scorer?: Scorer;
   shadowScorer?: Scorer;
+  scorerApply?: "rebuild" | "entry";
   ladder?: readonly { provider: string; model: string }[];
   home?: string;
 }): CodingSession {
@@ -216,6 +221,7 @@ export function createCodingSession(opts: {
           route,
           ...(opts.scorer ? { scorer: opts.scorer } : {}),
           ...(opts.shadowScorer ? { shadowScorer: opts.shadowScorer } : {}),
+          ...(opts.scorerApply ? { scorerApply: opts.scorerApply } : {}),
         }),
     sampling: opts.sampling,
   });
@@ -262,6 +268,14 @@ export async function runCli(
   if (!parsed.ok) {
     stderr.write(`${parsed.message}\n`);
     return parsed.exitCode ?? 1;
+  }
+  if (
+    parsed.scorerApply === "entry" &&
+    parsed.scorer !== "model" &&
+    parsed.scorer !== "jev"
+  ) {
+    stderr.write("entry scoring needs --scorer model|jev\n");
+    return 2;
   }
   const network = parsed.toolNetwork ?? "full";
   const platform = io.platform ?? process.platform;
@@ -337,6 +351,7 @@ export async function runCli(
       { provider: auth.provider, model: auth.model },
       env,
     ),
+    ...(parsed.scorerApply ? { scorerApply: parsed.scorerApply } : {}),
   });
   let turn = 0;
   session.hooks.observe("turn_start", (payload) => {
@@ -467,6 +482,7 @@ type FlagName =
   | "model"
   | "scorer"
   | "shadow-scorer"
+  | "scorer-apply"
   | "ladder"
   | "base-url"
   | "api-key-env"
@@ -486,6 +502,7 @@ type Parsed =
       json: boolean;
       scorer?: ScorerName;
       shadowScorer?: ScorerName;
+      scorerApply?: "rebuild" | "entry";
       ladder?: { provider: string; model: string }[];
       budget?: number;
       maxTurns?: number;
@@ -503,6 +520,7 @@ export function parseArgs(argv: string[]): Parsed {
   let json = false;
   let scorer: ScorerName | undefined;
   let shadowScorer: ScorerName | undefined;
+  let scorerApply: "rebuild" | "entry" | undefined;
   let ladder: { provider: string; model: string }[] | undefined;
   let budget: number | undefined;
   let maxTurns: number | undefined;
@@ -547,6 +565,12 @@ export function parseArgs(argv: string[]): Parsed {
           return { ok: false, message: usage() };
         }
         shadowScorer = taken.value;
+      }
+      if (taken.name === "scorer-apply") {
+        if (taken.value !== "entry" && taken.value !== "rebuild") {
+          return { ok: false, message: usage() };
+        }
+        scorerApply = taken.value;
       }
       if (taken.name === "ladder") {
         const parsed = parseLadder(taken.value);
@@ -607,6 +631,7 @@ export function parseArgs(argv: string[]): Parsed {
     json,
     scorer,
     shadowScorer,
+    ...(scorerApply ? { scorerApply } : {}),
     ladder,
     ...(budget !== undefined ? { budget } : {}),
     ...(maxTurns !== undefined ? { maxTurns } : {}),
@@ -616,9 +641,9 @@ export function parseArgs(argv: string[]): Parsed {
 
 function usage(): string {
   return [
-    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--passthrough] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--json]",
+    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--passthrough] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] [--json]",
     "       sage stats <session.jsonl>",
-    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--shadow-scorer rule|model|jev] --out <dir>",
+    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }
@@ -654,6 +679,7 @@ function flagName(arg: string): FlagName | "unknown" | undefined {
   if (arg === "--model") return "model";
   if (arg === "--scorer") return "scorer";
   if (arg === "--shadow-scorer") return "shadow-scorer";
+  if (arg === "--scorer-apply") return "scorer-apply";
   if (arg === "--ladder") return "ladder";
   if (arg === "--base-url") return "base-url";
   if (arg === "--api-key-env") return "api-key-env";
@@ -673,6 +699,7 @@ function inlineFlag(
     "model",
     "scorer",
     "shadow-scorer",
+    "scorer-apply",
     "ladder",
     "base-url",
     "api-key-env",

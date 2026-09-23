@@ -15,6 +15,10 @@
  * kernel stores it with the manifest and does not apply those tiers.
  * `shadow.raw` and `scorer.raw`, when present, are the model text prefix
  * and finish kind from a fallback. A successful score omits `raw`.
+ * `entryScored`, when present, is one entry-mode scorer call: how many
+ * candidates became `none`, `summary`, or `full`, plus that call's usage.
+ * Chunk `reason` for an applied entry decision is `scorer:entry:<tier>`.
+ * The kernel stores the object and does not read those counts.
  *
  * Intentionally not in the Log: the live CompiledView object, parentPath,
  * and depth. The kernel appends the manifest as its own entry; this module
@@ -132,6 +136,24 @@ export type ScorerReport = {
   raw?: ScorerRaw;
 };
 
+/**
+ * One entry-mode score. `calls` is 1 even when the scorer throws or omits
+ * an id. Tier counts are decisions that were applied. `usage` is the
+ * provider quadruple, omitted when the call reported none.
+ */
+export type EntryScoredReport = {
+  calls: number;
+  none: number;
+  summary: number;
+  full: number;
+  usage?: {
+    inputOther: number;
+    inputCacheRead: number;
+    inputCacheCreation: number;
+    output: number;
+  };
+};
+
 export type Manifest = {
   epoch: number;
   turn: number;
@@ -165,6 +187,11 @@ export type Manifest = {
    * Rebuild scorer record. Optional. `raw` is present only on fallback.
    */
   scorer?: ScorerReport;
+  /**
+   * Entry-mode score for this turn's new tool chunks. Optional. The tiers
+   * are already applied to `chunks`; this object is the call count.
+   */
+  entryScored?: EntryScoredReport;
 };
 
 export type CompiledView = {
