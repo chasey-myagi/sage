@@ -14,8 +14,9 @@
  * from the previous request_header, or there is none) →
  * append manifest (payload is view.manifest, details is view.details) →
  * adapter.stream →
- * collect → when finish is a transport error and this turn has not yet
- * appended an assistant message, wait (2s then 8s; `sleep` may replace
+ * collect → when finish.error.transport is true (the provider sets it for
+ * fetch and body-read failures; message text is not inspected) and this
+ * turn has not yet appended an assistant message, wait (2s then 8s; `sleep` may replace
  * the wait) and, unless aborted during the wait, append turn_retry
  * {turn, attempt, reason} and stream the same request again, at most
  * twice →
@@ -26,7 +27,8 @@
  * block), then turn_end continue;
  * otherwise turn_end done.
  * abort, a non-transport finish error, or a transport error after two
- * retries appends terminal and stops. A 4xx finish error is not resent.
+ * retries appends terminal and stops. An HTTP status error is not resent
+ * here: the provider already retried 429 and 5xx before the body began.
  * A throw from tool execute is a tool_result and the turn continues. Any
  * other throw appends terminal and stops.
  * Using up maxTurns appends terminal {outcome:"max_turns"}.
@@ -117,13 +119,6 @@ const EMPTY_USAGE: Usage = {
 
 const TURN_RETRY_LIMIT = 2;
 const TURN_RETRY_BASE_MS = 2000;
-const TRANSPORT_MARKS = [
-  "terminated",
-  "fetch failed",
-  "ECONNRESET",
-  "socket hang up",
-  "aborted by peer",
-];
 
 function turnBackoffMs(attempt: number): number {
   return TURN_RETRY_BASE_MS * 4 ** (attempt - 1);
@@ -146,32 +141,11 @@ function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function isClientStatus(status: number | undefined): boolean {
-  return typeof status === "number" && status >= 400 && status < 500;
-}
-
-function markedTransport(error: {
-  message: string;
-  status?: number;
-  raw?: unknown;
-}): boolean {
-  return (
-    "transport" in error &&
-    (error as { transport?: unknown }).transport === true
-  );
-}
-
 function turnTransportReason(
   finish: AssistantMessage["finish"],
 ): string | undefined {
   if (finish.kind !== "error" || !finish.error) return undefined;
-  if (isClientStatus(finish.error.status)) return undefined;
-  const error = finish.error;
-  if (markedTransport(error)) return error.message;
-  if (TRANSPORT_MARKS.some((mark) => error.message.includes(mark))) {
-    return error.message;
-  }
-  return undefined;
+  return finish.error.transport === true ? finish.error.message : undefined;
 }
 
 function assistantAfterLatestHeader(path: readonly StoredEntry[]): boolean {

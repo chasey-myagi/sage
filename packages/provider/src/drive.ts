@@ -3,6 +3,8 @@
  * Every exit yields usage and then a single finish chunk.
  * Fetch throws, HTTP 429, and HTTP 5xx are retried before the body
  * starts. Once parseSse is entered, a later failure is not retried.
+ * A fetch throw, and a throw while reading the body, finish with
+ * error.transport = true. A throw from the adapter's onEvent does not.
  *
  * Deliberately not a Log entry: this is the live decode of one call.
  * Wire frames stay in the SSE parser. The abort signal stays here.
@@ -11,7 +13,11 @@
  */
 
 import type { ContentBlock } from "./contract/message.js";
-import type { FinishKind, StreamChunk } from "./contract/stream.js";
+import type {
+  FinishError,
+  FinishKind,
+  StreamChunk,
+} from "./contract/stream.js";
 import type { Usage } from "./contract/usage.js";
 import { isAbortError, messageOf } from "./http.js";
 import type { RetryPolicy, Sleeper } from "./retry.js";
@@ -59,6 +65,7 @@ export async function* driveStream(args: {
   let usage: Usage | undefined;
   let stop: WireStop | undefined;
   let sealed = false;
+  let reading = false;
   let retries = 0;
   let retryReason: string | undefined;
   const pending: StreamChunk[] = [];
@@ -105,11 +112,17 @@ export async function* driveStream(args: {
       } else {
         yield* end(
           noted(),
-          errorFinish(opened.message, opened.status, opened.raw),
+          errorFinish({
+            message: opened.message,
+            status: opened.status,
+            raw: opened.raw,
+            transport: opened.transport,
+          }),
         );
       }
       return;
     }
+    reading = true;
     for await (const event of parseSse(opened.body)) {
       if (args.signal?.aborted) {
         sealed = true;
@@ -124,7 +137,7 @@ export async function* driveStream(args: {
       } catch (error) {
         yield* pending.splice(0, pending.length);
         sealed = true;
-        yield* end(noted(), failureFinish(args.signal, error));
+        yield* end(noted(), failureFinish(args.signal, error, false));
         return;
       }
       yield* take(pending, args.signal);
@@ -151,10 +164,15 @@ export async function* driveStream(args: {
       return;
     }
     sealed = true;
-    yield* end(noted(), errorFinish("stream ended before completion"));
+    yield* end(
+      noted(),
+      errorFinish({ message: "stream ended before completion" }),
+    );
   } catch (error) {
     if (sealed) return;
-    yield* end(noted(), failureFinish(args.signal, error));
+    // Only the body read can throw here once reading is set; that is a
+    // failure below HTTP, the same class as a fetch throw.
+    yield* end(noted(), failureFinish(args.signal, error, reading));
   }
 }
 
@@ -172,11 +190,12 @@ function* take(
 function failureFinish(
   signal: AbortSignal | undefined,
   error: unknown,
+  transport: boolean,
 ): StreamChunk {
   if (signal?.aborted || isAbortError(error)) {
     return { type: "finish", kind: "aborted" };
   }
-  return errorFinish(messageOf(error));
+  return errorFinish({ message: messageOf(error), transport });
 }
 
 function* end(
@@ -198,16 +217,16 @@ function successFinish(stop: WireStop): StreamChunk {
   return { type: "finish", kind: stop.kind };
 }
 
-function errorFinish(
-  message: string,
-  status?: number,
-  raw?: unknown,
-): StreamChunk {
-  const error: { message: string; status?: number; raw?: unknown } = {
-    message,
-  };
-  if (status !== undefined) error.status = status;
-  if (raw !== undefined) error.raw = raw;
+function errorFinish(from: {
+  message: string;
+  status?: number;
+  raw?: unknown;
+  transport?: boolean;
+}): StreamChunk {
+  const error: FinishError = { message: from.message };
+  if (from.status !== undefined) error.status = from.status;
+  if (from.raw !== undefined) error.raw = from.raw;
+  if (from.transport) error.transport = true;
   return { type: "finish", kind: "error", error };
 }
 
