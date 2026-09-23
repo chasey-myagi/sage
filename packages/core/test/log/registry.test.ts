@@ -302,6 +302,7 @@ describe("entry kinds", () => {
           none: 1,
           summary: 0,
           full: 0,
+          summaryRejected: 1,
           usage: { inputOther: 1, output: 2 },
         },
       },
@@ -317,6 +318,25 @@ describe("entry kinds", () => {
           chunks: [],
           anomalies: [],
           entryScored: { calls: 1 },
+        },
+      }),
+    ).toThrow(InvalidEntryError);
+    expect(() =>
+      store.append("entry-rejected-bad", {
+        kind: "manifest",
+        payload: {
+          epoch: 0,
+          turn: 1,
+          claims: [],
+          chunks: [],
+          anomalies: [],
+          entryScored: {
+            calls: 1,
+            none: 0,
+            summary: 0,
+            full: 1,
+            summaryRejected: "no",
+          },
         },
       }),
     ).toThrow(InvalidEntryError);

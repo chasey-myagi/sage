@@ -30,7 +30,8 @@
  * `text` and string `finish`. Any other raw is rejected. A missing raw is
  * valid. The kernel does not apply shadow tiers.
  * `entryScored`, when present, is an object with finite `calls`, `none`,
- * `summary`, and `full`. `usage`, when present, is an object; its four
+ * `summary`, and `full`. `summaryRejected`, when present, is a finite
+ * number. `usage`, when present, is an object; its four
  * token fields are finite numbers if they are present. Chunk `reason` may
  * be `scorer:entry:<tier>` for a tier this call applied. The kernel does
  * not read those fields.
@@ -240,6 +241,7 @@ function isEntryScored(value: unknown): boolean {
   if (!isFiniteNumber(value.none)) return false;
   if (!isFiniteNumber(value.summary)) return false;
   if (!isFiniteNumber(value.full)) return false;
+  if (!isOptionalFinite(value.summaryRejected)) return false;
   if (value.usage !== undefined && !isShadowUsage(value.usage)) return false;
   return true;
 }

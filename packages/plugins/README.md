@@ -88,7 +88,7 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 `modelScorer` 用调用方注入的 adapter 打一次分。请求的 `head`（system 和 tools）以及此前的 messages 与上一轮主请求逐字节相同，`toolChoice` 为 `"none"`，只在末尾多一条 user 消息：固定指令、当前问题、以及候选清单 `[{id, tool, summary, tokens}]`。用不到的 tools 也照带。少一个 tool 或换掉 system，缓存前缀会从第一个 token 断开，辅助调用就变成把整段历史再付一遍。`tool_choice` 不改这些字节。候选超过 60 个时丢掉最旧的。`timeoutMs` 默认 20000。
 
-指令说明这是旁路判定，不是继续任务。每个候选是早先某次工具调用的结果。模型只返回 JSON 数组，每项 `{"id","tier":"none"|"summary"|"full","summary"?}`，summary 最长 200 字符，并给出两项示例。正文可以包在一层 json 代码围栏里。围栏去掉之后，从第一个 `[` 或 `{` 起按括号配对取出一个 JSON 值，字符串内部的括号不计入配对，这个值前后的文字都忽略。取不到值，或取出的文本不是 JSON，整次解析失败。这样解析成功时，即使原文前后还有解释，也不算 fallback，不写 `raw`。顶层如果是带 `id` 的单个对象，会包成一项。`id` 不在这份候选清单里的项丢掉并计数，其余照用。空数组 `[]` 表示全部保留，不是失败。某一项缺 `id` 或 tier 非法，整次解析失败。`summary` 档在视图里是桩行，换行，然后 `summary (model notes, not evidence): ` 加上那段笔记。`none` 仍是原来的桩。`full` 保持原文。返回里没有的块保持 `kept`。打分器若把 `recent` 块判成 none，以 recent 为准。
+指令说明这是旁路判定，不是继续任务。每个候选是早先某次工具调用的结果。模型只返回 JSON 数组，每项 `{"id","tier":"none"|"summary"|"full","summary"?}`，summary 最长 200 字符。摘要必须让后面的轮次不用重读就能定位：文件读取写路径、关键符号或导出、以及行号范围；grep 或 ls 写命中路径与行号；命令输出写命令和结论性数字或状态，例如 `tests 23 passed 1 failed: name`。不要只写判断（已看过、不再需要、和之前一样），那种情况改判 `none` 或 `full`。示例里的 summary 是路径、符号和行号。正文可以包在一层 json 代码围栏里。围栏去掉之后，从第一个 `[` 或 `{` 起按括号配对取出一个 JSON 值，字符串内部的括号不计入配对，这个值前后的文字都忽略。取不到值，或取出的文本不是 JSON，整次解析失败。这样解析成功时，即使原文前后还有解释，也不算 fallback，不写 `raw`。顶层如果是带 `id` 的单个对象，会包成一项。`id` 不在这份候选清单里的项丢掉并计数，其余照用。空数组 `[]` 表示全部保留，不是失败。某一项缺 `id` 或 tier 非法，整次解析失败。`summary` 档在视图里是桩行，换行，然后 `summary (model notes, not evidence): ` 加上那段笔记。`none` 仍是原来的桩。`full` 保持原文。返回里没有的块保持 `kept`。打分器若把 `recent` 块判成 none，以 recent 为准。
 
 非法 JSON、超时、adapter 的 finish error，或者还没有上一轮请求，全部退回规则打分，本轮照常发出。清单 `epochDecision.reason` 追加 `;scorer:fallback:<原因>`。这次调用写在清单字段 `scorer: { calls, usage, fallback, raw? }` 里。`raw` 只在 fallback 且已经拿到模型回复时出现：`text` 是原文前 300 字，`finish` 是结束种类。成功不写 `raw`。
 
@@ -112,13 +112,13 @@ CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https:
 
 `contextCompiler({ scorerApply: "rebuild" | "entry", minScoreTokens })`。默认 `"rebuild"`，也就是上面那条：只在阶段重开时给仍然 `kept` 的工具块打分。`minScoreTokens` 默认 300。
 
-`"entry"` 改在工具结果**进入视图的那一轮**定档。本轮新出现、当前仍是 full、token 不少于 `minScoreTokens` 的工具块，打分器调用一次。`expand` 的结果不进候选，否则刚取回的原文会在同一轮被桩掉。`none` 写成可 expand 的桩。`summary` 用打分器给的笔记，最长 200 字；没给笔记就保持 full。`full` 原文不动。清单上这块的 reason 是 `scorer:entry:<tier>`。打分抛错、返回 `fallback`、或回答里没有这个 id，这块保持 full，编译照常，这次调用仍记 1。没有候选就不调用，清单上也不写 `entryScored`。
+`"entry"` 改在工具结果**进入视图的那一轮**定档。本轮新出现、当前仍是 full、token 不少于 `minScoreTokens` 的工具块，打分器调用一次。`expand` 的结果不进候选，否则刚取回的原文会在同一轮被桩掉。`none` 写成可 expand 的桩。`summary` 用打分器给的笔记，最长 200 字；没给笔记就保持 full。写了笔记但不足 20 字（含空串），或不含路径、符号或数字（斜杠、扩展名、数字、驼峰或下划线标识符）时，该块按 full 处理，reason 为 `scorer:entry:full;summary-rejected`。`full` 原文不动。清单上这块的 reason 是 `scorer:entry:<tier>`。打分抛错、返回 `fallback`、或回答里没有这个 id，这块保持 full，编译照常，这次调用仍记 1。没有候选就不调用，清单上也不写 `entryScored`。
 
 判定写进当轮清单，下一轮起由累积冻结保住，不再被 `keepRecent` 抬回 full。已打分的块也不再占最近窗口的名额。`entry` 不再跑重建路径上的那次打分，也不再跑影子：同一次调用的结果既写清单又改视图。`scorerApply` 仍是 `"rebuild"` 时，重建打分和影子都跟以前一样。
 
 选入口而不是「滑出最近窗口时再改档」：DeepSeek 的缓存是前缀缓存。出窗口时改档，会让该位置之后的近期内容每轮重新全价编码。按写入价和缓存读价的差距，要很多轮才回本。入口定档则这块从第一次出现就是最终形态，前缀逐字节不动。代价是模型偶尔需要全文时多一次 `expand`。
 
-`manifest.entryScored` 是 `{ calls, none, summary, full, usage? }`。`runHealth` 把各轮加总成 `entryScored`，usage 四项与 `shadow.usage` 同一口径。
+`manifest.entryScored` 是 `{ calls, none, summary, full, summaryRejected, usage? }`。`summaryRejected` 是退回的笔记数，这些块同时计入 `full`。`runHealth` 把各轮加总，没写 `summaryRejected` 的清单这一项加 0。usage 四项与 `shadow.usage` 同一口径。
 
 ## 离线回放
 

@@ -164,6 +164,7 @@ it("returns zeros and null rates for an empty path", () => {
       none: 0,
       summary: 0,
       full: 0,
+      summaryRejected: 0,
       usage: {
         input: 0,
         cacheRead: 0,
@@ -365,6 +366,7 @@ it("sums entryScored calls, tiers, and usage across manifests", () => {
         none: 2,
         summary: 1,
         full: 0,
+        summaryRejected: 2,
         usage: {
           inputOther: 3,
           inputCacheRead: 4,
@@ -384,6 +386,7 @@ it("sums entryScored calls, tiers, and usage across manifests", () => {
     none: 2,
     summary: 1,
     full: 1,
+    summaryRejected: 2,
     usage: {
       input: 3,
       cacheRead: 4,

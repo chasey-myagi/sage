@@ -15,9 +15,10 @@
  * manifests that carry a `shadow` object. `shadow.usage` sums that
  * object's `usage` quadruple (`inputOther`, `inputCacheRead`,
  * `inputCacheCreation`, `output`). `entryScored` sums each manifest's
- * `entryScored` object: `calls`, `none`, `summary`, `full`, and the same
- * usage quadruple. A manifest without the object adds nothing. `subtasks`
- * sums usage from
+ * `entryScored` object: `calls`, `none`, `summary`, `full`,
+ * `summaryRejected`, and the same usage quadruple. A missing
+ * `summaryRejected` adds nothing. A manifest without the object adds
+ * nothing. `subtasks` sums usage from
  * `spawn_subtask` and `spawn_subtasks` tool results stored on the user
  * message as `details.toolResults`. `spawn_subtasks` counts each item in
  * `details.results`. `cacheHitRatio` and `expandRate` ignore that usage.
@@ -62,6 +63,7 @@ export type RunHealth = {
     none: number;
     summary: number;
     full: number;
+    summaryRejected: number;
     usage: {
       input: number;
       cacheRead: number;
@@ -207,6 +209,7 @@ function entryHealth(path: readonly StoredEntry[]): RunHealth["entryScored"] {
   let none = 0;
   let summary = 0;
   let full = 0;
+  let summaryRejected = 0;
   for (const entry of path) {
     if (entry.kind !== "manifest" || !isRecord(entry.payload)) continue;
     const body = entry.payload.entryScored;
@@ -215,11 +218,19 @@ function entryHealth(path: readonly StoredEntry[]): RunHealth["entryScored"] {
     none += finite(body.none) ?? 0;
     summary += finite(body.summary) ?? 0;
     full += finite(body.full) ?? 0;
+    summaryRejected += finite(body.summaryRejected) ?? 0;
     addUsage(tokens, body.usage);
   }
   const total =
     tokens.input + tokens.cacheRead + tokens.cacheCreation + tokens.output;
-  return { calls, none, summary, full, usage: { ...tokens, total } };
+  return {
+    calls,
+    none,
+    summary,
+    full,
+    summaryRejected,
+    usage: { ...tokens, total },
+  };
 }
 
 function subtaskHealth(path: readonly StoredEntry[]): RunHealth["subtasks"] {

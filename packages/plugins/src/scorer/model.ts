@@ -9,7 +9,11 @@
  * list of `{id, tool, summary, tokens}`. Candidates beyond `maxCandidates`
  * (default 60) drop the oldest. The instruction says this is a side
  * judgment of earlier tool results, not a continuation of the task, and
- * that the reply is a JSON array of `{id, tier, summary?}`. `timeoutMs`
+ * that the reply is a JSON array of `{id, tier, summary?}`. A summary must
+ * locate the result: a file read names the path, key symbols, and line
+ * range; grep or ls names hit paths and line numbers; command output names
+ * the command and conclusive counts. A judgment-only note is not a summary.
+ * `timeoutMs`
  * defaults to 20000. The parser strips one fenced json block, then takes the
  * first top-level JSON value (`[` or `{`). Brackets pair, and brackets
  * inside strings do not count. Text before or after that value is ignored.
@@ -50,9 +54,15 @@ const INSTRUCTION = [
   'Each item is {"id":"<candidate id>","tier":"none"|"summary"|"full","summary"?:string}.',
   "Copy id from the candidate list.",
   "summary is optional and at most 200 characters.",
+  "A summary must let a later turn locate the result without rereading it.",
+  "File read: path, key symbols or exports, and the line range.",
+  "grep or ls: the matching paths and line numbers.",
+  'Command output: the command and conclusive numbers or status, for example "tests 23 passed 1 failed: name".',
+  'Do not write a judgment only ("already reviewed", "not needed", "same as before"). Use tier none or full instead.',
+  "文件读取写路径、关键符号或导出、以及行号范围；grep 或 ls 写命中路径与行号；命令输出写命令和结论性数字或状态。不要只写判断（已看过、不再需要、和之前一样），改判 none 或 full。",
   "tier none drops the result, summary keeps a short note, full keeps the original text.",
   "Example:",
-  '[{"id":"seq:1#a","tier":"none"},{"id":"seq:2#b","tier":"summary","summary":"listed the files"}]',
+  '[{"id":"seq:1#a","tier":"none"},{"id":"seq:2#b","tier":"summary","summary":"src/utils/url.ts: isURLMatched, isURLInList (L12-40)"}]',
 ].join("\n");
 
 const TIERS = new Set(["none", "summary", "full"]);

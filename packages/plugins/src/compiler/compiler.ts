@@ -66,6 +66,8 @@
  * `minScoreTokens` (default 300). `expand` results are not candidates.
  * One call per compile. `none` becomes a stub. `summary` keeps the
  * scorer's note, at most 200 characters; a missing note stays full.
+ * A present note shorter than 20 characters, or with no path, symbol,
+ * or number, stays full. Its reason is `scorer:entry:full;summary-rejected`.
  * `full` keeps the text. The chunk reason is `scorer:entry:<tier>`.
  * A throw, a fallback, or a missing id leaves that chunk full and still
  * records the call. Cumulative freeze keeps that first decision.
@@ -73,7 +75,9 @@
  * that chunk does not consume a recent slot. `entry` does not run the
  * rebuild scorer and does not run `shadowScorer`. The rebuild path is
  * unchanged when `scorerApply` is `rebuild`. `manifest.entryScored` is
- * `{ calls, none, summary, full, usage }` when a call was made.
+ * `{ calls, none, summary, full, summaryRejected, usage }` when a call
+ * was made. `summaryRejected` counts notes demoted by that check. Those
+ * chunks are also counted in `full`.
  * Candidates are `listModels` of the current provider. Chunk accesses passed
  * to the policy come from the chunk index and are not copied onto the manifest.
  * The context-window guard is the only rebuild allowed on an epoch's first
@@ -1256,6 +1260,10 @@ function isTierName(value: unknown): value is Tier {
 
 const SCORE_TIERS = new Set<Tier>(["none", "summary", "full"]);
 const SUMMARY_LIMIT = 200;
+const SUMMARY_MIN_CHARS = 20;
+/** Path, extension, digit, camelCase, or snake_case. */
+const SUMMARY_ANCHOR =
+  /(?:[/\\]|\.[A-Za-z0-9]{1,8}\b|\d|[A-Za-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*|[A-Za-z0-9]+_[A-Za-z0-9_]+)/;
 const EMPTY_USAGE: Usage = {
   inputOther: 0,
   inputCacheRead: 0,
@@ -1435,6 +1443,10 @@ function clampSummary(summary: string): string {
   return summary.slice(0, SUMMARY_LIMIT);
 }
 
+function summaryLocatable(summary: string): boolean {
+  return summary.length >= SUMMARY_MIN_CHARS && SUMMARY_ANCHOR.test(summary);
+}
+
 async function runEntry(input: {
   scorer: Scorer;
   chunks: Chunk[];
@@ -1498,6 +1510,7 @@ async function runEntry(input: {
   let none = 0;
   let summary = 0;
   let full = 0;
+  let summaryRejected = 0;
   const rows = input.rows.map((row) => {
     const scored = byId.get(row.id);
     const chunk = chunksById.get(row.id);
@@ -1523,8 +1536,18 @@ async function runEntry(input: {
         originalTokens: chunk.tokens,
       };
     }
-    const note = clampSummary(scored.summary ?? "");
-    if (note.length === 0) return row;
+    if (scored.summary === undefined) return row;
+    const note = clampSummary(scored.summary);
+    if (!summaryLocatable(note)) {
+      full += 1;
+      summaryRejected += 1;
+      return {
+        id: row.id,
+        tier: "full" as const,
+        reason: `${entryReason(row.reason, "full")};summary-rejected`,
+        tokens: chunk.tokens,
+      };
+    }
     summary += 1;
     const rendered = renderSummary(chunk, note);
     usedDelta += input.count(rendered) - chunk.tokens;
@@ -1547,7 +1570,7 @@ async function runEntry(input: {
     rows,
     messages: applyDecisions(input.messages, input.chunks, decisions),
     used: input.used + usedDelta,
-    report: entryReport(1, none, summary, full, result.usage),
+    report: entryReport(1, none, summary, full, result.usage, summaryRejected),
   };
 }
 
@@ -1567,12 +1590,14 @@ function entryReport(
   summary: number,
   full: number,
   usage?: Usage,
+  summaryRejected = 0,
 ): EntryScoredReport {
   return {
     calls,
     none,
     summary,
     full,
+    summaryRejected,
     ...(usage ? { usage: shadowUsage(usage) } : {}),
   };
 }

@@ -16,8 +16,10 @@
  * `shadow.raw` and `scorer.raw`, when present, are the model text prefix
  * and finish kind from a fallback. A successful score omits `raw`.
  * `entryScored`, when present, is one entry-mode scorer call: how many
- * candidates became `none`, `summary`, or `full`, plus that call's usage.
- * Chunk `reason` for an applied entry decision is `scorer:entry:<tier>`.
+ * candidates became `none`, `summary`, or `full`, how many summary notes
+ * were rejected, plus that call's usage. Chunk `reason` for an applied
+ * entry decision is `scorer:entry:<tier>`. A rejected summary uses
+ * `scorer:entry:full;summary-rejected`.
  * The kernel stores the object and does not read those counts.
  *
  * Intentionally not in the Log: the live CompiledView object, parentPath,
@@ -138,14 +140,17 @@ export type ScorerReport = {
 
 /**
  * One entry-mode score. `calls` is 1 even when the scorer throws or omits
- * an id. Tier counts are decisions that were applied. `usage` is the
- * provider quadruple, omitted when the call reported none.
+ * an id. Tier counts are decisions that were applied. `summaryRejected`
+ * counts summary notes demoted to full; those chunks are included in
+ * `full`. `usage` is the provider quadruple, omitted when the call
+ * reported none.
  */
 export type EntryScoredReport = {
   calls: number;
   none: number;
   summary: number;
   full: number;
+  summaryRejected: number;
   usage?: {
     inputOther: number;
     inputCacheRead: number;
