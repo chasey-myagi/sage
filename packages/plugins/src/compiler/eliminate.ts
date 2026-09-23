@@ -24,6 +24,7 @@ import type { Access } from "@sage/core";
 import type { Chunk } from "./chunks.js";
 import type { Tier } from "./claim.js";
 
+/** The tier chosen for one chunk and the rule that chose it. */
 export type ChunkDecision = {
   id: string;
   tier: Tier;
@@ -32,6 +33,10 @@ export type ChunkDecision = {
   summary?: string;
 };
 
+/**
+ * Decides a tier for every chunk, in chunk order, by the rules in the file
+ * header. Pure; `chunks` is not mutated.
+ */
 export function eliminate(
   chunks: Chunk[],
   opts: { keepRecent: number; remainingBudget: number },

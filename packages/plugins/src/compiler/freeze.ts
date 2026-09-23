@@ -26,6 +26,10 @@ import type { ChunkDecision } from "./eliminate.js";
 
 const TIERS: readonly Tier[] = ["none", "line", "summary", "full"];
 
+/**
+ * The epoch's frozen chunk decisions, first tier per id, or undefined on
+ * the epoch's first turn.
+ */
 export function frozenDecisions(
   path: readonly StoredEntry[],
   epoch: number,
@@ -37,6 +41,10 @@ export function frozenDecisions(
   return map;
 }
 
+/**
+ * Highest message seq before the epoch's first manifest, or undefined
+ * when there is none. Messages above it are new to the epoch.
+ */
 export function frozenSeqCeiling(
   path: readonly StoredEntry[],
   epoch: number,
@@ -52,6 +60,7 @@ export function frozenSeqCeiling(
   return max < 0 ? undefined : max;
 }
 
+/** The latest `view_epoch` number on the path, or 0. */
 export function currentEpoch(path: readonly StoredEntry[]): number {
   let epoch = 0;
   for (const entry of path) {
@@ -62,6 +71,7 @@ export function currentEpoch(path: readonly StoredEntry[]): number {
   return epoch;
 }
 
+/** The `reason` of the `view_epoch` entry that opened `epoch`, if any. */
 export function epochOpenReason(
   path: readonly StoredEntry[],
   epoch: number,

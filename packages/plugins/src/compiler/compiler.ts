@@ -1,1836 +1,564 @@
 /**
- * Context compiler. One ViewProvider: collect claims, allocate a budget,
- * assemble the view, and attach a manifest.
+ * Context compiler: the plugin's only ViewProvider. Each turn it collects
+ * claims, decides a tier for every history chunk, and returns the view with
+ * a manifest that records every decision.
  *
- * Contract: head is the session-injected head. History is the passthrough
- * projection, including its repair and anomalies, then indexed into chunks:
- * one tool call plus its result, or one prose message. Decisions follow
- * recent, superseded, retry, then oldest-first budget. `keepRecent` defaults
- * to 6. A none tool chunk keeps its tool_use and replaces the tool_result
- * content with a one-line stub. Manifest chunks carry that id, tier, reason,
- * and tokens. A stubbed tool chunk's `tokens` count the stub; `originalTokens`
- * keeps the pre-stub estimate. `budget` also carries `omitted` (none chunks)
- * and `expands` (assistant `expand` tool_use calls already on the path).
- * Each such call appends `;expanded_at:<turn>` to that chunk's reason, where
- * `<turn>` is the preceding manifest's turn. The tier is unchanged.
- * Inside an epoch, every manifest contributes chunk decisions. The first
- * tier recorded for an id stays; later manifests do not override it. Chunks
- * already in that map are copied. eliminate sees those frozen chunks with
- * their tokens zeroed, as a read-only reference, plus the new chunks. Only
- * the new chunks keep eliminate's tier. Their first turn is recent or full,
- * unless oldest-first budget drops a new chunk; that drop is frozen too.
- * Frozen kept tokens are spent before that budget runs, so a frozen chunk
- * is not demoted. The first turn of an epoch has no freeze record.
- * `oldTokens` is `head + used × ratio` for the frozen view. `head`
- * is the fixed overhead from the epoch's first measured input, floored at 0
- * so a negative head cannot make `newTokens` negative and reopen as
- * immediate. `ratio` is `(measured − head) / budget.used` and is applied
- * even when it is above 1. No calibration uses head 0 and ratio 1.
- * `cache.expectedReadTokens` is the previous manifest's own
- * `head + ratio × budget.frozenTokens` (head 0 and ratio 1 when that
- * manifest has no calibration). It is the frozen-prefix estimate the
- * previous turn emitted, not this turn's re-anchored head.
- * `newTokens` is the same projection of a from-scratch eliminate of every
- * chunk, plus claims. `budget.frozenTokens` sums tokens of frozen chunks that
- * are not none. `budget.staleOmittable` is the part a from-scratch eliminate
- * would set to none. Both describe the frozen view even on a rebuild turn.
- * A new epoch opens when `decideEpoch` says rebuild: the view is a full
- * recompile, `epoch` is the previous epoch plus one, and `epochStart.reason`
- * is `cost:<paybackTurns>`, `cost:immediate`, or `context-window-guard`.
- * `route`, when set, runs only on that rebuild. A result sets
- * `epochStart.model` and appends `;route:<reason>` to the decision reason.
- * `scorer` defaults to `ruleScorer` and runs only when this compile rebuilds
- * and at least one kept tool chunk remains. The rule scorer leaves tier and
- * reason untouched. Any other scorer may set a kept tool chunk to none,
- * summary, or full. The chunk reason is the decision's `reason` when that
- * string is non-empty, otherwise `scorer:model`. recent, superseded, retry, and
- * budget reasons win. Summary tool_result text is the stub, a newline, and
- * `summary (model notes, not evidence): `. That string is stored on the chunk
- * record. A fallback appends `;scorer:fallback:<reason>` and keeps the
- * eliminate tiers. When the call reports usage or a fallback, `manifest.scorer`
- * is `{ calls, usage, fallback, raw? }`. `raw` is copied only when the
- * scorer fell back and supplied `{ text, finish }`. The score request reuses
- * the previous turn's head and messages rebuilt from the log.
- * `shadowScorer`, when set, runs after tiers, freeze, and budget are fixed.
- * It scores tool chunks whose ids are absent from the previous manifest.
- * The first turn has no previous manifest, so every tool chunk is new.
- * Prose chunks are not scored. `prevRequest` is this turn's compiled view
- * (head, messages, cache breakpoints), not the previous turn's request.
- * The result is stored on `manifest.shadow` and does not change tiers,
- * freeze, or budget. `shadow.raw` is copied only when that score fell back
- * and supplied it. A throw becomes `fallback` and the view still returns.
- * No new tool chunk means no call and no `shadow` field. Subtask compiles
- * do not run it.
- * `scorerApply` defaults to `rebuild`. `entry` scores tool chunks that are
- * new since the previous manifest, still tier full, and at least
- * `minScoreTokens` (default 300). `expand` results are not candidates.
- * One call per compile. `none` becomes a stub. `summary` keeps the
- * scorer's note, at most 200 characters; a missing note stays full.
- * A present note shorter than 20 characters, or with no path, symbol,
- * or number, stays full. Its reason is `scorer:entry:full;summary-rejected`.
- * `full` keeps the text. The chunk reason is `scorer:entry:<tier>`.
- * A throw, a fallback, or a missing id leaves that chunk full and still
- * records the call. Cumulative freeze keeps that first decision.
- * `keepRecent` does not force an entry-scored chunk back to full, and
- * that chunk does not consume a recent slot. `entry` does not run the
- * rebuild scorer and does not run `shadowScorer`. The rebuild path is
- * unchanged when `scorerApply` is `rebuild`. `manifest.entryScored` is
- * `{ calls, none, summary, full, summaryRejected, usage }` when a call
- * was made. `summaryRejected` counts notes demoted by that check. Those
- * chunks are also counted in `full`.
- * Candidates are `listModels` of the current provider. Chunk accesses passed
- * to the policy come from the chunk index and are not copied onto the manifest.
- * The context-window guard is the only rebuild allowed on an epoch's first
- * turn. If that rebuilt view is still over 90% of the context window,
- * `budget.overrun` records the excess when the compile budget itself did
- * not, and a later turn of that epoch does not open another one for the
- * same guard. `expectedTurns` defaults to 20. `alpha` defaults to 0.5.
- * `minSavingsRatio` defaults to 0.2. Turns already started are
- * max(0, turn - 1). Remaining turns are max(1, expectedTurns - started,
- * ceil(alpha * started)): a long task assumes about half as many turns
- * again. The inequality itself is unchanged.
- * Cache breakpoints are `head`, the end of the frozen prefix, and the last
- * message. An epoch-head message is rendered once. Later turns of that epoch
- * copy `view_epoch.details.epochHead` when that message is not itself a
- * logged history message, and ignore fresh provider text. Tail blocks are
- * recomputed every turn and appended to the last message when it is a user
- * message. `tail-if-changed` text is stored in `details.claimContent` only
- * when its hash is new. `none` is omitted from the view. A provider that
- * throws becomes one manifest row and does not stop the compile.
- * When `ctx.parentPath` is set, this is a subtask recompile. Messages start
- * with the parent request rebuilt from that path's latest manifest, epoch
- * head included. `frozenDecisions` of the parent's current epoch supplies
- * those chunk tiers. The child's own messages are `own:` chunks and go
- * through `eliminate`. A tail claim `subtask-query` carries `subtask.query`
- * and is appended after that prefix. `decideEpoch` is not called. The
- * decision reason is `subtask:no-rebuild`. `budget.frozenTokens` and
- * `budget.staleOmittable` are 0; this compile does not compare a reopen.
+ * Contract: `head` is always the session-injected head. Inside an epoch the
+ * rendered prefix is byte-identical to the previous turn's, so the provider
+ * prefix cache keeps hitting; only the tail changes. A new epoch opens only
+ * when the cost check or the context-window guard says rebuild. Every
+ * model-visible byte is reproducible from the Log: the manifest, the
+ * `view_epoch` head, and `details.claimContent`. A claim provider that
+ * throws becomes a manifest row; a scorer that throws or falls back
+ * degrades to the deterministic tiers. Only kernel defects throw.
  *
- * Intentionally not in the Log: claim providers, the token counter, the route
- * policy, the scorer function, the shadow scorer function, and the live
+ * Stages live in sibling files: `assemble.ts` (claims and chunk rows),
+ * `chunk-decisions.ts` (freeze), `epoch.ts` (cost check), `score-*.ts`
+ * (scorers), `breakpoints.ts`, and `subtask-view.ts`.
+ *
+ * Intentionally not in the Log: claim providers, the token counter, the
+ * route policy, the scorer and shadow scorer functions, and the live
  * CompiledView. The kernel persists `view_epoch`, `model_change`, and the
- * manifest, including `scorer` and `shadow` when set.
+ * manifest, including `scorer`, `entryScored`, and `shadow` when set.
  */
 
-import type {
-  ClaimRecord,
-  CompiledView,
-  EntryScoredReport,
-  ViewContext,
-} from "@sage/core";
+import type { CompiledView, EntryScoredReport, ViewContext } from "@sage/core";
 import { passthroughView } from "@sage/core";
-import { listModels } from "@sage/provider";
-import type {
-  Message,
-  ModelRef,
-  Request,
-  Sampling,
-  Usage,
-} from "@sage/provider/contract";
-import { escapeClaimText } from "../claims/escape.js";
 import type { RoutePolicy } from "../routing/types.js";
 import { ruleScorer } from "../scorer/rule.js";
-import type { ScoreDecision, ScoreRaw, Scorer } from "../scorer/types.js";
-import { applyDecisions, renderSummary } from "./apply.js";
-import { allocate, defaultTokenCount, type TokenCounter } from "./budget.js";
+import type { Scorer } from "../scorer/types.js";
+import { type Assembly, assembleView, collectClaims } from "./assemble.js";
+import { cacheBreakpointsFor } from "./breakpoints.js";
+import { defaultTokenCount, type TokenCounter } from "./budget.js";
 import {
   calibrationFor,
   expectedFrozenPrefix,
   measuredCacheRead,
 } from "./calibrate.js";
+import { type FrozenMap, freezeAccounting } from "./chunk-decisions.js";
 import type { Chunk } from "./chunks.js";
 import { indexChunks } from "./chunks.js";
-import type { Claim, ClaimProvider, Placement, Tier } from "./claim.js";
-import type { EpochDecision, Rates } from "./decide.js";
-import { decideEpoch, ratesFor } from "./decide.js";
-import type { ChunkDecision } from "./eliminate.js";
-import { eliminate } from "./eliminate.js";
-import { contentHash, parseClaimMessage, renderClaim } from "./format.js";
+import type { ClaimProvider } from "./claim.js";
+import { ratesFor } from "./decide.js";
 import {
-  currentEpoch,
+  appendReason,
+  chooseEpoch,
+  DEFAULT_ALPHA,
+  DEFAULT_EXPECTED_TURNS,
+  DEFAULT_MIN_SAVINGS_RATIO,
+  type EpochChoice,
+  openEpoch,
+  type Projection,
+  projectionFor,
+  remainingTurnsFor,
+  viewOverrun,
+} from "./epoch.js";
+import {
   epochOpenReason,
   frozenDecisions,
   frozenSeqCeiling,
 } from "./freeze.js";
-import { rebuildFromLog } from "./rebuild.js";
-import { renderStub } from "./stub.js";
+import {
+  assertSeqsMatch,
+  countExpands,
+  latestQuery,
+  previousRequest,
+  projectionSeqs,
+} from "./log-read.js";
+import { firstById } from "./rows.js";
+import { requestFromCompiled } from "./score-common.js";
+import { resolveMinScoreTokens, runEntryScorer } from "./score-entry.js";
+import {
+  type RebuildScorerReport,
+  runRebuildScorer,
+  type ScoredView,
+} from "./score-rebuild.js";
+import { runShadowScorer, type ShadowBody } from "./score-shadow.js";
+import { compileSubtask } from "./subtask-view.js";
 
-type ManifestClaim = ClaimRecord & {
-  contentHash?: string;
-  placement?: Placement;
-  priority?: number;
-};
+/**
+ * Default `keepRecent`: how many of the latest tool chunks stay full with
+ * reason `recent` regardless of budget.
+ */
+export const DEFAULT_KEEP_RECENT = 6;
 
-type ChunkRow = {
-  id: string;
-  tier: Tier;
-  reason: string;
-  tokens: number;
-  originalTokens?: number;
-  summary?: string;
-};
-
-type Assembly = {
-  messages: Message[];
-  records: ManifestClaim[];
-  chunkRecords: ChunkRow[];
-  used: number;
-  claimContent: Record<string, string>;
-  epochStart?: { reason: string };
-  hasEpochHead: boolean;
-};
-
-export function contextCompiler(opts: {
+/** Options of `contextCompiler`. Token counts are estimates from `count`. */
+export type ContextCompilerOptions = {
+  /** Token budget for claims plus history chunks. */
   budget: number;
   claims: ClaimProvider[];
+  /** Token estimator. Defaults to `defaultTokenCount`. */
   count?: TokenCounter;
+  /** Defaults to `DEFAULT_KEEP_RECENT` (6). */
   keepRecent?: number;
+  /** Defaults to `DEFAULT_EXPECTED_TURNS` (20). */
   expectedTurns?: number;
+  /** Defaults to `DEFAULT_ALPHA` (0.5). */
   alpha?: number;
+  /** Defaults to `DEFAULT_MIN_SAVINGS_RATIO` (0.2). */
   minSavingsRatio?: number;
+  /**
+   * Picks a model when an epoch opens; runs only on a rebuild. Candidates
+   * are `listModels` of the current provider.
+   */
   route?: RoutePolicy;
+  /** Defaults to `ruleScorer`, which changes no tier or reason. */
   scorer?: Scorer;
+  /** Records what this scorer would decide; never applied. */
   shadowScorer?: Scorer;
+  /**
+   * `rebuild` (default) scores kept tool chunks when an epoch opens.
+   * `entry` scores each new tool chunk once, on the turn it enters the
+   * view, and runs neither the rebuild scorer nor `shadowScorer`.
+   */
   scorerApply?: "rebuild" | "entry";
+  /**
+   * Entry mode only: smallest tool chunk worth scoring. Defaults to
+   * `DEFAULT_MIN_SCORE_TOKENS` (300); a negative or non-finite value also
+   * falls back to it.
+   */
   minScoreTokens?: number;
+  /** Set on a child compiler: the child's question. */
   subtask?: { query: string };
-}): { view(ctx: ViewContext): Promise<CompiledView> } {
-  const count = opts.count ?? defaultTokenCount;
-  const keepRecent = opts.keepRecent ?? 6;
-  const expectedTurns = opts.expectedTurns ?? 20;
-  const alpha = opts.alpha ?? 0.5;
-  const minSavingsRatio = opts.minSavingsRatio ?? 0.2;
-  const scorer = opts.scorer ?? ruleScorer;
-  const applyEntry = opts.scorerApply === "entry";
-  const minScoreTokens = finiteMinScore(opts.minScoreTokens);
+};
 
+type Settings = {
+  budget: number;
+  claims: ClaimProvider[];
+  count: TokenCounter;
+  keepRecent: number;
+  expectedTurns: number;
+  alpha: number;
+  minSavingsRatio: number;
+  route: RoutePolicy | undefined;
+  scorer: Scorer;
+  shadowScorer: Scorer | undefined;
+  applyEntry: boolean;
+  minScoreTokens: number;
+  subtaskQuery: string;
+};
+
+/**
+ * Creates the compiler. `view` rejects only on kernel defects: a seq map
+ * that disagrees with the passthrough projection, a non-finite context
+ * window, or, for a subtask, a parent path without a manifest. When
+ * `ctx.parentPath` is set, the call is a subtask recompile (see
+ * `compileSubtask`).
+ */
+export function contextCompiler(opts: ContextCompilerOptions): {
+  view(ctx: ViewContext): Promise<CompiledView>;
+} {
+  const settings: Settings = {
+    budget: opts.budget,
+    claims: opts.claims,
+    count: opts.count ?? defaultTokenCount,
+    keepRecent: opts.keepRecent ?? DEFAULT_KEEP_RECENT,
+    expectedTurns: opts.expectedTurns ?? DEFAULT_EXPECTED_TURNS,
+    alpha: opts.alpha ?? DEFAULT_ALPHA,
+    minSavingsRatio: opts.minSavingsRatio ?? DEFAULT_MIN_SAVINGS_RATIO,
+    route: opts.route,
+    scorer: opts.scorer ?? ruleScorer,
+    shadowScorer: opts.shadowScorer,
+    applyEntry: opts.scorerApply === "entry",
+    minScoreTokens: resolveMinScoreTokens(opts.minScoreTokens),
+    subtaskQuery: opts.subtask?.query ?? "",
+  };
   return {
     async view(ctx: ViewContext): Promise<CompiledView> {
       if (ctx.parentPath) {
         return compileSubtask(ctx, {
-          budget: opts.budget,
-          query: opts.subtask?.query ?? "",
-          count,
-          keepRecent,
+          budget: settings.budget,
+          query: settings.subtaskQuery,
+          count: settings.count,
+          keepRecent: settings.keepRecent,
         });
       }
-      const base = await passthroughView.view(ctx);
-      const collected = await collect(opts.claims, ctx);
-      const seqs = projectionSeqs(ctx.path);
-      if (seqs.length !== base.messages.length) {
-        throw new Error(
-          `projected seqs (${seqs.length}) do not match passthrough messages (${base.messages.length})`,
-        );
-      }
-      const chunks = indexChunks(base.messages, seqs, ctx.tools, count);
-      const prior = frozenDecisions(ctx.path, base.epoch);
-      const ceiling = frozenSeqCeiling(ctx.path, base.epoch);
-      const stay = assemble({
-        freezeHead: true,
-        prior,
-      });
-      const fresh = prior
-        ? assemble({ freezeHead: false, prior: undefined })
-        : stay;
-      const freezeStats = freezeAccounting(
-        prior,
-        stay.chunkRecords,
-        fresh.chunkRecords,
-      );
-      const calibration = calibrationFor(ctx.path);
-      const head = calibration?.head ?? 0;
-      const ratio = calibration?.ratio ?? 1;
-      const project = (used: number) => head + used * ratio;
-      const rates = ratesFor(ctx.prepared.pricing);
-      const started = Math.max(0, ctx.turn - 1);
-      const remainingTurns = Math.max(
-        1,
-        expectedTurns - started,
-        Math.ceil(alpha * started),
-      );
-      const window = ctx.prepared.contextWindow;
-      const guarded =
-        epochOpenReason(ctx.path, base.epoch) === "context-window-guard";
-      const over = project(stay.used) > window * 0.9;
-      let decision = tagPricing(
-        decideEpoch({
-          oldTokens: project(stay.used),
-          newTokens: project(fresh.used),
-          remainingTurns,
-          rates,
-          minSavingsRatio,
-          contextWindow: window,
-          overContext: over && !guarded,
-        }),
-        rates,
-      );
-      const guard = decision.reason.includes("context-window-guard");
-      if (!prior && !guard && decision.rebuild) {
-        decision = {
-          ...decision,
-          rebuild: false,
-          reason: tagReason("savings-too-small", rates),
-        };
-      }
-      let chosen = decision.rebuild && prior ? fresh : stay;
-      let scorerReport:
-        | { calls: number; usage: Usage; fallback: boolean; raw?: ScoreRaw }
-        | undefined;
-      if (decision.rebuild && !applyEntry) {
-        const scored = await runScorer({
-          scorer,
-          chunks,
-          rows: chosen.chunkRecords,
-          messages: chosen.messages,
-          used: chosen.used,
-          count,
-          prevRequest: previousRequest(ctx),
-          query: latestQuery(ctx.path),
-        });
-        chosen = {
-          ...chosen,
-          messages: scored.messages,
-          chunkRecords: scored.rows,
-          used: scored.used,
-        };
-        if (scored.fallback) {
-          decision = {
-            ...decision,
-            reason: `${decision.reason};scorer:fallback:${scored.fallback}`,
-          };
-        }
-        scorerReport = scored.report;
-      }
-      let epoch = base.epoch;
-      let epochStart: { reason: string; model?: ModelRef } | undefined =
-        chosen.epochStart;
-      if (decision.rebuild) {
-        epoch = base.epoch + 1;
-        epochStart = { reason: openReason(decision) };
-        if (opts.route) {
-          const routed = opts.route({
-            epoch,
-            current: ctx.model,
-            candidates: [...listModels(ctx.model.provider)],
-            viewChunks: routeChunks(chunks, chosen.chunkRecords),
-            decision,
-            budget: opts.budget,
-          });
-          if (routed) {
-            epochStart = { ...epochStart, model: routed.model };
-            decision = {
-              ...decision,
-              reason: `${decision.reason};route:${routed.reason}`,
-            };
-          }
-        }
-      }
-      const end = prefixEndIndex(
-        chosen.messages.length,
-        base.messages.length,
-        chosen.hasEpochHead,
-        seqs,
-        decision.rebuild ? undefined : ceiling,
-      );
-      const last = Math.max(0, chosen.messages.length - 1);
-      const cacheBreakpoints: CompiledView["cacheBreakpoints"] = [
-        "head",
-        { afterMessage: end },
-        { afterMessage: last },
-      ];
-      let entryReport: EntryScoredReport | undefined;
-      if (applyEntry) {
-        const entered = await runEntry({
-          scorer,
-          chunks,
-          rows: chosen.chunkRecords,
-          messages: chosen.messages,
-          used: chosen.used,
-          count,
-          minScoreTokens,
-          path: ctx.path,
-          prevRequest: requestFromCompiled(
-            ctx,
-            chosen.messages,
-            cacheBreakpoints,
-          ),
-          query: latestQuery(ctx.path),
-        });
-        chosen = {
-          ...chosen,
-          messages: entered.messages,
-          chunkRecords: entered.rows,
-          used: entered.used,
-        };
-        entryReport = entered.report;
-      }
-      const cache = {
-        expectedReadTokens: expectedFrozenPrefix(ctx.path),
-        measuredReadTokens: measuredCacheRead(ctx.path),
-      };
-      let overrun = Math.max(0, chosen.used - opts.budget);
-      const scaled = project(chosen.used);
-      const stillOver = scaled > window * 0.9;
-      if (
-        overrun === 0 &&
-        stillOver &&
-        (decision.reason.includes("context-window-guard") || (guarded && over))
-      ) {
-        overrun = Math.ceil(scaled - window * 0.9);
-      }
-      const budget = {
-        total: opts.budget,
-        used: chosen.used,
-        overrun,
-        omitted: chosen.chunkRecords.filter((record) => record.tier === "none")
-          .length,
-        expands: countExpands(ctx.path),
-        frozenTokens: freezeStats.frozenTokens,
-        staleOmittable: freezeStats.staleOmittable,
-      };
-      const shadow =
-        applyEntry || !opts.shadowScorer
-          ? undefined
-          : await runShadow({
-              scorer: opts.shadowScorer,
-              chunks,
-              path: ctx.path,
-              ctx,
-              messages: chosen.messages,
-              cacheBreakpoints,
-              query: latestQuery(ctx.path),
-            });
-      const manifest = {
-        epoch,
-        turn: ctx.turn,
-        budget,
-        claims: chosen.records,
-        chunks: chosen.chunkRecords,
-        anomalies: base.manifest.anomalies,
-        epochDecision: decision,
-        cache,
-        ...(calibration ? { calibration } : {}),
-        ...(scorerReport ? { scorer: scorerReport } : {}),
-        ...(entryReport ? { entryScored: entryReport } : {}),
-        ...(shadow ? { shadow } : {}),
-      };
-      const view: CompiledView = {
-        epoch,
-        head: ctx.head,
-        messages: chosen.messages,
-        cacheBreakpoints,
-        manifest,
-      };
-      if (epochStart) view.epochStart = epochStart;
-      if (Object.keys(chosen.claimContent).length > 0) {
-        view.details = { claimContent: chosen.claimContent };
-      }
-      return view;
-
-      function assemble(mode: {
-        freezeHead: boolean;
-        prior: Map<string, ChunkDecision> | undefined;
-      }): Assembly {
-        const stored = mode.freezeHead
-          ? epochHeadFor(ctx.path, base.epoch)
-          : undefined;
-        const frozen =
-          stored && !loggedMessage(ctx.path, stored) ? stored : undefined;
-        const frozenParts = frozen ? parseClaimMessage(frozen) : undefined;
-        const allocatable: Claim[] = [];
-        const frozenClaims: Claim[] = [];
-        for (const claim of collected.claims) {
-          if (frozen && claim.placement === "epoch-head") {
-            frozenClaims.push(claim);
-          } else allocatable.push(claim);
-        }
-        const frozenUsed = frozenParts ? tokensOf(frozenParts, count) : 0;
-        const remaining = Math.max(0, opts.budget - frozenUsed);
-        const allocation = allocate(allocatable, remaining, count);
-        const claimById = new Map(
-          allocatable.map((claim) => [claim.id, claim]),
-        );
-        const records: ManifestClaim[] = [];
-        for (const claim of frozenClaims) {
-          records.push(frozenRecord(claim, frozenParts, count));
-        }
-        for (const record of allocation.records) {
-          const claim = claimById.get(record.id);
-          if (!claim) continue;
-          records.push({
-            ...record,
-            placement: claim.placement,
-            priority: claim.priority,
-          });
-        }
-        records.sort(byPriority);
-        const claimContent: Record<string, string> = {};
-        const previous = latestManifest(ctx.path);
-        for (const record of records) {
-          const claim = claimById.get(record.id);
-          if (!claim || record.tier === "none") continue;
-          if (claim.placement === "epoch-head") {
-            const body = claim.tiers[record.tier];
-            if (body === undefined) continue;
-            record.contentHash = contentHash(
-              renderClaim(claim.id, record.tier, body),
-            );
-            continue;
-          }
-          const body = claim.tiers[record.tier];
-          if (body === undefined) continue;
-          const rendered = renderClaim(claim.id, record.tier, body);
-          const hash = contentHash(rendered);
-          record.contentHash = hash;
-          const priorHash = previousHash(previous, claim.id);
-          if (claim.placement === "tail-if-changed" && priorHash === hash) {
-            record.reason = "unchanged";
-            continue;
-          }
-          if (
-            claim.placement === "tail-if-changed" &&
-            priorHash !== undefined
-          ) {
-            record.reason = "changed";
-          }
-          if (priorHash !== hash) claimContent[claim.id] = rendered;
-        }
-        const allocatedUsed = allocation.records.reduce(
-          (sum, record) => sum + (record.tokens ?? 0),
-          0,
-        );
-        const claimUsed = frozenUsed + allocatedUsed;
-        const decided = decideChunks(
-          chunks,
-          mode.prior,
-          keepRecent,
-          Math.max(0, opts.budget - claimUsed),
-        );
-        if (mode.prior) {
-          const notes = loggedSummaries(ctx.path, base.epoch);
-          for (const decision of decided.decisions) {
-            if (decision.tier !== "summary") continue;
-            const note = notes.get(decision.id);
-            if (note !== undefined) decision.summary = note;
-          }
-        }
-        const expansions = expandStamps(ctx.path);
-        const messages = applyDecisions(
-          base.messages,
-          chunks,
-          decided.decisions,
-        );
-        const chunkRecords = decided.decisions.map((decision) => {
-          const chunk = chunks.find((item) => item.id === decision.id);
-          const stamps = expansions.get(decision.id) ?? [];
-          const reason = withStamps(decision.reason, stamps);
-          const original = chunk?.tokens ?? 0;
-          if (decision.tier === "none" && chunk?.kind === "tool") {
-            return {
-              id: decision.id,
-              tier: decision.tier,
-              reason,
-              tokens: count(renderStub(chunk)),
-              originalTokens: original,
-            };
-          }
-          if (decision.tier === "summary" && chunk?.kind === "tool") {
-            const summary = decision.summary ?? "";
-            return {
-              id: decision.id,
-              tier: decision.tier,
-              reason,
-              tokens: count(renderSummary(chunk, summary)),
-              originalTokens: original,
-              summary,
-            };
-          }
-          return {
-            id: decision.id,
-            tier: decision.tier,
-            reason,
-            tokens: original,
-          };
-        });
-        let chunkUsed = decided.used;
-        for (const decision of decided.decisions) {
-          if (decision.tier !== "summary") continue;
-          const chunk = chunks.find((item) => item.id === decision.id);
-          if (chunk?.kind !== "tool") continue;
-          chunkUsed +=
-            count(renderSummary(chunk, decision.summary ?? "")) - chunk.tokens;
-        }
-        let epochStart: { reason: string } | undefined;
-        if (frozen) {
-          messages.unshift(frozen);
-        } else {
-          const head = renderEpochHead(records, claimById);
-          if (head) {
-            messages.unshift(head);
-            epochStart = { reason: "compiler:first-turn" };
-          }
-        }
-        appendTail(messages, tailBlocks(records, claimById));
-        return {
-          messages,
-          records: [...records, ...collected.errors],
-          chunkRecords,
-          used: claimUsed + chunkUsed,
-          claimContent,
-          ...(epochStart ? { epochStart } : {}),
-          hasEpochHead: frozen !== undefined || epochStart !== undefined,
-        };
-      }
+      return compileView(ctx, settings);
     },
   };
 }
 
-function routeChunks(chunks: readonly Chunk[], records: readonly ChunkRow[]) {
-  const byId = new Map(chunks.map((chunk) => [chunk.id, chunk]));
-  return records.map((record) => {
-    const chunk = byId.get(record.id);
-    return {
-      id: record.id,
-      tier: record.tier,
-      reason: record.reason,
-      tokens: record.tokens,
-      ...(chunk ? { accesses: chunk.accesses } : {}),
-    };
-  });
-}
-
-function decideChunks(
-  chunks: Chunk[],
-  prior: Map<string, ChunkDecision> | undefined,
-  keepRecent: number,
-  remainingBudget: number,
-): { decisions: ChunkDecision[]; used: number } {
-  if (!prior) {
-    const eliminated = eliminate(chunks, { keepRecent, remainingBudget });
-    return { decisions: eliminated.decisions, used: eliminated.used };
-  }
-  let frozenKept = 0;
-  for (const chunk of chunks) {
-    const kept = prior.get(chunk.id);
-    if (!kept || kept.tier === "none") continue;
-    frozenKept += chunk.tokens;
-  }
-  const input = chunks.map((chunk) =>
-    prior.has(chunk.id) ? { ...chunk, tokens: 0 } : chunk,
-  );
-  const eliminated = eliminate(input, {
-    keepRecent,
-    remainingBudget: Math.max(0, remainingBudget - frozenKept),
-  });
-  const decisions = chunks.map((chunk, index) => {
-    const kept = prior.get(chunk.id);
-    if (kept) return copyFrozen(kept);
-    return (
-      eliminated.decisions[index] ?? {
-        id: chunk.id,
-        tier: "full" as const,
-        reason: "kept",
-      }
-    );
-  });
-  yieldRecent(chunks, prior, decisions, keepRecent);
-  let used = 0;
-  for (let index = 0; index < chunks.length; index += 1) {
-    if (decisions[index]?.tier === "none") continue;
-    used += chunks[index]?.tokens ?? 0;
-  }
-  return { decisions, used };
-}
-
-function copyFrozen(kept: ChunkDecision): ChunkDecision {
-  return {
-    id: kept.id,
-    tier: kept.tier,
-    reason: kept.reason,
-    ...(kept.summary !== undefined ? { summary: kept.summary } : {}),
-  };
-}
-
-function yieldRecent(
-  chunks: readonly Chunk[],
-  prior: Map<string, ChunkDecision>,
-  decisions: ChunkDecision[],
-  keepRecent: number,
-): void {
-  if (keepRecent <= 0) return;
-  const scored = new Set<string>();
-  for (const [id, decision] of prior) {
-    if (rootReason(decision.reason).startsWith("scorer:entry:")) {
-      scored.add(id);
-    }
-  }
-  if (scored.size === 0) return;
-  const open: number[] = [];
-  for (let index = 0; index < chunks.length; index += 1) {
-    const chunk = chunks[index];
-    if (chunk?.kind !== "tool" || scored.has(chunk.id)) continue;
-    open.push(index);
-  }
-  const recent = new Set(open.slice(-keepRecent));
-  for (const index of recent) {
-    const chunk = chunks[index];
-    const decision = decisions[index];
-    if (!chunk || !decision || prior.has(chunk.id)) continue;
-    const root = rootReason(decision.reason);
-    if (root === "recent") continue;
-    if (root.startsWith("superseded_by:") || root === "retry_intermediate") {
-      continue;
-    }
-    decisions[index] = { id: chunk.id, tier: "full", reason: "recent" };
-  }
-}
-
-function finiteMinScore(value: number | undefined): number {
-  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
-    return value;
-  }
-  return 300;
-}
-
-function freezeAccounting(
-  prior: Map<string, ChunkDecision> | undefined,
-  stay: readonly ChunkRow[],
-  fresh: readonly ChunkRow[],
-): { frozenTokens: number; staleOmittable: number } {
-  if (!prior) return { frozenTokens: 0, staleOmittable: 0 };
-  const freshById = new Map(fresh.map((row) => [row.id, row]));
-  let frozenTokens = 0;
-  let staleOmittable = 0;
-  for (const row of stay) {
-    if (!prior.has(row.id) || row.tier === "none") continue;
-    frozenTokens += row.tokens;
-    if (freshById.get(row.id)?.tier === "none") staleOmittable += row.tokens;
-  }
-  return { frozenTokens, staleOmittable };
-}
-
-function withStamps(reason: string, stamps: readonly string[]): string {
-  const extra = stamps.filter((stamp) => !reason.split(";").includes(stamp));
-  if (extra.length === 0) return reason;
-  return `${reason};${extra.join(";")}`;
-}
-
-function tagPricing(decision: EpochDecision, rates: Rates): EpochDecision {
-  return { ...decision, reason: tagReason(decision.reason, rates) };
-}
-
-function tagReason(reason: string, rates: Rates): string {
-  if (rates.source !== "fallback" || reason.includes("pricing:fallback")) {
-    return reason;
-  }
-  return `${reason};pricing:fallback`;
-}
-
-function openReason(decision: EpochDecision): string {
-  if (decision.reason.includes("context-window-guard")) {
-    return "context-window-guard";
-  }
-  if (decision.reason.includes("immediate")) return "cost:immediate";
-  if (decision.paybackTurns === null) return "cost:immediate";
-  return `cost:${decision.paybackTurns}`;
-}
-
-function prefixEndIndex(
-  messageCount: number,
-  historyCount: number,
-  hasEpochHead: boolean,
-  seqs: readonly number[],
-  ceiling: number | undefined,
-): number {
-  if (messageCount === 0) return 0;
-  const offset = hasEpochHead ? 1 : 0;
-  if (historyCount === 0) return Math.min(messageCount - 1, offset);
-  if (ceiling === undefined) {
-    return Math.min(messageCount - 1, offset + historyCount - 1);
-  }
-  let lastHistory = -1;
-  let prevReal: number | undefined;
-  for (let index = 0; index < historyCount; index += 1) {
-    const seq = seqs[index] ?? 0;
-    const included =
-      seq >= 0 ? seq <= ceiling : prevReal !== undefined && prevReal <= ceiling;
-    if (seq >= 0) prevReal = seq;
-    if (included) lastHistory = index;
-  }
-  if (lastHistory < 0) return Math.min(messageCount - 1, offset);
-  return Math.min(messageCount - 1, offset + lastHistory);
-}
-
-function loggedMessage(path: ViewContext["path"], head: Message): boolean {
-  const rendered = JSON.stringify(head);
-  for (const entry of path) {
-    if (entry.kind !== "message") continue;
-    if (JSON.stringify(entry.payload) === rendered) return true;
-  }
-  return false;
-}
-
-async function collect(
-  providers: readonly ClaimProvider[],
+/**
+ * One main-session compile. History is the passthrough projection,
+ * including its repair and anomalies, indexed into chunks. Stages run in
+ * this order: assemble the frozen and the from-scratch candidate views,
+ * choose the epoch, run the rebuild scorer, open the epoch (and route),
+ * place cache breakpoints, run the entry scorer, run the shadow scorer,
+ * and build the manifest.
+ */
+async function compileView(
   ctx: ViewContext,
-): Promise<{ claims: Claim[]; errors: ManifestClaim[] }> {
-  const claims: Claim[] = [];
-  const errors: ManifestClaim[] = [];
-  const settled = await Promise.all(
-    providers.map(async (provider, index) => {
-      try {
-        return { index, claims: await provider(ctx) };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return { index, message };
-      }
+  settings: Settings,
+): Promise<CompiledView> {
+  const candidates = await assembleCandidates(ctx, settings);
+  const calibration = calibrationFor(ctx.path);
+  const project = projectionFor(calibration);
+  const choice = chooseTurnEpoch(ctx, settings, candidates, project);
+  const rebuildScored = await scoreOnRebuild(ctx, settings, candidates, choice);
+  const opened = openEpoch({
+    baseEpoch: candidates.epoch,
+    choice: rebuildScored.choice,
+    assembledStart: rebuildScored.chosen.epochStart,
+    route: settings.route,
+    model: ctx.model,
+    budget: settings.budget,
+    chunks: candidates.chunks,
+    rows: rebuildScored.chosen.chunkRecords,
+  });
+  const cacheBreakpoints = placeBreakpoints(
+    ctx,
+    candidates,
+    rebuildScored.chosen,
+    opened.choice,
+  );
+  const entryScored = await scoreOnEntry(ctx, settings, {
+    chosen: rebuildScored.chosen,
+    chunks: candidates.chunks,
+    cacheBreakpoints,
+  });
+  const chosen = entryScored.chosen;
+  const shadow = await scoreInShadow(ctx, settings, {
+    chunks: candidates.chunks,
+    chosen,
+    cacheBreakpoints,
+  });
+  return buildView(ctx, {
+    chosen,
+    epoch: opened.epoch,
+    epochStart: opened.epochStart,
+    choice: opened.choice,
+    cacheBreakpoints,
+    budget: budgetReport(ctx, settings, candidates, {
+      chosen,
+      choice: opened.choice,
+      project,
     }),
-  );
-  for (const item of settled) {
-    if ("message" in item && item.message !== undefined) {
-      errors.push({
-        id: `provider:${item.index}`,
-        tier: "none",
-        reason: `provider_error:${item.message}`,
-        tokens: 0,
-      });
-      continue;
-    }
-    if ("claims" in item) claims.push(...item.claims);
-  }
-  return { claims, errors };
+    anomalies: candidates.anomalies,
+    reports: {
+      ...(calibration ? { calibration } : {}),
+      ...(rebuildScored.report ? { scorer: rebuildScored.report } : {}),
+      ...(entryScored.report ? { entryScored: entryScored.report } : {}),
+      ...(shadow ? { shadow } : {}),
+    },
+  });
 }
 
-function frozenRecord(
-  claim: Claim,
-  parts: Map<string, { tier: Tier; body: string }> | undefined,
-  count: TokenCounter,
-): ManifestClaim {
-  const found = parts?.get(claim.id);
-  if (!found || found.tier === "none") {
-    return {
-      id: claim.id,
-      tier: "none",
-      reason: "frozen:epoch-head",
-      tokens: 0,
-      placement: "epoch-head",
-      priority: claim.priority,
-    };
-  }
-  return {
-    id: claim.id,
-    tier: found.tier,
-    reason: "frozen:epoch-head",
-    tokens: count(found.body),
-    contentHash: contentHash(renderClaim(claim.id, found.tier, found.body)),
-    placement: "epoch-head",
-    priority: claim.priority,
-  };
-}
+type ManifestBudget = {
+  total: number;
+  used: number;
+  overrun: number;
+  omitted: number;
+  expands: number;
+  frozenTokens: number;
+  staleOmittable: number;
+};
 
-function renderEpochHead(
-  records: readonly ManifestClaim[],
-  claimById: ReadonlyMap<string, Claim>,
-): Message | undefined {
-  const parts: string[] = [];
-  for (const record of records) {
-    if (record.placement !== "epoch-head" || record.tier === "none") continue;
-    const claim = claimById.get(record.id);
-    const body = claim?.tiers[record.tier];
-    if (!claim || body === undefined) continue;
-    parts.push(renderClaim(claim.id, record.tier, body));
-  }
-  if (parts.length === 0) return undefined;
-  return {
-    role: "user",
-    content: [{ type: "text", text: parts.join("\n\n") }],
-  };
-}
+type Candidates = {
+  epoch: number;
+  historyCount: number;
+  anomalies: CompiledView["manifest"]["anomalies"];
+  seqs: number[];
+  chunks: Chunk[];
+  frozen: FrozenMap | undefined;
+  /** The view that keeps the epoch's frozen head and chunk tiers. */
+  frozenView: Assembly;
+  /** A from-scratch recompile; `frozenView` itself when nothing is frozen. */
+  recompiledView: Assembly;
+  freeze: { frozenTokens: number; staleOmittable: number };
+};
 
-function tailBlocks(
-  records: readonly ManifestClaim[],
-  claimById: ReadonlyMap<string, Claim>,
-): { type: "text"; text: string }[] {
-  const blocks: { type: "text"; text: string }[] = [];
-  const tails = records
-    .filter(
-      (record) =>
-        (record.placement === "tail" ||
-          record.placement === "tail-if-changed") &&
-        record.tier !== "none",
-    )
-    .sort(byPriority);
-  for (const record of tails) {
-    const claim = claimById.get(record.id);
-    const tier = record.tier;
-    if (!claim || tier === "none") continue;
-    const body = claim.tiers[tier];
-    if (body === undefined) continue;
-    blocks.push({ type: "text", text: renderClaim(claim.id, tier, body) });
-  }
-  return blocks;
-}
-
-function appendTail(
-  messages: Message[],
-  blocks: { type: "text"; text: string }[],
-): void {
-  if (blocks.length === 0) return;
-  const last = messages.at(-1);
-  if (last?.role === "user") {
-    last.content.push(...blocks);
-    return;
-  }
-  messages.push({ role: "user", content: blocks });
-}
-
-function tokensOf(
-  parts: ReadonlyMap<string, { tier: Tier; body: string }>,
-  count: TokenCounter,
-): number {
-  let total = 0;
-  for (const part of parts.values()) {
-    if (part.tier === "none") continue;
-    total += count(part.body);
-  }
-  return total;
-}
-
-function byPriority(left: ManifestClaim, right: ManifestClaim): number {
-  return (
-    (right.priority ?? 0) - (left.priority ?? 0) ||
-    left.id.localeCompare(right.id)
-  );
-}
-
-function epochHeadFor(
-  path: ViewContext["path"],
-  epoch: number,
-): Message | undefined {
-  let found: Message | undefined;
-  for (const entry of path) {
-    if (entry.kind !== "view_epoch") continue;
-    if (!isRecord(entry.payload) || entry.payload.epoch !== epoch) continue;
-    const head = entry.details?.epochHead;
-    if (!isMessage(head)) continue;
-    found = structuredClone(head);
-  }
-  return found;
-}
-
-function latestManifest(
-  path: ViewContext["path"],
-): ViewContext["path"][number] | undefined {
-  for (let index = path.length - 1; index >= 0; index -= 1) {
-    const entry = path[index];
-    if (entry?.kind === "manifest") return entry;
-  }
-  return undefined;
-}
-
-function previousHash(
-  manifest: ViewContext["path"][number] | undefined,
-  id: string,
-): string | undefined {
-  if (!manifest || !isRecord(manifest.payload)) return undefined;
-  const claims = manifest.payload.claims;
-  if (!Array.isArray(claims)) return undefined;
-  for (const claim of claims) {
-    if (!isRecord(claim) || claim.id !== id) continue;
-    return typeof claim.contentHash === "string"
-      ? claim.contentHash
-      : undefined;
-  }
-  return undefined;
-}
-
-function projectionSeqs(path: ViewContext["path"]): number[] {
-  const seqs: number[] = [];
-  const open: string[] = [];
-  const flush = () => {
-    if (open.length === 0) return;
-    open.length = 0;
-    seqs.push(-1);
-  };
-  for (const entry of path) {
-    if (entry.kind !== "message" || !isMessage(entry.payload)) continue;
-    if (entry.payload.role === "assistant" && open.length > 0) flush();
-    let kept = 0;
-    const opened: string[] = [];
-    for (const block of entry.payload.content) {
-      if (block.type === "tool_result") {
-        const index = open.indexOf(block.toolUseId);
-        if (index === -1) continue;
-        open.splice(index, 1);
-        kept += 1;
-        continue;
-      }
-      kept += 1;
-      if (block.type === "tool_use") opened.push(block.id);
-    }
-    if (kept === 0) continue;
-    seqs.push(entry.seq);
-    open.push(...opened);
-  }
-  if (open.length > 0) flush();
-  return seqs;
-}
-
-function expandStamps(path: ViewContext["path"]): Map<string, string[]> {
-  const stamps = new Map<string, string[]>();
-  let turn = 0;
-  for (const entry of path) {
-    if (
-      entry.kind === "manifest" &&
-      isRecord(entry.payload) &&
-      typeof entry.payload.turn === "number" &&
-      Number.isFinite(entry.payload.turn)
-    ) {
-      turn = entry.payload.turn;
-    }
-    if (entry.kind !== "message" || !isMessage(entry.payload)) continue;
-    if (entry.payload.role !== "assistant") continue;
-    for (const block of entry.payload.content) {
-      if (block.type !== "tool_use" || block.name !== "expand") continue;
-      const id = expandTarget(block.input);
-      if (!id) continue;
-      const list = stamps.get(id) ?? [];
-      list.push(`expanded_at:${turn}`);
-      stamps.set(id, list);
-    }
-  }
-  return stamps;
-}
-
-function countExpands(path: ViewContext["path"]): number {
-  let total = 0;
-  for (const entry of path) {
-    if (entry.kind !== "message" || !isMessage(entry.payload)) continue;
-    if (entry.payload.role !== "assistant") continue;
-    for (const block of entry.payload.content) {
-      if (block.type === "tool_use" && block.name === "expand") total += 1;
-    }
-  }
-  return total;
-}
-
-function expandTarget(input: unknown): string | undefined {
-  if (!isRecord(input)) return undefined;
-  if (typeof input.id !== "string" || input.id.length === 0) return undefined;
-  return input.id;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isMessage(value: unknown): value is Message {
-  if (!isRecord(value)) return false;
-  return (
-    (value.role === "user" || value.role === "assistant") &&
-    Array.isArray(value.content)
-  );
-}
-
-function compileSubtask(
+/**
+ * Projects the history, indexes chunks, and assembles both candidate
+ * views. Throws when the seq map disagrees with the projection.
+ */
+async function assembleCandidates(
   ctx: ViewContext,
-  opts: {
-    budget: number;
-    query: string;
-    count: TokenCounter;
-    keepRecent: number;
+  settings: Settings,
+): Promise<Candidates> {
+  const base = await passthroughView.view(ctx);
+  const collected = await collectClaims(settings.claims, ctx);
+  const seqs = projectionSeqs(ctx.path);
+  assertSeqsMatch(seqs.length, base.messages.length);
+  const chunks = indexChunks(base.messages, seqs, ctx.tools, settings.count);
+  const frozen = frozenDecisions(ctx.path, base.epoch);
+  const input = {
+    path: ctx.path,
+    history: base.messages,
+    epoch: base.epoch,
+    collected,
+    chunks,
+    chunkById: firstById(chunks),
+    budget: settings.budget,
+    keepRecent: settings.keepRecent,
+    count: settings.count,
+  };
+  const frozenView = assembleView(input, { freezeHead: true, frozen });
+  const recompiledView = frozen
+    ? assembleView(input, { freezeHead: false, frozen: undefined })
+    : frozenView;
+  return {
+    epoch: base.epoch,
+    historyCount: base.messages.length,
+    anomalies: base.manifest.anomalies,
+    seqs,
+    chunks,
+    frozen,
+    frozenView,
+    recompiledView,
+    freeze: freezeAccounting(
+      frozen,
+      frozenView.chunkRecords,
+      recompiledView.chunkRecords,
+    ),
+  };
+}
+
+/**
+ * `manifest.budget` for the chosen view. `omitted` counts none chunks;
+ * `expands` counts assistant `expand` calls already on the path.
+ */
+function budgetReport(
+  ctx: ViewContext,
+  settings: Settings,
+  candidates: Candidates,
+  input: { chosen: Assembly; choice: EpochChoice; project: Projection },
+): ManifestBudget {
+  const { chosen } = input;
+  return {
+    total: settings.budget,
+    used: chosen.used,
+    overrun: viewOverrun({
+      used: chosen.used,
+      budget: settings.budget,
+      project: input.project,
+      contextWindow: ctx.prepared.contextWindow,
+      choice: input.choice,
+    }),
+    omitted: chosen.chunkRecords.filter((record) => record.tier === "none")
+      .length,
+    expands: countExpands(ctx.path),
+    frozenTokens: candidates.freeze.frozenTokens,
+    staleOmittable: candidates.freeze.staleOmittable,
+  };
+}
+
+/**
+ * Builds the manifest and the view. Optional reports keep the key order
+ * `calibration`, `scorer`, `entryScored`, `shadow` after `cache`.
+ */
+function buildView(
+  ctx: ViewContext,
+  input: {
+    chosen: Assembly;
+    epoch: number;
+    epochStart: CompiledView["epochStart"];
+    choice: EpochChoice;
+    cacheBreakpoints: CompiledView["cacheBreakpoints"];
+    budget: ManifestBudget;
+    anomalies: CompiledView["manifest"]["anomalies"];
+    reports: Partial<CompiledView["manifest"]>;
   },
 ): CompiledView {
-  const parentPath = ctx.parentPath ?? [];
-  const epoch = currentEpoch(parentPath);
-  const manifest = latestManifest(parentPath);
-  const turn = manifestTurn(manifest);
-  if (turn === undefined) {
-    throw new Error("subtask parent path has no manifest");
-  }
-  const rebuilt = rebuildFromLog(parentPath, turn);
-  const parentMessages = structuredClone(rebuilt.messages);
-  const parentRows = overlayFrozen(
-    chunkRows(manifest),
-    frozenDecisions(parentPath, epoch),
-  );
-  const projected = passthroughView.view(ctx);
-  if (projected instanceof Promise) {
-    throw new Error("passthrough projection must be synchronous");
-  }
-  const seqs = projectionSeqs(ctx.path);
-  if (seqs.length !== projected.messages.length) {
-    throw new Error(
-      `projected seqs (${seqs.length}) do not match passthrough messages (${projected.messages.length})`,
-    );
-  }
-  const ownChunks = indexChunks(
-    projected.messages,
-    seqs,
-    ctx.tools,
-    opts.count,
-  ).map((chunk) => ({ ...chunk, id: `own:${chunk.id}` }));
-  const rendered = renderClaim(
-    "subtask-query",
-    "full",
-    escapeClaimText(opts.query),
-  );
-  const claimTokens = opts.count(rendered);
-  const parentTokens = keptTokens(parentRows);
-  const eliminated = eliminate(ownChunks, {
-    keepRecent: opts.keepRecent,
-    remainingBudget: Math.max(0, opts.budget - parentTokens - claimTokens),
-  });
-  const ownMessages = applyDecisions(
-    projected.messages,
-    ownChunks,
-    eliminated.decisions,
-  );
-  const parentCount = parentMessages.length;
-  const messages = parentMessages;
-  messages.push(...ownMessages);
-  appendSubtaskQuery(messages, parentCount, rendered);
-  const ownRows = ownRowsFrom(ownChunks, eliminated.decisions, opts.count);
-  const used = parentTokens + eliminated.used + claimTokens;
-  const omitted =
-    parentRows.filter((row) => row.tier === "none").length +
-    ownRows.filter((row) => row.tier === "none").length;
-  const prefixEnd = Math.max(0, parentCount - 1);
-  const last = Math.max(0, messages.length - 1);
-  const budget = {
-    total: opts.budget,
-    used,
-    overrun: Math.max(0, used - opts.budget),
-    omitted,
-    expands: countExpands(ctx.path),
-    frozenTokens: 0,
-    staleOmittable: 0,
+  const { chosen } = input;
+  const manifest = {
+    epoch: input.epoch,
+    turn: ctx.turn,
+    budget: input.budget,
+    claims: chosen.records,
+    chunks: chosen.chunkRecords,
+    anomalies: input.anomalies,
+    epochDecision: input.choice.decision,
+    cache: cacheReport(ctx),
+    ...input.reports,
   };
-  const claims: ManifestClaim[] = [
-    {
-      id: "subtask-query",
-      tier: "full",
-      reason: "pinned",
-      tokens: claimTokens,
-      placement: "tail",
-      priority: 100,
-      contentHash: contentHash(rendered),
-    },
-  ];
   const view: CompiledView = {
-    epoch,
+    epoch: input.epoch,
     head: ctx.head,
-    messages,
-    cacheBreakpoints: [
-      "head",
-      { afterMessage: prefixEnd },
-      { afterMessage: last },
-    ],
-    manifest: {
-      epoch,
-      turn: ctx.turn,
-      budget,
-      claims,
-      chunks: [...parentRows, ...ownRows],
-      anomalies: projected.manifest.anomalies,
-      epochDecision: {
-        rebuild: false,
-        oldTokens: parentTokens,
-        newTokens: used,
-        remainingTurns: 1,
-        readRate: 0,
-        writeRate: 0,
-        savingsPerTurn: 0,
-        extraCost: 0,
-        paybackTurns: null,
-        reason: "subtask:no-rebuild",
-      },
-      cache: {
-        expectedReadTokens: parentTokens,
-        measuredReadTokens: measuredCacheRead(parentPath),
-      },
-    },
-    details: { claimContent: { "subtask-query": rendered } },
+    messages: chosen.messages,
+    cacheBreakpoints: input.cacheBreakpoints,
+    manifest,
   };
+  if (input.epochStart) view.epochStart = input.epochStart;
+  if (Object.keys(chosen.claimContent).length > 0) {
+    view.details = { claimContent: chosen.claimContent };
+  }
   return view;
 }
 
-function manifestTurn(
-  entry: ViewContext["path"][number] | undefined,
-): number | undefined {
-  if (!entry || !isRecord(entry.payload)) return undefined;
-  return typeof entry.payload.turn === "number"
-    ? entry.payload.turn
-    : undefined;
-}
-
-function chunkRows(entry: ViewContext["path"][number] | undefined): ChunkRow[] {
-  if (
-    !entry ||
-    !isRecord(entry.payload) ||
-    !Array.isArray(entry.payload.chunks)
-  ) {
-    return [];
-  }
-  const rows: ChunkRow[] = [];
-  for (const value of entry.payload.chunks) {
-    if (!isRecord(value) || typeof value.id !== "string") continue;
-    if (!isTierName(value.tier)) continue;
-    const row: ChunkRow = {
-      id: value.id,
-      tier: value.tier,
-      reason: typeof value.reason === "string" ? value.reason : "kept",
-      tokens: typeof value.tokens === "number" ? value.tokens : 0,
-    };
-    if (typeof value.originalTokens === "number") {
-      row.originalTokens = value.originalTokens;
-    }
-    rows.push(row);
-  }
-  return rows;
-}
-
-function overlayFrozen(
-  rows: ChunkRow[],
-  frozen: Map<string, ChunkDecision> | undefined,
-): ChunkRow[] {
-  if (!frozen) return rows;
-  return rows.map((row) => {
-    const kept = frozen.get(row.id);
-    if (!kept) return row;
-    return { ...row, tier: kept.tier, reason: kept.reason };
-  });
-}
-
-function keptTokens(rows: readonly ChunkRow[]): number {
-  return rows.reduce(
-    (sum, row) => (row.tier === "none" ? sum : sum + row.tokens),
-    0,
-  );
-}
-
-function ownRowsFrom(
-  chunks: readonly Chunk[],
-  decisions: readonly ChunkDecision[],
-  count: TokenCounter,
-): ChunkRow[] {
-  return decisions.map((decision) => {
-    const chunk = chunks.find((item) => item.id === decision.id);
-    const original = chunk?.tokens ?? 0;
-    if (decision.tier === "none" && chunk?.kind === "tool") {
-      return {
-        id: decision.id,
-        tier: decision.tier,
-        reason: decision.reason,
-        tokens: count(renderStub(chunk)),
-        originalTokens: original,
-      };
-    }
-    return {
-      id: decision.id,
-      tier: decision.tier,
-      reason: decision.reason,
-      tokens: original,
-    };
-  });
-}
-
-function appendSubtaskQuery(
-  messages: Message[],
-  parentCount: number,
-  rendered: string,
-): void {
-  const block = { type: "text" as const, text: rendered };
-  const last = messages.at(-1);
-  if (messages.length > parentCount && last?.role === "user") {
-    last.content.push(block);
-    return;
-  }
-  messages.push({ role: "user", content: [block] });
-}
-
-function isTierName(value: unknown): value is Tier {
-  return (
-    value === "none" ||
-    value === "line" ||
-    value === "summary" ||
-    value === "full"
-  );
-}
-
-const SCORE_TIERS = new Set<Tier>(["none", "summary", "full"]);
-const SUMMARY_LIMIT = 200;
-const SUMMARY_MIN_CHARS = 20;
-/** Path, extension, digit, camelCase, or snake_case. */
-const SUMMARY_ANCHOR =
-  /(?:[/\\]|\.[A-Za-z0-9]{1,8}\b|\d|[A-Za-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*|[A-Za-z0-9]+_[A-Za-z0-9_]+)/;
-const EMPTY_USAGE: Usage = {
-  inputOther: 0,
-  inputCacheRead: 0,
-  inputCacheCreation: 0,
-  output: 0,
-};
-
-async function runScorer(input: {
-  scorer: Scorer;
-  chunks: Chunk[];
-  rows: ChunkRow[];
-  messages: Message[];
-  used: number;
-  count: TokenCounter;
-  prevRequest: Request | undefined;
-  query: string;
-}): Promise<{
-  rows: ChunkRow[];
-  messages: Message[];
-  used: number;
-  fallback?: string;
-  report?: { calls: number; usage: Usage; fallback: boolean; raw?: ScoreRaw };
-}> {
-  const candidates = keptToolChunks(input.rows, input.chunks);
-  if (candidates.length === 0) {
-    return { rows: input.rows, messages: input.messages, used: input.used };
-  }
-  let result: {
-    decisions: ScoreDecision[];
-    usage?: Usage;
-    fallback?: string;
-    raw?: ScoreRaw;
-  };
-  try {
-    result = await input.scorer.score({
-      candidates,
-      prevRequest: input.prevRequest,
-      query: input.query,
-    });
-  } catch {
-    result = { decisions: [], fallback: "error" };
-  }
-  const report = reportOf(result);
-  if (result.fallback !== undefined || input.scorer.name === "rule") {
-    return {
-      rows: input.rows,
-      messages: input.messages,
-      used: input.used,
-      ...(result.fallback !== undefined ? { fallback: result.fallback } : {}),
-      ...(report ? { report } : {}),
-    };
-  }
-  const merged = mergeScore(
-    input.rows,
-    input.chunks,
-    result.decisions,
-    input.count,
-  );
-  const decisions = merged.rows.map((row) => ({
-    id: row.id,
-    tier: row.tier,
-    reason: row.reason,
-    ...(row.summary !== undefined ? { summary: row.summary } : {}),
-  }));
-  return {
-    rows: merged.rows,
-    messages: applyDecisions(input.messages, input.chunks, decisions),
-    used: input.used + merged.usedDelta,
-    ...(report ? { report } : {}),
-  };
-}
-
-function keptToolChunks(
-  rows: readonly ChunkRow[],
-  chunks: readonly Chunk[],
-): Chunk[] {
-  const byId = new Map(chunks.map((chunk) => [chunk.id, chunk]));
-  const kept: Chunk[] = [];
-  for (const row of rows) {
-    if (rootReason(row.reason) !== "kept") continue;
-    const chunk = byId.get(row.id);
-    if (chunk?.kind !== "tool") continue;
-    kept.push(chunk);
-  }
-  return kept;
-}
-
-function mergeScore(
-  rows: readonly ChunkRow[],
-  chunks: readonly Chunk[],
-  decisions: readonly ScoreDecision[],
-  count: TokenCounter,
-): { rows: ChunkRow[]; usedDelta: number } {
-  const byId = new Map(decisions.map((decision) => [decision.id, decision]));
-  const chunksById = new Map(chunks.map((chunk) => [chunk.id, chunk]));
-  let usedDelta = 0;
-  const next = rows.map((row) => {
-    if (rootReason(row.reason) !== "kept") return row;
-    const chunk = chunksById.get(row.id);
-    if (chunk?.kind !== "tool") return row;
-    const scored = byId.get(row.id);
-    if (!scored || !SCORE_TIERS.has(scored.tier)) return row;
-    const reason = modelReason(row.reason, scored);
-    if (scored.tier === "full") {
-      return {
-        id: row.id,
-        tier: "full" as const,
-        reason,
-        tokens: chunk.tokens,
-      };
-    }
-    if (scored.tier === "none") {
-      usedDelta -= chunk.tokens;
-      return {
-        id: row.id,
-        tier: "none" as const,
-        reason,
-        tokens: count(renderStub(chunk)),
-        originalTokens: chunk.tokens,
-      };
-    }
-    const summary = clampSummary(scored.summary ?? "");
-    const rendered = renderSummary(chunk, summary);
-    usedDelta += count(rendered) - chunk.tokens;
-    return {
-      id: row.id,
-      tier: "summary" as const,
-      reason,
-      tokens: count(rendered),
-      originalTokens: chunk.tokens,
-      summary,
-    };
-  });
-  return { rows: next, usedDelta };
-}
-
-function reportOf(result: {
-  usage?: Usage;
-  fallback?: string;
-  raw?: ScoreRaw;
-}):
-  | { calls: number; usage: Usage; fallback: boolean; raw?: ScoreRaw }
-  | undefined {
-  if (result.usage === undefined && result.fallback === undefined)
-    return undefined;
-  const preCall =
-    result.fallback === "no-previous-request" ||
-    result.fallback === "no-adapter";
-  const fallback = result.fallback !== undefined;
-  return {
-    calls: preCall ? 0 : 1,
-    usage: result.usage ?? EMPTY_USAGE,
-    fallback,
-    ...(fallback && result.raw ? { raw: result.raw } : {}),
-  };
-}
-
-function rootReason(reason: string): string {
-  return reason.split(";")[0] ?? reason;
-}
-
-function modelReason(reason: string, decision: ScoreDecision): string {
-  const root =
-    decision.reason !== undefined && decision.reason.length > 0
-      ? decision.reason
-      : "scorer:model";
-  const extra = reason
-    .split(";")
-    .slice(1)
-    .filter((part) => part.length > 0);
-  if (extra.length === 0) return root;
-  return `${root};${extra.join(";")}`;
-}
-
-function clampSummary(summary: string): string {
-  if (summary.length <= SUMMARY_LIMIT) return summary;
-  return summary.slice(0, SUMMARY_LIMIT);
-}
-
-function summaryLocatable(summary: string): boolean {
-  return summary.length >= SUMMARY_MIN_CHARS && SUMMARY_ANCHOR.test(summary);
-}
-
-async function runEntry(input: {
-  scorer: Scorer;
-  chunks: Chunk[];
-  rows: ChunkRow[];
-  messages: Message[];
-  used: number;
-  count: TokenCounter;
-  minScoreTokens: number;
-  path: ViewContext["path"];
-  prevRequest: Request;
-  query: string;
-}): Promise<{
-  rows: ChunkRow[];
-  messages: Message[];
-  used: number;
-  report?: EntryScoredReport;
-}> {
-  const unchanged = {
-    rows: input.rows,
-    messages: input.messages,
-    used: input.used,
-  };
-  if (input.scorer.name === "rule") return unchanged;
-  const seen = listedChunkIds(input.path);
-  const candidates = input.chunks.filter((chunk) => {
-    if (chunk.kind !== "tool" || chunk.toolName === "expand") return false;
-    if (seen.has(chunk.id) || chunk.tokens < input.minScoreTokens) return false;
-    const row = input.rows.find((item) => item.id === chunk.id);
-    return row?.tier === "full";
-  });
-  if (candidates.length === 0) return unchanged;
-  let result: {
-    decisions: ScoreDecision[];
-    usage?: Usage;
-    fallback?: string;
-  };
-  try {
-    result = await input.scorer.score({
-      candidates,
-      prevRequest: input.prevRequest,
-      query: input.query,
-    });
-  } catch {
-    return { ...unchanged, report: entryReport(1, 0, 0, 0) };
-  }
-  if (result.fallback !== undefined) {
-    return {
-      ...unchanged,
-      report: entryReport(1, 0, 0, 0, result.usage),
-    };
-  }
-  const allowed = new Set(candidates.map((chunk) => chunk.id));
-  const byId = new Map<string, ScoreDecision>();
-  for (const decision of result.decisions) {
-    if (!allowed.has(decision.id) || byId.has(decision.id)) continue;
-    if (!SCORE_TIERS.has(decision.tier)) continue;
-    byId.set(decision.id, decision);
-  }
-  const chunksById = new Map(input.chunks.map((chunk) => [chunk.id, chunk]));
-  let usedDelta = 0;
-  let none = 0;
-  let summary = 0;
-  let full = 0;
-  let summaryRejected = 0;
-  const rows = input.rows.map((row) => {
-    const scored = byId.get(row.id);
-    const chunk = chunksById.get(row.id);
-    if (!scored || chunk?.kind !== "tool") return row;
-    const reason = entryReason(row.reason, scored.tier);
-    if (scored.tier === "full") {
-      full += 1;
-      return {
-        id: row.id,
-        tier: "full" as const,
-        reason,
-        tokens: chunk.tokens,
-      };
-    }
-    if (scored.tier === "none") {
-      none += 1;
-      usedDelta -= chunk.tokens;
-      return {
-        id: row.id,
-        tier: "none" as const,
-        reason,
-        tokens: input.count(renderStub(chunk)),
-        originalTokens: chunk.tokens,
-      };
-    }
-    if (scored.summary === undefined) return row;
-    const note = clampSummary(scored.summary);
-    if (!summaryLocatable(note)) {
-      full += 1;
-      summaryRejected += 1;
-      return {
-        id: row.id,
-        tier: "full" as const,
-        reason: `${entryReason(row.reason, "full")};summary-rejected`,
-        tokens: chunk.tokens,
-      };
-    }
-    summary += 1;
-    const rendered = renderSummary(chunk, note);
-    usedDelta += input.count(rendered) - chunk.tokens;
-    return {
-      id: row.id,
-      tier: "summary" as const,
-      reason,
-      tokens: input.count(rendered),
-      originalTokens: chunk.tokens,
-      summary: note,
-    };
-  });
-  const decisions = rows.map((row) => ({
-    id: row.id,
-    tier: row.tier,
-    reason: row.reason,
-    ...(row.summary !== undefined ? { summary: row.summary } : {}),
-  }));
-  return {
-    rows,
-    messages: applyDecisions(input.messages, input.chunks, decisions),
-    used: input.used + usedDelta,
-    report: entryReport(1, none, summary, full, result.usage, summaryRejected),
-  };
-}
-
-function entryReason(reason: string, tier: Tier): string {
-  const extra = reason
-    .split(";")
-    .slice(1)
-    .filter((part) => part.startsWith("expanded_at:"));
-  const root = `scorer:entry:${tier}`;
-  if (extra.length === 0) return root;
-  return `${root};${extra.join(";")}`;
-}
-
-function entryReport(
-  calls: number,
-  none: number,
-  summary: number,
-  full: number,
-  usage?: Usage,
-  summaryRejected = 0,
-): EntryScoredReport {
-  return {
-    calls,
-    none,
-    summary,
-    full,
-    summaryRejected,
-    ...(usage ? { usage: shadowUsage(usage) } : {}),
-  };
-}
-
-type ShadowBody = NonNullable<CompiledView["manifest"]["shadow"]>;
-
-async function runShadow(input: {
-  scorer: Scorer;
-  chunks: readonly Chunk[];
-  path: ViewContext["path"];
-  ctx: ViewContext;
-  messages: Message[];
-  cacheBreakpoints: CompiledView["cacheBreakpoints"];
-  query: string;
-}): Promise<ShadowBody | undefined> {
-  try {
-    const seen = listedChunkIds(input.path);
-    const candidates = input.chunks.filter(
-      (chunk) => chunk.kind === "tool" && !seen.has(chunk.id),
-    );
-    if (candidates.length === 0) return undefined;
-    let result: {
-      decisions: ScoreDecision[];
-      usage?: Usage;
-      fallback?: string;
-      raw?: ScoreRaw;
-    };
-    try {
-      result = await input.scorer.score({
-        candidates,
-        prevRequest: requestFromCompiled(
-          input.ctx,
-          input.messages,
-          input.cacheBreakpoints,
-        ),
-        query: input.query,
-      });
-    } catch (error) {
-      return {
-        scorer: input.scorer.name,
-        decisions: [],
-        fallback: errorText(error),
-      };
-    }
-    const usage = result.usage ? shadowUsage(result.usage) : undefined;
-    return {
-      scorer: input.scorer.name,
-      decisions: shadowDecisions(candidates, result.decisions),
-      ...(usage ? { usage } : {}),
-      ...(typeof result.fallback === "string"
-        ? { fallback: result.fallback }
-        : {}),
-      ...(typeof result.fallback === "string" && result.raw
-        ? { raw: result.raw }
-        : {}),
-    };
-  } catch (error) {
-    return {
-      scorer: input.scorer.name,
-      decisions: [],
-      fallback: errorText(error),
-    };
-  }
-}
-
-function listedChunkIds(path: ViewContext["path"]): Set<string> {
-  const ids = new Set<string>();
-  const manifest = latestManifest(path);
-  if (
-    !manifest ||
-    !isRecord(manifest.payload) ||
-    !Array.isArray(manifest.payload.chunks)
-  ) {
-    return ids;
-  }
-  for (const chunk of manifest.payload.chunks) {
-    if (!isRecord(chunk) || typeof chunk.id !== "string") continue;
-    ids.add(chunk.id);
-  }
-  return ids;
-}
-
-function requestFromCompiled(
+/**
+ * Picks the from-scratch view on a rebuild inside an epoch, else the
+ * frozen view, then runs the rebuild scorer when this compile rebuilds in
+ * `rebuild` mode. A
+ * fallback appends `;scorer:fallback:<reason>` to the decision reason and
+ * keeps the eliminate tiers. The score request reuses the previous turn's
+ * head and messages rebuilt from the Log.
+ */
+async function scoreOnRebuild(
   ctx: ViewContext,
-  messages: Message[],
-  cacheBreakpoints: CompiledView["cacheBreakpoints"],
-): Request {
+  settings: Settings,
+  candidates: Candidates,
+  choice: EpochChoice,
+): Promise<{
+  chosen: Assembly;
+  choice: EpochChoice;
+  report?: RebuildScorerReport;
+}> {
+  const chosen =
+    choice.decision.rebuild && candidates.frozen
+      ? candidates.recompiledView
+      : candidates.frozenView;
+  if (!choice.decision.rebuild || settings.applyEntry) {
+    return { chosen, choice };
+  }
+  const scored = await runRebuildScorer({
+    scorer: settings.scorer,
+    chunks: candidates.chunks,
+    view: scoredViewOf(chosen),
+    count: settings.count,
+    prevRequest: previousRequest(ctx),
+    query: latestQuery(ctx.path),
+  });
   return {
-    model: { provider: ctx.model.provider, model: ctx.model.model },
-    head: structuredClone(ctx.head),
-    messages: structuredClone(messages),
-    cacheBreakpoints: structuredClone(cacheBreakpoints),
-    sampling: latestHeader(ctx.path)?.sampling ?? {},
+    chosen: withScored(chosen, scored),
+    choice: scored.fallback
+      ? appendReason(choice, `scorer:fallback:${scored.fallback}`)
+      : choice,
+    ...(scored.report ? { report: scored.report } : {}),
   };
 }
 
-function shadowDecisions(
-  candidates: readonly Chunk[],
-  decisions: readonly ScoreDecision[],
-): ShadowBody["decisions"] {
-  const allowed = new Set(candidates.map((chunk) => chunk.id));
-  const kept: ShadowBody["decisions"] = [];
-  for (const decision of decisions) {
-    if (!allowed.has(decision.id) || !SCORE_TIERS.has(decision.tier)) continue;
-    kept.push({
-      id: decision.id,
-      tier: decision.tier,
-      ...(decision.reason !== undefined && decision.reason.length > 0
-        ? { reason: decision.reason }
-        : {}),
-    });
-  }
-  return kept;
-}
-
-function shadowUsage(usage: Usage): NonNullable<ShadowBody["usage"]> {
+/**
+ * Runs the entry scorer in `entry` mode. Its request is this turn's
+ * compiled view with the breakpoints already placed.
+ */
+async function scoreOnEntry(
+  ctx: ViewContext,
+  settings: Settings,
+  input: {
+    chosen: Assembly;
+    chunks: Chunk[];
+    cacheBreakpoints: CompiledView["cacheBreakpoints"];
+  },
+): Promise<{ chosen: Assembly; report?: EntryScoredReport }> {
+  const { chosen } = input;
+  if (!settings.applyEntry) return { chosen };
+  const entered = await runEntryScorer({
+    scorer: settings.scorer,
+    chunks: input.chunks,
+    view: scoredViewOf(chosen),
+    count: settings.count,
+    minScoreTokens: settings.minScoreTokens,
+    path: ctx.path,
+    prevRequest: requestFromCompiled(
+      ctx,
+      chosen.messages,
+      input.cacheBreakpoints,
+    ),
+    query: latestQuery(ctx.path),
+  });
   return {
-    inputOther: finiteNumber(usage.inputOther),
-    inputCacheRead: finiteNumber(usage.inputCacheRead),
-    inputCacheCreation: finiteNumber(usage.inputCacheCreation),
-    output: finiteNumber(usage.output),
+    chosen: withScored(chosen, entered),
+    ...(entered.report ? { report: entered.report } : {}),
   };
 }
 
-function finiteNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+/**
+ * `manifest.cache`. `expectedReadTokens` is the frozen-prefix estimate the
+ * previous turn emitted (its own `head + ratio × budget.frozenTokens`), not
+ * a projection with this turn's re-anchored head.
+ */
+function cacheReport(ctx: ViewContext): {
+  expectedReadTokens: number;
+  measuredReadTokens: number;
+} {
+  return {
+    expectedReadTokens: expectedFrozenPrefix(ctx.path),
+    measuredReadTokens: measuredCacheRead(ctx.path),
+  };
 }
 
-function errorText(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) return error.message;
-  const text = String(error);
-  return text.length > 0 && text !== "undefined" ? text : "error";
+function scoredViewOf(chosen: Assembly): ScoredView {
+  return {
+    rows: chosen.chunkRecords,
+    messages: chosen.messages,
+    used: chosen.used,
+  };
 }
 
-function previousRequest(ctx: ViewContext): Request | undefined {
-  const manifest = latestManifest(ctx.path);
-  const turn = manifestTurn(manifest);
-  if (!manifest || turn === undefined) return undefined;
-  const header = latestHeader(ctx.path);
-  if (!header) return undefined;
-  try {
-    const rebuilt = rebuildFromLog(ctx.path, turn);
-    const last = Math.max(0, rebuilt.messages.length - 1);
-    return {
-      model: { provider: header.provider, model: header.model },
-      head: rebuilt.head,
-      messages: rebuilt.messages,
-      cacheBreakpoints: ["head", { afterMessage: last }],
-      sampling: header.sampling,
-    };
-  } catch {
-    return undefined;
-  }
+function withScored(chosen: Assembly, scored: ScoredView): Assembly {
+  return {
+    ...chosen,
+    messages: scored.messages,
+    chunkRecords: scored.rows,
+    used: scored.used,
+  };
 }
 
-function latestHeader(
-  path: ViewContext["path"],
-): { provider: string; model: string; sampling: Sampling } | undefined {
-  for (let index = path.length - 1; index >= 0; index -= 1) {
-    const entry = path[index];
-    if (entry?.kind !== "request_header" || !isRecord(entry.payload)) continue;
-    const provider = entry.payload.provider;
-    const model = entry.payload.model;
-    if (typeof provider !== "string" || typeof model !== "string") continue;
-    return { provider, model, sampling: samplingOf(entry.payload.sampling) };
-  }
-  return undefined;
+/** Runs the epoch cost check for this turn's two candidate views. */
+function chooseTurnEpoch(
+  ctx: ViewContext,
+  settings: Settings,
+  candidates: Candidates,
+  project: Projection,
+): EpochChoice {
+  return chooseEpoch({
+    frozenUsed: candidates.frozenView.used,
+    recompiledUsed: candidates.recompiledView.used,
+    hasFrozen: candidates.frozen !== undefined,
+    project,
+    rates: ratesFor(ctx.prepared.pricing),
+    remainingTurns: remainingTurnsFor(
+      ctx.turn,
+      settings.expectedTurns,
+      settings.alpha,
+    ),
+    minSavingsRatio: settings.minSavingsRatio,
+    contextWindow: ctx.prepared.contextWindow,
+    epochOpenReason: epochOpenReason(ctx.path, candidates.epoch),
+  });
 }
 
-function samplingOf(value: unknown): Sampling {
-  if (!isRecord(value)) return {};
-  const sampling: Sampling = {};
-  if (typeof value.maxTokens === "number") sampling.maxTokens = value.maxTokens;
-  if (typeof value.temperature === "number")
-    sampling.temperature = value.temperature;
-  return sampling;
+/**
+ * Runs the shadow scorer in `rebuild` mode when one is configured, after
+ * tiers, freeze, and budget are fixed.
+ */
+async function scoreInShadow(
+  ctx: ViewContext,
+  settings: Settings,
+  input: {
+    chunks: readonly Chunk[];
+    chosen: Assembly;
+    cacheBreakpoints: CompiledView["cacheBreakpoints"];
+  },
+): Promise<ShadowBody | undefined> {
+  if (settings.applyEntry || !settings.shadowScorer) return undefined;
+  return runShadowScorer({
+    scorer: settings.shadowScorer,
+    chunks: input.chunks,
+    ctx,
+    messages: input.chosen.messages,
+    cacheBreakpoints: input.cacheBreakpoints,
+    query: latestQuery(ctx.path),
+  });
 }
 
-function latestQuery(path: ViewContext["path"]): string {
-  for (let index = path.length - 1; index >= 0; index -= 1) {
-    const entry = path[index];
-    if (entry?.kind !== "message" || !isMessage(entry.payload)) continue;
-    if (entry.payload.role !== "user") continue;
-    const text = entry.payload.content
-      .filter((block) => block.type === "text")
-      .map((block) => block.text)
-      .join("\n");
-    if (text.length > 0) return text;
-  }
-  return "";
-}
-
-function loggedSummaries(
-  path: ViewContext["path"],
-  epoch: number,
-): Map<string, string> {
-  const entry = epochManifest(path, epoch);
-  const notes = new Map<string, string>();
-  if (
-    !entry ||
-    !isRecord(entry.payload) ||
-    !Array.isArray(entry.payload.chunks)
-  ) {
-    return notes;
-  }
-  for (const chunk of entry.payload.chunks) {
-    if (!isRecord(chunk) || typeof chunk.id !== "string") continue;
-    if (chunk.tier !== "summary" || typeof chunk.summary !== "string") continue;
-    notes.set(chunk.id, chunk.summary);
-  }
-  return notes;
-}
-
-function epochManifest(
-  path: ViewContext["path"],
-  epoch: number,
-): ViewContext["path"][number] | undefined {
-  let start = -1;
-  let opened = false;
-  for (let index = 0; index < path.length; index += 1) {
-    const entry = path[index];
-    if (entry?.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
-    if (entry.payload.epoch !== epoch) continue;
-    start = index;
-    opened = true;
-    break;
-  }
-  if (!opened && epoch !== 0) return undefined;
-  for (let index = start + 1; index < path.length; index += 1) {
-    const entry = path[index];
-    if (!entry) continue;
-    if (entry.kind === "view_epoch") break;
-    if (entry.kind === "manifest") return entry;
-  }
-  return undefined;
+/**
+ * Cache breakpoints for the chosen view. Inside an epoch the frozen prefix
+ * ends at the epoch's seq ceiling; a rebuild freezes the whole history.
+ */
+function placeBreakpoints(
+  ctx: ViewContext,
+  candidates: Candidates,
+  chosen: Assembly,
+  choice: EpochChoice,
+): CompiledView["cacheBreakpoints"] {
+  return cacheBreakpointsFor({
+    messageCount: chosen.messages.length,
+    historyCount: candidates.historyCount,
+    hasEpochHead: chosen.hasEpochHead,
+    seqs: candidates.seqs,
+    ceiling: choice.decision.rebuild
+      ? undefined
+      : frozenSeqCeiling(ctx.path, candidates.epoch),
+  });
 }

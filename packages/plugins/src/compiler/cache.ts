@@ -11,6 +11,7 @@
 
 import type { StoredEntry } from "@sage/core";
 
+/** One cache-hit row per manifest that recorded both cache numbers. */
 export function cacheHitRatio(
   path: readonly StoredEntry[],
 ): { turn: number; expected: number; measured: number; ratio: number }[] {

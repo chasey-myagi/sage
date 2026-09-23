@@ -39,6 +39,12 @@ type LoggedClaim = {
   contentHash?: string;
 };
 
+/**
+ * Rebuilds the head and messages the model saw on `turn`. Throws when the
+ * path has no manifest or request_header for that turn, when a tail claim's
+ * content is missing from every manifest, or when the projection is not
+ * synchronous.
+ */
 export function rebuildFromLog(
   path: readonly StoredEntry[],
   turn: number,
