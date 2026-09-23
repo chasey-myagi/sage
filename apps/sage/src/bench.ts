@@ -7,7 +7,8 @@
  * when the selected provider has no API key, before it reads the task file
  * or fetches a repository. With no `--provider`, any preset env key is enough,
  * in the same order and with the same missing-key message as `sage -p`.
- * Each task is fetched into a temp directory as a single commit at
+ * Each task is fetched into `<realpath(tmpdir)>/sage-bench-<runId>/<taskId>/`
+ * as a single commit at
  * `baseCommit`: `git init`, add origin, `git fetch --depth 1 --no-tags`
  * of that SHA, `git checkout -q FETCH_HEAD`, then remove origin. Fetch
  * failure is `clone-failed`. Before setup or the agent, that worktree must
@@ -45,8 +46,17 @@
  * `results.json` also has top-level `budget`: the positive integer from
  * `--budget` for a compiler run, or null when the flag is omitted or the
  * policy is passthrough. Top-level `toolNetwork` is `none` unless
- * `--tool-network full` is set. The default `none` is always forwarded on
- * the sage argv. Top-level `maxTurns` is the positive integer from
+ * `--tool-network full` is set. `--tool-sandbox` is the same switch. The
+ * default `none` is always forwarded on the sage argv as `--tool-network`,
+ * and it sets `fsIsolate`. On darwin, bash cannot read other bench
+ * workspaces under the real temp root. The directory prefix is
+ * `BENCH_WORKSPACE_PREFIX` and is passed into the sandbox. linux
+ * `unshare -n` cannot enforce that file rule. Before the run root is
+ * created, leftover directories with that prefix
+ * directly under that temp root are printed to stderr with a
+ * manual-cleanup warning and are left in place. Each task directory is
+ * deleted when the task ends. The run root is deleted when the run ends.
+ * Top-level `maxTurns` is the positive integer from
  * `--max-turns`, or 80 when that flag is omitted. Both policies record it.
  * Top-level `scorerApply` is `entry` or `rebuild`. Omitting the flag
  * records `rebuild`.
@@ -58,8 +68,9 @@
  * per-task values. `delta` is B minus A. A null side makes that delta null.
  * Repo names without a scheme are fetched from `https://github.com/<repo>.git`.
  *
- * Intentionally not in the Log: argv, API keys, clone directories, setup
- * commands, test patches, test output, and this report. The session jsonl is
+ * Intentionally not in the Log: argv, API keys, clone directories, the
+ * leftover-workspace warning, setup commands, test patches, test output,
+ * and this report. The session jsonl is
  * the recorded run, copied before `testPatch` is applied. The report reads
  * health back off it.
  */
@@ -72,6 +83,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -81,7 +93,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JsonlLogStore, type RunHealth, runHealth } from "@sage/core";
 import { resolvePreset } from "@sage/provider";
-import type { ToolNetwork } from "@sage/tools";
+import {
+  resolveToolSandbox,
+  type ToolNetwork,
+  type ToolSandbox,
+} from "@sage/tools";
+
+/** Directory prefix for one bench run. Passed into the bash sandbox deny. */
+export const BENCH_WORKSPACE_PREFIX = "sage-bench-";
 
 export type BenchPolicy = "passthrough" | "compiler";
 
@@ -136,6 +155,7 @@ export type BenchDeps = {
       env: NodeJS.ProcessEnv;
       budget: number | null;
       toolNetwork: ToolNetwork;
+      sandbox: ToolSandbox;
       maxTurns: number;
       shadowScorer?: "rule" | "model" | "jev";
       scorer?: "rule" | "model" | "jev";
@@ -167,6 +187,7 @@ const FLAGS = new Set([
   "budget",
   "max-turns",
   "tool-network",
+  "tool-sandbox",
   "shadow-scorer",
   "scorer",
   "scorer-apply",
@@ -202,36 +223,48 @@ export async function runBenchCli(
   }
   const out = path.resolve(io.cwd, parsed.out);
   const deps = io.deps ?? defaultDeps();
+  const sandbox = resolveToolSandbox({ network: parsed.toolNetwork });
   const results: BenchResults = {
     policy: parsed.policy,
     model: parsed.model,
     budget: parsed.policy === "passthrough" ? null : parsed.budget,
-    toolNetwork: parsed.toolNetwork,
+    toolNetwork: sandbox.network,
     maxTurns: parsed.maxTurns,
     scorerApply: parsed.scorerApply,
     tasks: [],
   };
-  for (const task of tasks) {
-    results.tasks.push(
-      await runTask(task, out, deps, {
-        policy: parsed.policy,
-        model: parsed.model,
-        ...(parsed.provider ? { provider: parsed.provider } : {}),
-        env: io.env,
-        budget: parsed.budget,
-        toolNetwork: parsed.toolNetwork,
-        maxTurns: parsed.maxTurns,
-        ...(parsed.shadowScorer ? { shadowScorer: parsed.shadowScorer } : {}),
-        ...(parsed.scorer ? { scorer: parsed.scorer } : {}),
-        ...(parsed.forwardScorerApply
-          ? { scorerApply: parsed.scorerApply }
-          : {}),
-      }),
+  for (const leftover of leftoverBenchRoots()) {
+    io.stderr.write(
+      `warning: leftover bench workspace ${leftover}; remove it manually\n`,
     );
-    writeResults(out, results);
   }
-  writeResults(out, results);
-  return 0;
+  const runRoot = mkdtempSync(path.join(tmpdir(), BENCH_WORKSPACE_PREFIX));
+  try {
+    for (const task of tasks) {
+      results.tasks.push(
+        await runTask(task, out, deps, runRoot, {
+          policy: parsed.policy,
+          model: parsed.model,
+          ...(parsed.provider ? { provider: parsed.provider } : {}),
+          env: io.env,
+          budget: parsed.budget,
+          toolNetwork: sandbox.network,
+          sandbox,
+          maxTurns: parsed.maxTurns,
+          ...(parsed.shadowScorer ? { shadowScorer: parsed.shadowScorer } : {}),
+          ...(parsed.scorer ? { scorer: parsed.scorer } : {}),
+          ...(parsed.forwardScorerApply
+            ? { scorerApply: parsed.scorerApply }
+            : {}),
+        }),
+      );
+      writeResults(out, results);
+    }
+    writeResults(out, results);
+    return 0;
+  } finally {
+    rmSync(runRoot, { recursive: true, force: true });
+  }
 }
 
 export function loadTasks(file: string): BenchTask[] {
@@ -378,6 +411,7 @@ async function runTask(
   task: BenchTask,
   out: string,
   deps: BenchDeps,
+  runRoot: string,
   opts: {
     policy: BenchPolicy;
     model: string;
@@ -385,13 +419,15 @@ async function runTask(
     env: NodeJS.ProcessEnv;
     budget: number | null;
     toolNetwork: ToolNetwork;
+    sandbox: ToolSandbox;
     maxTurns: number;
     shadowScorer?: "rule" | "model" | "jev";
     scorer?: "rule" | "model" | "jev";
     scorerApply?: "entry" | "rebuild";
   },
 ): Promise<BenchTaskResult> {
-  const work = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
+  const work = path.join(runRoot, sessionName(task.id));
+  mkdirSync(work, { recursive: true });
   try {
     try {
       await deps.prepare(task, work);
@@ -592,7 +628,7 @@ async function applyTestPatch(task: BenchTask, cwd: string): Promise<void> {
   }
   const patchPath = path.join(
     tmpdir(),
-    `sage-bench-test-patch-${process.pid}-${Date.now()}`,
+    `${BENCH_WORKSPACE_PREFIX}test-patch-${process.pid}-${Date.now()}`,
   );
   try {
     writeFileSync(patchPath, patch);
@@ -720,6 +756,7 @@ function sageArgv(
     provider?: string;
     budget: number | null;
     toolNetwork: ToolNetwork;
+    sandbox: ToolSandbox;
     maxTurns: number;
     shadowScorer?: "rule" | "model" | "jev";
     scorer?: "rule" | "model" | "jev";
@@ -731,7 +768,7 @@ function sageArgv(
   if (opts.budget !== null) args.push("--budget", String(opts.budget));
   args.push("--max-turns", String(opts.maxTurns));
   if (opts.policy === "passthrough") args.push("--passthrough");
-  args.push("--tool-network", opts.toolNetwork);
+  args.push("--tool-network", opts.sandbox.network);
   if (opts.shadowScorer) {
     args.push("--shadow-scorer", opts.shadowScorer);
   }
@@ -755,8 +792,50 @@ function invalidMaxTurns(value: string): string {
   return `Invalid --max-turns ${JSON.stringify(value)}: expected a positive integer`;
 }
 
-function invalidToolNetwork(value: string): string {
-  return `Invalid --tool-network ${JSON.stringify(value)}: expected none or full`;
+function storeFlag(
+  name: string,
+  networkFlag: "tool-network" | "tool-sandbox",
+): { name: string; networkFlag: "tool-network" | "tool-sandbox" } {
+  if (name === "tool-sandbox") {
+    return { name: "tool-network", networkFlag: "tool-sandbox" };
+  }
+  if (name === "tool-network") return { name, networkFlag: "tool-network" };
+  return { name, networkFlag };
+}
+
+function invalidToolNetwork(
+  value: string,
+  flag: "tool-network" | "tool-sandbox" = "tool-network",
+): string {
+  return `Invalid --${flag} ${JSON.stringify(value)}: expected none or full`;
+}
+
+function leftoverBenchRoots(): string[] {
+  let root: string;
+  try {
+    root = realpathSync(tmpdir());
+  } catch {
+    return [];
+  }
+  let names: string[];
+  try {
+    names = readdirSync(root);
+  } catch {
+    return [];
+  }
+  const found: string[] = [];
+  for (const name of names) {
+    if (!name.startsWith(BENCH_WORKSPACE_PREFIX)) continue;
+    const full = path.join(root, name);
+    try {
+      if (!statSync(full).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    found.push(full);
+  }
+  found.sort();
+  return found;
 }
 
 function parseRun(argv: string[]):
@@ -776,22 +855,29 @@ function parseRun(argv: string[]):
     }
   | { message: string; exitCode?: number } {
   const values = new Map<string, string>();
+  let networkFlag: "tool-network" | "tool-sandbox" = "tool-network";
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? "";
     const inline = /^--([A-Za-z0-9-]+)=(.*)$/.exec(arg);
     if (inline) {
-      const name = inline[1];
+      const rawName = inline[1];
       const value = inline[2];
-      if (!name || !value || !FLAGS.has(name)) return { message: benchUsage() };
-      values.set(name, value);
+      if (!rawName || !value || !FLAGS.has(rawName)) {
+        return { message: benchUsage() };
+      }
+      const taken = storeFlag(rawName, networkFlag);
+      networkFlag = taken.networkFlag;
+      values.set(taken.name, value);
       continue;
     }
     if (!arg.startsWith("--")) return { message: benchUsage() };
-    const name = arg.slice(2);
-    if (!FLAGS.has(name)) return { message: benchUsage() };
+    const rawName = arg.slice(2);
+    if (!FLAGS.has(rawName)) return { message: benchUsage() };
     const value = argv[index + 1];
     if (!value || value.startsWith("-")) return { message: benchUsage() };
-    values.set(name, value);
+    const taken = storeFlag(rawName, networkFlag);
+    networkFlag = taken.networkFlag;
+    values.set(taken.name, value);
     index += 1;
   }
   const tasks = values.get("tasks");
@@ -854,7 +940,10 @@ function parseRun(argv: string[]):
   let toolNetwork: ToolNetwork = "none";
   if (rawNetwork !== undefined) {
     if (rawNetwork !== "none" && rawNetwork !== "full") {
-      return { message: invalidToolNetwork(rawNetwork), exitCode: 2 };
+      return {
+        message: invalidToolNetwork(rawNetwork, networkFlag),
+        exitCode: 2,
+      };
     }
     toolNetwork = rawNetwork;
   }
@@ -954,7 +1043,7 @@ function requiredString(
 
 function benchUsage(): string {
   return [
-    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>",
+    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }

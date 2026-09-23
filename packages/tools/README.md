@@ -18,8 +18,16 @@
 
 ## 网络
 
-`createTools({ network })` 取 `"full"` 或 `"none"`，默认 `"full"`。`"none"` 只包住 bash 拉起的子进程：darwin 用 `sandbox-exec`，外网（含 DNS）拒绝，localhost 仍可用；linux 在 `unshare -n` 可用时用它，不可用则创建工具时失败，不静默改回 `"full"`；其他平台同样失败。父进程里的 provider 请求不经过这层包裹。
+`createTools({ sandbox: { network } })` 的 `network` 取 `"full"` 或 `"none"`，默认 `"full"`。`"none"` 只包住 bash 拉起的子进程：darwin 用 `sandbox-exec`，外网（含 DNS）拒绝，localhost 仍可用；linux 在 `unshare -n` 可用时用它，不可用则创建工具时失败，不静默改回 `"full"`；其他平台同样失败。父进程里的 provider 请求不经过这层包裹。
 
 评测必须用 `"none"`。仓库只剩 baseCommit 时，agent 会 `curl` GitHub 把上游修复抄下来，隐藏测试因此通过，结果作废。
 
-`network: "none"` 记在该次 bash 的 `details` 上。内核把它写到用户消息的 `details.toolResults`，模型看不见。`"full"` 不写这条。
+`network: "none"` 记在该次 bash 的 `details` 上。内核把它写到用户消息的 `details.toolResults`，模型看不见。`"full"` 不写这条。`fsIsolate` 不进 details。
+
+## 文件系统
+
+`createTools({ sandbox: { network, fsIsolate } })`。`network` 仍是 `"full"` 或 `"none"`，默认 `"full"`。没写 `fsIsolate` 时，`"none"` 把它当成 `true`，`"full"` 当成 `false`。
+
+agent 在 darwin、`fsIsolate` 打开时，bash 子进程能读工作目录（`cwd` 的 realpath），也能读临时目录里的普通文件，但读不到同一临时根下的其他 bench 工作区。profile 先写 `(deny file-read* (regex #"^<tmpRoot 的 realpath，元字符已转义>/<前缀>"))`，再写 `(allow file-read* (subpath "<cwd>"))`。后写的规则覆盖先写的，所以自己的工作区仍可读。`tmpRoot` 和前缀都是选项；没写前缀时用 `sage-bench-`，bench 传入自己的前缀。路径里的 `.`、`+` 等正则元字符会转义。macOS 上 `/var` 会先解析成 `/private/var`。临时根以外的系统路径仍走 `(allow default)`，二进制和库读得到。`$TMPDIR` 里不以该前缀开头的文件，包括测试框架写回的临时文件，可以读。
+
+linux 的 `unshare -n` 只切网络命名空间，不能限制文件。这时 `fsIsolate` 不会改 argv，也不会让 `network: "none"` 创建失败。`network: "full"` 再要求 `fsIsolate` 时，只有 darwin 做得到，其他平台创建工具即失败。`"full"` 且不隔离文件时，不包沙箱，文件系统不限制。

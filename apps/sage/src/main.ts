@@ -13,9 +13,12 @@
  * `--max-turns <n>` replaces the kernel default of 80. The value must be a
  * positive integer; anything else exits 2 with one stderr line. It is passed
  * to `session.run` under both the compiler and `--passthrough`.
- * `--tool-network none|full` defaults to full. `none` cuts network only for
- * bash child processes. On a platform that cannot enforce it, sage exits 2
- * before the run. Provider calls stay in this process.
+ * `--tool-network none|full` defaults to full. `--tool-sandbox` is the same
+ * switch. `none` cuts network for bash child processes and, on darwin,
+ * denies reads of other bench workspaces under the real temp root. linux
+ * `unshare -n` cannot restrict files. On a platform that cannot enforce
+ * the network cut, sage exits 2 before the run. Provider calls stay in
+ * this process.
  * `--scorer model` installs a model scorer on the root compiler. It reuses
  * the assembled adapters and the session model. `--scorer jev` installs the
  * TypeSafe Jev scorer. `JEV_BASE_URL` defaults to `https://api.typesafe.ai`.
@@ -66,15 +69,16 @@
  *
  * Intentionally not in the Log: argv, API keys, the stderr progress
  * lines, and the stderr note that `--passthrough` ignored `--budget`.
- * `--tool-network` is argv. bash records `network: "none"` through the
- * kernel's toolResults, not as its own entry. The system prompt is
+ * `--tool-network` and `--tool-sandbox` are argv. bash records
+ * `network: "none"` through the kernel's toolResults, not as its own
+ * entry. The sibling-workspace deny is not a Log entry. The system prompt is
  * model-visible and is stored on request_header. Claim text reaches the
  * Log only through the manifest the kernel appends.
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, realpathSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -116,10 +120,15 @@ import {
 import {
   type BashExec,
   createTools,
+  resolveToolSandbox,
   type ToolNetwork,
-  toolNetworkSupport,
+  toolSandboxSupport,
 } from "@sage/tools";
-import { type BenchDeps, runBenchCli } from "./bench.js";
+import {
+  BENCH_WORKSPACE_PREFIX,
+  type BenchDeps,
+  runBenchCli,
+} from "./bench.js";
 
 export type CodingSession = {
   session: AgentSession;
@@ -137,7 +146,11 @@ export function createCodingSession(opts: {
   sessionsDir?: string;
   store?: LogStore;
   exec?: BashExec;
-  network?: ToolNetwork;
+  sandbox?: { network?: ToolNetwork; fsIsolate?: boolean };
+  /** Realpath of the temp root passed into the bash sandbox. */
+  tmpRoot?: string;
+  /** Bench workspace prefix passed into the bash sandbox. */
+  benchPrefix?: string;
   platform?: NodeJS.Platform;
   unshareAvailable?: boolean;
   sampling?: Sampling;
@@ -179,12 +192,15 @@ export function createCodingSession(opts: {
     opts.model.provider,
     opts.ladder,
   );
+  const sandbox = resolveToolSandbox(opts.sandbox);
   const tools = [
     ...createTools({
       cwd: opts.cwd,
       exec: opts.exec,
-      network: opts.network,
+      sandbox,
       platform: opts.platform,
+      tmpRoot: opts.tmpRoot ?? realpathSync(tmpdir()),
+      benchPrefix: opts.benchPrefix ?? BENCH_WORKSPACE_PREFIX,
       ...(opts.unshareAvailable !== undefined
         ? { unshareAvailable: opts.unshareAvailable }
         : {}),
@@ -284,19 +300,23 @@ export async function runCli(
     stderr.write("entry scoring needs --scorer model|jev\n");
     return 2;
   }
-  const network = parsed.toolNetwork ?? "full";
+  const sandbox = resolveToolSandbox({ network: parsed.toolNetwork ?? "full" });
   const platform = io.platform ?? process.platform;
   let unshareAvailable = io.unshareAvailable;
-  if (network === "none") {
-    const support = toolNetworkSupport({
+  if (sandbox.network === "none" || sandbox.fsIsolate) {
+    const support = toolSandboxSupport({
       platform,
+      network: sandbox.network,
+      fsIsolate: sandbox.fsIsolate,
       ...(unshareAvailable !== undefined ? { unshareAvailable } : {}),
     });
     if (!support.ok) {
       stderr.write(`${support.message}\n`);
       return 2;
     }
-    if (platform === "linux") unshareAvailable = true;
+    if (platform === "linux" && sandbox.network === "none") {
+      unshareAvailable = true;
+    }
   }
   if (
     (parsed.scorer === "jev" || parsed.shadowScorer === "jev") &&
@@ -338,7 +358,7 @@ export async function runCli(
     model: { provider: auth.provider, model: auth.model },
     passthrough: parsed.passthrough,
     home: homedir(),
-    network,
+    sandbox,
     platform,
     ...(unshareAvailable !== undefined ? { unshareAvailable } : {}),
     ...(io.exec ? { exec: io.exec } : {}),
@@ -497,7 +517,8 @@ type FlagName =
   | "api-key-env"
   | "budget"
   | "max-turns"
-  | "tool-network";
+  | "tool-network"
+  | "tool-sandbox";
 
 type Parsed =
   | {
@@ -610,12 +631,12 @@ export function parseArgs(argv: string[]): Parsed {
         }
         maxTurns = parsedMaxTurns;
       }
-      if (taken.name === "tool-network") {
+      if (taken.name === "tool-network" || taken.name === "tool-sandbox") {
         if (taken.value !== "none" && taken.value !== "full") {
           return {
             ok: false,
             exitCode: 2,
-            message: invalidToolNetwork(taken.value),
+            message: invalidToolNetwork(taken.value, taken.name),
           };
         }
         toolNetwork = taken.value;
@@ -650,9 +671,9 @@ export function parseArgs(argv: string[]): Parsed {
 
 function usage(): string {
   return [
-    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--passthrough] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] [--json]",
+    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--passthrough] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] [--json]",
     "       sage stats <session.jsonl>",
-    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>",
+    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }
@@ -695,6 +716,7 @@ function flagName(arg: string): FlagName | "unknown" | undefined {
   if (arg === "--budget") return "budget";
   if (arg === "--max-turns") return "max-turns";
   if (arg === "--tool-network") return "tool-network";
+  if (arg === "--tool-sandbox") return "tool-sandbox";
   if (arg.startsWith("-")) return "unknown";
   return undefined;
 }
@@ -715,6 +737,7 @@ function inlineFlag(
     "budget",
     "max-turns",
     "tool-network",
+    "tool-sandbox",
   ] as const;
   for (const name of names) {
     const prefix = `--${name}=`;
@@ -741,8 +764,11 @@ function invalidMaxTurns(value: string): string {
   return `Invalid --max-turns ${JSON.stringify(value)}: expected a positive integer`;
 }
 
-function invalidToolNetwork(value: string): string {
-  return `Invalid --tool-network ${JSON.stringify(value)}: expected none or full`;
+function invalidToolNetwork(
+  value: string,
+  flag: "tool-network" | "tool-sandbox" = "tool-network",
+): string {
+  return `Invalid --${flag} ${JSON.stringify(value)}: expected none or full`;
 }
 
 function parseLadder(

@@ -71,6 +71,7 @@ it("rejects an unknown --tool-network value with exit 2", async () => {
   const help = parseArgs(["--help"]);
   if (help.ok) throw new Error("help should not parse");
   expect(help.message).toContain("--tool-network none|full");
+  expect(help.message).toContain("--tool-sandbox none|full");
 });
 
 it("bench run defaults to tool network none and can record full", async () => {
@@ -161,7 +162,7 @@ it("logs network none on the bash tool result and not in model-visible text", as
     adapter: adapter as ProviderAdapter,
     model: { provider: "anthropic", model: "claude-test" },
     passthrough: true,
-    network: "none",
+    sandbox: { network: "none" },
     platform: "darwin",
     exec: async () => ({ stdout: "ok\n", stderr: "", code: 0 }),
   });
