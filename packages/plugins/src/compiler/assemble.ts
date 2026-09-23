@@ -13,7 +13,7 @@
  * records, and new claim text reach the Log through the manifest.
  */
 
-import type { ViewContext } from "@sage/core";
+import { errorText, type ViewContext } from "@sage/core";
 import type { Message } from "@sage/provider/contract";
 import { applyDecisions, renderSummary } from "./apply.js";
 import { allocate, type TokenCounter } from "./budget.js";
@@ -103,8 +103,7 @@ export async function collectClaims(
       try {
         return { index, claims: await provider(ctx) };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return { index, message };
+        return { index, message: errorText(error) };
       }
     }),
   );

@@ -13,7 +13,11 @@
  * the store.
  */
 
-import type { ToolResultBlock, ToolUseBlock } from "@sage/provider/contract";
+import {
+  errorText,
+  type ToolResultBlock,
+  type ToolUseBlock,
+} from "@sage/provider/contract";
 import type { HarnessTool } from "../tools.js";
 import type { Decision, HookEvents, Hooks, ObserverError } from "./types.js";
 
@@ -30,10 +34,6 @@ type AroundFn = (
   call: ToolUseBlock,
   next: () => Promise<ToolResultBlock>,
 ) => Promise<ToolResultBlock>;
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /** Appends `item` to `list`; the returned function removes that one entry. */
 function register<T>(list: T[], item: T): () => void {

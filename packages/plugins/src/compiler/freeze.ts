@@ -12,15 +12,14 @@
  * `frozenSeqCeiling` is the highest message seq before the epoch's first
  * manifest. Later messages are new.
  *
- * `currentEpoch` is the latest `view_epoch` on the path, or 0 when the path
- * has none. A subtask recompile reads the freeze from that epoch on the
- * parent path.
+ * A subtask recompile reads the freeze from the parent path's latest
+ * epoch (`latestViewEpoch` from `@sage/core`).
  *
  * Intentionally not in the Log: the returned map. The manifest entry is the
  * record the next turn reads back.
  */
 
-import type { StoredEntry } from "@sage/core";
+import { isRecord, type StoredEntry } from "@sage/core";
 import type { Tier } from "./claim.js";
 import type { ChunkDecision } from "./eliminate.js";
 
@@ -58,17 +57,6 @@ export function frozenSeqCeiling(
     if (entry.seq > max) max = entry.seq;
   }
   return max < 0 ? undefined : max;
-}
-
-/** The latest `view_epoch` number on the path, or 0. */
-export function currentEpoch(path: readonly StoredEntry[]): number {
-  let epoch = 0;
-  for (const entry of path) {
-    if (entry.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
-    const value = entry.payload.epoch;
-    if (typeof value === "number" && Number.isFinite(value)) epoch = value;
-  }
-  return epoch;
 }
 
 /** The `reason` of the `view_epoch` entry that opened `epoch`, if any. */
@@ -139,8 +127,4 @@ function mergeFirst(map: Map<string, ChunkDecision>, entry: StoredEntry): void {
 
 function isTier(value: unknown): value is Tier {
   return typeof value === "string" && TIERS.includes(value as Tier);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

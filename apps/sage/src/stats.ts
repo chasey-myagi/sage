@@ -14,10 +14,16 @@
 
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { JsonlLogStore, runHealth, type StoredEntry } from "@sage/core";
+import {
+  errorText,
+  isRecord,
+  JsonlLogStore,
+  runHealth,
+  type StoredEntry,
+} from "@sage/core";
 import { usage } from "./args.js";
-import { isFiniteNumber, isRecord } from "./guards.js";
-import type { CommandIo } from "./io.js";
+import type { CommandIo } from "./command-io.js";
+import { isFiniteNumber } from "./guards.js";
 
 /** How often shadow `none` decisions were later contradicted. */
 export type ShadowAudit = {
@@ -63,8 +69,7 @@ export function runStats(argv: string[], io: CommandIo): number {
     io.stdout.write(`${JSON.stringify({ ...health, ...audit })}\n`);
     return 0;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr.write(`${message}\n`);
+    io.stderr.write(`${errorText(error)}\n`);
     return 1;
   }
 }

@@ -13,7 +13,7 @@
  * entry records the resolved query, budget, and readOnly.
  */
 
-import type { Access } from "@sage/core";
+import { type Access, isRecord } from "@sage/core";
 import type { ModelRef } from "@sage/provider/contract";
 import {
   loadPresets,
@@ -212,9 +212,4 @@ function readModel(value: unknown): ModelRef | undefined {
     return undefined;
   }
   return { provider: value.provider, model: value.model };
-}
-
-/** Narrows untrusted JSON to a plain object. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

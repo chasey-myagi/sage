@@ -10,7 +10,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { isRecord } from "../guards.js";
+import { isRecord } from "@sage/core";
 import type { BenchTask } from "./types.js";
 
 /**

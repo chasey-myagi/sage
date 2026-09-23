@@ -1,4 +1,9 @@
-import { MemoryLogStore, runHealth, type ViewContext } from "@sage/core";
+import {
+  isRecord,
+  MemoryLogStore,
+  runHealth,
+  type ViewContext,
+} from "@sage/core";
 import type {
   ProviderAdapter,
   Request,
@@ -246,10 +251,6 @@ function resultOf(
     }
   }
   return "";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function scoreChunk(id: string): Chunk {

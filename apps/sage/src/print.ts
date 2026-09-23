@@ -17,8 +17,9 @@
  */
 
 import { homedir } from "node:os";
-import type { AgentSession } from "@sage/core";
+import { type AgentSession, errorText } from "@sage/core";
 import type { ProviderAdapter } from "@sage/provider";
+import { inputTokens } from "@sage/provider/contract";
 import {
   resolveToolSandbox,
   SANDBOX_ALLOW_ROOT_ENV,
@@ -28,7 +29,8 @@ import {
 import { type PrintOptions, parseArgs } from "./args.js";
 import { adaptersFromEnv, createAdapter, resolveAuth } from "./auth.js";
 import { createCodingSession } from "./coding-session.js";
-import type { CliIo, TextOut } from "./io.js";
+import type { TextOut } from "./command-io.js";
+import type { CliIo } from "./io.js";
 import { jevApiKey, namedScorer } from "./scorers.js";
 
 type SandboxPlan = {
@@ -179,8 +181,7 @@ function reportProgress(session: AgentSession, stderr: TextOut): void {
   });
   session.hooks.observe("llm_end", ({ assistant }) => {
     const usage = assistant.usage;
-    const input =
-      usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation;
+    const input = inputTokens(usage);
     const calls = assistant.content.filter(
       (block) => block.type === "tool_use",
     ).length;
@@ -203,8 +204,7 @@ async function runSession(
     io.stdout.write(`${JSON.stringify(summary)}\n`);
     return summary.outcome === "done" ? 0 : 1;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr.write(`${message}\n`);
+    io.stderr.write(`${errorText(error)}\n`);
     return 1;
   }
 }

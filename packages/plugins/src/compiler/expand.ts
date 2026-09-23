@@ -15,7 +15,13 @@
  * as an ordinary tool_use / tool_result. That pair is the expand numerator.
  */
 
-import type { EntryId, HarnessTool, LogStore, StoredEntry } from "@sage/core";
+import {
+  type EntryId,
+  type HarnessTool,
+  isRecord,
+  type LogStore,
+  type StoredEntry,
+} from "@sage/core";
 import { OWN_CHUNK_PREFIX } from "./chunks.js";
 
 /**
@@ -191,8 +197,4 @@ function asMessage(entry: StoredEntry): LoggedMessage | undefined {
   if (role !== "user" && role !== "assistant") return undefined;
   if (!Array.isArray(content)) return undefined;
   return { role, content: content as Block[] };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

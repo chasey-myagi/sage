@@ -19,13 +19,17 @@
 
 import { randomUUID } from "node:crypto";
 import type { HarnessTool, LogStore, ViewProvider } from "@sage/core";
-import { AgentSession } from "@sage/core";
-import type { ModelRef, ProviderAdapter, Usage } from "@sage/provider/contract";
+import { AgentSession, errorText, isRecord } from "@sage/core";
+import {
+  emptyUsage,
+  type ModelRef,
+  type ProviderAdapter,
+  type Usage,
+} from "@sage/provider/contract";
 import { admissionError, reserve, runPool } from "./admission.js";
 import type { PresetFs } from "./presets.js";
 import {
   applyPreset,
-  isRecord,
   presetsOf,
   readTask,
   readTasks,
@@ -50,13 +54,6 @@ export const DEFAULT_MAX_CONCURRENT = 4;
  * `subtask-query`, not this message.
  */
 const BEGIN = 'Begin the subtask described in <claim id="subtask-query">.';
-
-const EMPTY_USAGE: Usage = {
-  inputOther: 0,
-  inputCacheRead: 0,
-  inputCacheCreation: 0,
-  output: 0,
-};
 
 type TaskResult = {
   content: string;
@@ -354,7 +351,7 @@ function failed(
     details: {
       sessionId,
       outcome,
-      usage: { ...EMPTY_USAGE },
+      usage: emptyUsage(),
       chunks: [],
     },
   };
@@ -429,8 +426,4 @@ function lastAssistantText(store: LogStore, sessionId: string): string {
     if (text.length > 0) return text;
   }
   return "";
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

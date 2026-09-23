@@ -15,8 +15,13 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { DEFAULT_MAX_TURNS, type RunHealth } from "@sage/core";
-import { isFiniteNumber, isRecord } from "../guards.js";
+import {
+  DEFAULT_MAX_TURNS,
+  errorText,
+  isRecord,
+  type RunHealth,
+} from "@sage/core";
+import { isFiniteNumber } from "../guards.js";
 import { benchUsage } from "./args.js";
 import type {
   BenchIo,
@@ -54,8 +59,7 @@ export function runBenchReport(argv: string[], io: BenchIo): number {
     io.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return 0;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr.write(`${message}\n`);
+    io.stderr.write(`${errorText(error)}\n`);
     return 1;
   }
 }

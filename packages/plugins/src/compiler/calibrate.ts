@@ -23,7 +23,7 @@
  * resulting calibration object.
  */
 
-import type { StoredEntry } from "@sage/core";
+import { isRecord, latestViewEpoch, type StoredEntry } from "@sage/core";
 import type { Message } from "@sage/provider/contract";
 
 /**
@@ -82,7 +82,7 @@ export function expectedFrozenPrefix(path: readonly StoredEntry[]): number {
 }
 
 function anchorHead(path: readonly StoredEntry[]): number | undefined {
-  const epoch = currentEpoch(path);
+  const epoch = latestViewEpoch(path);
   const range = epochRange(path, epoch);
   const slice = path.slice(range.start, range.end);
   const first = firstHead(slice);
@@ -119,16 +119,6 @@ function headFromPairs(
     pending = undefined;
   }
   return found;
-}
-
-function currentEpoch(path: readonly StoredEntry[]): number {
-  let epoch = 0;
-  for (const entry of path) {
-    if (entry.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
-    const value = finite(entry.payload.epoch);
-    if (value !== undefined) epoch = value;
-  }
-  return epoch;
 }
 
 function epochRange(
@@ -232,10 +222,6 @@ function finite(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isMessage(value: unknown): value is Message {

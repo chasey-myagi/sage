@@ -13,6 +13,7 @@
 
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { errorText } from "@sage/core";
 import { runBenchCli } from "./bench/cli.js";
 import type { CliIo } from "./io.js";
 import { runPrint } from "./print.js";
@@ -56,8 +57,7 @@ if (isDirectRun()) {
       process.exit(code);
     })
     .catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`${message}\n`);
+      process.stderr.write(`${errorText(error)}\n`);
       process.exit(1);
     });
 }

@@ -14,7 +14,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import type { ViewContext } from "@sage/core";
+import { isRecord, type ViewContext } from "@sage/core";
 import type { Claim, ClaimProvider } from "../compiler/claim.js";
 import { escapeClaimText } from "./escape.js";
 
@@ -153,8 +153,4 @@ function isInside(cwd: string, candidate: string): boolean {
 
 function toPosix(rel: string): string {
   return rel.split(path.sep).join("/");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

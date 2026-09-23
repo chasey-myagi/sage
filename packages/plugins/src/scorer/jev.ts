@@ -10,7 +10,13 @@
  * usage, and fallback onto the manifest.
  */
 
-import type { Usage } from "@sage/provider/contract";
+import { isRecord } from "@sage/core";
+import {
+  emptyUsage,
+  type Sleeper,
+  sleep,
+  type Usage,
+} from "@sage/provider/contract";
 import { summarizeInput } from "../compiler/stub.js";
 import type { ScoreDecision, Scorer } from "./types.js";
 
@@ -82,8 +88,8 @@ export function jevScorer(opts: {
   model?: string;
   /** Test seam. Production uses the global `fetch`. */
   fetchImpl?: JevFetch;
-  /** Test seam. Production sleeps with `setTimeout`. */
-  sleepImpl?: (ms: number) => Promise<void>;
+  /** Test seam. Production uses `sleep` from the provider contract. */
+  sleepImpl?: Sleeper;
   batchSize?: number;
   minConfidence?: number;
   timeoutMs?: number;
@@ -92,7 +98,7 @@ export function jevScorer(opts: {
   const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   const model = opts.model || MODEL_ID;
   const fetchImpl = opts.fetchImpl ?? defaultFetch;
-  const sleepImpl = opts.sleepImpl ?? delay;
+  const sleepImpl = opts.sleepImpl ?? sleep;
   const batchSize = Math.max(
     1,
     Math.floor(opts.batchSize ?? DEFAULT_BATCH_SIZE),
@@ -146,12 +152,6 @@ function defaultFetch(
   },
 ): Promise<Response> {
   return globalThis.fetch(url, init);
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 function packBatches(
@@ -245,7 +245,7 @@ function readFull(answer: unknown): number | undefined {
 
 async function postBatch(input: {
   fetchImpl: JevFetch;
-  sleepImpl: (ms: number) => Promise<void>;
+  sleepImpl: Sleeper;
   url: string;
   apiKey: string;
   timeoutMs: number;
@@ -344,14 +344,5 @@ function readInputTokens(body: Record<string, unknown>): number {
 }
 
 function usageFrom(inputOther: number): Usage {
-  return {
-    inputOther,
-    inputCacheRead: 0,
-    inputCacheCreation: 0,
-    output: 0,
-  };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return { ...emptyUsage(), inputOther };
 }

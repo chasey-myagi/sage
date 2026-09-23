@@ -25,6 +25,7 @@ import {
   type AssistantMessage,
   addUsage,
   emptyUsage,
+  errorText,
   type Head,
   type Message,
   type ModelRef,
@@ -248,8 +249,7 @@ export class AgentSession {
       }
       return await this.finish("max_turns", turns, usage);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await this.finish("error", turns, usage, message);
+      await this.finish("error", turns, usage, errorText(error));
       throw error;
     }
   }

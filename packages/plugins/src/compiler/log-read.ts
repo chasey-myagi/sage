@@ -11,7 +11,7 @@
  * entries already record.
  */
 
-import type { ViewContext } from "@sage/core";
+import { isRecord, type ViewContext } from "@sage/core";
 import type { Message, Request, Sampling } from "@sage/provider/contract";
 import { EXPAND_TOOL_NAME } from "./expand.js";
 import { rebuildFromLog } from "./rebuild.js";
@@ -20,11 +20,6 @@ import { rebuildFromLog } from "./rebuild.js";
 export type SessionPath = ViewContext["path"];
 /** One entry of a `SessionPath`. */
 export type PathEntry = SessionPath[number];
-
-/** Narrows an untrusted value to a plain JSON object. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /** Narrows an untrusted value to a user or assistant `Message`. */
 export function isMessage(value: unknown): value is Message {

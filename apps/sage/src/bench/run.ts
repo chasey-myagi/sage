@@ -25,6 +25,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { errorText } from "@sage/core";
 import { resolveToolSandbox, type ToolSandbox } from "@sage/tools";
 import { missingBenchKey } from "../auth.js";
 import { type BenchRunArgs, parseRun } from "./args.js";
@@ -63,8 +64,7 @@ export async function runBenchRun(
   try {
     tasks = loadTasks(path.resolve(io.cwd, args.tasks));
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr.write(`${message}\n`);
+    io.stderr.write(`${errorText(error)}\n`);
     return 1;
   }
   for (const leftover of leftoverBenchRoots()) {

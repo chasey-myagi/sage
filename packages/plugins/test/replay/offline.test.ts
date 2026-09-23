@@ -1,4 +1,9 @@
-import { type HarnessTool, JsonlLogStore, MemoryLogStore } from "@sage/core";
+import {
+  type HarnessTool,
+  isRecord,
+  JsonlLogStore,
+  MemoryLogStore,
+} from "@sage/core";
 import { expect, it } from "vitest";
 import { caseDir, REPLAY_CASES } from "../../../core/test/replay/cases.ts";
 import { compareOffline, replayOffline } from "../../src/replay/offline.ts";
@@ -324,8 +329,4 @@ function appendTurn(
       finish: { kind: assistant.finish },
     },
   });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

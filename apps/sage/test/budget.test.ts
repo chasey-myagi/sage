@@ -1,12 +1,10 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { isRecord } from "@sage/core";
+import { createFaux, stopScript } from "@sage/core/testing";
 import type { ProviderAdapter } from "@sage/provider";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  createFaux,
-  stopScript,
-} from "../../../packages/core/test/support/faux.ts";
 import { parseArgs } from "../src/args.ts";
 import { runCli } from "../src/main.ts";
 
@@ -101,10 +99,6 @@ function firstManifest(cwd: string): { budget?: { total: number } } {
     throw new Error("missing manifest");
   }
   return manifest.payload as { budget?: { total: number } };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function capture() {

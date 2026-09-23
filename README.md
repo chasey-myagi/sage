@@ -28,7 +28,7 @@ M1 内核、M2 申领单与预算、M3 阶段与路由、M4 打分器与回放�
 
 ## 快速开始
 
-Node 22 以上，pnpm。
+Node 22.18 以上，pnpm。
 
 ```sh
 pnpm install

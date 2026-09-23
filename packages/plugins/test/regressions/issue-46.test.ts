@@ -1,6 +1,11 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { type HarnessTool, JsonlLogStore, MemoryLogStore } from "@sage/core";
+import {
+  type HarnessTool,
+  isRecord,
+  JsonlLogStore,
+  MemoryLogStore,
+} from "@sage/core";
 import { renderLlmInput } from "@sage/core/testing";
 import type { Message, Request } from "@sage/provider/contract";
 import { expect, it } from "vitest";
@@ -362,8 +367,4 @@ function pathTool(
       return Promise.resolve({ content: "", isError: false });
     },
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
