@@ -14,15 +14,21 @@
  * from the previous request_header, or there is none) →
  * append manifest (payload is view.manifest, details is view.details) →
  * adapter.stream →
- * collect → append message(assistant) with details
+ * collect → when finish is a transport error and this turn has not yet
+ * appended an assistant message, wait (2s then 8s; `sleep` may replace
+ * the wait) and, unless aborted during the wait, append turn_retry
+ * {turn, attempt, reason} and stream the same request again, at most
+ * twice →
+ * append message(assistant) with details
  * {responseModel, responseId, api, usage, finish} → llm_end →
  * if finish.kind is tool_use, run the tool pipeline for each tool_use and
  * append one user message of results (tool details on the entry, not the
  * block), then turn_end continue;
  * otherwise turn_end done.
- * abort or an adapter finish error appends terminal and stops. A throw from
- * tool execute is a tool_result and the turn continues. Any other throw
- * appends terminal and stops.
+ * abort, a non-transport finish error, or a transport error after two
+ * retries appends terminal and stops. A 4xx finish error is not resent.
+ * A throw from tool execute is a tool_result and the turn continues. Any
+ * other throw appends terminal and stops.
  * Using up maxTurns appends terminal {outcome:"max_turns"}.
  * The default maxTurns is 80 when run is called without that option.
  *
@@ -40,18 +46,22 @@
  * model-visible tool_result block.
  * Constructor takes `adapters` (provider → adapter) or one `adapter`, which
  * is stored under the starting model's provider.
+ * `sleep`, when set, replaces the wait between turn retries.
  * `parent`, when set, snapshots `store.path(parent.sessionId, parent.leafId)`
  * onto `ViewContext.parentPath` and sets `ViewContext.depth`. The kernel
  * does not copy those entries onto this session. Child usage is not added
  * to this run's usage.
  *
  * Intentionally not in the Log: the hook list, the abort signal, observer
- * errors, and the adapter table. Model-visible text is the message and
- * request_header entries. The manifest entry is the kernel's record of the
- * view that produced that request.
+ * errors, the adapter table, the sleep function, and assistant text
+ * discarded by a turn retry. Model-visible text is the message and
+ * request_header entries. `turn_retry` is persisted and is not model-visible.
+ * The manifest entry is the kernel's record of the view that produced that
+ * request.
  */
 
 import type {
+  AssistantMessage,
   ContentBlock,
   Head,
   Message,
@@ -104,6 +114,86 @@ const EMPTY_USAGE: Usage = {
   inputCacheCreation: 0,
   output: 0,
 };
+
+const TURN_RETRY_LIMIT = 2;
+const TURN_RETRY_BASE_MS = 2000;
+const TRANSPORT_MARKS = [
+  "terminated",
+  "fetch failed",
+  "ECONNRESET",
+  "socket hang up",
+  "aborted by peer",
+];
+
+function turnBackoffMs(attempt: number): number {
+  return TURN_RETRY_BASE_MS * 4 ** (attempt - 1);
+}
+
+function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (): void => {
+      if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    timer = setTimeout(finish, ms);
+    signal?.addEventListener("abort", finish, { once: true });
+  });
+}
+
+function isClientStatus(status: number | undefined): boolean {
+  return typeof status === "number" && status >= 400 && status < 500;
+}
+
+function markedTransport(error: {
+  message: string;
+  status?: number;
+  raw?: unknown;
+}): boolean {
+  return (
+    "transport" in error &&
+    (error as { transport?: unknown }).transport === true
+  );
+}
+
+function turnTransportReason(
+  finish: AssistantMessage["finish"],
+): string | undefined {
+  if (finish.kind !== "error" || !finish.error) return undefined;
+  if (isClientStatus(finish.error.status)) return undefined;
+  const error = finish.error;
+  if (markedTransport(error)) return error.message;
+  if (TRANSPORT_MARKS.some((mark) => error.message.includes(mark))) {
+    return error.message;
+  }
+  return undefined;
+}
+
+function assistantAfterLatestHeader(path: readonly StoredEntry[]): boolean {
+  let header = -1;
+  for (let index = 0; index < path.length; index += 1) {
+    if (path[index]?.kind === "request_header") header = index;
+  }
+  if (header < 0) return false;
+  for (const entry of path.slice(header + 1)) {
+    if (entry.kind !== "message") continue;
+    const payload = entry.payload;
+    if (
+      typeof payload === "object" &&
+      payload !== null &&
+      !Array.isArray(payload) &&
+      (payload as { role?: unknown }).role === "assistant"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function sameModel(left: ModelRef, right: ModelRef): boolean {
   return left.provider === right.provider && left.model === right.model;
@@ -206,6 +296,7 @@ export class AgentSession {
   private readonly tools: HarnessTool[];
   private readonly viewProvider: ViewProvider;
   private readonly sampling: Sampling | undefined;
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   private readonly parent?: {
     sessionId: string;
     leafId: EntryId;
@@ -221,6 +312,7 @@ export class AgentSession {
       tools: HarnessTool[];
       viewProvider?: ViewProvider;
       sampling?: Sampling;
+      sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
       parent?: { sessionId: string; leafId: EntryId; depth: number };
     } & (
       | { adapter: ProviderAdapter; adapters?: Record<string, ProviderAdapter> }
@@ -246,6 +338,7 @@ export class AgentSession {
     this.tools = opts.tools;
     this.viewProvider = opts.viewProvider ?? passthroughView;
     this.sampling = opts.sampling;
+    this.sleep = opts.sleep ?? defaultSleep;
     this.parent = opts.parent;
     this.dispatcher = new HookDispatcher(this.observerErrors);
     this.hooks = this.dispatcher;
@@ -342,17 +435,17 @@ export class AgentSession {
       payload: view.manifest,
       ...(view.details ? { details: view.details } : {}),
     });
-    // Dynamic so dist/index.js can load under plain Node for the log manifest.
-    // The contract barrel is TypeScript source; a static import breaks that load.
-    const { collect } = await import("@sage/provider/contract");
-    const assistant = await collect(
-      this.adapter.stream(request, active, signal),
-      {
-        responseModel: this.model.model,
-        responseId: "",
-        api: this.adapter.api,
-      },
+    const streamed = await this.collectWithTurnRetry(
+      turn,
+      request,
+      active,
+      signal,
     );
+    if (streamed === "aborted") {
+      await this.dispatcher.emit("turn_end", { turn, outcome: "aborted" });
+      return { kind: "aborted", usage: { ...EMPTY_USAGE }, prepared: active };
+    }
+    const assistant = streamed;
     this.store.append(this.sessionId, {
       kind: "message",
       payload: { role: "assistant", content: assistant.content },
@@ -400,6 +493,46 @@ export class AgentSession {
     }
     await this.dispatcher.emit("turn_end", { turn, outcome: "done" });
     return { kind: "done", usage: assistant.usage, prepared: active };
+  }
+
+  private async collectWithTurnRetry(
+    turn: number,
+    request: Request,
+    active: PreparedCall,
+    signal: AbortSignal | undefined,
+  ): Promise<AssistantMessage | "aborted"> {
+    // Dynamic so dist/index.js can load under plain Node for the log manifest.
+    // The contract barrel is TypeScript source; a static import breaks that load.
+    const { collect } = await import("@sage/provider/contract");
+    let attempt = 0;
+    while (true) {
+      const assistant = await collect(
+        this.adapter.stream(request, active, signal),
+        {
+          responseModel: this.model.model,
+          responseId: "",
+          api: this.adapter.api,
+        },
+      );
+      if (assistant.finish.kind === "aborted" || signal?.aborted) {
+        return assistant;
+      }
+      const reason = turnTransportReason(assistant.finish);
+      const committed = assistantAfterLatestHeader(
+        this.store.path(this.sessionId),
+      );
+      if (reason !== undefined && !committed && attempt < TURN_RETRY_LIMIT) {
+        attempt += 1;
+        await this.sleep(turnBackoffMs(attempt), signal);
+        if (signal?.aborted) return "aborted";
+        this.store.append(this.sessionId, {
+          kind: "turn_retry",
+          payload: { turn, attempt, reason },
+        });
+        continue;
+      }
+      return assistant;
+    }
   }
 
   private applyRoute(

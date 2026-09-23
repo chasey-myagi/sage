@@ -38,6 +38,11 @@
  * `terminal.health`, when present, is an object. The kernel does not read
  * its fields. A missing health is valid. A non-object health is rejected.
  *
+ * `turn_retry` records one whole-turn resend after a transport error.
+ * Payload is `{ turn, attempt, reason }`. It is persisted and not
+ * model-visible. The kernel checks that shape and does not put the entry
+ * on the request.
+ *
  * `subtask` records that a child session recompiles a parent leaf. The
  * payload is `{ parentSessionId, parentLeaf, query, budget, readOnly }`.
  * The kernel does not copy the parent path onto the child.
@@ -96,6 +101,12 @@ export type ManifestPayload = {
 
 export type TargetPayload = {
   target: string;
+};
+
+export type TurnRetryPayload = {
+  turn: number;
+  attempt: number;
+  reason: string;
 };
 
 export type TerminalPayload = {
@@ -289,6 +300,17 @@ function isTarget(payload: unknown): payload is TargetPayload {
   return isRecord(payload) && typeof payload.target === "string";
 }
 
+function isTurnRetry(payload: unknown): payload is TurnRetryPayload {
+  return (
+    isRecord(payload) &&
+    typeof payload.turn === "number" &&
+    Number.isFinite(payload.turn) &&
+    typeof payload.attempt === "number" &&
+    Number.isFinite(payload.attempt) &&
+    typeof payload.reason === "string"
+  );
+}
+
 function isTerminal(payload: unknown): payload is TerminalPayload {
   if (!isRecord(payload) || typeof payload.outcome !== "string") return false;
   if (payload.health !== undefined && !isRecord(payload.health)) return false;
@@ -362,6 +384,13 @@ registerEntryKind<TargetPayload>({
   persisted: true,
   doc: "Moves the leaf pointer to an existing entry. Does not copy history.",
   validate: isTarget,
+});
+
+registerEntryKind<TurnRetryPayload>({
+  kind: "turn_retry",
+  persisted: true,
+  doc: "Whole-turn resend after a transport error. Not model-visible. Payload is { turn, attempt, reason }.",
+  validate: isTurnRetry,
 });
 
 registerEntryKind<TerminalPayload>({
