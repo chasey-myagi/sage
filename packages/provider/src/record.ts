@@ -5,11 +5,10 @@
  * a later request_header would store.
  */
 
+import { isRecord } from "./contract/record.js";
+
 export function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
+  return isRecord(value) ? value : undefined;
 }
 
 export function num(value: unknown): number {

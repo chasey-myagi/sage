@@ -5,9 +5,9 @@
  * yet. `leaf` is kernel semantics (it moves the pointer); the other kinds are
  * recorded and left for later folds.
  *
- * `message` payload is `Message` from `@sage/provider/contract` (type-only).
+ * `message` payload is `Message` from `@sage/provider/contract`.
  * The validator checks that `role` is a string and `content` is present.
- * Do not value-import `@sage/provider`.
+ * Only the contract subpath is imported, never the adapters.
  *
  * `request_header.system` and `request_header.tools` are present only when
  * they differ from the default. The kernel does not decide that; it only
@@ -52,9 +52,9 @@
  * high-water mark.
  */
 
-import type { Message } from "@sage/provider/contract";
+import { isRecord, type Message } from "@sage/provider/contract";
 import { registerEntryKind } from "./registry.js";
-import { isRecord, type ModelRef } from "./types.js";
+import type { ModelRef } from "./types.js";
 
 export type RequestHeaderPayload = {
   provider: string;

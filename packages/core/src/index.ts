@@ -11,8 +11,11 @@ import "./log/kinds.js";
 
 export const PACKAGE = "@sage/core" as const;
 
-export { type RunHealth, runHealth } from "./health.js";
+/** Re-exported so packages that depend only on core share the one guard. */
+export { isRecord } from "@sage/provider/contract";
+export { type HealthTokens, type RunHealth, runHealth } from "./health.js";
 export type { Decision, HookEvents, Hooks } from "./hooks/types.js";
+export { latestViewEpoch } from "./log/epoch.js";
 export {
   InvalidEntryError,
   LogCorruptedError,
@@ -25,11 +28,7 @@ export {
   entryKinds,
   registerEntryKind,
 } from "./log/registry.js";
-export {
-  DANGLING,
-  synthesizeToolResult,
-  type ToolResultBlock,
-} from "./log/repair.js";
+export { DANGLING, synthesizeToolResult } from "./log/repair.js";
 export { type LogStore, replay } from "./log/store.js";
 export type {
   EntryId,

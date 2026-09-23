@@ -44,7 +44,3 @@ export type ModelRef = {
 export function asEntryId(id: string): EntryId {
   return id as EntryId;
 }
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}

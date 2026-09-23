@@ -12,15 +12,16 @@
  * last failure reason are copied onto the usage chunk.
  */
 
+import type { Sleeper } from "./contract/backoff.js";
 import type { ContentBlock } from "./contract/message.js";
 import type {
   FinishError,
   FinishKind,
   StreamChunk,
 } from "./contract/stream.js";
-import type { Usage } from "./contract/usage.js";
+import { emptyUsage, type Usage } from "./contract/usage.js";
 import { isAbortError, messageOf } from "./http.js";
-import type { RetryPolicy, Sleeper } from "./retry.js";
+import type { RetryPolicy } from "./retry.js";
 import { openWithRetry } from "./retry.js";
 import type { SseEvent } from "./sse.js";
 import { parseSse } from "./sse.js";
@@ -202,7 +203,7 @@ function* end(
   usage: Usage | undefined,
   finish: StreamChunk,
 ): Generator<StreamChunk> {
-  yield { type: "usage", usage: usage ?? zeroUsage() };
+  yield { type: "usage", usage: usage ?? emptyUsage() };
   yield finish;
 }
 
@@ -230,20 +231,11 @@ function errorFinish(from: {
   return { type: "finish", kind: "error", error };
 }
 
-function zeroUsage(): Usage {
-  return {
-    inputOther: 0,
-    inputCacheRead: 0,
-    inputCacheCreation: 0,
-    output: 0,
-  };
-}
-
 function withRetry(
   usage: Usage | undefined,
   retries: number,
   reason: string | undefined,
 ): Usage | undefined {
   if (retries <= 0 || reason === undefined) return usage;
-  return { ...(usage ?? zeroUsage()), details: { retries, reason } };
+  return { ...(usage ?? emptyUsage()), details: { retries, reason } };
 }

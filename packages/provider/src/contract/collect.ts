@@ -12,7 +12,7 @@
 import type { AssistantMessage, ProviderAdapter } from "./adapter.js";
 import type { ContentBlock } from "./message.js";
 import type { StreamChunk } from "./stream.js";
-import type { Usage } from "./usage.js";
+import { emptyUsage, type Usage } from "./usage.js";
 
 type Acc = {
   index: number;
@@ -23,13 +23,6 @@ type Acc = {
   rawInput: string;
 };
 
-const EMPTY_USAGE: Usage = {
-  inputOther: 0,
-  inputCacheRead: 0,
-  inputCacheCreation: 0,
-  output: 0,
-};
-
 export async function collect(
   chunks: AsyncIterable<StreamChunk>,
   meta: { api: ProviderAdapter["api"] },
@@ -37,7 +30,7 @@ export async function collect(
   const blocks = new Map<number, Acc>();
   let responseId = "";
   let responseModel = "";
-  let usage: Usage = EMPTY_USAGE;
+  let usage: Usage = emptyUsage();
   let finish: Extract<StreamChunk, { type: "finish" }> = {
     type: "finish",
     kind: "error",

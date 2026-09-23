@@ -29,17 +29,33 @@
  * text, chunk text, reasons, paths, or child session ids.
  */
 
-import { isRecord, type StoredEntry } from "./log/types.js";
+import {
+  addUsage,
+  emptyUsage,
+  inputTokens,
+  isRecord,
+  type TokenCounts,
+  totalTokens,
+} from "@sage/provider/contract";
+import { viewEpochs } from "./log/epoch.js";
+import type { StoredEntry } from "./log/types.js";
+
+/**
+ * Token sums in run-health naming. `input` is uncached input only
+ * (`inputOther`); `total` adds cache read, cache creation, and output.
+ * Persisted inside `terminal.health`, so the field names are fixed.
+ */
+export type HealthTokens = {
+  input: number;
+  cacheRead: number;
+  cacheCreation: number;
+  output: number;
+  total: number;
+};
 
 export type RunHealth = {
   turns: number;
-  tokens: {
-    input: number;
-    cacheRead: number;
-    cacheCreation: number;
-    output: number;
-    total: number;
-  };
+  tokens: HealthTokens;
   cacheHitRatio: number | null;
   expandRate: number | null;
   omitted: number;
@@ -50,13 +66,7 @@ export type RunHealth = {
   scorerFallbacks: number;
   shadow: {
     calls: number;
-    usage: {
-      input: number;
-      cacheRead: number;
-      cacheCreation: number;
-      output: number;
-      total: number;
-    };
+    usage: HealthTokens;
   };
   entryScored: {
     calls: number;
@@ -64,41 +74,22 @@ export type RunHealth = {
     summary: number;
     full: number;
     summaryRejected: number;
-    usage: {
-      input: number;
-      cacheRead: number;
-      cacheCreation: number;
-      output: number;
-      total: number;
-    };
+    usage: HealthTokens;
   };
   subtasks: {
     count: number;
-    tokens: {
-      input: number;
-      cacheRead: number;
-      cacheCreation: number;
-      output: number;
-      total: number;
-    };
+    tokens: HealthTokens;
   };
   toolErrors: number;
   turnRetries: number;
 };
 
 export function runHealth(path: readonly StoredEntry[]): RunHealth {
-  const tokens = {
-    input: 0,
-    cacheRead: 0,
-    cacheCreation: 0,
-    output: 0,
-  };
+  let tokens: TokenCounts = emptyUsage();
   let turns = 0;
   let sawUsage = false;
   let omitted = 0;
   let expands = 0;
-  let highestEpoch = 0;
-  let sawEpoch = false;
   let modelChanges = 0;
   let scorerCalls = 0;
   let scorerFallbacks = 0;
@@ -106,13 +97,10 @@ export function runHealth(path: readonly StoredEntry[]): RunHealth {
   for (const entry of path) {
     if (entry.kind === "message" && isAssistant(entry)) {
       turns += 1;
-      const usage = entry.details?.usage;
-      if (!isRecord(usage)) continue;
+      const usage = readTokenCounts(entry.details?.usage);
+      if (!usage) continue;
       sawUsage = true;
-      tokens.input += finite(usage.inputOther) ?? 0;
-      tokens.cacheRead += finite(usage.inputCacheRead) ?? 0;
-      tokens.cacheCreation += finite(usage.inputCacheCreation) ?? 0;
-      tokens.output += finite(usage.output) ?? 0;
+      tokens = addUsage(tokens, usage);
       continue;
     }
     if (entry.kind === "manifest") {
@@ -124,28 +112,20 @@ export function runHealth(path: readonly StoredEntry[]): RunHealth {
       scorerFallbacks += scorer.fallbacks;
       continue;
     }
-    if (entry.kind === "view_epoch" && isRecord(entry.payload)) {
-      const epoch = finite(entry.payload.epoch);
-      if (epoch === undefined) continue;
-      if (!sawEpoch || epoch > highestEpoch) highestEpoch = epoch;
-      sawEpoch = true;
-      continue;
-    }
     if (entry.kind === "model_change") modelChanges += 1;
   }
 
-  const inputMass = tokens.cacheRead + tokens.input + tokens.cacheCreation;
-  const total =
-    tokens.input + tokens.cacheRead + tokens.cacheCreation + tokens.output;
+  const inputMass = inputTokens(tokens);
+  const epochs = viewEpochs(path);
   return {
     turns,
-    tokens: { ...tokens, total },
+    tokens: toHealthTokens(tokens),
     cacheHitRatio:
-      !sawUsage || inputMass === 0 ? null : tokens.cacheRead / inputMass,
+      !sawUsage || inputMass === 0 ? null : tokens.inputCacheRead / inputMass,
     expandRate: omitted === 0 ? null : expands / omitted,
     omitted,
     expands,
-    epochs: sawEpoch ? highestEpoch + 1 : 1,
+    epochs: epochs.length > 0 ? Math.max(...epochs) + 1 : 1,
     modelChanges,
     scorerCalls,
     scorerFallbacks,
@@ -180,31 +160,19 @@ function toolErrorCount(path: readonly StoredEntry[]): number {
 }
 
 function shadowHealth(path: readonly StoredEntry[]): RunHealth["shadow"] {
-  const tokens = {
-    input: 0,
-    cacheRead: 0,
-    cacheCreation: 0,
-    output: 0,
-  };
+  let tokens: TokenCounts = emptyUsage();
   let calls = 0;
   for (const entry of path) {
     if (entry.kind !== "manifest" || !isRecord(entry.payload)) continue;
     if (!isRecord(entry.payload.shadow)) continue;
     calls += 1;
-    addUsage(tokens, entry.payload.shadow.usage);
+    tokens = addLogged(tokens, entry.payload.shadow.usage);
   }
-  const total =
-    tokens.input + tokens.cacheRead + tokens.cacheCreation + tokens.output;
-  return { calls, usage: { ...tokens, total } };
+  return { calls, usage: toHealthTokens(tokens) };
 }
 
 function entryHealth(path: readonly StoredEntry[]): RunHealth["entryScored"] {
-  const tokens = {
-    input: 0,
-    cacheRead: 0,
-    cacheCreation: 0,
-    output: 0,
-  };
+  let tokens: TokenCounts = emptyUsage();
   let calls = 0;
   let none = 0;
   let summary = 0;
@@ -219,27 +187,20 @@ function entryHealth(path: readonly StoredEntry[]): RunHealth["entryScored"] {
     summary += finite(body.summary) ?? 0;
     full += finite(body.full) ?? 0;
     summaryRejected += finite(body.summaryRejected) ?? 0;
-    addUsage(tokens, body.usage);
+    tokens = addLogged(tokens, body.usage);
   }
-  const total =
-    tokens.input + tokens.cacheRead + tokens.cacheCreation + tokens.output;
   return {
     calls,
     none,
     summary,
     full,
     summaryRejected,
-    usage: { ...tokens, total },
+    usage: toHealthTokens(tokens),
   };
 }
 
 function subtaskHealth(path: readonly StoredEntry[]): RunHealth["subtasks"] {
-  const tokens = {
-    input: 0,
-    cacheRead: 0,
-    cacheCreation: 0,
-    output: 0,
-  };
+  let tokens: TokenCounts = emptyUsage();
   let count = 0;
   const names = new Map<string, string>();
   for (const entry of path) {
@@ -267,52 +228,60 @@ function subtaskHealth(path: readonly StoredEntry[]): RunHealth["subtasks"] {
       if (named !== "spawn_subtask" && named !== "spawn_subtasks") continue;
       const details = isRecord(item.details) ? item.details : undefined;
       if (!details) continue;
-      count += absorbSpawn(named, details, tokens);
+      const spawned = absorbSpawn(named, details);
+      count += spawned.count;
+      tokens = addUsage(tokens, spawned.tokens);
     }
   }
-  const total =
-    tokens.input + tokens.cacheRead + tokens.cacheCreation + tokens.output;
-  return { count, tokens: { ...tokens, total } };
+  return { count, tokens: toHealthTokens(tokens) };
 }
 
 function absorbSpawn(
   name: string,
   details: Record<string, unknown>,
-  tokens: {
-    input: number;
-    cacheRead: number;
-    cacheCreation: number;
-    output: number;
-  },
-): number {
+): { count: number; tokens: TokenCounts } {
+  let tokens: TokenCounts = emptyUsage();
   if (name === "spawn_subtasks" && Array.isArray(details.results)) {
     let count = 0;
     for (const result of details.results) {
       if (!isRecord(result)) continue;
-      addUsage(tokens, result.usage);
+      tokens = addLogged(tokens, result.usage);
       count += 1;
     }
-    return count;
+    return { count, tokens };
   }
-  if (!isRecord(details.usage)) return 0;
-  addUsage(tokens, details.usage);
-  return 1;
+  if (!isRecord(details.usage)) return { count: 0, tokens };
+  return { count: 1, tokens: addLogged(tokens, details.usage) };
 }
 
-function addUsage(
-  tokens: {
-    input: number;
-    cacheRead: number;
-    cacheCreation: number;
-    output: number;
-  },
-  usage: unknown,
-): void {
-  if (!isRecord(usage)) return;
-  tokens.input += finite(usage.inputOther) ?? 0;
-  tokens.cacheRead += finite(usage.inputCacheRead) ?? 0;
-  tokens.cacheCreation += finite(usage.inputCacheCreation) ?? 0;
-  tokens.output += finite(usage.output) ?? 0;
+/**
+ * Reads a logged usage object. Returns undefined for a non-object; a missing
+ * or non-finite count reads as 0.
+ */
+function readTokenCounts(value: unknown): TokenCounts | undefined {
+  if (!isRecord(value)) return undefined;
+  return {
+    inputOther: finite(value.inputOther) ?? 0,
+    inputCacheRead: finite(value.inputCacheRead) ?? 0,
+    inputCacheCreation: finite(value.inputCacheCreation) ?? 0,
+    output: finite(value.output) ?? 0,
+  };
+}
+
+/** Adds a logged usage object to `tokens`; a non-object adds nothing. */
+function addLogged(tokens: TokenCounts, logged: unknown): TokenCounts {
+  const usage = readTokenCounts(logged);
+  return usage ? addUsage(tokens, usage) : tokens;
+}
+
+function toHealthTokens(tokens: TokenCounts): HealthTokens {
+  return {
+    input: tokens.inputOther,
+    cacheRead: tokens.inputCacheRead,
+    cacheCreation: tokens.inputCacheCreation,
+    output: tokens.output,
+    total: totalTokens(tokens),
+  };
 }
 
 function isAssistant(entry: StoredEntry): boolean {
