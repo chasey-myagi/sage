@@ -11,6 +11,7 @@
  * `context-window-guard`. A drop smaller than minSavingsRatio * oldTokens
  * does not rebuild (`savings-too-small`). extraCost <= 0 rebuilds with
  * reason `immediate`. Otherwise rebuild when paybackTurns <= remainingTurns.
+ * `remainingTurns` is an input. This function does not estimate it.
  *
  * Intentionally not in the Log: this function. The compiler copies the
  * decision onto the manifest.
