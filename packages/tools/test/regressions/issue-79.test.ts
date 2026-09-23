@@ -7,14 +7,14 @@ import {
   passthroughView,
   type ViewContext,
 } from "@sage/core";
-import { afterEach, expect, it } from "vitest";
 import {
   createFaux,
-  MODEL,
-  SYSTEM,
+  FAUX_MODEL as MODEL,
+  FAUX_SYSTEM as SYSTEM,
   stopScript,
   toolScript,
-} from "../../../core/test/support/faux.ts";
+} from "@sage/core/testing";
+import { afterEach, expect, it } from "vitest";
 import { createTools } from "../../src/index.ts";
 
 const ctx = { sessionId: "s", toolUseId: "tool-79" };

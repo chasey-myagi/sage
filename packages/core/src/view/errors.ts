@@ -1,7 +1,7 @@
 /**
  * Seam failures. Thrown before a request is sent.
  *
- * Contract: an unpaired view or a mid-epoch head change is a compiler bug.
+ * Guarantees: an unpaired view or a mid-epoch head change is a compiler bug.
  * The session records a terminal error entry, then throws. These errors are
  * not log entries by themselves.
  *
@@ -9,6 +9,7 @@
  * the outcome and the message.
  */
 
+/** A tool_use without its result, or a result without its call. `id` names it. */
 export class UnpairedToolCallError extends Error {
   readonly id: string;
 
@@ -19,6 +20,7 @@ export class UnpairedToolCallError extends Error {
   }
 }
 
+/** The view changed system or tools without opening a new epoch first. */
 export class HeadChangedMidEpochError extends Error {
   constructor() {
     super(

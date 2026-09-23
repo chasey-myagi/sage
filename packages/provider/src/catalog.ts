@@ -1,18 +1,30 @@
 /**
- * Static model table.
+ * Static model table: context window and pricing per known model, plus the
+ * `adapterDefaults` an adapter reports for a call.
  *
- * 定价 2026-09-23 核对，来源见每条 source。
- * currency 缺省为 USD。缓存读写比率只除四个单价，不看币种。
+ * Guarantees: an unknown model still prepares, with fallback numbers,
+ * `pricing: null`, and `adapterDefaults.catalogFallback: true`. Prices were
+ * checked on 2026-09-23 against each entry's `source`. `currency` absent
+ * means USD; cache read/write ratios divide the four prices and ignore
+ * currency.
  *
- * Deliberately not a Log entry: lookup happens before the call.
- * adapterDefaults are reported so a later request_header can store them.
+ * Intentionally not in the Log: the table itself. Lookup happens before the
+ * call; the session stores the returned `adapterDefaults` on request_header.
  */
 
 import type { PreparedCall, Pricing } from "./contract/adapter.js";
 import type { ModelRef, Request } from "./contract/message.js";
 
+/** Context window, in tokens, assumed for a model missing from the table. */
 const FALLBACK_WINDOW = 128_000;
+/** Output token cap (`max_tokens`) for a model missing from the table. */
 const FALLBACK_MAX_TOKENS = 4096;
+/**
+ * Output token cap (`max_tokens` on the wire) reported as
+ * `adapterDefaults.maxTokens` for every model in the table. It limits one
+ * response's output and is unrelated to the context window, which is why a
+ * 1M-context model shares it. `Sampling.maxTokens` overrides it.
+ */
 const KNOWN_MAX_TOKENS = 8192;
 const ANTHROPIC_SOURCE =
   "https://platform.claude.com/docs/en/about-claude/pricing";
@@ -24,6 +36,7 @@ const DASHSCOPE_SOURCE =
 const TYPESAFE_SOURCE =
   "https://typesafe.ai/blog/introducing-system-one-models-and-jev";
 
+/** One known model. `contextWindow` is in tokens; prices are per million tokens. */
 export type CatalogEntry = {
   provider: string;
   model: string;
@@ -116,7 +129,8 @@ const MODELS: readonly CatalogEntry[] = [
       source: OPENAI_SOURCE,
     },
   },
-  // 非峰时减半：01:00–04:00 与 06:00–10:00 UTC 工作日为峰时。表内是峰时价。
+  // Peak-hour prices. Off-peak is half price; peak is 01:00-04:00 and
+  // 06:00-10:00 UTC on weekdays.
   {
     provider: "deepseek",
     model: "deepseek-flash",
@@ -167,7 +181,7 @@ const MODELS: readonly CatalogEntry[] = [
       currency: "CNY",
     },
   },
-  // 显式上下文缓存 5min TTL 价
+  // Explicit context cache prices at the 5-minute TTL.
   {
     provider: "moonshot",
     model: "kimi-k3",
@@ -181,9 +195,9 @@ const MODELS: readonly CatalogEntry[] = [
       currency: "CNY",
     },
   },
-  // 页面为原价，促销可能更低；思考模式输出价不同（plus 为 8）。
-  // plus / flash 上下文 1,000,000；max 为 32,768。
-  // flash 单价是输入 ≤128K 的第一档。
+  // List prices; promotions may be lower. Thinking-mode output costs more
+  // (8 for plus). Context: plus and flash 1,000,000; max 32,768. flash uses
+  // the first tier, for inputs up to 128K.
   {
     provider: "dashscope",
     model: "qwen-plus",
@@ -250,10 +264,12 @@ const MODELS: readonly CatalogEntry[] = [
   },
 ];
 
+/** Known models for `provider`, in table order; empty when none. */
 export function listModels(provider: string): readonly CatalogEntry[] {
   return MODELS.filter((entry) => entry.provider === provider);
 }
 
+/** The first table entry for `provider`. Throws when the provider has none. */
 export function defaultModel(provider: string): ModelRef {
   const first = listModels(provider)[0];
   if (!first) {
@@ -262,6 +278,10 @@ export function defaultModel(provider: string): ModelRef {
   return { provider: first.provider, model: first.model };
 }
 
+/**
+ * The prepared call for `model`: table values when known, fallback values
+ * with `catalogFallback: true` otherwise. Never throws.
+ */
 export function prepareModel(model: ModelRef): PreparedCall {
   const hit = MODELS.find(
     (entry) => entry.provider === model.provider && entry.model === model.model,
@@ -285,6 +305,10 @@ export function prepareModel(model: ModelRef): PreparedCall {
   };
 }
 
+/**
+ * `max_tokens` for the wire: `request.sampling.maxTokens` when set, else
+ * `adapterDefaults.maxTokens`, else `FALLBACK_MAX_TOKENS`.
+ */
 export function resolveMaxTokens(
   request: Request,
   prepared: PreparedCall,

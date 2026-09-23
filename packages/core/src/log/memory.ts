@@ -1,7 +1,7 @@
 /**
  * In-memory log. Same tree rules as the JSONL store, with no disk.
  *
- * Contract: `append` validates, then commits. A failed validation leaves the
+ * Guarantees: `append` validates, then commits. A failed validation leaves the
  * session unchanged.
  *
  * Intentionally not in the Log: this map of sessions.
@@ -12,6 +12,7 @@ import { LogSession, prepareEntry } from "./session.js";
 import type { LogStore } from "./store.js";
 import type { EntryId, EntryInput, StoredEntry } from "./types.js";
 
+/** Non-durable `LogStore`: entries live only in this process. */
 export class MemoryLogStore implements LogStore {
   private readonly sessions = new Map<string, LogSession>();
 

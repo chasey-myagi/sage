@@ -1,61 +1,28 @@
 /**
- * Kernel entry kinds. Registered when this module is imported.
+ * Kernel entry kinds, registered when this module is imported.
  *
- * Contract: validators check shape only. None of these kinds ship a reducer
- * yet. `leaf` is kernel semantics (it moves the pointer); the other kinds are
- * recorded and left for later folds.
+ * Guarantees: each validator checks shape only and rejects anything else.
+ * None of these kinds ships a reducer yet. `leaf` is kernel semantics (it
+ * moves the pointer); the other kinds are recorded for later folds. The
+ * kernel never interprets manifest reports, `terminal.health`, or the
+ * `subtask` payload beyond their shape. Only `@sage/provider/contract` is
+ * imported, never the adapters.
  *
- * `message` payload is `Message` from `@sage/provider/contract`.
- * The validator checks that `role` is a string and `content` is present.
- * Only the contract subpath is imported, never the adapters.
+ * Per-kind rules are on each payload type below.
  *
- * `request_header.system` and `request_header.tools` are present only when
- * they differ from the default. The kernel does not decide that; it only
- * checks the shape.
- *
- * `manifest.budget` is either a finite number or an object with finite
- * `total`, `used`, and `overrun`. `frozenTokens` and `staleOmittable`, when
- * present, are finite numbers. Other fields are left unchecked. The kernel
- * does not interpret the object.
- * `epochDecision`, `calibration`, and `cache` are optional objects. When
- * `epochDecision` is present, `remainingTurns` is a finite number. The
- * kernel checks that shape and does not interpret the decision. When
- * `calibration` is present, `measured`, `estimated`, `ratio`, and `head`
- * are finite numbers if they are present. Older manifests may omit `head`.
- * `shadow`, when present, is an object with string `scorer` and an array
- * `decisions`. Each decision has string `id` and `tier`. `reason` and
- * `fallback`, when present, are strings. `usage`, when present, is an
- * object; its four token fields are finite numbers if they are present.
- * `raw`, when present on `shadow` or `scorer`, is an object with string
- * `text` and string `finish`. Any other raw is rejected. A missing raw is
- * valid. The kernel does not apply shadow tiers.
- * `entryScored`, when present, is an object with finite `calls`, `none`,
- * `summary`, and `full`. `summaryRejected`, when present, is a finite
- * number. `usage`, when present, is an object; its four
- * token fields are finite numbers if they are present. Chunk `reason` may
- * be `scorer:entry:<tier>` for a tier this call applied. The kernel does
- * not read those fields.
- *
- * `terminal.health`, when present, is an object. The kernel does not read
- * its fields. A missing health is valid. A non-object health is rejected.
- *
- * `turn_retry` records one whole-turn resend after a transport error.
- * Payload is `{ turn, attempt, reason }`. It is persisted and not
- * model-visible. The kernel checks that shape and does not put the entry
- * on the request.
- *
- * `subtask` records that a child session recompiles a parent leaf. The
- * payload is `{ parentSessionId, parentLeaf, query, budget, readOnly }`.
- * The kernel does not copy the parent path onto the child.
- *
- * Intentionally not in the Log: reducer functions, the registry, and any
- * high-water mark.
+ * Intentionally not in the Log: reducer functions and the registry.
  */
 
 import { isRecord, type Message } from "@sage/provider/contract";
 import { registerEntryKind } from "./registry.js";
 import type { ModelRef } from "./types.js";
 
+/**
+ * The request envelope for one model call. `system` and `tools` carry full
+ * text only when their hash differs from the previous request_header on
+ * the path, or when there is none; `AgentSession` decides, the validator
+ * only checks the shape.
+ */
 export type RequestHeaderPayload = {
   provider: string;
   model: string;
@@ -67,17 +34,38 @@ export type RequestHeaderPayload = {
   tools?: unknown;
 };
 
+/**
+ * A new view epoch opened. The entry's `details.epochHead` is the first
+ * message of the view that opened it (not the system+tools `Head`); the
+ * field keeps that name because it is persisted.
+ */
 export type ViewEpochPayload = {
   epoch: number;
   reason: string;
 };
 
+/** A model switch. History is not rewritten. */
 export type ModelChangePayload = {
   from: ModelRef;
   to: ModelRef;
   reason: string;
 };
 
+/**
+ * Stored manifest. `budget` is a finite number or an object with finite
+ * `total`, `used`, and `overrun` (and finite `frozenTokens` and
+ * `staleOmittable` when present). `epochDecision`, `calibration`, and
+ * `cache` are optional objects; `epochDecision.remainingTurns` must be
+ * finite, and `calibration`'s `measured`, `estimated`, `ratio`, and `head`
+ * are finite when present (older manifests omit `head`). `shadow` needs a
+ * string `scorer` and a `decisions` array of `{id, tier}` strings with
+ * optional string `reason`; optional `fallback` is a string. `entryScored`
+ * needs finite `calls`, `none`, `summary`, and `full`, and an optional
+ * finite `summaryRejected`. A `usage` on `shadow` or `entryScored` is an
+ * object whose four token fields are finite when present. A `raw` on
+ * `shadow` or `scorer` is `{text, finish}` strings or absent. Other fields
+ * are unchecked. The kernel reads none of this.
+ */
 export type ManifestPayload = {
   epoch: number;
   turn: number;
@@ -100,16 +88,25 @@ export type ManifestPayload = {
   entryScored?: unknown;
 };
 
+/** Payload of `undo` and `leaf`: the id of an earlier entry. */
 export type TargetPayload = {
   target: string;
 };
 
+/**
+ * One whole-turn resend after a transport error. Persisted, not
+ * model-visible: the kernel never puts it on a request.
+ */
 export type TurnRetryPayload = {
   turn: number;
   attempt: number;
   reason: string;
 };
 
+/**
+ * How a run ended. `usage` and `error` stay opaque. `health`, when present,
+ * must be an object; the kernel does not read its fields.
+ */
 export type TerminalPayload = {
   outcome: string;
   usage?: unknown;
@@ -118,6 +115,7 @@ export type TerminalPayload = {
   health?: Record<string, unknown>;
 };
 
+/** `role` is a string and `content` is present; blocks are not checked. */
 function isMessage(payload: unknown): payload is Message {
   return (
     isRecord(payload) &&
@@ -319,6 +317,10 @@ function isTerminal(payload: unknown): payload is TerminalPayload {
   return true;
 }
 
+/**
+ * A child session recompiling a parent leaf. The kernel does not copy the
+ * parent path onto the child.
+ */
 export type SubtaskPayload = {
   parentSessionId: string;
   parentLeaf: string;
@@ -349,7 +351,7 @@ registerEntryKind<Message>({
 registerEntryKind<RequestHeaderPayload>({
   kind: "request_header",
   persisted: true,
-  doc: "Request envelope. system and tools are stored only when they differ from the default.",
+  doc: "Request envelope. system and tools are stored in full only when their hash differs from the previous request_header, or there is none.",
   validate: isRequestHeader,
 });
 

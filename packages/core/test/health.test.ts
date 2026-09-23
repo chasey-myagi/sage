@@ -4,11 +4,11 @@ import { AgentSession, MemoryLogStore } from "../src/index.ts";
 import type { StoredEntry } from "../src/log/types.ts";
 import {
   createFaux,
-  MODEL,
-  SYSTEM,
+  FAUX_MODEL as MODEL,
+  FAUX_SYSTEM as SYSTEM,
   stopScript,
   toolScript,
-} from "./support/faux.ts";
+} from "../src/testing/index.ts";
 
 const LEAK = "LEAK_SENTINEL_claim_/tmp/secret.txt";
 

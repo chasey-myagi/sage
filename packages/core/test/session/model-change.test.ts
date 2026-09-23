@@ -9,7 +9,7 @@ import {
   MemoryLogStore,
   passthroughView,
 } from "../../src/index.ts";
-import { SYSTEM } from "../support/faux.ts";
+import { FAUX_SYSTEM as SYSTEM } from "../../src/testing/index.ts";
 
 const START = { provider: "anthropic", model: "claude-sonnet-5" };
 const MINI = { provider: "openai", model: "gpt-5.4-mini" };

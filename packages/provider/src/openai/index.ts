@@ -1,63 +1,57 @@
 /**
- * OpenAI-compatible chat adapter. cacheBreakpoints are ignored: this wire
- * format has no cache field. Thinking blocks and foreign tool ids are
- * normalized before encode. SSE `delta.reasoning_content` string increments
- * open their own thinking block and emit thinking_delta. block_end fires
- * when content starts or the choice finishes. Encode still drops thinking
- * through normalizeForApi and does not send reasoning_content back. Usage
- * prefers prompt_cache_hit_tokens, then prompt_tokens_details.cached_tokens,
- * then the whole prompt_tokens. inputCacheCreation stays 0. raw is the
- * provider usage object unchanged. The first parsed SSE object's `id` and
- * `model` become the response chunk. `toolChoice: "none"` is
- * `tool_choice: "none"` and `"auto"` is `"auto"`. An absent toolChoice
- * omits the field. messages and tools are otherwise unchanged.
+ * OpenAI-compatible chat adapter.
  *
- * Deliberately not a Log entry: the API key, request bytes, and abort
- * signal stay here. adapterDefaults are returned so a later
- * request_header can store what this adapter filled in. Pre-stream
- * retries are not adapter defaults and are not a request_header field.
+ * Guarantees: cacheBreakpoints are ignored, since this wire format has no
+ * cache field. Thinking blocks and foreign tool ids are normalized before
+ * encoding; thinking is never sent back. Streamed `reasoning_content`
+ * opens its own thinking block. The first parsed SSE object's `id` and
+ * `model` become the response chunk. `toolChoice` is sent as
+ * `tool_choice` unchanged; an absent toolChoice omits the field. Messages
+ * and tools are otherwise sent unchanged.
+ *
+ * Intentionally not in the Log: the API key, request bytes, and abort
+ * signal. adapterDefaults are returned so the request_header can store what
+ * this adapter filled in. Pre-stream retries are not adapter defaults and
+ * not a request_header field.
  */
 
 import { prepareModel, resolveMaxTokens } from "../catalog.js";
 import type { PreparedCall, ProviderAdapter } from "../contract/adapter.js";
-import type { Sleeper } from "../contract/backoff.js";
 import type { Message, ModelRef, Request } from "../contract/message.js";
 import type { StreamChunk } from "../contract/stream.js";
 import type { Usage } from "../contract/usage.js";
 import type { Driver, WireStop } from "../drive.js";
 import { blockStart, driveStream } from "../drive.js";
-import type { ClientOptions } from "../http.js";
-import { joinUrl } from "../http.js";
+import { type Client, type ClientOptions, resolveClient } from "../http.js";
 import { normalizeForApi } from "../normalize.js";
-import { asRecord, indexOf, num } from "../record.js";
-import type { RetryPolicy } from "../retry.js";
+import { asRecord, indexOf, num, parseRecord } from "../record.js";
 import type { SseEvent } from "../sse.js";
 
 const DEFAULT_BASE = "https://api.openai.com/v1";
 
+type OpenKind = "text" | "tool" | "thinking";
+
 type OpenState = {
   nextIndex: number;
-  open?: { index: number; kind: "text" | "tool" | "thinking" };
+  open?: { index: number; kind: OpenKind };
   toolBlocks: Map<number, number>;
   finishReason?: string;
   /** Set once the response chunk has been pushed. */
   announced: boolean;
 };
 
+/**
+ * OpenAI-compatible chat adapter. Differs from `AnthropicAdapter` only where
+ * the protocol does: the `/chat/completions` path, bearer auth, the request
+ * encoding, and the event decoder (which must allocate block indices itself,
+ * since this wire format has none).
+ */
 export class OpenAIAdapter implements ProviderAdapter {
   readonly api = "openai-chat" as const;
-  private readonly apiKey: string;
-  private readonly baseUrl: string;
-  private readonly fetchImpl: typeof fetch | undefined;
-  private readonly retry: RetryPolicy | undefined;
-  private readonly sleep: Sleeper | undefined;
+  private readonly client: Client;
 
   constructor(options: ClientOptions) {
-    this.apiKey = options.apiKey;
-    this.baseUrl = options.baseUrl ?? DEFAULT_BASE;
-    this.fetchImpl = options.fetchImpl;
-    this.retry = options.retry;
-    this.sleep = options.sleep;
+    this.client = resolveClient(options, DEFAULT_BASE);
   }
 
   prepare(model: ModelRef): PreparedCall {
@@ -74,20 +68,15 @@ export class OpenAIAdapter implements ProviderAdapter {
       toolBlocks: new Map(),
       announced: false,
     };
-    return driveStream({
-      url: joinUrl(this.baseUrl, "/chat/completions"),
+    return driveStream(this.client, {
+      path: "/chat/completions",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${this.apiKey}`,
+        authorization: `Bearer ${this.client.apiKey}`,
       },
       json: encodeRequest(request, prepared),
       signal,
-      fetchImpl: this.fetchImpl,
-      retry: this.retry,
-      sleep: this.sleep,
-      onEvent(event, driver) {
-        interpret(event, state, driver);
-      },
+      onEvent: (event, driver) => interpret(event, state, driver),
     });
   }
 }
@@ -180,13 +169,7 @@ function interpret(event: SseEvent, state: OpenState, driver: Driver): void {
     driver.complete(mapStop(state.finishReason));
     return;
   }
-  let payload: unknown;
-  try {
-    payload = JSON.parse(event.data);
-  } catch {
-    return;
-  }
-  const record = asRecord(payload);
+  const record = parseRecord(event.data);
   if (!record) return;
   if (!state.announced) {
     state.announced = true;
@@ -200,10 +183,10 @@ function interpret(event: SseEvent, state: OpenState, driver: Driver): void {
   if (choice) {
     const delta = asRecord(choice.delta);
     if (delta && typeof delta.reasoning_content === "string") {
-      applyReasoning(state, driver, delta.reasoning_content);
+      applyText(state, driver, "thinking", delta.reasoning_content);
     }
     if (delta && typeof delta.content === "string") {
-      applyContent(state, driver, delta.content);
+      applyText(state, driver, "text", delta.content);
     }
     if (delta && Array.isArray(delta.tool_calls)) {
       for (const call of delta.tool_calls) applyTool(state, driver, call);
@@ -217,64 +200,63 @@ function interpret(event: SseEvent, state: OpenState, driver: Driver): void {
   if (usage) driver.setUsage(mapUsage(usage));
 }
 
-function applyReasoning(state: OpenState, driver: Driver, text: string): void {
+/**
+ * Appends streamed text of one kind. A different open block is closed first
+ * and a new block opened. An empty delta only opens a block when none is
+ * open; it never closes one.
+ */
+function applyText(
+  state: OpenState,
+  driver: Driver,
+  kind: "text" | "thinking",
+  text: string,
+): void {
   if (text.length === 0) {
-    if (!state.open) openThinking(state, driver);
+    if (!state.open) openBlock(state, driver, kind);
     return;
   }
-  if (state.open?.kind !== "thinking") closeOpen(state, driver);
-  if (!state.open) openThinking(state, driver);
-  if (!state.open) return;
-  driver.push({
-    type: "thinking_delta",
-    index: state.open.index,
-    text,
-  });
+  if (state.open?.kind !== kind) closeOpen(state, driver);
+  const index = state.open?.index ?? openBlock(state, driver, kind);
+  driver.push(
+    kind === "text"
+      ? { type: "text_delta", index, text }
+      : { type: "thinking_delta", index, text },
+  );
 }
 
-function openThinking(state: OpenState, driver: Driver): void {
+/** Opens the next block index as `kind` and returns that index. */
+function openBlock(
+  state: OpenState,
+  driver: Driver,
+  kind: OpenKind,
+  id?: string,
+  name?: string,
+): number {
   const index = state.nextIndex;
   state.nextIndex += 1;
-  state.open = { index, kind: "thinking" };
-  driver.push(blockStart(index, "thinking"));
+  state.open = { index, kind };
+  driver.push(blockStart(index, kind === "tool" ? "tool_use" : kind, id, name));
+  return index;
 }
 
-function applyContent(state: OpenState, driver: Driver, content: string): void {
-  if (content.length === 0) {
-    if (!state.open) openText(state, driver);
-    return;
-  }
-  if (state.open?.kind !== "text") closeOpen(state, driver);
-  if (!state.open) openText(state, driver);
-  if (!state.open) return;
-  driver.push({ type: "text_delta", index: state.open.index, text: content });
-}
-
-function openText(state: OpenState, driver: Driver): void {
-  const index = state.nextIndex;
-  state.nextIndex += 1;
-  state.open = { index, kind: "text" };
-  driver.push(blockStart(index, "text"));
-}
-
+/**
+ * Tool call deltas are keyed by the wire's `index`; the first delta for an
+ * index closes any open block and opens a tool_use block.
+ */
 function applyTool(state: OpenState, driver: Driver, value: unknown): void {
   const call = asRecord(value);
   if (!call) return;
   const toolIndex = indexOf(call.index);
   if (toolIndex === undefined) return;
+  const fn = asRecord(call.function);
   let blockIndex = state.toolBlocks.get(toolIndex);
   if (blockIndex === undefined) {
     closeOpen(state, driver);
-    blockIndex = state.nextIndex;
-    state.nextIndex += 1;
-    state.toolBlocks.set(toolIndex, blockIndex);
-    state.open = { index: blockIndex, kind: "tool" };
-    const fn = asRecord(call.function);
     const id = typeof call.id === "string" ? call.id : undefined;
     const name = fn && typeof fn.name === "string" ? fn.name : undefined;
-    driver.push(blockStart(blockIndex, "tool_use", id, name));
+    blockIndex = openBlock(state, driver, "tool", id, name);
+    state.toolBlocks.set(toolIndex, blockIndex);
   }
-  const fn = asRecord(call.function);
   const args =
     fn && typeof fn.arguments === "string" ? fn.arguments : undefined;
   if (args !== undefined && args.length > 0) {
@@ -286,6 +268,10 @@ function applyTool(state: OpenState, driver: Driver, value: unknown): void {
   }
 }
 
+/**
+ * Ends the open block, if any. Called when a block of another kind starts,
+ * when the choice reports a finish_reason, and at `[DONE]`.
+ */
 function closeOpen(state: OpenState, driver: Driver): void {
   if (!state.open) return;
   driver.push({ type: "block_end", index: state.open.index });
@@ -297,6 +283,12 @@ function firstRecord(value: unknown): Record<string, unknown> | undefined {
   return asRecord(value[0]);
 }
 
+/**
+ * Cache reads come from `prompt_cache_hit_tokens` (DeepSeek), then
+ * `prompt_tokens_details.cached_tokens`, else none; the rest of
+ * `prompt_tokens` is `inputOther`. This protocol reports no cache writes,
+ * so `inputCacheCreation` is 0. `raw` is the provider object unchanged.
+ */
 function mapUsage(raw: Record<string, unknown>): Usage {
   const output = num(raw.completion_tokens);
   if ("prompt_cache_hit_tokens" in raw) {

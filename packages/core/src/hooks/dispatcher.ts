@@ -1,7 +1,7 @@
 /**
  * Hook dispatcher.
  *
- * Contract: observers run in registration order. A throw is recorded and the
+ * Guarantees: observers run in registration order. A throw is recorded and the
  * next observer still runs. The tool pipeline is fixed: tool_pre, then guard,
  * then around(execute), then tool_post, then tool_result. A pre deny is final.
  * A guard may only add a deny. Neither denial executes the tool. A throw from
@@ -17,7 +17,10 @@ import type { ToolResultBlock, ToolUseBlock } from "@sage/provider/contract";
 import type { HarnessTool } from "../tools.js";
 import type { Decision, HookEvents, Hooks, ObserverError } from "./types.js";
 
-type Observer = (payload: never) => void | Promise<void>;
+type ObserverFn<E extends keyof HookEvents> = (
+  payload: Readonly<HookEvents[E]>,
+) => void | Promise<void>;
+type ObserverLists = { [E in keyof HookEvents]: ObserverFn<E>[] };
 type PreFn = (payload: HookEvents["tool_pre"]) => Decision | Promise<Decision>;
 type PostFn = (
   payload: HookEvents["tool_post"],
@@ -30,6 +33,15 @@ type AroundFn = (
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Appends `item` to `list`; the returned function removes that one entry. */
+function register<T>(list: T[], item: T): () => void {
+  list.push(item);
+  return () => {
+    const index = list.indexOf(item);
+    if (index >= 0) list.splice(index, 1);
+  };
 }
 
 function denied(id: string, reason: string): ToolResultBlock {
@@ -50,8 +62,24 @@ function toolFailure(call: ToolUseBlock, error: unknown): ToolResultBlock {
   };
 }
 
+/**
+ * The session's `Hooks` implementation. `errors` is the caller's array;
+ * observer throws are pushed onto it.
+ */
 export class HookDispatcher implements Hooks {
-  private readonly observers = new Map<string, Observer[]>();
+  // One list per event, created up front: TypeScript can read a mapped type
+  // through a generic key but cannot assign through one.
+  private readonly observers: ObserverLists = {
+    session_start: [],
+    turn_start: [],
+    view_compiled: [],
+    llm_end: [],
+    tool_pre: [],
+    tool_post: [],
+    tool_result: [],
+    turn_end: [],
+    session_end: [],
+  };
   private readonly pres: PreFn[] = [];
   private readonly posts: PostFn[] = [];
   private readonly guards: GuardFn[] = [];
@@ -59,79 +87,50 @@ export class HookDispatcher implements Hooks {
 
   constructor(private readonly errors: ObserverError[]) {}
 
-  observe<E extends keyof HookEvents>(
-    event: E,
-    fn: (payload: Readonly<HookEvents[E]>) => void | Promise<void>,
-  ): () => void {
-    const list = this.observers.get(event) ?? [];
-    const observer = fn as Observer;
-    list.push(observer);
-    this.observers.set(event, list);
-    return () => {
-      const current = this.observers.get(event);
-      if (!current) return;
-      const index = current.indexOf(observer);
-      if (index >= 0) current.splice(index, 1);
-    };
+  observe<E extends keyof HookEvents>(event: E, fn: ObserverFn<E>): () => void {
+    return register(this.observers[event], fn);
   }
 
-  on(
-    event: "tool_pre",
-    fn: (payload: HookEvents["tool_pre"]) => Decision | Promise<Decision>,
-  ): () => void;
-  on(
-    event: "tool_post",
-    fn: (
-      payload: HookEvents["tool_post"],
-    ) => ToolResultBlock | undefined | Promise<ToolResultBlock | undefined>,
-  ): () => void;
-  on(event: "tool_pre" | "tool_post", fn: PreFn | PostFn): () => void {
-    if (event === "tool_pre") {
-      const pre = fn as PreFn;
-      this.pres.push(pre);
-      return () => {
-        const index = this.pres.indexOf(pre);
-        if (index >= 0) this.pres.splice(index, 1);
-      };
-    }
-    const post = fn as PostFn;
-    this.posts.push(post);
-    return () => {
-      const index = this.posts.indexOf(post);
-      if (index >= 0) this.posts.splice(index, 1);
-    };
+  on(event: "tool_pre", fn: PreFn): () => void;
+  on(event: "tool_post", fn: PostFn): () => void;
+  on(...args: ["tool_pre", PreFn] | ["tool_post", PostFn]): () => void {
+    const [event, fn] = args;
+    if (event === "tool_pre") return register(this.pres, fn);
+    return register(this.posts, fn);
   }
 
   guard(fn: GuardFn): () => void {
-    this.guards.push(fn);
-    return () => {
-      const index = this.guards.indexOf(fn);
-      if (index >= 0) this.guards.splice(index, 1);
-    };
+    return register(this.guards, fn);
   }
 
   around(fn: AroundFn): () => void {
-    this.arounds.push(fn);
-    return () => {
-      const index = this.arounds.indexOf(fn);
-      if (index >= 0) this.arounds.splice(index, 1);
-    };
+    return register(this.arounds, fn);
   }
 
+  /**
+   * Runs `event`'s observers in registration order, awaiting each. A throw
+   * or rejection is recorded on `errors` and the next observer still runs;
+   * `emit` itself never throws.
+   */
   async emit<E extends keyof HookEvents>(
     event: E,
     payload: HookEvents[E],
   ): Promise<void> {
-    const list = this.observers.get(event) ?? [];
-    for (const fn of list) {
+    for (const fn of this.observers[event]) {
       try {
-        await fn(payload as never);
+        await fn(payload);
       } catch (error) {
         this.errors.push({ event, error: errorText(error) });
       }
     }
   }
 
+  /**
+   * Runs one call through the fixed pipeline and returns its tool_result;
+   * never throws for a tool failure. An unknown `tool` yields an error
+   * result after the pre hooks and guards ran. `tool_post` hooks may replace
+   * the result; observers then see the final one as `tool_result`.
+   */
   async runTool(
     call: ToolUseBlock,
     tool: HarnessTool | undefined,

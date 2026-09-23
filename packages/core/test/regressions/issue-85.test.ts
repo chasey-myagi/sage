@@ -1,13 +1,13 @@
+import type { StreamChunk as FauxChunk } from "@sage/provider/contract";
 import { describe, expect, it } from "vitest";
 import { AgentSession, MemoryLogStore } from "../../src/index.ts";
 import {
   createFaux,
-  type FauxChunk,
-  MODEL,
-  SYSTEM,
+  FAUX_MODEL as MODEL,
+  FAUX_SYSTEM as SYSTEM,
   stopScript,
-  USAGE,
-} from "../support/faux.ts";
+  FAUX_USAGE as USAGE,
+} from "../../src/testing/index.ts";
 
 function cut(
   text: string,

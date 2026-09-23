@@ -2,7 +2,7 @@ import { AnthropicAdapter, OpenAIAdapter } from "@sage/provider";
 import type { ProviderAdapter } from "@sage/provider/contract";
 import { describe, expect, it } from "vitest";
 import { AgentSession, MemoryLogStore } from "../../src/index.ts";
-import { SYSTEM } from "../support/faux.ts";
+import { FAUX_SYSTEM as SYSTEM } from "../../src/testing/index.ts";
 
 const ANTHROPIC_SSE = [
   "event: message_start",

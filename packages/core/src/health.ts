@@ -1,29 +1,11 @@
 /**
- * Run health read back from one log path.
+ * Run health: counts and token sums read back from one Log path.
  *
- * Contract: every number comes from assistant `details.usage`, the last
- * manifest `budget`, every manifest `scorer`, `view_epoch`, and
- * `model_change`. `tokens.input` is the sum of `inputOther`. `tokens.total`
- * adds cache read, cache creation, and output. `cacheHitRatio` is
- * Σ cacheRead / Σ (cacheRead + inputOther + cacheCreation), or null when
- * no assistant usage exists or that denominator is 0. `omitted` and
- * `expands` are the last manifest's budget fields (already cumulative).
- * `expandRate` is expands/omitted, or null when omitted is 0. `epochs` is
- * one more than the highest `view_epoch.epoch`, or 1 when none exist.
- * `scorerCalls` sums `scorer.calls`. `scorerFallbacks` sums numeric
- * `scorer.fallback`, and counts `true` as 1. `shadow.calls` counts
- * manifests that carry a `shadow` object. `shadow.usage` sums that
- * object's `usage` quadruple (`inputOther`, `inputCacheRead`,
- * `inputCacheCreation`, `output`). `entryScored` sums each manifest's
- * `entryScored` object: `calls`, `none`, `summary`, `full`,
- * `summaryRejected`, and the same usage quadruple. A missing
- * `summaryRejected` adds nothing. A manifest without the object adds
- * nothing. `subtasks` sums usage from
- * `spawn_subtask` and `spawn_subtasks` tool results stored on the user
- * message as `details.toolResults`. `spawn_subtasks` counts each item in
- * `details.results`. `cacheHitRatio` and `expandRate` ignore that usage.
- * `toolErrors` counts `tool_result` blocks whose `isError` is true. The
- * count does not end the run. `turnRetries` counts `turn_retry` entries.
+ * Guarantees: `runHealth` is a pure function of the path. It reads only
+ * assistant `details.usage`, manifest `budget`, `scorer`, `shadow`, and
+ * `entryScored`, `view_epoch`, `model_change`, `turn_retry`, tool_result
+ * error flags, and `details.toolResults`; anything malformed counts as 0.
+ * The same object is stored on the terminal entry.
  *
  * Intentionally not in the Log: this function. It does not copy claim
  * text, chunk text, reasons, paths, or child session ids.
@@ -37,7 +19,7 @@ import {
   type TokenCounts,
   totalTokens,
 } from "@sage/provider/contract";
-import { viewEpochs } from "./log/epoch.js";
+import { viewEpochs } from "./log/path.js";
 import type { StoredEntry } from "./log/types.js";
 
 /**
@@ -53,21 +35,40 @@ export type HealthTokens = {
   total: number;
 };
 
+/** Health of one run. Every field is derived from the Log path alone. */
 export type RunHealth = {
+  /** Assistant messages on the path. */
   turns: number;
+  /** Sum of assistant usage. */
   tokens: HealthTokens;
+  /**
+   * Σ cacheRead / Σ (cacheRead + input + cacheCreation) over assistant
+   * usage; null when no assistant usage exists or the denominator is 0.
+   */
   cacheHitRatio: number | null;
+  /** `expands / omitted`; null when `omitted` is 0. */
   expandRate: number | null;
+  /** The last manifest's `budget.omitted`. */
   omitted: number;
+  /** The last manifest's `budget.expands` (already cumulative). */
   expands: number;
+  /** One more than the highest `view_epoch.epoch`, or 1 when none exist. */
   epochs: number;
+  /** model_change entries on the path. */
   modelChanges: number;
+  /** Sum of manifest `scorer.calls`. */
   scorerCalls: number;
+  /** Sum of numeric manifest `scorer.fallback`; `true` counts as 1. */
   scorerFallbacks: number;
+  /** Manifests carrying a `shadow` object, and the sum of their usage. */
   shadow: {
     calls: number;
     usage: HealthTokens;
   };
+  /**
+   * Sums of each manifest's `entryScored` counts and usage. A manifest
+   * without the object, or a missing `summaryRejected`, adds nothing.
+   */
   entryScored: {
     calls: number;
     none: number;
@@ -76,14 +77,23 @@ export type RunHealth = {
     summaryRejected: number;
     usage: HealthTokens;
   };
+  /**
+   * Child sessions spawned by `spawn_subtask` (one each) and
+   * `spawn_subtasks` (one per item in `details.results`), and their summed
+   * usage, read from `details.toolResults` on user messages. Not part of
+   * `cacheHitRatio` or `expandRate`.
+   */
   subtasks: {
     count: number;
     tokens: HealthTokens;
   };
+  /** tool_result blocks with `isError: true`. Errors do not end the run. */
   toolErrors: number;
+  /** turn_retry entries on the path. */
   turnRetries: number;
 };
 
+/** Computes `RunHealth` for `path`. Never throws on malformed entries. */
 export function runHealth(path: readonly StoredEntry[]): RunHealth {
   let tokens: TokenCounts = emptyUsage();
   let turns = 0;
@@ -205,16 +215,7 @@ function subtaskHealth(path: readonly StoredEntry[]): RunHealth["subtasks"] {
   const names = new Map<string, string>();
   for (const entry of path) {
     if (entry.kind !== "message" || !isRecord(entry.payload)) continue;
-    const content = entry.payload.content;
-    if (Array.isArray(content)) {
-      for (const block of content) {
-        if (!isRecord(block) || block.type !== "tool_use") continue;
-        if (typeof block.id !== "string" || typeof block.name !== "string") {
-          continue;
-        }
-        names.set(block.id, block.name);
-      }
-    }
+    recordToolNames(entry.payload.content, names);
     const listed = entry.details?.toolResults;
     if (!Array.isArray(listed)) continue;
     for (const item of listed) {
@@ -234,6 +235,18 @@ function subtaskHealth(path: readonly StoredEntry[]): RunHealth["subtasks"] {
     }
   }
   return { count, tokens: toHealthTokens(tokens) };
+}
+
+/** Adds each well-formed tool_use block's id → name to `names`. */
+function recordToolNames(content: unknown, names: Map<string, string>): void {
+  if (!Array.isArray(content)) return;
+  for (const block of content) {
+    if (!isRecord(block) || block.type !== "tool_use") continue;
+    if (typeof block.id !== "string" || typeof block.name !== "string") {
+      continue;
+    }
+    names.set(block.id, block.name);
+  }
 }
 
 function absorbSpawn(

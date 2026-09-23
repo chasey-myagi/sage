@@ -1,7 +1,7 @@
 /**
  * Import-time entry kind registry.
  *
- * Contract: the kernel only appends, replays, and reads the leaf. Each kind
+ * Guarantees: the kernel only appends, replays, and reads the leaf. Each kind
  * registers its own validator and optional pure reducer. Registering the same
  * kind twice throws. Reading an unregistered kind refuses the log.
  *
@@ -11,6 +11,11 @@
 
 import type { StoredEntry } from "./types.js";
 
+/**
+ * One entry kind. `validate` runs on every append and every reopen;
+ * `reduce`, when present, must be pure. `doc` is copied into
+ * docs/log-manifest.md.
+ */
 export type EntryKindDef<P, S = unknown> = {
   kind: string;
   persisted: true;
@@ -22,6 +27,7 @@ export type EntryKindDef<P, S = unknown> = {
 const kinds: EntryKindDef<unknown>[] = [];
 const byKind = new Map<string, EntryKindDef<unknown>>();
 
+/** Registers a kind at import time. Throws when the kind already exists. */
 export function registerEntryKind<P, S = unknown>(
   def: EntryKindDef<P, S>,
 ): void {
@@ -33,10 +39,12 @@ export function registerEntryKind<P, S = unknown>(
   byKind.set(def.kind, stored);
 }
 
+/** Every registered kind, in registration order. */
 export function entryKinds(): readonly EntryKindDef<unknown>[] {
   return kinds;
 }
 
+/** The definition for `kind`, or undefined when unregistered. */
 export function kindDef(kind: string): EntryKindDef<unknown> | undefined {
   return byKind.get(kind);
 }

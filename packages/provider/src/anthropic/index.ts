@@ -1,22 +1,20 @@
 /**
- * Anthropic Messages adapter. Translates cache breakpoints into
- * cache_control and folds SSE back into StreamChunk.
+ * Anthropic Messages adapter.
  *
- * Deliberately not a Log entry: the API key, request bytes, and abort
- * signal stay here. adapterDefaults are returned so a later
- * request_header can store what this adapter filled in. Pre-stream
- * retries are not adapter defaults and are not a request_header field.
+ * Guarantees: cache breakpoints become `cache_control` marks (the head mark
+ * goes on the system block and the last tool). `message_start` becomes the
+ * response chunk (message.id, message.model). `toolChoice` becomes
+ * `tool_choice: { type }`; an absent toolChoice omits the field. Messages
+ * and tools are otherwise sent unchanged.
  *
- * `message_start` becomes the response chunk (message.id, message.model).
- *
- * `toolChoice` becomes `tool_choice: { type }` for `"none"` and `"auto"`.
- * An absent toolChoice omits the field. messages and tools are otherwise
- * unchanged.
+ * Intentionally not in the Log: the API key, request bytes, and abort
+ * signal. adapterDefaults are returned so the request_header can store what
+ * this adapter filled in. Pre-stream retries are not adapter defaults and
+ * not a request_header field.
  */
 
 import { prepareModel, resolveMaxTokens } from "../catalog.js";
 import type { PreparedCall, ProviderAdapter } from "../contract/adapter.js";
-import type { Sleeper } from "../contract/backoff.js";
 import type {
   CacheBreakpoint,
   ContentBlock,
@@ -27,34 +25,31 @@ import type { StreamChunk } from "../contract/stream.js";
 import type { Usage } from "../contract/usage.js";
 import type { Driver, WireStop } from "../drive.js";
 import { blockStart, driveStream } from "../drive.js";
-import type { ClientOptions } from "../http.js";
-import { joinUrl } from "../http.js";
+import { type Client, type ClientOptions, resolveClient } from "../http.js";
 import { normalizeForApi } from "../normalize.js";
-import { asRecord, indexOf, num } from "../record.js";
-import type { RetryPolicy } from "../retry.js";
+import { asRecord, indexOf, num, parseRecord } from "../record.js";
 import type { SseEvent } from "../sse.js";
 
 const DEFAULT_BASE = "https://api.anthropic.com";
+/** Messages API version header this encoder and decoder are written against. */
+const ANTHROPIC_VERSION = "2023-06-01";
 
 type AnthropicState = {
   rawUsage: Record<string, unknown>;
   stopReason: string | null;
 };
 
+/**
+ * Anthropic Messages adapter. Differs from `OpenAIAdapter` only where the
+ * protocol does: the `/v1/messages` path, `x-api-key` plus
+ * `anthropic-version` headers, the request encoding, and the event decoder.
+ */
 export class AnthropicAdapter implements ProviderAdapter {
   readonly api = "anthropic-messages" as const;
-  private readonly apiKey: string;
-  private readonly baseUrl: string;
-  private readonly fetchImpl: typeof fetch | undefined;
-  private readonly retry: RetryPolicy | undefined;
-  private readonly sleep: Sleeper | undefined;
+  private readonly client: Client;
 
   constructor(options: ClientOptions) {
-    this.apiKey = options.apiKey;
-    this.baseUrl = options.baseUrl ?? DEFAULT_BASE;
-    this.fetchImpl = options.fetchImpl;
-    this.retry = options.retry;
-    this.sleep = options.sleep;
+    this.client = resolveClient(options, DEFAULT_BASE);
   }
 
   prepare(model: ModelRef): PreparedCall {
@@ -67,21 +62,16 @@ export class AnthropicAdapter implements ProviderAdapter {
     signal?: AbortSignal,
   ): AsyncIterable<StreamChunk> {
     const state: AnthropicState = { rawUsage: {}, stopReason: null };
-    return driveStream({
-      url: joinUrl(this.baseUrl, "/v1/messages"),
+    return driveStream(this.client, {
+      path: "/v1/messages",
       headers: {
         "content-type": "application/json",
-        "x-api-key": this.apiKey,
-        "anthropic-version": "2023-06-01",
+        "x-api-key": this.client.apiKey,
+        "anthropic-version": ANTHROPIC_VERSION,
       },
       json: encodeRequest(request, prepared),
       signal,
-      fetchImpl: this.fetchImpl,
-      retry: this.retry,
-      sleep: this.sleep,
-      onEvent(event, driver) {
-        interpret(event, state, driver);
-      },
+      onEvent: (event, driver) => interpret(event, state, driver),
     });
   }
 }
@@ -194,13 +184,7 @@ function interpret(
   state: AnthropicState,
   driver: Driver,
 ): void {
-  let payload: unknown;
-  try {
-    payload = JSON.parse(event.data);
-  } catch {
-    return;
-  }
-  const record = asRecord(payload);
+  const record = parseRecord(event.data);
   if (!record || typeof record.type !== "string") return;
   switch (record.type) {
     case "message_start":

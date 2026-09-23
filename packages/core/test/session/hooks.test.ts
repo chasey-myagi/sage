@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { AgentSession, MemoryLogStore } from "../../src/index.ts";
 import {
   createFaux,
-  MODEL,
-  SYSTEM,
+  FAUX_MODEL as MODEL,
+  FAUX_SYSTEM as SYSTEM,
   stopScript,
   toolScript,
-} from "../support/faux.ts";
+} from "../../src/testing/index.ts";
 
 function harness(
   name: string,

@@ -1,7 +1,7 @@
 /**
  * Committed expected-output files.
  *
- * Contract: a missing file is created. `UPDATE_EXPECTED=1` rewrites it.
+ * Guarantees: a missing file is created. `UPDATE_EXPECTED=1` rewrites it.
  * Otherwise the bytes must match, and a mismatch throws with a line diff.
  *
  * Intentionally not in the Log: expected files and diffs. They are the test
@@ -11,6 +11,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+/**
+ * Compares `actual` with the committed file. Creates a missing file, and
+ * rewrites it when `UPDATE_EXPECTED=1`; otherwise throws with a line diff
+ * on any byte difference.
+ */
 export function expectFile(file: string, actual: string): void {
   const update = process.env.UPDATE_EXPECTED === "1";
   if (update || !existsSync(file)) {

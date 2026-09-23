@@ -5,15 +5,15 @@ import {
   MemoryLogStore,
   passthroughView,
 } from "../../src/index.ts";
-import { canonicalJson, sha256 } from "../support/canonical.ts";
 import {
   createFaux,
-  MODEL,
-  SYSTEM,
+  FAUX_MODEL as MODEL,
+  FAUX_SYSTEM as SYSTEM,
   stopScript,
   toolScript,
-  USAGE,
-} from "../support/faux.ts";
+  FAUX_USAGE as USAGE,
+} from "../../src/testing/index.ts";
+import { canonicalJson, sha256 } from "../support/canonical.ts";
 
 function tool(name = "echo") {
   return {

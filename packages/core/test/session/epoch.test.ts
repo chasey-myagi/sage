@@ -6,11 +6,11 @@ import {
 } from "../../src/index.ts";
 import {
   createFaux,
-  MODEL,
-  SYSTEM,
+  FAUX_MODEL as MODEL,
+  FAUX_SYSTEM as SYSTEM,
   stopScript,
   toolScript,
-} from "../support/faux.ts";
+} from "../../src/testing/index.ts";
 
 const HEAD = {
   role: "user" as const,

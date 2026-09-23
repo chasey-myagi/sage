@@ -1,10 +1,10 @@
 /**
  * In-memory session tree shared by every store.
  *
- * Contract: entries are append-only. The leaf is derived by scanning entries
- * in seq order: a `leaf` entry sets the pointer to its target, any other kind
- * sets the pointer to itself. `path` walks parent links from that pointer back
- * to the root and omits `leaf` entries. Nothing here is a high-water mark.
+ * Guarantees: entries are append-only. The leaf is derived by scanning
+ * entries in seq order: a `leaf` entry sets the pointer to its target, any
+ * other kind sets the pointer to itself. `path` walks parent links from that
+ * pointer back to the root and omits `leaf` entries.
  *
  * Intentionally not in the Log: this index. Disk or the caller holds the
  * entries; this object is rebuilt by replaying those entries.
@@ -21,6 +21,7 @@ import {
   type StoredEntry,
 } from "./types.js";
 
+/** One session's entries and id index. Stores wrap it; it never touches disk. */
 export class LogSession {
   private readonly entries: StoredEntry[] = [];
   private readonly byId = new Map<string, StoredEntry>();
@@ -37,6 +38,7 @@ export class LogSession {
     return this.byId.has(id);
   }
 
+  /** Current leaf pointer, or null when there are no entries. */
   leaf(): EntryId | null {
     let current: EntryId | null = null;
     for (const entry of this.entries) {
@@ -45,6 +47,11 @@ export class LogSession {
     return current;
   }
 
+  /**
+   * Root-to-leaf chain ending at `leafId` (default: the current leaf),
+   * without `leaf` entries. Throws on an unknown id, a broken parent link,
+   * or a cycle.
+   */
   path(leafId?: EntryId): StoredEntry[] {
     const startId = leafId ?? this.leaf();
     if (startId === null) return [];
@@ -71,12 +78,18 @@ export class LogSession {
     return chain;
   }
 
+  /** Adds an already prepared entry. Does not validate. */
   commit(entry: StoredEntry): void {
     this.entries.push(entry);
     this.byId.set(entry.id, entry);
   }
 }
 
+/**
+ * Validates `input` against its kind and parent, then builds the stored
+ * entry without committing it. Throws `UnknownEntryKindError`,
+ * `InvalidEntryError`, or an Error for an unknown parent.
+ */
 export function prepareEntry(
   session: LogSession,
   input: EntryInput,
