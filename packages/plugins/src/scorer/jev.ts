@@ -6,7 +6,8 @@
  * `Authorization: Bearer <apiKey>` and `Content-Type: application/json`.
  * `state` is `{ query, chunks: [{ id, tool, summary, tokens }] }`. `summary`
  * is the one-line stub summary, not the original tool text. `model` is
- * `jev-latest`. Each chunk is one `choice` question keyed by its id, with
+ * `opts.model` when that string is non-empty, otherwise `jev-latest`.
+ * Each chunk is one `choice` question keyed by its id, with
  * criteria `full` and `none`. `probabilities.full` >= `minConfidence`
  * (default 0.5) becomes tier `full`; otherwise `none`. The decision `reason`
  * is `scorer:jev:<p>` with p rounded to two decimals. Decisions do not set
@@ -68,6 +69,7 @@ type Posted =
 export function jevScorer(opts: {
   apiKey?: string;
   baseUrl?: string;
+  model?: string;
   fetchImpl?: JevFetch;
   sleepImpl?: (ms: number) => Promise<void>;
   batchSize?: number;
@@ -76,6 +78,7 @@ export function jevScorer(opts: {
 }): Scorer {
   const apiKey = opts.apiKey ?? "";
   const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const model = opts.model || MODEL_ID;
   const fetchImpl = opts.fetchImpl ?? defaultFetch;
   const sleepImpl = opts.sleepImpl ?? delay;
   const batchSize = Math.max(
@@ -105,7 +108,7 @@ export function jevScorer(opts: {
             signal: input.signal,
             body: JSON.stringify({
               state: { query: input.query, chunks: batch },
-              model: MODEL_ID,
+              model,
               questions: questionsFor(batch),
             }),
           });

@@ -18,11 +18,14 @@
  * before the run. Provider calls stay in this process.
  * `--scorer model` installs a model scorer on the root compiler. It reuses
  * the assembled adapters and the session model. `--scorer jev` installs the
- * TypeSafe Jev scorer and reads `TYPESAFE_API_KEY`; a missing key exits 2.
- * The default scorer is the deterministic rule scorer. `--shadow-scorer
- * rule|model|jev` installs a second scorer that records `manifest.shadow`
- * and does not change tiers. It is off unless the flag is set. `jev` for
- * either flag reads `TYPESAFE_API_KEY`; a missing key exits 2.
+ * TypeSafe Jev scorer. `JEV_BASE_URL` defaults to `https://api.typesafe.ai`.
+ * `JEV_API_KEY` falls back to `TYPESAFE_API_KEY`. `JEV_MODEL` defaults to
+ * `jev-latest`. When neither key is set, the process exits 2 and names both
+ * variables. The default scorer is the deterministic rule scorer.
+ * `--shadow-scorer rule|model|jev` installs a second scorer that records
+ * `manifest.shadow` and does not change tiers. It is off unless the flag
+ * is set. `jev` for either flag uses the same three variables; a missing
+ * key still exits 2.
  * `--scorer-apply entry|rebuild` defaults to rebuild. `entry` scores a new
  * tool chunk when it first enters the view and requires `--scorer model`
  * or `--scorer jev`; otherwise the process exits 2. `entry` does not run
@@ -228,6 +231,8 @@ export function createCodingSession(opts: {
   return { session, store, sessionId };
 }
 
+type JevFetchImpl = NonNullable<Parameters<typeof jevScorer>[0]["fetchImpl"]>;
+
 export type CliIo = {
   env: NodeJS.ProcessEnv;
   cwd: string;
@@ -242,6 +247,8 @@ export type CliIo = {
   platform?: NodeJS.Platform;
   /** Test seam. Production probes `unshare -n` on linux. */
   unshareAvailable?: boolean;
+  /** Test seam. Production jev scoring uses global fetch. */
+  jevFetch?: JevFetchImpl;
 };
 
 export async function runCli(
@@ -293,9 +300,9 @@ export async function runCli(
   }
   if (
     (parsed.scorer === "jev" || parsed.shadowScorer === "jev") &&
-    !env.TYPESAFE_API_KEY
+    !jevApiKey(env)
   ) {
-    stderr.write("Missing TYPESAFE_API_KEY\n");
+    stderr.write("Missing JEV_API_KEY or TYPESAFE_API_KEY\n");
     return 2;
   }
   const auth = resolveAuth(
@@ -344,12 +351,14 @@ export async function runCli(
       adapters,
       { provider: auth.provider, model: auth.model },
       env,
+      io.jevFetch,
     ),
     shadowScorer: namedScorer(
       parsed.shadowScorer,
       adapters,
       { provider: auth.provider, model: auth.model },
       env,
+      io.jevFetch,
     ),
     ...(parsed.scorerApply ? { scorerApply: parsed.scorerApply } : {}),
   });
@@ -804,7 +813,7 @@ function resolveAuth(
       ok: false,
       exitCode: 1,
       message:
-        "typesafe is not a chat endpoint; use --scorer jev with TYPESAFE_API_KEY",
+        "typesafe is not a chat endpoint; use --scorer jev with JEV_API_KEY or TYPESAFE_API_KEY",
     };
   }
   const preset = resolvePreset(selected);
@@ -841,14 +850,28 @@ function isScorerName(value: string): value is ScorerName {
   return value === "rule" || value === "model" || value === "jev";
 }
 
+function jevApiKey(env: NodeJS.ProcessEnv): string | undefined {
+  return env.JEV_API_KEY || env.TYPESAFE_API_KEY || undefined;
+}
+
 function namedScorer(
   name: ScorerName | undefined,
   adapters: Record<string, ProviderAdapter>,
   model: ModelRef,
   env: NodeJS.ProcessEnv,
+  jevFetch?: JevFetchImpl,
 ): Scorer | undefined {
   if (name === "model") return modelScorer({ adapters, model });
-  if (name === "jev") return jevScorer({ apiKey: env.TYPESAFE_API_KEY });
+  if (name === "jev") {
+    const baseUrl = env.JEV_BASE_URL;
+    const jevModel = env.JEV_MODEL;
+    return jevScorer({
+      apiKey: jevApiKey(env),
+      ...(baseUrl ? { baseUrl } : {}),
+      ...(jevModel ? { model: jevModel } : {}),
+      ...(jevFetch ? { fetchImpl: jevFetch } : {}),
+    });
+  }
   if (name === "rule") return ruleScorer;
   return undefined;
 }

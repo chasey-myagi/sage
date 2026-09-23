@@ -202,6 +202,24 @@ it("posts to baseUrl without a trailing slash", async () => {
   expect(url).toBe("https://jev.example/v1/systemone");
 });
 
+it("posts opts.model instead of jev-latest", async () => {
+  let model = "";
+  await jevScorer({
+    apiKey: "k",
+    model: "served-model",
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { model?: string };
+      model = body.model ?? "";
+      return jsonResponse(systemOne({ a: choice(0.9) }, 1));
+    },
+  }).score({
+    candidates: [chunk("a", 1)],
+    prevRequest: undefined,
+    query: "q",
+  });
+  expect(model).toBe("served-model");
+});
+
 it("splits 200 chunks into at least two batches of at most 40", async () => {
   const sizes: number[] = [];
   const fetchImpl = async (_url: string, init?: FetchInit) => {
