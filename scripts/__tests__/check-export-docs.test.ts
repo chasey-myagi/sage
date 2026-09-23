@@ -88,6 +88,35 @@ describe("scanText", () => {
     expect(scanText(text)).toEqual([]);
   });
 
+  it("checks enum, namespace, var, and anonymous default exports", () => {
+    const text = [
+      "export enum Color { Red }",
+      "export const enum Flag { On }",
+      "export var legacy = 1;",
+      "export namespace Space {}",
+      "export default function () {}",
+      "",
+    ].join("\n");
+    expect(scanText(text).map((v) => v.name)).toEqual([
+      "Color",
+      "Flag",
+      "legacy",
+      "Space",
+      "default",
+    ]);
+  });
+
+  it("does not let a trailing comment after code borrow an earlier block", () => {
+    const text = [
+      "/** A. */",
+      "export const a = 1;",
+      "const b = 2; /* note */",
+      "export const c = 3;",
+      "",
+    ].join("\n");
+    expect(scanText(text)).toEqual([{ line: 4, name: "c" }]);
+  });
+
   it("allows blank lines between the block and the declaration", () => {
     expect(scanText("/** Doc. */\n\nexport const a = 1;\n")).toEqual([]);
   });
