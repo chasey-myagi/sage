@@ -131,17 +131,6 @@ function subtaskView(
   const omitted =
     parent.rows.filter((row) => row.tier === "none").length +
     ownRows.filter((row) => row.tier === "none").length;
-  // Built outside the literal: core's `BudgetReport` does not declare
-  // `omitted` and `expands`, which the manifest still records.
-  const budget = {
-    total: opts.budget,
-    used,
-    overrun: Math.max(0, used - opts.budget),
-    omitted,
-    expands: countExpands(ctx.path),
-    frozenTokens: 0,
-    staleOmittable: 0,
-  };
   return {
     epoch: parent.epoch,
     head: ctx.head,
@@ -154,7 +143,15 @@ function subtaskView(
     manifest: {
       epoch: parent.epoch,
       turn: ctx.turn,
-      budget,
+      budget: {
+        total: opts.budget,
+        used,
+        overrun: Math.max(0, used - opts.budget),
+        omitted,
+        expands: countExpands(ctx.path),
+        frozenTokens: 0,
+        staleOmittable: 0,
+      },
       claims: [queryClaimRecord(input.rendered, input.claimTokens)],
       chunks: [...parent.rows, ...ownRows],
       anomalies: input.own.anomalies,
