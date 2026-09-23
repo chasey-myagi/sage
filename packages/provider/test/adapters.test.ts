@@ -122,7 +122,8 @@ function openaiStop(reason: string): string {
 
 runContractSuite(
   "anthropic-messages",
-  (fetchImpl) => new AnthropicAdapter({ apiKey: "test-key", fetchImpl }),
+  (fetchImpl, sleep) =>
+    new AnthropicAdapter({ apiKey: "test-key", fetchImpl, sleep }),
   {
     happy: readFixture("anthropic-text-tool.sse"),
     truncated: readFixture("anthropic-truncated.sse"),
@@ -132,7 +133,8 @@ runContractSuite(
 
 runContractSuite(
   "openai-chat",
-  (fetchImpl) => new OpenAIAdapter({ apiKey: "test-key", fetchImpl }),
+  (fetchImpl, sleep) =>
+    new OpenAIAdapter({ apiKey: "test-key", fetchImpl, sleep }),
   {
     happy: readFixture("openai-text-tool.sse"),
     truncated: readFixture("openai-truncated.sse"),
