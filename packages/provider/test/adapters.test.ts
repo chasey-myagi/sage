@@ -450,9 +450,17 @@ describe("finish reasons and transport errors", () => {
     });
     for (const make of [
       (fetchImpl: typeof fetch) =>
-        new AnthropicAdapter({ apiKey: "k", fetchImpl }),
+        new AnthropicAdapter({
+          apiKey: "k",
+          fetchImpl,
+          sleep: async () => undefined,
+        }),
       (fetchImpl: typeof fetch) =>
-        new OpenAIAdapter({ apiKey: "k", fetchImpl }),
+        new OpenAIAdapter({
+          apiKey: "k",
+          fetchImpl,
+          sleep: async () => undefined,
+        }),
     ]) {
       const { fetchImpl } = fixtureFetch(body, 500);
       const adapter = make(fetchImpl);

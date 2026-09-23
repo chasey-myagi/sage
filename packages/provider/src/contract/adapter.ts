@@ -36,6 +36,8 @@ export interface ProviderAdapter {
   /**
    * Does not throw. Transport and protocol failures end as
    * finish{kind:"error"}. Abort ends as finish{kind:"aborted"}.
+   * Fetch throws, HTTP 429, and HTTP 5xx are retried before the
+   * response body starts. A started body is not retried.
    */
   stream(
     request: Request,
