@@ -28,6 +28,6 @@
 
 `createTools({ sandbox: { network, fsIsolate } })`。`network` 仍是 `"full"` 或 `"none"`，默认 `"full"`。没写 `fsIsolate` 时，`"none"` 把它当成 `true`，`"full"` 当成 `false`。
 
-agent 在 darwin、`fsIsolate` 打开时，bash 子进程能读工作目录（`cwd` 的 realpath），读不到临时根目录（`os.tmpdir()` 的 realpath）里的其他路径。profile 先写 `(deny file-read* (subpath "<tmpRoot>"))`，再写 `(allow file-read* (subpath "<cwd>"))`。后写的规则覆盖先写的，所以自己的工作区仍可读，隔壁的 `sage-bench-*` 和 `$TMPDIR` 本身不可读。macOS 上 `/var` 会先解析成 `/private/var`，两条路径都用 realpath。临时根以外的系统路径仍走 `(allow default)`，二进制和库读得到。
+agent 在 darwin、`fsIsolate` 打开时，bash 子进程能读工作目录（`cwd` 的 realpath），也能读临时目录里的普通文件，但读不到同一临时根下的其他 bench 工作区。profile 先写 `(deny file-read* (regex #"^<tmpRoot 的 realpath，元字符已转义>/<前缀>"))`，再写 `(allow file-read* (subpath "<cwd>"))`。后写的规则覆盖先写的，所以自己的工作区仍可读。`tmpRoot` 和前缀都是选项；没写前缀时用 `sage-bench-`，bench 传入自己的前缀。路径里的 `.`、`+` 等正则元字符会转义。macOS 上 `/var` 会先解析成 `/private/var`。临时根以外的系统路径仍走 `(allow default)`，二进制和库读得到。`$TMPDIR` 里不以该前缀开头的文件，包括测试框架写回的临时文件，可以读。
 
 linux 的 `unshare -n` 只切网络命名空间，不能限制文件。这时 `fsIsolate` 不会改 argv，也不会让 `network: "none"` 创建失败。`network: "full"` 再要求 `fsIsolate` 时，只有 darwin 做得到，其他平台创建工具即失败。`"full"` 且不隔离文件时，不包沙箱，文件系统不限制。

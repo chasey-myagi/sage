@@ -42,6 +42,10 @@ function watchingExec(seen: SpawnOpts[]): BashExec {
   };
 }
 
+function escapeSandboxRegex(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
 describe("bash network policy", () => {
   it.skipIf(process.platform !== "darwin")(
     "denies external hosts and still reaches localhost when network is none",
@@ -106,9 +110,10 @@ describe("bash network policy", () => {
     const result = await bash.execute({ command: "echo hi" }, ctx);
     const root = realpathSync(tmpdir());
     const realCwd = realpathSync(cwd);
+    const pattern = `^${escapeSandboxRegex(root)}/sage-bench-`;
     const profile = [
       PROFILE,
-      `(deny file-read* (subpath ${JSON.stringify(root)}))`,
+      `(deny file-read* (regex #"${pattern}"))`,
       `(allow file-read* (subpath ${JSON.stringify(realCwd)}))`,
     ].join("");
     expect(seen).toEqual([

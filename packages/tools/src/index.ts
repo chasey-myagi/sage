@@ -6,7 +6,8 @@
  * `sandbox.network` defaults to "full". "none" throws ToolNetworkError
  * unless this platform can enforce it (darwin, or linux with `unshare -n`).
  * `sandbox.fsIsolate` defaults to true when network is none. On darwin that
- * denies reads under the real temp root except the workspace cwd. linux
+ * denies reads of other bench workspaces under the real temp root. `tmpRoot`
+ * and `benchPrefix` are options; the prefix defaults to `sage-bench-`. linux
  * `unshare -n` cannot restrict files. A path outside the workspace returns
  * an isError tool result and does not throw from execute or accesses. The
  * kernel does not import this package.
@@ -55,6 +56,10 @@ export function createTools(opts: {
   sandbox?: { network?: ToolNetwork; fsIsolate?: boolean };
   platform?: NodeJS.Platform;
   unshareAvailable?: boolean;
+  /** Realpath of the temp root. Defaults to realpath(os.tmpdir()). */
+  tmpRoot?: string;
+  /** Bench workspace directory prefix. Defaults to `sage-bench-`. */
+  benchPrefix?: string;
 }) {
   const sandbox = resolveToolSandbox(opts.sandbox);
   const platform = opts.platform ?? process.platform;
@@ -79,7 +84,10 @@ export function createTools(opts: {
     createBash(cwd, execCwd, exec, {
       sandbox,
       platform,
-      tmpRoot: realpathSync(tmpdir()),
+      tmpRoot: opts.tmpRoot ?? realpathSync(tmpdir()),
+      ...(opts.benchPrefix !== undefined
+        ? { benchPrefix: opts.benchPrefix }
+        : {}),
     }),
     createGrep(cwd),
     createFind(cwd),

@@ -82,7 +82,7 @@ node apps/sage/bin/sage.mjs bench run \
 
 `none` 同时打开文件系统隔离。每次运行用一个根目录，真实路径是 `<tmpdir 的 realpath>/sage-bench-<runId>/<taskId>/`。同一轮的任务都在这个 `runId` 下面，目录名是任务 id。一个任务结束就删掉它的目录，整轮结束再删根目录。进程中途被杀掉时，根目录会留在临时目录里。下次 `bench run` 在创建新根之前，把临时根下所有名字以 `sage-bench-` 开头的目录打到 stderr，每行一条 `warning: leftover bench workspace <path>; remove it manually`，不自动删。
 
-agent 能读到什么：darwin 上，默认沙箱允许读当前任务目录，拒绝读临时根目录以及其他 `sage-bench-*`（包括上一轮没删掉的 clone 和同一轮里别的任务目录）。linux 的 `unshare -n` 做不到文件隔离，这一点写在 [`packages/tools/README.md`](../packages/tools/README.md)。`--tool-network full` 关掉网络限制，也关掉这层文件隔离。
+agent 能读到什么：darwin 上，默认沙箱允许读当前任务目录，也允许读临时目录里的普通文件，拒绝读同一临时根下其他 `sage-bench-*` 工作区（包括上一轮没删掉的 clone，以及同一轮里别的任务目录）。linux 的 `unshare -n` 做不到文件隔离，这一点写在 [`packages/tools/README.md`](../packages/tools/README.md)。`--tool-network full` 关掉网络限制，也关掉这层文件隔离。
 
 TS/JS 这 10 条：
 

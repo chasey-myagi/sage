@@ -15,7 +15,7 @@
  * to `session.run` under both the compiler and `--passthrough`.
  * `--tool-network none|full` defaults to full. `--tool-sandbox` is the same
  * switch. `none` cuts network for bash child processes and, on darwin,
- * denies reads under the real temp root except the workspace. linux
+ * denies reads of other bench workspaces under the real temp root. linux
  * `unshare -n` cannot restrict files. On a platform that cannot enforce
  * the network cut, sage exits 2 before the run. Provider calls stay in
  * this process.
@@ -71,14 +71,14 @@
  * lines, and the stderr note that `--passthrough` ignored `--budget`.
  * `--tool-network` and `--tool-sandbox` are argv. bash records
  * `network: "none"` through the kernel's toolResults, not as its own
- * entry. The temp-root deny is not a Log entry. The system prompt is
+ * entry. The sibling-workspace deny is not a Log entry. The system prompt is
  * model-visible and is stored on request_header. Claim text reaches the
  * Log only through the manifest the kernel appends.
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, realpathSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -124,7 +124,11 @@ import {
   type ToolNetwork,
   toolSandboxSupport,
 } from "@sage/tools";
-import { type BenchDeps, runBenchCli } from "./bench.js";
+import {
+  BENCH_WORKSPACE_PREFIX,
+  type BenchDeps,
+  runBenchCli,
+} from "./bench.js";
 
 export type CodingSession = {
   session: AgentSession;
@@ -143,6 +147,10 @@ export function createCodingSession(opts: {
   store?: LogStore;
   exec?: BashExec;
   sandbox?: { network?: ToolNetwork; fsIsolate?: boolean };
+  /** Realpath of the temp root passed into the bash sandbox. */
+  tmpRoot?: string;
+  /** Bench workspace prefix passed into the bash sandbox. */
+  benchPrefix?: string;
   platform?: NodeJS.Platform;
   unshareAvailable?: boolean;
   sampling?: Sampling;
@@ -191,6 +199,8 @@ export function createCodingSession(opts: {
       exec: opts.exec,
       sandbox,
       platform: opts.platform,
+      tmpRoot: opts.tmpRoot ?? realpathSync(tmpdir()),
+      benchPrefix: opts.benchPrefix ?? BENCH_WORKSPACE_PREFIX,
       ...(opts.unshareAvailable !== undefined
         ? { unshareAvailable: opts.unshareAvailable }
         : {}),
@@ -661,9 +671,9 @@ export function parseArgs(argv: string[]): Parsed {
 
 function usage(): string {
   return [
-    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--passthrough] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] [--json]",
+    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--passthrough] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] [--json]",
     "       sage stats <session.jsonl>",
-    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>",
+    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }

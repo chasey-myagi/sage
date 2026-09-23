@@ -48,9 +48,11 @@
  * policy is passthrough. Top-level `toolNetwork` is `none` unless
  * `--tool-network full` is set. `--tool-sandbox` is the same switch. The
  * default `none` is always forwarded on the sage argv as `--tool-network`,
- * and it sets `fsIsolate`. On darwin, bash cannot read other directories
- * under the real temp root. linux `unshare -n` cannot enforce that file
- * rule. Before the run root is created, leftover `sage-bench-*` directories
+ * and it sets `fsIsolate`. On darwin, bash cannot read other bench
+ * workspaces under the real temp root. The directory prefix is
+ * `BENCH_WORKSPACE_PREFIX` and is passed into the sandbox. linux
+ * `unshare -n` cannot enforce that file rule. Before the run root is
+ * created, leftover directories with that prefix
  * directly under that temp root are printed to stderr with a
  * manual-cleanup warning and are left in place. Each task directory is
  * deleted when the task ends. The run root is deleted when the run ends.
@@ -96,6 +98,9 @@ import {
   type ToolNetwork,
   type ToolSandbox,
 } from "@sage/tools";
+
+/** Directory prefix for one bench run. Passed into the bash sandbox deny. */
+export const BENCH_WORKSPACE_PREFIX = "sage-bench-";
 
 export type BenchPolicy = "passthrough" | "compiler";
 
@@ -233,7 +238,7 @@ export async function runBenchCli(
       `warning: leftover bench workspace ${leftover}; remove it manually\n`,
     );
   }
-  const runRoot = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
+  const runRoot = mkdtempSync(path.join(tmpdir(), BENCH_WORKSPACE_PREFIX));
   try {
     for (const task of tasks) {
       results.tasks.push(
@@ -623,7 +628,7 @@ async function applyTestPatch(task: BenchTask, cwd: string): Promise<void> {
   }
   const patchPath = path.join(
     tmpdir(),
-    `sage-bench-test-patch-${process.pid}-${Date.now()}`,
+    `${BENCH_WORKSPACE_PREFIX}test-patch-${process.pid}-${Date.now()}`,
   );
   try {
     writeFileSync(patchPath, patch);
@@ -820,7 +825,7 @@ function leftoverBenchRoots(): string[] {
   }
   const found: string[] = [];
   for (const name of names) {
-    if (!name.startsWith("sage-bench-")) continue;
+    if (!name.startsWith(BENCH_WORKSPACE_PREFIX)) continue;
     const full = path.join(root, name);
     try {
       if (!statSync(full).isDirectory()) continue;
@@ -1038,7 +1043,7 @@ function requiredString(
 
 function benchUsage(): string {
   return [
-    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>",
+    "usage: sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }

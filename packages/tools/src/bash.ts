@@ -11,9 +11,12 @@
  * the wrapped argv.
  *
  * `sandbox.fsIsolate` defaults to true when network is none. On darwin the
- * profile then denies file reads under the realpath of os.tmpdir() and
- * allows file reads under the realpath of the cwd. Later rules win, so the
- * deny is written first. macOS `/var` is stored as `/private/var`. linux
+ * profile then denies file reads of other bench workspaces under the
+ * realpath of os.tmpdir(): `(deny file-read* (regex #"^<tmpRoot>/<prefix>"))`.
+ * Regex metacharacters in that path and prefix are escaped. `benchPrefix`
+ * defaults to `sage-bench-`. The cwd realpath is allowed afterwards; later
+ * rules win, so the deny is written first. macOS `/var` is stored as
+ * `/private/var`. Ordinary files in the temp directory stay readable. linux
  * `unshare -n` cannot restrict files; fsIsolate does not change that argv
  * and does not fail a network-none launch. Filesystem isolation with
  * network full is darwin-only.
@@ -52,6 +55,8 @@ import { spill } from "./spill.js";
 export const BASH_TIMEOUT_MS = 120_000;
 
 export type ToolNetwork = "full" | "none";
+
+const DEFAULT_BENCH_PREFIX = "sage-bench-";
 
 export type ToolSandbox = {
   network: ToolNetwork;
@@ -157,11 +162,13 @@ export function createBash(
     sandbox?: { network?: ToolNetwork; fsIsolate?: boolean };
     platform?: NodeJS.Platform;
     tmpRoot?: string;
+    benchPrefix?: string;
   } = {},
 ): HarnessTool {
   const sandbox = resolveToolSandbox(opts.sandbox);
   const platform = opts.platform ?? process.platform;
   const tmpRoot = opts.tmpRoot ?? realpathSync(tmpdir());
+  const benchPrefix = opts.benchPrefix ?? DEFAULT_BENCH_PREFIX;
   return {
     def: {
       name: "bash",
@@ -188,6 +195,7 @@ export function createBash(
         const launch = bashLaunch(command, sandbox, platform, {
           cwd: execCwd,
           tmpRoot,
+          benchPrefix,
         });
         const result = await exec(command, {
           cwd: execCwd,
@@ -280,7 +288,7 @@ function bashLaunch(
   command: string,
   sandbox: ToolSandbox,
   platform: NodeJS.Platform,
-  paths: { cwd: string; tmpRoot: string },
+  paths: { cwd: string; tmpRoot: string; benchPrefix: string },
 ): { argv: string[]; shell: boolean } {
   if (sandbox.network === "full" && !sandbox.fsIsolate) {
     return { argv: [command], shell: true };
@@ -314,20 +322,25 @@ function bashLaunch(
 
 function sandboxProfile(
   sandbox: ToolSandbox,
-  paths: { cwd: string; tmpRoot: string },
+  paths: { cwd: string; tmpRoot: string; benchPrefix: string },
 ): string {
   const rules = ["(version 1)", "(allow default)"];
   if (sandbox.network === "none") {
     rules.push("(deny network*)", '(allow network* (local ip "localhost:*"))');
   }
   if (sandbox.fsIsolate) {
-    // Later rules win. Deny the temp root, then allow this workspace.
+    // Later rules win. Deny sibling bench workspaces, then allow this cwd.
+    const pattern = `^${escapeSandboxRegex(paths.tmpRoot)}/${escapeSandboxRegex(paths.benchPrefix)}`;
     rules.push(
-      `(deny file-read* (subpath ${JSON.stringify(paths.tmpRoot)}))`,
+      `(deny file-read* (regex #"${pattern}"))`,
       `(allow file-read* (subpath ${JSON.stringify(paths.cwd)}))`,
     );
   }
   return rules.join("");
+}
+
+function escapeSandboxRegex(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 }
 
 function probeUnshare(): boolean {
