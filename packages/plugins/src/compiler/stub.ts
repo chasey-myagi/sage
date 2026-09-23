@@ -14,12 +14,17 @@ import type { Chunk } from "./chunks.js";
 
 const SUMMARY_LIMIT = 80;
 
+/** One-line summary of a tool input, at most 80 characters. */
 export function summarizeInput(input: unknown): string {
   const line = compact(input);
   if (line.length <= SUMMARY_LIMIT) return line;
   return `${line.slice(0, SUMMARY_LIMIT - 1)}…`;
 }
 
+/**
+ * A stub is the one line left in the view when a chunk is omitted: what
+ * it was, how large, and how to get it back with `expand`.
+ */
 export function renderStub(chunk: Chunk): string {
   const name = chunk.toolName ?? "";
   const summary = summarizeInput(chunk.input);

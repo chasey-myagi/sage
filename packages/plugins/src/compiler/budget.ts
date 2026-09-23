@@ -15,14 +15,22 @@
 import type { ClaimRecord } from "@sage/core";
 import type { Claim, Tier } from "./claim.js";
 
+/** Estimates the tokens of a text. Must be deterministic. */
 export type TokenCounter = (text: string) => number;
 
 const LADDER: readonly Tier[] = ["full", "summary", "line", "none"];
 
+/** Default estimator: one token per 4 characters, rounded up. */
 export function defaultTokenCount(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+/**
+ * Chooses a tier for every claim so the total fits `budget` when it can.
+ * A duplicate id keeps the last claim. `records` are in priority order
+ * with reason `pinned`, `fits`, or `budget:downgraded`; `chosen` maps id to
+ * tier.
+ */
 export function allocate(
   claims: readonly Claim[],
   budget: number,

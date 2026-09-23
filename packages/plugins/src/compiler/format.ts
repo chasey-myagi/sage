@@ -16,14 +16,20 @@ import type { Tier } from "./claim.js";
 
 const TIERS = new Set<Tier>(["none", "line", "summary", "full"]);
 
+/** Renders one claim as `<claim id="…" tier="…">`, the body, `</claim>`. */
 export function renderClaim(id: string, tier: string, body: string): string {
   return `<claim id="${id}" tier="${tier}">\n${body}\n</claim>`;
 }
 
+/** Hex sha256 of `text`. */
 export function contentHash(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
+/**
+ * Extracts every rendered claim from a message's text blocks, keyed by id.
+ * A later claim with the same id replaces an earlier one.
+ */
 export function parseClaimMessage(
   message: Message,
 ): Map<string, { tier: Tier; body: string }> {

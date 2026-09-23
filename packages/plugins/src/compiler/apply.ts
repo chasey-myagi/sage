@@ -18,12 +18,17 @@ import type { Chunk } from "./chunks.js";
 import type { ChunkDecision } from "./eliminate.js";
 import { renderStub } from "./stub.js";
 
+/** Tool_result text for a tier-summary chunk: stub, newline, labelled note. */
 export function renderSummary(chunk: Chunk, summary: string): string {
   return `${renderStub(chunk)}\nsummary (model notes, not evidence): ${summary}`;
 }
 
+/**
+ * Returns a copy of `messages` with each none or summary tool chunk's
+ * tool_result content replaced. Chunks without a decision are unchanged.
+ */
 export function applyDecisions(
-  messages: Message[],
+  messages: readonly Message[],
   chunks: Chunk[],
   decisions: ChunkDecision[],
 ): Message[] {
@@ -44,6 +49,10 @@ export function applyDecisions(
   return replaceToolResults(messages, stubs);
 }
 
+/**
+ * Returns a copy of `messages` with each tool_result whose toolUseId is in
+ * the map given that content. Every block is shallow-copied.
+ */
 export function replaceToolResults(
   messages: readonly Message[],
   contentByToolUseId: ReadonlyMap<string, string>,

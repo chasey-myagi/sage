@@ -16,6 +16,7 @@
  */
 
 import type { EntryId, HarnessTool, LogStore, StoredEntry } from "@sage/core";
+import { OWN_CHUNK_PREFIX } from "./chunks.js";
 
 const inputSchema = {
   type: "object",
@@ -28,6 +29,10 @@ const inputSchema = {
   required: ["id"],
 };
 
+/**
+ * Creates the `expand` tool bound to one session's Log. Unknown ids are an
+ * `isError` result, not a throw.
+ */
 export function expandTool(opts: {
   store: LogStore;
   sessionId: string;
@@ -71,8 +76,8 @@ function resolve(
   const childId = child[1] ?? "";
   const chunkId = child[2] ?? "";
   const path = store.path(childId);
-  if (chunkId.startsWith("own:")) {
-    return locate(path, chunkId.slice("own:".length));
+  if (chunkId.startsWith(OWN_CHUNK_PREFIX)) {
+    return locate(path, chunkId.slice(OWN_CHUNK_PREFIX.length));
   }
   const parent = parentPath(store, path);
   if (parent) {

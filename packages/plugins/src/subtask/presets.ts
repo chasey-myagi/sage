@@ -17,6 +17,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { ModelRef } from "@sage/provider/contract";
 
+/** A subtask template loaded from `.sage/subtasks/<name>.md`. */
 export type SubtaskPreset = {
   name: string;
   query: string;
@@ -25,11 +26,16 @@ export type SubtaskPreset = {
   model?: ModelRef;
 };
 
+/** Test seam. Production uses `node:fs`. */
 export type PresetFs = {
   readdirSync(dir: string): string[];
   readFileSync(file: string, encoding: "utf8"): string;
 };
 
+/**
+ * Reads the user and project preset directories. A missing directory or an
+ * unreadable file is skipped, not thrown.
+ */
 export function loadPresets(opts: {
   cwd: string;
   home?: string;
@@ -44,6 +50,7 @@ export function loadPresets(opts: {
   return presets;
 }
 
+/** Fills `{{args.name}}` placeholders; a missing arg becomes "". */
 export function renderPresetQuery(
   template: string,
   args: Record<string, string>,

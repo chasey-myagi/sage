@@ -22,6 +22,18 @@ import type { Access, HarnessTool } from "@sage/core";
 import type { Message, ToolUseBlock } from "@sage/provider/contract";
 import type { TokenCounter } from "./budget.js";
 
+/**
+ * Prefix a subtask compile puts on the child's own chunk ids, keeping them
+ * apart from the parent's ids. `expand` strips it to resolve the id on the
+ * child's path.
+ */
+export const OWN_CHUNK_PREFIX = "own:";
+
+/**
+ * A chunk is the unit the compiler schedules: one tool call together with
+ * its result, or one prose message. A chunk enters the view whole, at one
+ * tier, or not at all.
+ */
 export type Chunk = {
   id: string;
   kind: "user" | "assistant" | "tool";
@@ -34,6 +46,10 @@ export type Chunk = {
   accesses: Access[];
 };
 
+/**
+ * Indexes projected messages into chunks, in message order. `seqs[i]` is
+ * the Log seq of `messages[i]`; a missing seq counts as 0.
+ */
 export function indexChunks(
   messages: Message[],
   seqs: number[],
@@ -99,6 +115,11 @@ export function indexChunks(
   return chunks;
 }
 
+/**
+ * True when the view may be cut after message `index`: never after a user
+ * message or an assistant message with tool_use, and never right before a
+ * user message that carries tool_result blocks.
+ */
 export function canSplitAfter(
   messages: readonly Message[],
   index: number,

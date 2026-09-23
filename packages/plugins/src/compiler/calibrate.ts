@@ -26,6 +26,10 @@
 import type { StoredEntry } from "@sage/core";
 import type { Message } from "@sage/provider/contract";
 
+/**
+ * How this turn's estimates map to measured input tokens. Stored on the
+ * manifest as `calibration`.
+ */
 export type Calibration = {
   measured: number;
   estimated: number;
@@ -33,6 +37,7 @@ export type Calibration = {
   ratio: number;
 };
 
+/** Input total of the latest assistant message's usage, if it has one. */
 export function measuredInput(
   path: readonly StoredEntry[],
 ): number | undefined {
@@ -41,12 +46,17 @@ export function measuredInput(
   return inputTotal(usage);
 }
 
+/** Cache-read tokens of the latest assistant usage, or 0. */
 export function measuredCacheRead(path: readonly StoredEntry[]): number {
   const usage = latestUsage(path);
   const read = usage ? finite(usage.inputCacheRead) : undefined;
   return read ?? 0;
 }
 
+/**
+ * Pairs the latest measured input with the previous manifest's estimate.
+ * Undefined without usage or with a zero estimate.
+ */
 export function calibrationFor(
   path: readonly StoredEntry[],
 ): Calibration | undefined {
@@ -59,6 +69,11 @@ export function calibrationFor(
   return { measured, estimated, head, ratio: (measured - head) / estimated };
 }
 
+/**
+ * The frozen-prefix read the previous manifest predicted:
+ * `head + ratio × budget.frozenTokens` from that manifest's own
+ * calibration, else head 0 and ratio 1. 0 without a previous manifest.
+ */
 export function expectedFrozenPrefix(path: readonly StoredEntry[]): number {
   const manifest = previousManifest(path);
   if (!manifest || !isRecord(manifest.payload)) return 0;
