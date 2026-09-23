@@ -1,3 +1,4 @@
+import { stopScript } from "@sage/core/testing";
 import type {
   ProviderAdapter,
   Request,
@@ -38,16 +39,6 @@ function prevRequest(model: { provider: string; model: string }): Request {
   };
 }
 
-function textScript(text: string): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "text" },
-    { type: "text_delta", index: 0, text },
-    { type: "block_end", index: 0 },
-    { type: "usage", usage: USAGE },
-    { type: "finish", kind: "stop" },
-  ];
-}
-
 function scripted(script: StreamChunk[]): ProviderAdapter {
   return {
     api: "anthropic-messages",
@@ -70,7 +61,7 @@ function scripted(script: StreamChunk[]): ProviderAdapter {
 async function score(text: string, candidates: Chunk[]) {
   const model = { provider: "anthropic", model: "claude-haiku-4-5" };
   return modelScorer({
-    adapters: { anthropic: scripted(textScript(text)) },
+    adapters: { anthropic: scripted(stopScript(text, USAGE)) },
     model,
   }).score({
     candidates,

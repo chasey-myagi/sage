@@ -4,8 +4,8 @@ import {
   passthroughView,
   type ViewProvider,
 } from "@sage/core";
-import { fauxAdapter } from "@sage/core/testing";
-import type { Message, Pricing, StreamChunk } from "@sage/provider/contract";
+import { fauxAdapter, stopScript, toolScript } from "@sage/core/testing";
+import type { Message, Pricing } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import { indexChunks } from "../../src/compiler/chunks.ts";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
@@ -275,23 +275,12 @@ it("opens the next epoch when the inequality pays back", async () => {
     inputCacheCreation: 0,
     output: 1,
   };
-  const toolTurn = (id: string): StreamChunk[] => [
-    { type: "block_start", index: 0, blockType: "tool_use", id, name: "bash" },
-    { type: "tool_input_delta", index: 0, partialJson: "{}" },
-    { type: "block_end", index: 0 },
-    { type: "usage", usage: { ...usage } },
-    { type: "finish", kind: "tool_use" },
-  ];
-  const stopTurn: StreamChunk[] = [
-    { type: "block_start", index: 0, blockType: "text" },
-    { type: "text_delta", index: 0, text: "done" },
-    { type: "block_end", index: 0 },
-    { type: "usage", usage: { ...usage } },
-    { type: "finish", kind: "stop" },
-  ];
-  const adapter = fauxAdapter([toolTurn("next"), stopTurn], {
-    prepared: { contextWindow: 1_000_000, pricing: SONNET },
-  });
+  const adapter = fauxAdapter(
+    [toolScript("next", "bash", "{}", usage), stopScript("done", usage)],
+    {
+      prepared: { contextWindow: 1_000_000, pricing: SONNET },
+    },
+  );
   const session = new AgentSession({
     store,
     sessionId: "seed",

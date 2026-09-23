@@ -1,4 +1,5 @@
 import { MemoryLogStore, type ViewContext } from "@sage/core";
+import { stopScript } from "@sage/core/testing";
 import { AnthropicAdapter, OpenAIAdapter } from "@sage/provider";
 import type {
   ProviderAdapter,
@@ -76,16 +77,6 @@ function prevRequest(model: { provider: string; model: string }): Request {
   };
 }
 
-function textScript(text: string, usage: Usage = USAGE): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "text" },
-    { type: "text_delta", index: 0, text },
-    { type: "block_end", index: 0 },
-    { type: "usage", usage },
-    { type: "finish", kind: "stop" },
-  ];
-}
-
 function scripted(script: StreamChunk[]): ProviderAdapter {
   const adapter: ProviderAdapter = {
     api: "anthropic-messages",
@@ -117,7 +108,7 @@ function instructionOf(request: Request): string {
 
 async function score(text: string, candidates: Chunk[]) {
   const seen: Request[] = [];
-  const adapter = scripted(textScript(text));
+  const adapter = scripted(stopScript(text, USAGE));
   const wrapped: ProviderAdapter = {
     ...adapter,
     stream(request, prepared, signal) {
@@ -341,7 +332,7 @@ async function shadowOf(text: string) {
     budget: 100_000,
     claims: [],
     shadowScorer: modelScorer({
-      adapters: { anthropic: scripted(textScript(text)) },
+      adapters: { anthropic: scripted(stopScript(text, USAGE)) },
       model: SHADOW_MODEL,
     }),
   });

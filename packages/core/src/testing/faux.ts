@@ -33,12 +33,23 @@ export const FAUX_MODEL: ModelRef = {
 /** System prompt the session fixtures use. */
 export const FAUX_SYSTEM = "You are sage.";
 
-/** Usage every `stopScript` and `toolScript` call reports. */
+/** Usage `stopScript` and `toolScript` report unless given another. */
 export const FAUX_USAGE: TokenCounts = {
   inputOther: 3,
   inputCacheRead: 1,
   inputCacheCreation: 0,
   output: 2,
+};
+
+/**
+ * One uncached input token and one output token: for tests that want usage
+ * present but small enough not to move token-driven decisions.
+ */
+export const FAUX_UNIT_USAGE: TokenCounts = {
+  inputOther: 1,
+  inputCacheRead: 0,
+  inputCacheCreation: 0,
+  output: 1,
 };
 
 /**
@@ -124,28 +135,38 @@ export function createFaux(
   return { adapter, requests: adapter.requests, prepared };
 }
 
-/** A call that streams one text block and stops. */
-export function stopScript(text: string): StreamChunk[] {
+/**
+ * A call that streams one text block and stops. `usage` (default
+ * `FAUX_USAGE`) is copied into the usage chunk.
+ */
+export function stopScript(
+  text: string,
+  usage: TokenCounts = FAUX_USAGE,
+): StreamChunk[] {
   return [
     { type: "block_start", index: 0, blockType: "text" },
     { type: "text_delta", index: 0, text },
     { type: "block_end", index: 0 },
-    { type: "usage", usage: { ...FAUX_USAGE } },
+    { type: "usage", usage: { ...usage } },
     { type: "finish", kind: "stop" },
   ];
 }
 
-/** A call that streams one tool_use block and finishes with `tool_use`. */
+/**
+ * A call that streams one tool_use block and finishes with `tool_use`.
+ * `usage` (default `FAUX_USAGE`) is copied into the usage chunk.
+ */
 export function toolScript(
   id: string,
   name: string,
   inputJson = "{}",
+  usage: TokenCounts = FAUX_USAGE,
 ): StreamChunk[] {
   return [
     { type: "block_start", index: 0, blockType: "tool_use", id, name },
     { type: "tool_input_delta", index: 0, partialJson: inputJson },
     { type: "block_end", index: 0 },
-    { type: "usage", usage: { ...FAUX_USAGE } },
+    { type: "usage", usage: { ...usage } },
     { type: "finish", kind: "tool_use" },
   ];
 }

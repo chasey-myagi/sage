@@ -1,6 +1,7 @@
+import { stopScript } from "@sage/core/testing";
 import { expect, it } from "vitest";
 import { systemReminder } from "../../src/claims/index.ts";
-import { contextOf, runSession, stopScript } from "./session.ts";
+import { contextOf, runSession } from "./session.ts";
 
 it("submits a tail line claim and nothing else", async () => {
   const { store, sessionId } = await runSession({

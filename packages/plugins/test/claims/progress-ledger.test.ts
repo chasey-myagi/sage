@@ -1,7 +1,8 @@
+import { stopScript, toolScript } from "@sage/core/testing";
 import { expect, it } from "vitest";
 import { progressLedger } from "../../src/claims/index.ts";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
-import { contextOf, runSession, stopScript, toolScript } from "./session.ts";
+import { contextOf, runSession } from "./session.ts";
 
 it("folds update_ledger inputs and does not validate or drive", async () => {
   const { tool, provider } = progressLedger();

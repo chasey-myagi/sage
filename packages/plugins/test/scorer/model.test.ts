@@ -1,4 +1,4 @@
-import { renderLlmInput } from "@sage/core/testing";
+import { renderLlmInput, stopScript } from "@sage/core/testing";
 import type {
   ProviderAdapter,
   Request,
@@ -55,16 +55,6 @@ function prevRequest(): Request {
     cacheBreakpoints: ["head", { afterMessage: 1 }],
     sampling: { temperature: 0 },
   };
-}
-
-function textScript(text: string, usage: Usage = USAGE): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "text" },
-    { type: "text_delta", index: 0, text },
-    { type: "block_end", index: 0 },
-    { type: "usage", usage },
-    { type: "finish", kind: "stop" },
-  ];
 }
 
 function scripted(
@@ -134,10 +124,11 @@ it("extends the previous main request by one user message and keeps its tools", 
     JSON.stringify(listed),
   ].join("\n");
   const adapter = scripted(
-    textScript(
+    stopScript(
       JSON.stringify([
         { id: "seq:12#x", tier: "summary", summary: "listed files" },
       ]),
+      USAGE,
     ),
   );
   const scorer = modelScorer({
@@ -201,7 +192,7 @@ it("extends the previous main request by one user message and keeps its tools", 
 });
 
 it("does not call the adapter when there is no previous request", async () => {
-  const adapter = scripted(textScript("{}"));
+  const adapter = scripted(stopScript("{}", USAGE));
   const scorer = modelScorer({
     adapters: { anthropic: adapter },
     model: SCORE_MODEL,
@@ -221,7 +212,7 @@ it("drops the oldest candidates past the default cap of 60", async () => {
   const candidates = Array.from({ length: 61 }, (_, index) =>
     chunk(`seq:${index}#c${index}`),
   );
-  const adapter = scripted(textScript("[]"));
+  const adapter = scripted(stopScript("[]", USAGE));
   const scorer = modelScorer({
     adapters: { anthropic: adapter },
     model: SCORE_MODEL,
@@ -240,7 +231,10 @@ it("drops the oldest candidates past the default cap of 60", async () => {
 it("truncates a summary to 200 characters", async () => {
   const summary = "s".repeat(250);
   const adapter = scripted(
-    textScript(JSON.stringify([{ id: "seq:12#x", tier: "summary", summary }])),
+    stopScript(
+      JSON.stringify([{ id: "seq:12#x", tier: "summary", summary }]),
+      USAGE,
+    ),
   );
   const result = await modelScorer({
     adapters: { anthropic: adapter },
@@ -254,7 +248,7 @@ it("truncates a summary to 200 characters", async () => {
 });
 
 it("falls back when the model returns invalid JSON", async () => {
-  const adapter = scripted(textScript("not json"));
+  const adapter = scripted(stopScript("not json", USAGE));
   const result = await modelScorer({
     adapters: { anthropic: adapter },
     model: SCORE_MODEL,

@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { HarnessTool } from "@sage/core";
 import { MemoryLogStore } from "@sage/core";
-import type { Request, StreamChunk } from "@sage/provider/contract";
+import { FAUX_UNIT_USAGE, stopScript } from "@sage/core/testing";
+import type { Request } from "@sage/provider/contract";
 import { afterEach, expect, it } from "vitest";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
 import { subtaskTools } from "../../src/index.ts";
@@ -35,24 +36,6 @@ function user(text: string) {
     role: "user" as const,
     content: [{ type: "text" as const, text }],
   };
-}
-
-function stopTurn(text: string): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "text" },
-    { type: "text_delta", index: 0, text },
-    { type: "block_end", index: 0 },
-    {
-      type: "usage",
-      usage: {
-        inputOther: 1,
-        inputCacheRead: 0,
-        inputCacheCreation: 0,
-        output: 1,
-      },
-    },
-    { type: "finish", kind: "stop" },
-  ];
 }
 
 function seed(store: MemoryLogStore, sessionId: string) {
@@ -170,7 +153,8 @@ it("renders a project preset over the user preset and lets explicit fields win",
       const text = messageText(request);
       if (text.includes("Begin the subtask")) queries.push(queryOf(text));
       return (async function* () {
-        for (const chunk of stopTurn("reviewed")) yield chunk;
+        for (const chunk of stopScript("reviewed", FAUX_UNIT_USAGE))
+          yield chunk;
       })();
     },
   };
