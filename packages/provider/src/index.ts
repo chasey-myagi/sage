@@ -29,6 +29,7 @@ export type {
   StreamChunk,
   TextBlock,
   ThinkingBlock,
+  ToolChoice,
   ToolDef,
   ToolResultBlock,
   ToolUseBlock,

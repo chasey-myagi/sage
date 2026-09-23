@@ -48,15 +48,17 @@
  * `summary (model notes, not evidence): `. That string is stored on the chunk
  * record. A fallback appends `;scorer:fallback:<reason>` and keeps the
  * eliminate tiers. When the call reports usage or a fallback, `manifest.scorer`
- * is `{ calls, usage, fallback }`. The score request reuses the previous
- * turn's head and messages rebuilt from the log.
+ * is `{ calls, usage, fallback, raw? }`. `raw` is copied only when the
+ * scorer fell back and supplied `{ text, finish }`. The score request reuses
+ * the previous turn's head and messages rebuilt from the log.
  * `shadowScorer`, when set, runs after tiers, freeze, and budget are fixed.
  * It scores tool chunks whose ids are absent from the previous manifest.
  * The first turn has no previous manifest, so every tool chunk is new.
  * Prose chunks are not scored. `prevRequest` is this turn's compiled view
  * (head, messages, cache breakpoints), not the previous turn's request.
  * The result is stored on `manifest.shadow` and does not change tiers,
- * freeze, or budget. A throw becomes `fallback` and the view still returns.
+ * freeze, or budget. `shadow.raw` is copied only when that score fell back
+ * and supplied it. A throw becomes `fallback` and the view still returns.
  * No new tool chunk means no call and no `shadow` field. Subtask compiles
  * do not run it.
  * Candidates are `listModels` of the current provider. Chunk accesses passed
@@ -106,7 +108,7 @@ import type {
 import { escapeClaimText } from "../claims/escape.js";
 import type { RoutePolicy } from "../routing/types.js";
 import { ruleScorer } from "../scorer/rule.js";
-import type { ScoreDecision, Scorer } from "../scorer/types.js";
+import type { ScoreDecision, ScoreRaw, Scorer } from "../scorer/types.js";
 import { applyDecisions, renderSummary } from "./apply.js";
 import { allocate, defaultTokenCount, type TokenCounter } from "./budget.js";
 import {
@@ -246,7 +248,7 @@ export function contextCompiler(opts: {
       }
       let chosen = decision.rebuild && prior ? fresh : stay;
       let scorerReport:
-        | { calls: number; usage: Usage; fallback: boolean }
+        | { calls: number; usage: Usage; fallback: boolean; raw?: ScoreRaw }
         | undefined;
       if (decision.rebuild) {
         const scored = await runScorer({
@@ -1174,7 +1176,7 @@ async function runScorer(input: {
   messages: Message[];
   used: number;
   fallback?: string;
-  report?: { calls: number; usage: Usage; fallback: boolean };
+  report?: { calls: number; usage: Usage; fallback: boolean; raw?: ScoreRaw };
 }> {
   const candidates = keptToolChunks(input.rows, input.chunks);
   if (candidates.length === 0) {
@@ -1184,6 +1186,7 @@ async function runScorer(input: {
     decisions: ScoreDecision[];
     usage?: Usage;
     fallback?: string;
+    raw?: ScoreRaw;
   };
   try {
     result = await input.scorer.score({
@@ -1291,16 +1294,21 @@ function mergeScore(
 function reportOf(result: {
   usage?: Usage;
   fallback?: string;
-}): { calls: number; usage: Usage; fallback: boolean } | undefined {
+  raw?: ScoreRaw;
+}):
+  | { calls: number; usage: Usage; fallback: boolean; raw?: ScoreRaw }
+  | undefined {
   if (result.usage === undefined && result.fallback === undefined)
     return undefined;
   const preCall =
     result.fallback === "no-previous-request" ||
     result.fallback === "no-adapter";
+  const fallback = result.fallback !== undefined;
   return {
     calls: preCall ? 0 : 1,
     usage: result.usage ?? EMPTY_USAGE,
-    fallback: result.fallback !== undefined,
+    fallback,
+    ...(fallback && result.raw ? { raw: result.raw } : {}),
   };
 }
 
@@ -1347,6 +1355,7 @@ async function runShadow(input: {
       decisions: ScoreDecision[];
       usage?: Usage;
       fallback?: string;
+      raw?: ScoreRaw;
     };
     try {
       result = await input.scorer.score({
@@ -1372,6 +1381,9 @@ async function runShadow(input: {
       ...(usage ? { usage } : {}),
       ...(typeof result.fallback === "string"
         ? { fallback: result.fallback }
+        : {}),
+      ...(typeof result.fallback === "string" && result.raw
+        ? { raw: result.raw }
         : {}),
     };
   } catch (error) {

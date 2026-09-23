@@ -53,7 +53,13 @@ export type {
 export { jevScorer } from "./scorer/jev.js";
 export { modelScorer } from "./scorer/model.js";
 export { ruleScorer } from "./scorer/rule.js";
-export type { ScoreDecision, ScoreInput, Scorer } from "./scorer/types.js";
+export type {
+  ScoreDecision,
+  ScoreInput,
+  ScoreRaw,
+  ScoreResult,
+  Scorer,
+} from "./scorer/types.js";
 export type { SubtaskPreset } from "./subtask/presets.js";
 export { loadPresets } from "./subtask/presets.js";
 export { subtaskTools } from "./subtask/spawn.js";

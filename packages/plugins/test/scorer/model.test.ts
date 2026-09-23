@@ -99,9 +99,17 @@ function scripted(
 }
 
 const INSTRUCTION = [
-  "Output JSON only. No other text.",
-  "tier must be one of none, summary, full.",
-  "summary must be at most 200 characters.",
+  "You are judging which earlier tool results can be dropped from the context.",
+  "This is a side query, not a continuation of the task.",
+  "do not call tools. Do not output any other text.",
+  "Each candidate is the result of an earlier tool call.",
+  "Output a JSON array only.",
+  'Each item is {"id":"<candidate id>","tier":"none"|"summary"|"full","summary"?:string}.',
+  "Copy id from the candidate list.",
+  "summary is optional and at most 200 characters.",
+  "tier none drops the result, summary keeps a short note, full keeps the original text.",
+  "Example:",
+  '[{"id":"seq:1#a","tier":"none"},{"id":"seq:2#b","tier":"summary","summary":"listed the files"}]',
 ].join("\n");
 
 it("extends the previous main request by one user message and keeps its tools", async () => {
@@ -121,11 +129,9 @@ it("extends the previous main request by one user message and keeps its tools", 
   ].join("\n");
   const adapter = scripted(
     textScript(
-      JSON.stringify({
-        decisions: [
-          { id: "seq:12#x", tier: "summary", summary: "listed files" },
-        ],
-      }),
+      JSON.stringify([
+        { id: "seq:12#x", tier: "summary", summary: "listed files" },
+      ]),
     ),
   );
   const scorer = modelScorer({
@@ -152,6 +158,7 @@ it("extends the previous main request by one user message and keeps its tools", 
     content: [{ type: "text", text }],
   });
   expect(scoreReq.head.tools).toEqual(prev.head.tools);
+  expect(scoreReq.toolChoice).toBe("none");
   expect(scoreReq.model).toEqual(SCORE_MODEL);
   expect(renderLlmInput(scoreReq, prev)).toBe(
     [
@@ -159,9 +166,17 @@ it("extends the previous main request by one user message and keeps its tools", 
       "tools: <same>",
       "messages:",
       "<last>",
-      "+ [user] Output JSON only. No other text.",
-      "+ tier must be one of none, summary, full.",
-      "+ summary must be at most 200 characters.",
+      "+ [user] You are judging which earlier tool results can be dropped from the context.",
+      "+ This is a side query, not a continuation of the task.",
+      "+ do not call tools. Do not output any other text.",
+      "+ Each candidate is the result of an earlier tool call.",
+      "+ Output a JSON array only.",
+      '+ Each item is {"id":"<candidate id>","tier":"none"|"summary"|"full","summary"?:string}.',
+      "+ Copy id from the candidate list.",
+      "+ summary is optional and at most 200 characters.",
+      "+ tier none drops the result, summary keeps a short note, full keeps the original text.",
+      "+ Example:",
+      '+ [{"id":"seq:1#a","tier":"none"},{"id":"seq:2#b","tier":"summary","summary":"listed the files"}]',
       "+ Query: find the bug",
       `+ ${JSON.stringify(listed)}`,
     ].join("\n"),
@@ -194,7 +209,7 @@ it("drops the oldest candidates past the default cap of 60", async () => {
   const candidates = Array.from({ length: 61 }, (_, index) =>
     chunk(`seq:${index}#c${index}`),
   );
-  const adapter = scripted(textScript('{"decisions":[]}'));
+  const adapter = scripted(textScript("[]"));
   const scorer = modelScorer({
     adapters: { anthropic: adapter },
     model: SCORE_MODEL,
@@ -213,11 +228,7 @@ it("drops the oldest candidates past the default cap of 60", async () => {
 it("truncates a summary to 200 characters", async () => {
   const summary = "s".repeat(250);
   const adapter = scripted(
-    textScript(
-      JSON.stringify({
-        decisions: [{ id: "seq:12#x", tier: "summary", summary }],
-      }),
-    ),
+    textScript(JSON.stringify([{ id: "seq:12#x", tier: "summary", summary }])),
   );
   const result = await modelScorer({
     adapters: { anthropic: adapter },

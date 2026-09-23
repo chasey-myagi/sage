@@ -38,7 +38,7 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 ["head", {afterMessage: 冻结前缀最后一条}, {afterMessage: 最后一条}]
 ```
 
-`head` 盖住 system 和工具 schema。第二个断点落在本阶段第一份清单覆盖到的历史末尾（epoch 头加上当时的 seq 上限）。第三个断点落在当前最后一条消息。阶段内，一个块的档位以它第一次出现在本阶段清单里的那次为准，后面的清单不改它。`superseded` 和预算降档都不作用于已冻结的块；它们可以过时，但不能变。淘汰只决定还没冻结的新块，输入里带上已冻结块作只读参考：新块在历史末尾，不会被更早的块盖掉，所以第一次进清单时是 `recent` 或 `full`。预算先扣掉已冻结且仍保留的 token，只把新块从最旧开始降到 none，降完的档位同样冻结。缓存断点仍停在阶段第一份清单的 seq 上限，新内容写在那个断点之后。阶段重开时若用模型打分，那一次调用是上一轮主请求的前缀延长：头和历史逐字节复用，指令只追加在尾部。
+`head` 盖住 system 和工具 schema。第二个断点落在本阶段第一份清单覆盖到的历史末尾（epoch 头加上当时的 seq 上限）。第三个断点落在当前最后一条消息。阶段内，一个块的档位以它第一次出现在本阶段清单里的那次为准，后面的清单不改它。`superseded` 和预算降档都不作用于已冻结的块；它们可以过时，但不能变。淘汰只决定还没冻结的新块，输入里带上已冻结块作只读参考：新块在历史末尾，不会被更早的块盖掉，所以第一次进清单时是 `recent` 或 `full`。预算先扣掉已冻结且仍保留的 token，只把新块从最旧开始降到 none，降完的档位同样冻结。缓存断点仍停在阶段第一份清单的 seq 上限，新内容写在那个断点之后。阶段重开时若用模型打分，那一次调用是上一轮主请求的前缀延长：头和历史逐字节复用，指令只追加在尾部。请求带 `toolChoice: "none"`，不删 tools，前缀缓存仍能命中。
 
 开不开新阶段由这道不等式批准：
 
@@ -86,11 +86,11 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 默认是 `ruleScorer`：这些块保持 full，reason 仍是 `kept`。没装打分器时，视图和清单与只跑淘汰时逐字节相同。
 
-`modelScorer` 用调用方注入的 adapter 打一次分。请求的 `head`（system 和 tools）以及此前的 messages 与上一轮主请求逐字节相同，只在末尾多一条 user 消息：固定指令、当前问题、以及候选清单 `[{id, tool, summary, tokens}]`。用不到的 tools 也照带。少一个 tool 或换掉 system，缓存前缀会从第一个 token 断开，辅助调用就变成把整段历史再付一遍。候选超过 60 个时丢掉最旧的。`timeoutMs` 默认 20000。
+`modelScorer` 用调用方注入的 adapter 打一次分。请求的 `head`（system 和 tools）以及此前的 messages 与上一轮主请求逐字节相同，`toolChoice` 为 `"none"`，只在末尾多一条 user 消息：固定指令、当前问题、以及候选清单 `[{id, tool, summary, tokens}]`。用不到的 tools 也照带。少一个 tool 或换掉 system，缓存前缀会从第一个 token 断开，辅助调用就变成把整段历史再付一遍。`tool_choice` 不改这些字节。候选超过 60 个时丢掉最旧的。`timeoutMs` 默认 20000。
 
-模型应只返回 JSON：`{"decisions":[{"id","tier":"none"|"summary"|"full","summary"?}]}`，summary 最长 200 字符。`summary` 档在视图里是桩行，换行，然后 `summary (model notes, not evidence): ` 加上那段笔记。`none` 仍是原来的桩。`full` 保持原文。返回里没有的块保持 `kept`。打分器若把 `recent` 块判成 none，以 recent 为准。
+指令说明这是旁路判定，不是继续任务。每个候选是早先某次工具调用的结果。模型只返回 JSON 数组，每项 `{"id","tier":"none"|"summary"|"full","summary"?}`，summary 最长 200 字符，并给出两项示例。正文可以包在 json 代码围栏里。顶层如果是带 `id` 的单个对象，会包成一项。`id` 不在这份候选清单里的项丢掉并计数，其余照用。空数组 `[]` 表示全部保留，不是失败。某一项缺 `id`、tier 非法，或整段不是 JSON，整次解析失败。`summary` 档在视图里是桩行，换行，然后 `summary (model notes, not evidence): ` 加上那段笔记。`none` 仍是原来的桩。`full` 保持原文。返回里没有的块保持 `kept`。打分器若把 `recent` 块判成 none，以 recent 为准。
 
-非法 JSON、超时、adapter 的 finish error，或者还没有上一轮请求，全部退回规则打分，本轮照常发出。清单 `epochDecision.reason` 追加 `;scorer:fallback:<原因>`。这次调用的 usage 写在清单字段 `scorer: { calls, usage, fallback }` 里。
+非法 JSON、超时、adapter 的 finish error，或者还没有上一轮请求，全部退回规则打分，本轮照常发出。清单 `epochDecision.reason` 追加 `;scorer:fallback:<原因>`。这次调用写在清单字段 `scorer: { calls, usage, fallback, raw? }` 里。`raw` 只在 fallback 且已经拿到模型回复时出现：`text` 是原文前 300 字，`finish` 是结束种类。成功不写 `raw`。
 
 CLI `--scorer model` 给根编译器装上模型打分，沿用已装配的 adapter 和当前模型。不写这个参数就是规则打分。
 
@@ -104,7 +104,7 @@ CLI `--scorer jev` 读取 `TYPESAFE_API_KEY`。这个变量缺失时进程以退
 
 `contextCompiler({ shadowScorer })` 在这一轮的档位、冻结和预算都已经定下来之后，再对**本轮新进入视图的工具块**调用 `shadowScorer.score`。新块是上一份清单的 `chunks` 里没有的 chunk id。第一轮没有上一份清单，全部工具块都算新的。散文块不打。`prevRequest` 是这一轮已经编译好的视图（head、messages、缓存断点），不是上一轮发出去的请求。
 
-结果只写 `manifest.shadow`：`{ scorer, decisions: [{ id, tier, reason? }], usage?, fallback? }`。影子只记不生效。它不改任何档次，不改冻结，不改预算，也不改模型看到的消息。打分器抛错时 `shadow.fallback` 记下错误文本，`decisions` 为空，这一轮照常返回。打分器自己返回的 `fallback` 同样只记在这个字段上。没有新的工具块就不调用，清单上也不写 `shadow`。
+结果只写 `manifest.shadow`：`{ scorer, decisions: [{ id, tier, reason? }], usage?, fallback?, raw? }`。`raw` 与上面的打分记录一样，只在 fallback 时有。影子只记不生效。它不改任何档次，不改冻结，不改预算，也不改模型看到的消息。打分器抛错时 `shadow.fallback` 记下错误文本，`decisions` 为空，这一轮照常返回。打分器自己返回的 `fallback` 同样只记在这个字段上。没有新的工具块就不调用，清单上也不写 `shadow`。
 
 子任务重编译不跑影子打分。任务结束后用 `sage stats` 对账：被影子判为 `none` 的块，后来有没有被 `expand` 取回，或者作为 `read` 结果在后续轮次被同一路径再次读取。口径见 [`apps/sage/README.md`](../../apps/sage/README.md)。
 

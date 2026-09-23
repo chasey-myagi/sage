@@ -7,7 +7,9 @@
  * through normalizeForApi and does not send reasoning_content back. Usage
  * prefers prompt_cache_hit_tokens, then prompt_tokens_details.cached_tokens,
  * then the whole prompt_tokens. inputCacheCreation stays 0. raw is the
- * provider usage object unchanged.
+ * provider usage object unchanged. `toolChoice: "none"` is
+ * `tool_choice: "none"` and `"auto"` is `"auto"`. An absent toolChoice
+ * omits the field. messages and tools are otherwise unchanged.
  *
  * Deliberately not a Log entry: the API key, request bytes, and abort
  * signal stay here. adapterDefaults are returned so a later
@@ -114,6 +116,7 @@ function encodeRequest(
     body.temperature = request.sampling.temperature;
   }
   if (tools.length > 0) body.tools = tools;
+  if (request.toolChoice !== undefined) body.tool_choice = request.toolChoice;
   return body;
 }
 

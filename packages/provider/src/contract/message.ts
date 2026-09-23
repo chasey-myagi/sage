@@ -4,6 +4,9 @@
  * Deliberately not a Log entry: a request is compiled view plus sampling.
  * The Log records it later as a request_header entry (#4). API keys, fetch
  * signals, and wire bytes never belong in that entry.
+ *
+ * `toolChoice`, when set, is `auto` or `none`. Adapters map it onto the
+ * wire and omit the field when it is absent.
  */
 
 export type Role = "user" | "assistant";
@@ -54,10 +57,13 @@ export type ModelRef = { provider: string; model: string };
 
 export type Sampling = { maxTokens?: number; temperature?: number };
 
+export type ToolChoice = "auto" | "none";
+
 export type Request = {
   model: ModelRef;
   head: Head;
   messages: Message[];
   cacheBreakpoints: CacheBreakpoint[];
   sampling: Sampling;
+  toolChoice?: ToolChoice;
 };

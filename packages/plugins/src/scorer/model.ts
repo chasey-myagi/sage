@@ -4,17 +4,24 @@
  * Contract: when `prevRequest` is missing, score resolves
  * `{ decisions: [], fallback: "no-previous-request" }` and does not call an
  * adapter. Otherwise the request copies that previous head and messages
- * byte for byte, keeps its tools, and appends one user message: a fixed
- * instruction, the query, and a JSON list of `{id, tool, summary, tokens}`.
- * Candidates beyond `maxCandidates` (default 60) drop the oldest. The
- * instruction requires JSON only, tier `none` | `summary` | `full`, and a
- * summary of at most 200 characters. `timeoutMs` defaults to 20000. Invalid
- * JSON, timeout, a missing adapter, and a finish error resolve `fallback`
- * and no decisions. A completed call returns the parsed decisions and the
- * stream usage.
+ * byte for byte, keeps its tools, sets `toolChoice` to `"none"`, and
+ * appends one user message: a fixed instruction, the query, and a JSON
+ * list of `{id, tool, summary, tokens}`. Candidates beyond `maxCandidates`
+ * (default 60) drop the oldest. The instruction says this is a side
+ * judgment of earlier tool results, not a continuation of the task, and
+ * that the reply is a JSON array of `{id, tier, summary?}`. `timeoutMs`
+ * defaults to 20000. The parser strips one fenced json block, wraps a single
+ * object that has `id` into a one-item array, drops items whose id is not
+ * in the listed candidates (`dropped`), and treats `[]` as keep-all.
+ * A malformed item fails the parse. Invalid JSON, timeout, a missing
+ * adapter, and a finish error resolve `fallback` and no decisions. When
+ * that fallback follows a model reply, `raw` is `{ text, finish }` with at
+ * most 300 characters of text. A completed call returns the parsed
+ * decisions and the stream usage, and does not set `raw`.
  *
- * Intentionally not in the Log: this call. The compiler copies usage and
- * fallback onto the manifest; the kernel stores that manifest.
+ * Intentionally not in the Log: this call, and `dropped`. The compiler
+ * copies usage, fallback, and `raw` onto the manifest; the kernel stores
+ * that manifest.
  */
 
 import {
@@ -24,16 +31,25 @@ import {
   type Request,
 } from "@sage/provider/contract";
 import { summarizeInput } from "../compiler/stub.js";
-import type { ScoreDecision, Scorer } from "./types.js";
+import type { ScoreDecision, ScoreRaw, Scorer } from "./types.js";
 
 const SUMMARY_LIMIT = 200;
+const RAW_LIMIT = 300;
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_CANDIDATES = 60;
 
 const INSTRUCTION = [
-  "Output JSON only. No other text.",
-  "tier must be one of none, summary, full.",
-  "summary must be at most 200 characters.",
+  "You are judging which earlier tool results can be dropped from the context.",
+  "This is a side query, not a continuation of the task.",
+  "do not call tools. Do not output any other text.",
+  "Each candidate is the result of an earlier tool call.",
+  "Output a JSON array only.",
+  'Each item is {"id":"<candidate id>","tier":"none"|"summary"|"full","summary"?:string}.',
+  "Copy id from the candidate list.",
+  "summary is optional and at most 200 characters.",
+  "tier none drops the result, summary keeps a short note, full keeps the original text.",
+  "Example:",
+  '[{"id":"seq:1#a","tier":"none"},{"id":"seq:2#b","tier":"summary","summary":"listed the files"}]',
 ].join("\n");
 
 const TIERS = new Set(["none", "summary", "full"]);
@@ -82,6 +98,7 @@ export function modelScorer(opts: {
         messages,
         cacheBreakpoints: structuredClone(input.prevRequest.cacheBreakpoints),
         sampling: { ...input.prevRequest.sampling },
+        toolChoice: "none",
       };
 
       const controller = new AbortController();
@@ -132,11 +149,17 @@ export function modelScorer(opts: {
           };
         }
         const assistant = raced.value;
+        const body = assistant.content
+          .filter((block) => block.type === "text")
+          .map((block) => block.text)
+          .join("");
+        const raw = replyRaw(body, assistant.finish.kind);
         if (cause === "timeout") {
           return {
             decisions: [],
             usage: assistant.usage,
             fallback: "timeout",
+            raw,
           };
         }
         if (cause === "aborted" || assistant.finish.kind === "aborted") {
@@ -144,6 +167,7 @@ export function modelScorer(opts: {
             decisions: [],
             usage: assistant.usage,
             fallback: "aborted",
+            raw,
           };
         }
         if (assistant.finish.kind === "error") {
@@ -151,21 +175,26 @@ export function modelScorer(opts: {
             decisions: [],
             usage: assistant.usage,
             fallback: "finish:error",
+            raw,
           };
         }
-        const body = assistant.content
-          .filter((block) => block.type === "text")
-          .map((block) => block.text)
-          .join("");
-        const decisions = parseDecisions(body);
-        if (!decisions) {
+        const parsed = parseDecisions(
+          body,
+          new Set(selected.map((chunk) => chunk.id)),
+        );
+        if (!parsed) {
           return {
             decisions: [],
             usage: assistant.usage,
             fallback: "invalid-json",
+            raw,
           };
         }
-        return { decisions, usage: assistant.usage };
+        return {
+          decisions: parsed.decisions,
+          usage: assistant.usage,
+          ...(parsed.dropped > 0 ? { dropped: parsed.dropped } : {}),
+        };
       } finally {
         clearTimeout(timer);
         input.signal?.removeEventListener("abort", onCallerAbort);
@@ -174,36 +203,81 @@ export function modelScorer(opts: {
   };
 }
 
-function parseDecisions(text: string): ScoreDecision[] | undefined {
+function replyRaw(text: string, finish: string): ScoreRaw {
+  return { text: text.slice(0, RAW_LIMIT), finish };
+}
+
+function parseDecisions(
+  text: string,
+  allowed: ReadonlySet<string>,
+): { decisions: ScoreDecision[]; dropped: number } | undefined {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text.trim());
+    parsed = JSON.parse(stripFence(text));
   } catch {
     return undefined;
   }
-  if (!isRecord(parsed) || !Array.isArray(parsed.decisions)) return undefined;
+  const items = asItems(parsed);
+  if (!items) return undefined;
   const decisions: ScoreDecision[] = [];
-  for (const item of parsed.decisions) {
-    if (
-      !isRecord(item) ||
-      typeof item.id !== "string" ||
-      item.id.length === 0
-    ) {
-      return undefined;
+  let dropped = 0;
+  for (const item of items) {
+    const read = readItem(item, allowed);
+    if (read.kind === "fail") return undefined;
+    if (read.kind === "drop") {
+      dropped += 1;
+      continue;
     }
-    if (typeof item.tier !== "string" || !TIERS.has(item.tier))
-      return undefined;
-    const decision: ScoreDecision = {
-      id: item.id,
-      tier: item.tier as ScoreDecision["tier"],
-    };
-    if (item.summary !== undefined) {
-      if (typeof item.summary !== "string") return undefined;
-      decision.summary = clampSummary(item.summary);
-    }
-    decisions.push(decision);
+    decisions.push(read.decision);
   }
-  return decisions;
+  return { decisions, dropped };
+}
+
+function stripFence(text: string): string {
+  const trimmed = text.trim();
+  const fenced = /^```(?:json)?\s*([\s\S]*?)```$/i.exec(trimmed);
+  if (!fenced || fenced[1] === undefined) return trimmed;
+  return fenced[1].trim();
+}
+
+function asItems(parsed: unknown): unknown[] | undefined {
+  if (Array.isArray(parsed)) return parsed;
+  if (
+    isRecord(parsed) &&
+    typeof parsed.id === "string" &&
+    parsed.id.length > 0
+  ) {
+    return [parsed];
+  }
+  return undefined;
+}
+
+function readItem(
+  item: unknown,
+  allowed: ReadonlySet<string>,
+):
+  | { kind: "keep"; decision: ScoreDecision }
+  | { kind: "drop" }
+  | { kind: "fail" } {
+  if (!isRecord(item)) return { kind: "fail" };
+  if (typeof item.id !== "string" || item.id.length === 0) {
+    return { kind: "fail" };
+  }
+  if (!allowed.has(item.id)) return { kind: "drop" };
+  if (typeof item.tier !== "string" || !TIERS.has(item.tier)) {
+    return { kind: "fail" };
+  }
+  if (item.summary !== undefined && typeof item.summary !== "string") {
+    return { kind: "fail" };
+  }
+  const decision: ScoreDecision = {
+    id: item.id,
+    tier: item.tier as ScoreDecision["tier"],
+  };
+  if (typeof item.summary === "string") {
+    decision.summary = clampSummary(item.summary);
+  }
+  return { kind: "keep", decision };
 }
 
 function clampSummary(summary: string): string {

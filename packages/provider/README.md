@@ -14,7 +14,7 @@
 
 ### KV cache effect
 
-断点只按 `Request.cacheBreakpoints` 打，适配器不自作主张。丢掉 thinking 或重写 tool id 会改变发出去的消息字节；换 provider 发生在阶段边界，那一轮前缀本来就要重建。
+断点只按 `Request.cacheBreakpoints` 打，适配器不自作主张。丢掉 thinking 或重写 tool id 会改变发出去的消息字节；换 provider 发生在阶段边界，那一轮前缀本来就要重建。`Request.toolChoice` 可选 `"auto"` 或 `"none"`。没写时请求体不带 `tool_choice`。`"none"` 在 openai-chat 上是 `"none"`，在 anthropic-messages 上是 `{ "type": "none" }`；`"auto"` 同样映射。这个字段不改 system、tools、messages 的字节。
 
 ## 第三方 OpenAI 兼容端点
 

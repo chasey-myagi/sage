@@ -26,7 +26,9 @@
  * `decisions`. Each decision has string `id` and `tier`. `reason` and
  * `fallback`, when present, are strings. `usage`, when present, is an
  * object; its four token fields are finite numbers if they are present.
- * The kernel does not apply shadow tiers.
+ * `raw`, when present on `shadow` or `scorer`, is an object with string
+ * `text` and string `finish`. Any other raw is rejected. A missing raw is
+ * valid. The kernel does not apply shadow tiers.
  *
  * `terminal.health`, when present, is an object. The kernel does not read
  * its fields. A missing health is valid. A non-object health is rejected.
@@ -169,6 +171,7 @@ function isManifest(payload: unknown): payload is ManifestPayload {
   }
   if (payload.cache !== undefined && !isRecord(payload.cache)) return false;
   if (payload.shadow !== undefined && !isShadow(payload.shadow)) return false;
+  if (payload.scorer !== undefined && !rawFieldOk(payload.scorer)) return false;
   return (
     Array.isArray(payload.claims) &&
     Array.isArray(payload.chunks) &&
@@ -184,7 +187,18 @@ function isShadow(value: unknown): boolean {
     return false;
   }
   if (value.usage !== undefined && !isShadowUsage(value.usage)) return false;
+  if (!rawFieldOk(value)) return false;
   return value.decisions.every(isShadowDecision);
+}
+
+function rawFieldOk(value: unknown): boolean {
+  if (!isRecord(value) || value.raw === undefined) return true;
+  const raw = value.raw;
+  return (
+    isRecord(raw) &&
+    typeof raw.text === "string" &&
+    typeof raw.finish === "string"
+  );
 }
 
 function isShadowDecision(value: unknown): boolean {

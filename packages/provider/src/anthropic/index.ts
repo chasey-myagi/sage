@@ -5,6 +5,10 @@
  * Deliberately not a Log entry: the API key, request bytes, and abort
  * signal stay here. adapterDefaults are returned so a later
  * request_header can store what this adapter filled in.
+ *
+ * `toolChoice` becomes `tool_choice: { type }` for `"none"` and `"auto"`.
+ * An absent toolChoice omits the field. messages and tools are otherwise
+ * unchanged.
  */
 
 import { prepareModel, resolveMaxTokens } from "../catalog.js";
@@ -121,6 +125,9 @@ function encodeRequest(
     body.temperature = request.sampling.temperature;
   }
   if (tools.length > 0) body.tools = tools;
+  if (request.toolChoice !== undefined) {
+    body.tool_choice = { type: request.toolChoice };
+  }
   return body;
 }
 
