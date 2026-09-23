@@ -11,7 +11,10 @@
  * `expandRate` is expands/omitted, or null when omitted is 0. `epochs` is
  * one more than the highest `view_epoch.epoch`, or 1 when none exist.
  * `scorerCalls` sums `scorer.calls`. `scorerFallbacks` sums numeric
- * `scorer.fallback`, and counts `true` as 1. `subtasks` sums usage from
+ * `scorer.fallback`, and counts `true` as 1. `shadow.calls` counts
+ * manifests that carry a `shadow` object. `shadow.usage` sums that
+ * object's `usage` quadruple (`inputOther`, `inputCacheRead`,
+ * `inputCacheCreation`, `output`). `subtasks` sums usage from
  * `spawn_subtask` and `spawn_subtasks` tool results stored on the user
  * message as `details.toolResults`. `spawn_subtasks` counts each item in
  * `details.results`. `cacheHitRatio` and `expandRate` ignore that usage.
@@ -39,6 +42,16 @@ export type RunHealth = {
   modelChanges: number;
   scorerCalls: number;
   scorerFallbacks: number;
+  shadow: {
+    calls: number;
+    usage: {
+      input: number;
+      cacheRead: number;
+      cacheCreation: number;
+      output: number;
+      total: number;
+    };
+  };
   subtasks: {
     count: number;
     tokens: {
@@ -114,8 +127,28 @@ export function runHealth(path: readonly StoredEntry[]): RunHealth {
     modelChanges,
     scorerCalls,
     scorerFallbacks,
+    shadow: shadowHealth(path),
     subtasks: subtaskHealth(path),
   };
+}
+
+function shadowHealth(path: readonly StoredEntry[]): RunHealth["shadow"] {
+  const tokens = {
+    input: 0,
+    cacheRead: 0,
+    cacheCreation: 0,
+    output: 0,
+  };
+  let calls = 0;
+  for (const entry of path) {
+    if (entry.kind !== "manifest" || !isRecord(entry.payload)) continue;
+    if (!isRecord(entry.payload.shadow)) continue;
+    calls += 1;
+    addUsage(tokens, entry.payload.shadow.usage);
+  }
+  const total =
+    tokens.input + tokens.cacheRead + tokens.cacheCreation + tokens.output;
+  return { calls, usage: { ...tokens, total } };
 }
 
 function subtaskHealth(path: readonly StoredEntry[]): RunHealth["subtasks"] {

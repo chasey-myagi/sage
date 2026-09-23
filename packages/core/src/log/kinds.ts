@@ -22,6 +22,11 @@
  * kernel checks that shape and does not interpret the decision. When
  * `calibration` is present, `measured`, `estimated`, `ratio`, and `head`
  * are finite numbers if they are present. Older manifests may omit `head`.
+ * `shadow`, when present, is an object with string `scorer` and an array
+ * `decisions`. Each decision has string `id` and `tier`. `reason` and
+ * `fallback`, when present, are strings. `usage`, when present, is an
+ * object; its four token fields are finite numbers if they are present.
+ * The kernel does not apply shadow tiers.
  *
  * `terminal.health`, when present, is an object. The kernel does not read
  * its fields. A missing health is valid. A non-object health is rejected.
@@ -78,6 +83,7 @@ export type ManifestPayload = {
   epochDecision?: Record<string, unknown>;
   calibration?: Record<string, unknown>;
   cache?: Record<string, unknown>;
+  shadow?: unknown;
 };
 
 export type TargetPayload = {
@@ -162,10 +168,42 @@ function isManifest(payload: unknown): payload is ManifestPayload {
     return false;
   }
   if (payload.cache !== undefined && !isRecord(payload.cache)) return false;
+  if (payload.shadow !== undefined && !isShadow(payload.shadow)) return false;
   return (
     Array.isArray(payload.claims) &&
     Array.isArray(payload.chunks) &&
     Array.isArray(payload.anomalies)
+  );
+}
+
+function isShadow(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (typeof value.scorer !== "string") return false;
+  if (!Array.isArray(value.decisions)) return false;
+  if (value.fallback !== undefined && typeof value.fallback !== "string") {
+    return false;
+  }
+  if (value.usage !== undefined && !isShadowUsage(value.usage)) return false;
+  return value.decisions.every(isShadowDecision);
+}
+
+function isShadowDecision(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (typeof value.id !== "string") return false;
+  if (typeof value.tier !== "string") return false;
+  if (value.reason !== undefined && typeof value.reason !== "string") {
+    return false;
+  }
+  return true;
+}
+
+function isShadowUsage(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    isOptionalFinite(value.inputOther) &&
+    isOptionalFinite(value.inputCacheRead) &&
+    isOptionalFinite(value.inputCacheCreation) &&
+    isOptionalFinite(value.output)
   );
 }
 

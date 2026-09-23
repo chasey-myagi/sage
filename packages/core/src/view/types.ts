@@ -11,6 +11,9 @@
  * `parentPath` is a snapshot of another session's chain. `depth` is 0 on a
  * root session. Neither is stored by the kernel.
  *
+ * `shadow` on a manifest is the shadow scorer's record for this turn. The
+ * kernel stores it with the manifest and does not apply those tiers.
+ *
  * Intentionally not in the Log: the live CompiledView object, parentPath,
  * and depth. The kernel appends the manifest as its own entry; this module
  * does not. A child session's `subtask` entry is written by the caller.
@@ -86,6 +89,28 @@ export type CacheReport = {
   measuredReadTokens: number;
 };
 
+export type ShadowDecisionRecord = {
+  id: string;
+  tier: ChunkRecord["tier"];
+  reason?: string;
+};
+
+/**
+ * Shadow score for tool chunks that first appeared this turn. The compiler
+ * records it and does not apply the tiers.
+ */
+export type ShadowReport = {
+  scorer: string;
+  decisions: ShadowDecisionRecord[];
+  usage?: {
+    inputOther: number;
+    inputCacheRead: number;
+    inputCacheCreation: number;
+    output: number;
+  };
+  fallback?: string;
+};
+
 export type Manifest = {
   epoch: number;
   turn: number;
@@ -110,6 +135,11 @@ export type Manifest = {
    * was rewritten.
    */
   cache?: CacheReport;
+  /**
+   * Shadow score of this turn's new tool chunks. Optional. The kernel stores
+   * the object and does not apply it to chunk tiers.
+   */
+  shadow?: ShadowReport;
 };
 
 export type CompiledView = {

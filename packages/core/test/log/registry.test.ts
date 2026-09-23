@@ -253,6 +253,40 @@ describe("entry kinds", () => {
     ).toThrow(InvalidEntryError);
   });
 
+  it("accepts manifest shadow and rejects a shadow object without scorer", () => {
+    const store = new MemoryLogStore();
+    store.append("shadow-ok", {
+      kind: "manifest",
+      payload: {
+        epoch: 0,
+        turn: 1,
+        claims: [],
+        chunks: [],
+        anomalies: [],
+        shadow: {
+          scorer: "rule",
+          decisions: [{ id: "seq:1#t", tier: "none", reason: "shadow" }],
+          usage: { inputOther: 1, inputCacheRead: 0, output: 1 },
+          fallback: "boom",
+        },
+      },
+    });
+    expect(store.path("shadow-ok")).toHaveLength(1);
+    expect(() =>
+      store.append("shadow-bad", {
+        kind: "manifest",
+        payload: {
+          epoch: 0,
+          turn: 1,
+          claims: [],
+          chunks: [],
+          anomalies: [],
+          shadow: { decisions: [] },
+        },
+      }),
+    ).toThrow(InvalidEntryError);
+  });
+
   it("throws when the same kind is registered twice", () => {
     expect(() =>
       registerEntryKind({
