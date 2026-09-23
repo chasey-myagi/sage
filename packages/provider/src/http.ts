@@ -12,6 +12,13 @@ export type ClientOptions = {
   apiKey: string;
   baseUrl?: string;
   fetchImpl?: typeof fetch;
+  /**
+   * Retries before the response body starts. Omitted means 2 retries
+   * and a 1000ms base (1s, then 4s). Not a Log entry.
+   */
+  retry?: { attempts: number; baseMs: number };
+  /** Replaces the real timer. Tests pass this so they do not wait. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 };
 
 export function joinUrl(base: string, path: string): string {
@@ -27,6 +34,8 @@ export type PostFail = {
   message: string;
   status?: number;
   raw?: unknown;
+  /** True when fetch itself threw. HTTP responses leave this unset. */
+  transport?: boolean;
 };
 
 export async function postJson(args: {
@@ -52,7 +61,12 @@ export async function postJson(args: {
     if (args.signal?.aborted || isAbortError(error)) {
       return { ok: false, aborted: true, message: "aborted" };
     }
-    return { ok: false, aborted: false, message: messageOf(error) };
+    return {
+      ok: false,
+      aborted: false,
+      message: messageOf(error),
+      transport: true,
+    };
   }
   if (!response.ok) {
     return readFailure(response);

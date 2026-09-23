@@ -4,7 +4,8 @@
  *
  * Deliberately not a Log entry: the API key, request bytes, and abort
  * signal stay here. adapterDefaults are returned so a later
- * request_header can store what this adapter filled in.
+ * request_header can store what this adapter filled in. Pre-stream
+ * retries are not adapter defaults and are not a request_header field.
  *
  * `toolChoice` becomes `tool_choice: { type }` for `"none"` and `"auto"`.
  * An absent toolChoice omits the field. messages and tools are otherwise
@@ -27,6 +28,7 @@ import type { ClientOptions } from "../http.js";
 import { joinUrl } from "../http.js";
 import { normalizeForApi } from "../normalize.js";
 import { asRecord, indexOf, num } from "../record.js";
+import type { RetryPolicy, Sleeper } from "../retry.js";
 import type { SseEvent } from "../sse.js";
 
 const DEFAULT_BASE = "https://api.anthropic.com";
@@ -43,11 +45,15 @@ export class AnthropicAdapter implements ProviderAdapter {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch | undefined;
+  private readonly retry: RetryPolicy | undefined;
+  private readonly sleep: Sleeper | undefined;
 
   constructor(options: ClientOptions) {
     this.apiKey = options.apiKey;
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE;
     this.fetchImpl = options.fetchImpl;
+    this.retry = options.retry;
+    this.sleep = options.sleep;
   }
 
   prepare(model: ModelRef): PreparedCall {
@@ -74,6 +80,8 @@ export class AnthropicAdapter implements ProviderAdapter {
           json: encodeRequest(request, prepared),
           signal,
           fetchImpl: this.fetchImpl,
+          retry: this.retry,
+          sleep: this.sleep,
           onEvent(event, driver) {
             interpret(event, responseTrace, state, driver);
           },

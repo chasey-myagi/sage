@@ -1,15 +1,21 @@
 /**
  * Read one SSE response and let the adapter translate events.
  * Every exit yields usage and then a single finish chunk.
+ * Fetch throws, HTTP 429, and HTTP 5xx are retried before the body
+ * starts. Once parseSse is entered, a later failure is not retried.
  *
  * Deliberately not a Log entry: this is the live decode of one call.
  * Wire frames stay in the SSE parser. The abort signal stays here.
+ * Intermediate failure bodies are not entries. Retry count and the
+ * last failure reason are copied onto the usage chunk.
  */
 
 import type { ContentBlock } from "./contract/message.js";
 import type { FinishKind, StreamChunk } from "./contract/stream.js";
 import type { Usage } from "./contract/usage.js";
-import { isAbortError, messageOf, postJson } from "./http.js";
+import { isAbortError, messageOf } from "./http.js";
+import type { RetryPolicy, Sleeper } from "./retry.js";
+import { openWithRetry } from "./retry.js";
 import type { SseEvent } from "./sse.js";
 import { parseSse } from "./sse.js";
 
@@ -46,11 +52,15 @@ export async function* driveStream(args: {
   json: unknown;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  retry?: RetryPolicy;
+  sleep?: Sleeper;
   onEvent(event: SseEvent, driver: Driver): void;
 }): AsyncGenerator<StreamChunk> {
   let usage: Usage | undefined;
   let stop: WireStop | undefined;
   let sealed = false;
+  let retries = 0;
+  let retryReason: string | undefined;
   const pending: StreamChunk[] = [];
   const driver: Driver = {
     push(chunk) {
@@ -63,27 +73,38 @@ export async function* driveStream(args: {
       if (!stop) stop = next;
     },
   };
+  const noted = (): Usage | undefined => withRetry(usage, retries, retryReason);
 
   try {
     if (args.signal?.aborted) {
       sealed = true;
-      yield* end(usage, { type: "finish", kind: "aborted" });
+      yield* end(noted(), {
+        type: "finish",
+        kind: "aborted",
+      });
       return;
     }
-    const opened = await postJson({
+    const opened = await openWithRetry({
       url: args.url,
       headers: args.headers,
       json: args.json,
       signal: args.signal,
       fetchImpl: args.fetchImpl,
+      retry: args.retry,
+      sleep: args.sleep,
     });
+    retries = opened.retries;
+    retryReason = opened.reason;
     if (!opened.ok) {
       sealed = true;
       if (opened.aborted) {
-        yield* end(usage, { type: "finish", kind: "aborted" });
+        yield* end(noted(), {
+          type: "finish",
+          kind: "aborted",
+        });
       } else {
         yield* end(
-          usage,
+          noted(),
           errorFinish(opened.message, opened.status, opened.raw),
         );
       }
@@ -92,7 +113,10 @@ export async function* driveStream(args: {
     for await (const event of parseSse(opened.body)) {
       if (args.signal?.aborted) {
         sealed = true;
-        yield* end(usage, { type: "finish", kind: "aborted" });
+        yield* end(noted(), {
+          type: "finish",
+          kind: "aborted",
+        });
         return;
       }
       try {
@@ -100,31 +124,37 @@ export async function* driveStream(args: {
       } catch (error) {
         yield* pending.splice(0, pending.length);
         sealed = true;
-        yield* end(usage, failureFinish(args.signal, error));
+        yield* end(noted(), failureFinish(args.signal, error));
         return;
       }
       yield* take(pending, args.signal);
       if (args.signal?.aborted) {
         sealed = true;
-        yield* end(usage, { type: "finish", kind: "aborted" });
+        yield* end(noted(), {
+          type: "finish",
+          kind: "aborted",
+        });
         return;
       }
       if (stop) {
         sealed = true;
-        yield* end(usage, successFinish(stop));
+        yield* end(noted(), successFinish(stop));
         return;
       }
     }
     if (args.signal?.aborted) {
       sealed = true;
-      yield* end(usage, { type: "finish", kind: "aborted" });
+      yield* end(noted(), {
+        type: "finish",
+        kind: "aborted",
+      });
       return;
     }
     sealed = true;
-    yield* end(usage, errorFinish("stream ended before completion"));
+    yield* end(noted(), errorFinish("stream ended before completion"));
   } catch (error) {
     if (sealed) return;
-    yield* end(usage, failureFinish(args.signal, error));
+    yield* end(noted(), failureFinish(args.signal, error));
   }
 }
 
@@ -188,4 +218,13 @@ function zeroUsage(): Usage {
     inputCacheCreation: 0,
     output: 0,
   };
+}
+
+function withRetry(
+  usage: Usage | undefined,
+  retries: number,
+  reason: string | undefined,
+): Usage | undefined {
+  if (retries <= 0 || reason === undefined) return usage;
+  return { ...(usage ?? zeroUsage()), details: { retries, reason } };
 }
