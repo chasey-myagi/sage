@@ -113,6 +113,7 @@ it("stubs a new block of at least 300 tokens on entry and keeps the prefix", asy
     none: 1,
     summary: 0,
     full: 0,
+    summaryRejected: 0,
     usage: {
       input: 0,
       cacheRead: 0,
@@ -179,7 +180,7 @@ it("keeps the block full when the scorer throws and still counts the call", asyn
 
 it("keeps an entry summary on the next turn and does not score again", async () => {
   let calls = 0;
-  const note = "kept the listing";
+  const note = "src/big.ts: keptListing (L1-40)";
   const scorer: Scorer = {
     name: "fake",
     async score(input) {
