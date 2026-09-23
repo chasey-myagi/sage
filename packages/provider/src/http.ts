@@ -2,9 +2,9 @@
  * POSTs JSON and classifies the response.
  *
  * Guarantees: nothing here throws for a failed call. Non-2xx responses and
- * transport failures come back as data (`PostFail`). A fetch throw, or a
- * throw while reading a non-2xx body, is marked `transport: true`; callers
- * turn them into finish chunks.
+ * transport failures come back as data (`PostFail`). A fetch throw, a
+ * throw while reading a non-2xx body, and a 2xx without a body are marked
+ * `transport: true`; callers turn them into finish chunks.
  *
  * Intentionally not in the Log: the API key, the abort signal, and the
  * response bytes never leave this module as a fact to append.
@@ -56,7 +56,10 @@ export type PostFail = {
   message: string;
   status?: number;
   raw?: unknown;
-  /** True when fetch itself threw. HTTP responses leave this unset. */
+  /**
+   * True when fetch threw, reading a non-2xx body threw, or a 2xx came
+   * without a body. A response whose error body was read leaves it unset.
+   */
   transport?: boolean;
 };
 
@@ -90,10 +93,13 @@ export async function postJson(args: {
     return readFailure(response, args.signal);
   }
   if (!response.body) {
+    // A 2xx with no body ended before the response completed, the same
+    // failure as a connection cut mid-body, so it is transport.
     return {
       ok: false,
       aborted: false,
       message: INCOMPLETE_STREAM,
+      transport: true,
     };
   }
   return { ok: true, body: response.body };

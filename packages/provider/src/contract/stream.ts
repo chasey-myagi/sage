@@ -10,11 +10,12 @@
  * - for each index, block_start precedes that index's deltas, and no delta
  *   for that index appears after its block_end
  * - finish.error.transport is true exactly when the call failed below HTTP:
- *   fetch threw, or reading a response body threw (the SSE body, or the
- *   body of a non-2xx response). Such a failure carries no status. HTTP
- *   statuses whose body was read, error
- *   events inside the stream, and a body that closes without a stop leave
- *   it unset. Callers classify transport failures by this flag alone.
+ *   fetch threw, reading a response body threw (the SSE body, or the body
+ *   of a non-2xx response), or the response ended before it completed (a
+ *   2xx without a body, or an SSE body that closes without a stop). Such a
+ *   failure carries no status. HTTP statuses whose body was read and error
+ *   events inside the stream leave it unset. Callers classify transport
+ *   failures by this flag alone.
  *
  * Intentionally not in the Log: chunks, the live decode of one call. The
  * assistant entry that lands in the Log is the collected message. Wire SSE
@@ -59,7 +60,8 @@ export type StreamChunk =
 
 /**
  * Finish error message when a call ends without a stop: the body closed
- * early, there was no body, or a thrown value carried no message.
+ * early, there was no body, or a thrown value carried no message. The first
+ * two are transport failures; see the invariant above.
  */
 export const INCOMPLETE_STREAM = "stream ended before completion";
 

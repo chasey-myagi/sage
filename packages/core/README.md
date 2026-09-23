@@ -55,9 +55,9 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 
 ## 整轮重试
 
-流还没开始时的重试在 provider：`fetch` 抛错、HTTP 429、HTTP 5xx，最多 2 次。响应体一开始，provider 就不再重试。
+流还没开始时的重试在 provider：`fetch` 抛错、2xx 没有响应体、HTTP 429、HTTP 5xx，最多 2 次。响应体一开始，provider 就不再重试。
 
-流已经开始之后，如果 finish 是传输类错误，并且这一轮还没有把 assistant 消息写进 Log，core 重发同一条请求。传输类是消息里含有 `terminated`、`fetch failed`、`ECONNRESET`、`socket hang up`、`aborted by peer`，或者 finish error 上 `transport: true`。HTTP 4xx 不重试。最多再发 2 次，先等 2 秒，再等 8 秒。构造参数 `sleep` 可注入，测试不真等。第 3 次仍失败，才把这次的 assistant 写入，并追加 terminal，outcome 为 `error`。
+流已经开始之后，如果 finish 是传输类错误，并且这一轮还没有把 assistant 消息写进 Log，core 重发同一条请求。只认 finish error 上的 `transport: true`，不看错误文案。provider 在读 body 抛错、以及 body 在收到结束信号前正常关闭时打这个标记。HTTP 4xx 不重试。最多再发 2 次，先等 2 秒，再等 8 秒。构造参数 `sleep` 可注入，测试不真等。第 3 次仍失败，才把这次的 assistant 写入，并追加 terminal，outcome 为 `error`。
 
 每次重发之前追加 `turn_retry`，payload 是 `{ turn, attempt, reason }`。这条持久化，不进模型请求。被重发丢掉的半截文本不进 Log。
 

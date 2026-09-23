@@ -4,9 +4,10 @@
  *
  * Guarantees: every exit yields usage and then a single finish chunk.
  * Fetch throws, HTTP 429, and HTTP 5xx are retried before the body starts;
- * once parsing begins, a later failure is not retried. A fetch throw, and
- * a throw while reading the body, finish with `error.transport = true`; a
- * throw from the adapter's `onEvent` does not.
+ * once parsing begins, a later failure is not retried. A fetch throw, a
+ * throw while reading the body, and a body that ends before the adapter
+ * records a stop finish with `error.transport = true`; a throw from the
+ * adapter's `onEvent` does not.
  *
  * Intentionally not in the Log: this is the live decode of one call. Wire
  * frames stay in the SSE parser and the abort signal stays here.
@@ -138,8 +139,9 @@ function startDecode(): Decode {
 /**
  * Feeds SSE events to `onEvent` and yields the chunks it queues. Returns
  * the finish chunk: the recorded stop, `aborted`, an `onEvent` failure
- * (after yielding what it queued first), or `INCOMPLETE_STREAM` when the
- * body ends without a stop. A throw while reading the body propagates.
+ * (after yielding what it queued first), or a transport `INCOMPLETE_STREAM`
+ * when the body ends without a stop. A throw while reading the body
+ * propagates.
  */
 async function* readBody(
   body: ReadableStream<Uint8Array>,
@@ -159,9 +161,11 @@ async function* readBody(
     if (signal?.aborted) return abortedFinish();
     if (decode.stop) return successFinish(decode.stop);
   }
+  // The connection closed before the response completed: the same failure
+  // as a proxy cutting the socket, only without a thrown error.
   return signal?.aborted
     ? abortedFinish()
-    : errorFinish({ message: INCOMPLETE_STREAM });
+    : errorFinish({ message: INCOMPLETE_STREAM, transport: true });
 }
 
 function openFailure(opened: Extract<OpenedCall, { ok: false }>): StreamChunk {

@@ -34,8 +34,8 @@ const TURN_RETRY_BASE_MS = 2000;
 
 /**
  * The failure message when the finish is a transport error, else undefined.
- * The provider sets `transport` for fetch and body-read failures; the message
- * text is never inspected.
+ * The provider sets `transport` for fetch and body-read failures and for a
+ * body that ends before its stop; the message text is never inspected.
  */
 function turnTransportReason(
   finish: AssistantMessage["finish"],

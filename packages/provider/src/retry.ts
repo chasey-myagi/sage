@@ -1,7 +1,8 @@
 /**
  * Retries a POST until the response body starts or the attempts run out.
  *
- * Guarantees: fetch throws, HTTP 429, and HTTP 5xx wait and try again; any
+ * Guarantees: transport failures (fetch throws, error-body read throws, a
+ * 2xx without a body), HTTP 429, and HTTP 5xx wait and try again; any
  * other 4xx does not. This module never sees a body that has already
  * begun. The final failure keeps postJson's `transport` flag for the
  * finish chunk.
