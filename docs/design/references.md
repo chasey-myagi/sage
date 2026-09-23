@@ -21,7 +21,7 @@
 - **L1 · Log 是只追加的树，先落盘再进内存**（P5, K1）：entry 带 `id / parentId / seq`，leaf 也是一条 entry；append 先写 JSONL 再进内存，磁盘永远是内存的超集；读入时尾部撕裂的最后一行丢弃、其余位置损坏抛错。不再有 HWM 计数器。→ #4
 - **L2 · entry 是带类型的记录，reducer 在内核外**（K1, C7）：内核只会 append / replay / leaf；每种 entry 类型在 import 期注册自己的纯 reducer；读到未注册类型**拒绝重建**（fail-closed 词表），不跳过。类型清单由脚本生成并有新鲜度检查（K7）。→ #4, #2
 - **L3 · 改写也是追加**（K1）：撤销、压缩、换模型、开新阶段都是新 entry（`view_epoch` / `model_change` / `undo`），原记录永远在。→ #4
-- **L4 · model-visible ⟺ logged**（C4）：任何进入模型请求的内容都必须能从 Log 重建；新增一种模型可见输入 = 新增一种 entry。请求信封（provider / model / 采样参数 / `systemPromptHash` / `toolsHash` / adapter 补的默认值）作为 `request_header` entry 落 Log，**内容寻址**：system prompt 只在偏离默认时存全文、tool schema 按 hash 首见才存（K5）。→ #4, #8
+- **L4 · model-visible ⟺ logged**（C4）：任何进入模型请求的内容都必须能从 Log 重建；新增一种模型可见输入 = 新增一种 entry。请求信封（provider / model / 采样参数 / `systemPromptHash` / `toolsHash` / adapter 补的默认值）作为 `request_header` entry 落 Log，**内容寻址**：system prompt 与 tool schema 都按 hash 存，只有首见或与上一条 `request_header` 不同时才存全文（K5；原稿写「system prompt 只在偏离默认时存全文」，实现时没有「默认 prompt」这个概念，2026-09-24 按实现改写）。→ #4, #8
 - **L5 · 三域边界**（C5）：可重放的事实进 Log（纯 JSON，无活对象）；活的拦截与瞬时信号是运行时事件；同一事实不许两个来源。→ #5, AGENTS.md
 - **L6 · 临时注入不进 Log**（K12 反例）：提醒、协议消息、子任务说明都是视图里的 claim 产物，不是历史。kimi 为此付了三处特判的利息。→ #8, #11
 - **L7 · entry 留不透明 `details`**（P6）：claim 历史、清单、expand 记录落 Log 而不污染内核 schema；插件状态从 Log 派生，不放 sidecar。→ #4

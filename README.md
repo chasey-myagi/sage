@@ -12,7 +12,7 @@
 
 | 原语 | 负责 |
 |---|---|
-| Log | 只追加的历史：id / parentId / seq、持久化水位（HWM）、血缘 |
+| Log | 只追加的树：id / parentId / seq，先落盘再进内存，读入时丢弃撕裂的尾行 |
 | View seam | 每次调用模型前调一次 `view(log, turn) → CompiledView`；内核只检查视图里 toolCall 成对 |
 
 内核不持有消息数组，也不认识块 / 档位 / 预算 / 申领单——那些全在插件里。
