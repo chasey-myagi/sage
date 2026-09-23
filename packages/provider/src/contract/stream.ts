@@ -6,6 +6,10 @@
  * - finish is the last chunk
  * - for each index, block_start precedes that index's deltas, and no delta
  *   for that index appears after its block_end
+ * - finish.error.transport is true exactly when the call failed below HTTP:
+ *   fetch threw, or reading the response body threw. HTTP statuses, error
+ *   events inside the stream, and a body that closes without a stop leave
+ *   it unset. Callers classify transport failures by this flag alone.
  *
  * Deliberately not a Log entry: chunks are the live decode of one call.
  * The assistant entry that lands in the Log is the collected message (#4).
@@ -39,5 +43,13 @@ export type StreamChunk =
       type: "finish";
       kind: FinishKind;
       rawFinishReason?: string;
-      error?: { message: string; status?: number; raw?: unknown };
+      error?: FinishError;
     };
+
+export type FinishError = {
+  message: string;
+  status?: number;
+  raw?: unknown;
+  /** Set only for failures below HTTP. See the invariant above. */
+  transport?: boolean;
+};

@@ -27,6 +27,6 @@ export type {
   ToolResultBlock,
   ToolUseBlock,
 } from "./message.js";
-export type { FinishKind, StreamChunk } from "./stream.js";
+export type { FinishError, FinishKind, StreamChunk } from "./stream.js";
 export type { Usage } from "./usage.js";
 export type { ContractVersion } from "./version.js";

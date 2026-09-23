@@ -2,6 +2,7 @@
  * Retry a POST until the response body starts, or the budget runs out.
  * Fetch throws, HTTP 429, and HTTP 5xx wait and try again. Any other
  * 4xx does not. This module never sees a body that has already begun.
+ * The final failure keeps postJson's `transport` flag for the finish chunk.
  *
  * Deliberately not a Log entry: failed response bodies, the sleep, and
  * the API key stay here. The retry count and the last failure reason
@@ -34,6 +35,7 @@ type OpenedCall =
       message: string;
       status?: number;
       raw?: unknown;
+      transport?: boolean;
       retries: number;
       reason: string;
     };
@@ -124,5 +126,6 @@ function fail(opened: PostFail, retries: number): OpenedCall {
   };
   if (opened.status !== undefined) result.status = opened.status;
   if (opened.raw !== undefined) result.raw = opened.raw;
+  if (opened.transport) result.transport = true;
   return result;
 }

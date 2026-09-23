@@ -47,7 +47,7 @@ describe("issue 85 turn retry", () => {
     const sessionId = "retry-once";
     const { waits, sleep } = recordingSleep();
     const { adapter, requests } = createFaux([
-      cut("half-terminated-text", { message: "terminated" }),
+      cut("half-terminated-text", { message: "terminated", transport: true }),
       stopScript("done"),
     ]);
     const session = new AgentSession({
@@ -99,9 +99,9 @@ describe("issue 85 turn retry", () => {
     const sessionId = "retry-exhausted";
     const { waits, sleep } = recordingSleep();
     const { adapter, requests } = createFaux([
-      cut("partial-1", { message: "terminated" }),
-      cut("partial-2", { message: "terminated" }),
-      cut("partial-3", { message: "terminated" }),
+      cut("partial-1", { message: "terminated", transport: true }),
+      cut("partial-2", { message: "terminated", transport: true }),
+      cut("partial-3", { message: "terminated", transport: true }),
     ]);
     const session = new AgentSession({
       store,
@@ -172,10 +172,22 @@ describe("issue 85 turn retry", () => {
         error: { message: "upstream reset", transport: true },
         reason: "upstream reset",
       },
-      { error: { message: "fetch failed" }, reason: "fetch failed" },
-      { error: { message: "read ECONNRESET" }, reason: "read ECONNRESET" },
-      { error: { message: "socket hang up" }, reason: "socket hang up" },
-      { error: { message: "aborted by peer" }, reason: "aborted by peer" },
+      {
+        error: { message: "fetch failed", transport: true },
+        reason: "fetch failed",
+      },
+      {
+        error: { message: "read ECONNRESET", transport: true },
+        reason: "read ECONNRESET",
+      },
+      {
+        error: { message: "socket hang up", transport: true },
+        reason: "socket hang up",
+      },
+      {
+        error: { message: "aborted by peer", transport: true },
+        reason: "aborted by peer",
+      },
     ];
 
     for (const [index, item] of cases.entries()) {
