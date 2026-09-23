@@ -70,7 +70,7 @@
 
 ### 工程纪律（第一天就用）
 - **G1 · README 的 Model Experience 三问**（C13）：每个包的 README 必答「模型看到什么 / token 影响 / KV cache 影响」，豁免要写理由入表，CI 门。→ #2
-- **G2 · Agent Note 四段式**（C13）：Problem / Decision / Alternatives considered / Consequences，非平凡 PR 必带；归档即冻结。→ #2, AGENTS.md
+- **G2 · Agent Note**（C13）：Problem / Decision / Alternatives considered / Consequences，非平凡 PR 必带；归档即冻结。实现时加了第五段 Testing，写验证证据，见 `docs/notes/TEMPLATE.md`。→ #2, AGENTS.md
 - **G3 · 分层与纯度用脚本 + 单测守**（K7, C）：core 不许 import 编译器相关模块；plugin 之间不 import；contract 不 import 任何外部包。→ #2
 - **G4 · 预发布不留兼容层**（C13, P11）：首个 tag 之前只有一种形状。→ AGENTS.md
 - **G5 · 回归测试按 issue 号命名；编译器子系统单独覆盖率目标；`check` 复合门一个入口**（P11）。→ #2, #7

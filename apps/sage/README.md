@@ -72,11 +72,11 @@ bench 的网络默认 `none`，并总是写进子进程的 `--tool-network`。�
 
 ### What the model sees
 
-argv 和 stderr 进度不是模型可见面。本壳选定的 system prompt 和七个工具 schema 会进入请求；prompt 在 hash 变化时写入 `request_header`。进度行只在 stderr：`turn N · tokens in/out · tool calls`。
+argv 和 stderr 进度不是模型可见面。本壳选定的 system prompt 和十一个工具 schema（七个一方工具，加上 `update_ledger`、`expand`、`spawn_subtask`、`spawn_subtasks`）会进入请求。两者都按 hash 写入 `request_header`：首见或与上一条不同时才存全文。进度行只在 stderr：`turn N · tokens in/out · tool calls`。
 
 ### Token effect
 
-system prompt 是固定的几行，同一轮里 head 不变时后续 `request_header` 只存 hash。工具页的长度由 `@sage/tools` 的双限位和 spill 卡住。
+system prompt 是固定的几行；system prompt 与工具 schema 不变时，后续 `request_header` 只存两个 hash。工具页的长度由 `@sage/tools` 的双限位和 spill 卡住。
 
 ### KV cache effect
 
