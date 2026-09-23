@@ -7,7 +7,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { ProviderAdapter } from "@sage/provider";
 import { afterEach, expect, it } from "vitest";
+import {
+  createFaux,
+  stopScript,
+  toolScript,
+} from "../../../packages/core/test/support/faux.ts";
 import { parseArgs, runCli } from "../src/main.ts";
 
 let dir = "";
@@ -126,6 +132,88 @@ it("lists leftover sage-bench directories and does not delete them", async () =>
   expect(io.text().stderr).toContain(path.basename(orphan));
   expect(io.text().stderr.toLowerCase()).toContain("manually");
   expect(existsSync(orphan)).toBe(true);
+});
+
+it("passes the run root to the sandbox as allowRoot", async () => {
+  dir = mkdtempSync(path.join(tmpdir(), "sage-bench-case-"));
+  const tasks = path.join(dir, "tasks.json");
+  writeFileSync(tasks, JSON.stringify([task("one")]));
+  const io = capture();
+  let runRoot = "";
+  let allowRoot: string | undefined;
+  const code = await runCli(
+    [
+      "bench",
+      "run",
+      "--tasks",
+      tasks,
+      "--policy",
+      "compiler",
+      "--model",
+      "claude-test",
+      "--out",
+      path.join(dir, "out"),
+    ],
+    {
+      cwd: dir,
+      env: { ANTHROPIC_API_KEY: "test-key" },
+      stdout: io.stdout,
+      stderr: io.stderr,
+      benchDeps: {
+        async prepare() {},
+        async runSage(_task, cwd, opts) {
+          runRoot = path.dirname(realpathSync(cwd));
+          allowRoot = opts.sandbox.allowRoot;
+          return { code: 0 };
+        },
+        async diffEmpty() {
+          return true;
+        },
+        async runTests() {
+          return { code: 0 };
+        },
+      },
+    },
+  );
+  expect(code).toBe(0);
+  expect(allowRoot).toBe(runRoot);
+});
+
+it("reads SAGE_SANDBOX_ALLOW_ROOT into the bash allow rule", async () => {
+  dir = mkdtempSync(path.join(tmpdir(), "sage-bench-case-"));
+  const allow = mkdtempSync(path.join(realpathSync(tmpdir()), "sage-bench-"));
+  try {
+    const seen: string[] = [];
+    const { adapter } = createFaux([
+      toolScript("bash1", "bash", JSON.stringify({ command: "echo hi" })),
+      stopScript("done"),
+    ]);
+    const io = capture();
+    const code = await runCli(
+      ["-p", "x", "--passthrough", "--tool-network", "none"],
+      {
+        cwd: dir,
+        env: {
+          ANTHROPIC_API_KEY: "test-key",
+          SAGE_SANDBOX_ALLOW_ROOT: allow,
+        },
+        stdout: io.stdout,
+        stderr: io.stderr,
+        adapter: adapter as ProviderAdapter,
+        platform: "darwin",
+        exec: async (_command, opts) => {
+          seen.push(String(opts.argv[2] ?? ""));
+          return { stdout: "", stderr: "", code: 0 };
+        },
+      },
+    );
+    expect(code, io.text().stderr).toBe(0);
+    expect(seen[0] ?? "").toContain(
+      `(allow file-read* (subpath ${JSON.stringify(realpathSync(allow))}))`,
+    );
+  } finally {
+    rmSync(allow, { recursive: true, force: true });
+  }
 });
 
 it("accepts --tool-sandbox as an alias of --tool-network", async () => {

@@ -50,7 +50,11 @@
  * default `none` is always forwarded on the sage argv as `--tool-network`,
  * and it sets `fsIsolate`. On darwin, bash cannot read other bench
  * workspaces under the real temp root. The directory prefix is
- * `BENCH_WORKSPACE_PREFIX` and is passed into the sandbox. linux
+ * `BENCH_WORKSPACE_PREFIX` and is passed into the sandbox. When
+ * `fsIsolate` is on, `sandbox.allowRoot` is the realpath of this run
+ * root, and the child sage receives it as `SAGE_SANDBOX_ALLOW_ROOT`.
+ * There is no CLI flag for that path. A task can `cd` to its absolute
+ * directory. Other `sage-bench-*` roots stay denied. linux
  * `unshare -n` cannot enforce that file rule. Before the run root is
  * created, leftover directories with that prefix
  * directly under that temp root are printed to stderr with a
@@ -70,7 +74,7 @@
  *
  * Intentionally not in the Log: argv, API keys, clone directories, the
  * leftover-workspace warning, setup commands, test patches, test output,
- * and this report. The session jsonl is
+ * `SAGE_SANDBOX_ALLOW_ROOT`, and this report. The session jsonl is
  * the recorded run, copied before `testPatch` is applied. The report reads
  * health back off it.
  */
@@ -95,6 +99,7 @@ import { JsonlLogStore, type RunHealth, runHealth } from "@sage/core";
 import { resolvePreset } from "@sage/provider";
 import {
   resolveToolSandbox,
+  SANDBOX_ALLOW_ROOT_ENV,
   type ToolNetwork,
   type ToolSandbox,
 } from "@sage/tools";
@@ -240,6 +245,13 @@ export async function runBenchCli(
   }
   const runRoot = mkdtempSync(path.join(tmpdir(), BENCH_WORKSPACE_PREFIX));
   try {
+    const taskSandbox = sandbox.fsIsolate
+      ? resolveToolSandbox({
+          network: sandbox.network,
+          fsIsolate: true,
+          allowRoot: realpathSync(runRoot),
+        })
+      : sandbox;
     for (const task of tasks) {
       results.tasks.push(
         await runTask(task, out, deps, runRoot, {
@@ -249,7 +261,7 @@ export async function runBenchCli(
           env: io.env,
           budget: parsed.budget,
           toolNetwork: sandbox.network,
-          sandbox,
+          sandbox: taskSandbox,
           maxTurns: parsed.maxTurns,
           ...(parsed.shadowScorer ? { shadowScorer: parsed.shadowScorer } : {}),
           ...(parsed.scorer ? { scorer: parsed.scorer } : {}),
@@ -571,9 +583,13 @@ function defaultDeps(): BenchDeps {
   return {
     prepare: defaultPrepare,
     async runSage(task, cwd, opts) {
+      const env = { ...opts.env };
+      if (opts.sandbox.allowRoot) {
+        env[SANDBOX_ALLOW_ROOT_ENV] = opts.sandbox.allowRoot;
+      }
       const result = await exec(process.execPath, opts.argv, {
         cwd,
-        env: opts.env,
+        env,
         timeoutMs: task.timeoutSec * 1000,
       });
       const sessionFile = findSession(cwd);
