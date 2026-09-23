@@ -12,7 +12,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { JsonlLogStore } from "@sage/core";
 import { afterEach, expect, it } from "vitest";
-import { defaultPrepare } from "../src/bench.ts";
+import { defaultPrepare } from "../src/bench/git.ts";
 import { runCli } from "../src/main.ts";
 
 const repoRoot = path.resolve(

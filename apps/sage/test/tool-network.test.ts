@@ -9,7 +9,9 @@ import {
   stopScript,
   toolScript,
 } from "../../../packages/core/test/support/faux.ts";
-import { createCodingSession, parseArgs, runCli } from "../src/main.ts";
+import { parseArgs } from "../src/args.ts";
+import { createCodingSession } from "../src/coding-session.ts";
+import { runCli } from "../src/main.ts";
 
 let dir = "";
 

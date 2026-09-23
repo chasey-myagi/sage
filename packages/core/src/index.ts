@@ -37,7 +37,12 @@ export type {
   ModelRef,
   StoredEntry,
 } from "./log/types.js";
-export { AgentSession, type RunSummary, type TurnOutcome } from "./session.js";
+export {
+  AgentSession,
+  DEFAULT_MAX_TURNS,
+  type RunSummary,
+  type TurnOutcome,
+} from "./session.js";
 export type { Access, HarnessTool } from "./tools.js";
 export {
   assertHeadFrozen,

@@ -112,6 +112,9 @@ export type RunSummary = {
   error?: string;
 };
 
+/** Turn cap `AgentSession.run` uses when the caller passes no `maxTurns`. */
+export const DEFAULT_MAX_TURNS = 80;
+
 const EMPTY_USAGE: Usage = {
   inputOther: 0,
   inputCacheRead: 0,
@@ -325,7 +328,7 @@ export class AgentSession {
     opts?: { signal?: AbortSignal; maxTurns?: number },
   ): Promise<RunSummary> {
     const signal = opts?.signal;
-    const maxTurns = opts?.maxTurns ?? 80;
+    const maxTurns = opts?.maxTurns ?? DEFAULT_MAX_TURNS;
     this.observerErrors.length = 0;
     this.modelChanges = 0;
     let prepared = this.adapter.prepare(this.model);

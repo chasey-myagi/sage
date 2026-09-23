@@ -15,7 +15,9 @@ import {
   stopScript,
   toolScript,
 } from "../../../packages/core/test/support/faux.ts";
-import { createCodingSession, parseArgs, runCli } from "../src/main.ts";
+import { parseArgs } from "../src/args.ts";
+import { createCodingSession } from "../src/coding-session.ts";
+import { runCli } from "../src/main.ts";
 
 let dir = "";
 
@@ -744,7 +746,7 @@ describe("scenario 9 two adapters", () => {
     const anthropic = routedFaux("anthropic-messages");
     const openai = routedFaux("openai-chat");
     const { createCodingSession: create, defaultRoutePolicy } = await import(
-      "../src/main.ts"
+      "../src/coding-session.ts"
     );
     expect(typeof defaultRoutePolicy).toBe("function");
     const { session, store } = create({
@@ -792,9 +794,8 @@ describe("scenario 9 two adapters", () => {
   });
 
   it("denies the non-default provider when the new view touches .env or secrets", async () => {
-    const { defaultRoutePolicy, adaptersFromEnv } = await import(
-      "../src/main.ts"
-    );
+    const { defaultRoutePolicy } = await import("../src/coding-session.ts");
+    const { adaptersFromEnv } = await import("../src/auth.ts");
     const policy = defaultRoutePolicy(["anthropic", "openai"], "anthropic");
     const base = {
       epoch: 1,
@@ -894,7 +895,7 @@ describe("scenario 9 two adapters", () => {
   });
 
   it("picks the cheapest explicit ladder rung and still denies a non-home provider", async () => {
-    const { defaultRoutePolicy } = await import("../src/main.ts");
+    const { defaultRoutePolicy } = await import("../src/coding-session.ts");
     const policy = defaultRoutePolicy(["anthropic", "openai"], "anthropic", [
       { provider: "openai", model: "gpt-5.4-mini" },
       { provider: "anthropic", model: "claude-haiku-4-5-20251001" },
