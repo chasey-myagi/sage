@@ -12,6 +12,7 @@ import {
 import type { Head, Message, PreparedCall } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
+import { finite } from "../../src/guards.ts";
 
 const SESSION = "long-deepseek-flash";
 const SYSTEM = "You are sage.";
@@ -362,10 +363,4 @@ function pathTool(
       return Promise.resolve({ content: "", isError: false });
     },
   };
-}
-
-function finite(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
 }

@@ -13,12 +13,8 @@
  * Callers append a synthesized result themselves if they want it in history.
  */
 
-import {
-  type ContentBlock,
-  isRecord,
-  type Message,
-} from "@sage/provider/contract";
-import { latestViewEpoch } from "../log/path.js";
+import type { ContentBlock, Message } from "@sage/provider/contract";
+import { isMessage, latestViewEpoch } from "../log/path.js";
 import { synthesizeToolResult } from "../log/repair.js";
 import type { StoredEntry } from "../log/types.js";
 import type {
@@ -28,14 +24,6 @@ import type {
   ViewContext,
   ViewProvider,
 } from "./types.js";
-
-function isMessage(payload: unknown): payload is Message {
-  return (
-    isRecord(payload) &&
-    (payload.role === "user" || payload.role === "assistant") &&
-    Array.isArray(payload.content)
-  );
-}
 
 function project(path: readonly StoredEntry[]): {
   messages: Message[];

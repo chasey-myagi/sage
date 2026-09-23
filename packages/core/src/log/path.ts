@@ -1,15 +1,16 @@
 /**
- * Reads facts back off a Log path: view_epoch numbers and the last
- * request_header.
+ * Reads facts back off a Log path: view_epoch numbers, the span, manifests,
+ * and prefix message of an epoch, and the last request_header.
  *
- * Guarantees: pure reads in path order. A `view_epoch` payload without a
- * finite `epoch` is skipped; the store validators already reject those, so
- * the skip only matters for hand-built paths.
+ * Guarantees: pure reads in path order. Entries are returned as stored; a
+ * message read out of `details` is cloned. A `view_epoch` payload without
+ * a finite `epoch` is skipped; the store validators already reject those,
+ * so the skip only matters for hand-built paths.
  *
  * Intentionally not in the Log: these are reads; nothing here appends.
  */
 
-import { isRecord } from "@sage/provider/contract";
+import { isRecord, type Message } from "@sage/provider/contract";
 import type { RequestHeaderPayload } from "./kinds.js";
 import type { StoredEntry } from "./types.js";
 
@@ -30,6 +31,81 @@ export function viewEpochs(path: readonly StoredEntry[]): number[] {
  */
 export function latestViewEpoch(path: readonly StoredEntry[]): number {
   return viewEpochs(path).at(-1) ?? 0;
+}
+
+/**
+ * Narrows an untrusted value to a user or assistant `Message`: a `role` of
+ * `user` or `assistant` and an array `content`. Blocks are not checked.
+ */
+export function isMessage(value: unknown): value is Message {
+  return (
+    isRecord(value) &&
+    (value.role === "user" || value.role === "assistant") &&
+    Array.isArray(value.content)
+  );
+}
+
+/**
+ * Index range of the entries inside `epoch`: `start` is just after the
+ * first `view_epoch` for `epoch` (0 for epoch 0 when no `view_epoch`
+ * opened it) and `end` is the next `view_epoch` after that, else
+ * `path.length`. Undefined when `epoch` is not 0 and never opened.
+ */
+export function epochSpan(
+  path: readonly StoredEntry[],
+  epoch: number,
+): { start: number; end: number } | undefined {
+  let start = epoch === 0 ? 0 : -1;
+  for (let index = 0; index < path.length; index += 1) {
+    const entry = path[index];
+    if (entry?.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
+    if (entry.payload.epoch !== epoch) continue;
+    start = index + 1;
+    break;
+  }
+  if (start < 0) return undefined;
+  let end = path.length;
+  for (let index = start; index < path.length; index += 1) {
+    if (path[index]?.kind === "view_epoch") {
+      end = index;
+      break;
+    }
+  }
+  return { start, end };
+}
+
+/**
+ * The `manifest` entries inside `epoch` (see {@link epochSpan}), in path
+ * order; empty when the epoch was never opened.
+ */
+export function manifestsInEpoch(
+  path: readonly StoredEntry[],
+  epoch: number,
+): StoredEntry[] {
+  const span = epochSpan(path, epoch);
+  if (!span) return [];
+  return path
+    .slice(span.start, span.end)
+    .filter((entry) => entry.kind === "manifest");
+}
+
+/**
+ * A clone of the last `view_epoch.details.prefixMessage` recorded for
+ * `epoch`: the first message of the view that opened it. Undefined when
+ * that epoch stored none or the stored value is not a message.
+ */
+export function prefixMessageFor(
+  path: readonly StoredEntry[],
+  epoch: number,
+): Message | undefined {
+  let found: Message | undefined;
+  for (const entry of path) {
+    if (entry.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
+    if (entry.payload.epoch !== epoch) continue;
+    const stored = entry.details?.prefixMessage;
+    if (isMessage(stored)) found = stored;
+  }
+  return found ? structuredClone(found) : undefined;
 }
 
 /** Index of the last request_header on `path`, or -1. */

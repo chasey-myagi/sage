@@ -25,8 +25,14 @@
  * resulting calibration object.
  */
 
-import { isRecord, latestViewEpoch, type StoredEntry } from "@sage/core";
-import type { Message } from "@sage/provider/contract";
+import {
+  epochSpan,
+  isMessage,
+  isRecord,
+  latestViewEpoch,
+  type StoredEntry,
+} from "@sage/core";
+import { finite } from "../guards.js";
 
 /**
  * How this turn's estimates map to measured input tokens. Stored on the
@@ -91,11 +97,13 @@ export function expectedFrozenPrefix(path: readonly StoredEntry[]): number {
 
 function anchorOverhead(path: readonly StoredEntry[]): number | undefined {
   const epoch = latestViewEpoch(path);
-  const range = epochRange(path, epoch);
-  const slice = path.slice(range.start, range.end);
-  const first = firstOverhead(slice);
+  const span = epochSpan(path, epoch) ?? {
+    start: path.length,
+    end: path.length,
+  };
+  const first = firstOverhead(path.slice(span.start, span.end));
   if (first !== undefined) return first;
-  return latestOverhead(path.slice(0, range.end));
+  return latestOverhead(path.slice(0, span.end));
 }
 
 function firstOverhead(path: readonly StoredEntry[]): number | undefined {
@@ -127,31 +135,6 @@ function overheadFromPairs(
     pending = undefined;
   }
   return found;
-}
-
-function epochRange(
-  path: readonly StoredEntry[],
-  epoch: number,
-): { start: number; end: number } {
-  let start = 0;
-  let opened = epoch === 0;
-  for (let index = 0; index < path.length; index += 1) {
-    const entry = path[index];
-    if (entry?.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
-    if (entry.payload.epoch !== epoch) continue;
-    start = index;
-    opened = true;
-    break;
-  }
-  if (!opened) return { start: path.length, end: path.length };
-  let end = path.length;
-  for (let index = start + 1; index < path.length; index += 1) {
-    if (path[index]?.kind === "view_epoch") {
-      end = index;
-      break;
-    }
-  }
-  return { start, end };
 }
 
 function previousEstimate(path: readonly StoredEntry[]): number | undefined {
@@ -224,18 +207,4 @@ function inputTotal(usage: Record<string, unknown>): number | undefined {
     return undefined;
   }
   return other + read + created;
-}
-
-function finite(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
-}
-
-function isMessage(value: unknown): value is Message {
-  if (!isRecord(value)) return false;
-  return (
-    (value.role === "user" || value.role === "assistant") &&
-    Array.isArray(value.content)
-  );
 }

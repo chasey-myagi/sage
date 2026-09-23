@@ -10,6 +10,7 @@
  */
 
 import { isRecord, type StoredEntry } from "@sage/core";
+import { finite } from "../guards.js";
 
 /** One cache-hit row per manifest that recorded both cache numbers. */
 export function cacheHitRatio(
@@ -43,10 +44,4 @@ export function cacheHitRatio(
     });
   }
   return rows;
-}
-
-function finite(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
 }

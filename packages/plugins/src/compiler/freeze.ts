@@ -19,7 +19,7 @@
  * record the next turn reads back.
  */
 
-import { isRecord, type StoredEntry } from "@sage/core";
+import { isRecord, manifestsInEpoch, type StoredEntry } from "@sage/core";
 import type { Tier } from "./claim.js";
 import type { ChunkDecision } from "./eliminate.js";
 
@@ -83,31 +83,6 @@ function firstManifest(
   const index = path.indexOf(entry);
   if (index < 0) return undefined;
   return { index, entry };
-}
-
-function manifestsInEpoch(
-  path: readonly StoredEntry[],
-  epoch: number,
-): StoredEntry[] {
-  let start = -1;
-  let opened = false;
-  for (let index = 0; index < path.length; index += 1) {
-    const entry = path[index];
-    if (entry?.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
-    if (entry.payload.epoch !== epoch) continue;
-    start = index;
-    opened = true;
-    break;
-  }
-  if (!opened && epoch !== 0) return [];
-  const found: StoredEntry[] = [];
-  for (let index = start + 1; index < path.length; index += 1) {
-    const entry = path[index];
-    if (!entry) continue;
-    if (entry.kind === "view_epoch") break;
-    if (entry.kind === "manifest") found.push(entry);
-  }
-  return found;
 }
 
 function mergeFirst(map: Map<string, ChunkDecision>, entry: StoredEntry): void {

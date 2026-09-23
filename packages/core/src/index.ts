@@ -24,7 +24,13 @@ export {
 } from "./log/errors.js";
 export { JsonlLogStore, type LogFs } from "./log/jsonl.js";
 export { MemoryLogStore } from "./log/memory.js";
-export { latestViewEpoch } from "./log/path.js";
+export {
+  epochSpan,
+  isMessage,
+  latestViewEpoch,
+  manifestsInEpoch,
+  prefixMessageFor,
+} from "./log/path.js";
 export {
   type EntryKindDef,
   entryKinds,
