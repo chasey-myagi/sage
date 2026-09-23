@@ -7,10 +7,13 @@
  * own note, at most 200 characters. `reason`, when non-empty, is the chunk
  * reason the compiler stores; otherwise the compiler writes `scorer:model`.
  * `fallback` tells the caller to keep the deterministic tiers. `usage` is
- * present only when an adapter was asked.
+ * present only when an adapter was asked. `raw` is present only when the
+ * call fell back after a model reply: `text` is at most 300 characters and
+ * `finish` is the finish kind. `dropped` counts items the parser discarded,
+ * including ids that were not candidates.
  *
- * Intentionally not in the Log: the Scorer object. The compiler copies
- * decisions, usage, and fallback onto the manifest.
+ * Intentionally not in the Log: the Scorer object, and `dropped`. The
+ * compiler copies decisions, usage, fallback, and `raw` onto the manifest.
  */
 
 import type { Request, Usage } from "@sage/provider/contract";
@@ -31,9 +34,20 @@ export type ScoreDecision = {
   reason?: string;
 };
 
+export type ScoreRaw = {
+  text: string;
+  finish: string;
+};
+
+export type ScoreResult = {
+  decisions: ScoreDecision[];
+  usage?: Usage;
+  fallback?: string;
+  raw?: ScoreRaw;
+  dropped?: number;
+};
+
 export interface Scorer {
   readonly name: string;
-  score(
-    input: ScoreInput,
-  ): Promise<{ decisions: ScoreDecision[]; usage?: Usage; fallback?: string }>;
+  score(input: ScoreInput): Promise<ScoreResult>;
 }

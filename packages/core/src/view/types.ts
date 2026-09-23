@@ -13,6 +13,8 @@
  *
  * `shadow` on a manifest is the shadow scorer's record for this turn. The
  * kernel stores it with the manifest and does not apply those tiers.
+ * `shadow.raw` and `scorer.raw`, when present, are the model text prefix
+ * and finish kind from a fallback. A successful score omits `raw`.
  *
  * Intentionally not in the Log: the live CompiledView object, parentPath,
  * and depth. The kernel appends the manifest as its own entry; this module
@@ -95,6 +97,12 @@ export type ShadowDecisionRecord = {
   reason?: string;
 };
 
+/** Model text prefix and finish kind. Written only when a score falls back. */
+export type ScorerRaw = {
+  text: string;
+  finish: string;
+};
+
 /**
  * Shadow score for tool chunks that first appeared this turn. The compiler
  * records it and does not apply the tiers.
@@ -109,6 +117,19 @@ export type ShadowReport = {
     output: number;
   };
   fallback?: string;
+  raw?: ScorerRaw;
+};
+
+export type ScorerReport = {
+  calls: number;
+  usage: {
+    inputOther: number;
+    inputCacheRead: number;
+    inputCacheCreation: number;
+    output: number;
+  };
+  fallback: boolean;
+  raw?: ScorerRaw;
 };
 
 export type Manifest = {
@@ -140,6 +161,10 @@ export type Manifest = {
    * the object and does not apply it to chunk tiers.
    */
   shadow?: ShadowReport;
+  /**
+   * Rebuild scorer record. Optional. `raw` is present only on fallback.
+   */
+  scorer?: ScorerReport;
 };
 
 export type CompiledView = {

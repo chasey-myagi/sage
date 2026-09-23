@@ -22,6 +22,7 @@ export type {
   Sampling,
   TextBlock,
   ThinkingBlock,
+  ToolChoice,
   ToolDef,
   ToolResultBlock,
   ToolUseBlock,

@@ -287,6 +287,59 @@ describe("entry kinds", () => {
     ).toThrow(InvalidEntryError);
   });
 
+  it("rejects shadow and scorer raw that is not text plus finish", () => {
+    const store = new MemoryLogStore();
+    expect(() =>
+      store.append("shadow-raw-bad", {
+        kind: "manifest",
+        payload: {
+          epoch: 0,
+          turn: 1,
+          claims: [],
+          chunks: [],
+          anomalies: [],
+          shadow: { scorer: "model", decisions: [], raw: "nope" },
+        },
+      }),
+    ).toThrow(InvalidEntryError);
+    expect(() =>
+      store.append("scorer-raw-bad", {
+        kind: "manifest",
+        payload: {
+          epoch: 0,
+          turn: 1,
+          claims: [],
+          chunks: [],
+          anomalies: [],
+          scorer: { calls: 1, fallback: true, raw: { text: 1 } },
+        },
+      }),
+    ).toThrow(InvalidEntryError);
+  });
+
+  it("accepts shadow and scorer raw of text plus finish", () => {
+    const store = new MemoryLogStore();
+    const raw = { text: "not json", finish: "stop" };
+    store.append("raw-ok", {
+      kind: "manifest",
+      payload: {
+        epoch: 0,
+        turn: 1,
+        claims: [],
+        chunks: [],
+        anomalies: [],
+        scorer: { calls: 1, fallback: true, raw },
+        shadow: {
+          scorer: "model",
+          decisions: [],
+          fallback: "invalid-json",
+          raw,
+        },
+      },
+    });
+    expect(store.path("raw-ok")).toHaveLength(1);
+  });
+
   it("throws when the same kind is registered twice", () => {
     expect(() =>
       registerEntryKind({

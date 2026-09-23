@@ -295,12 +295,10 @@ it("records model usage and renders the summary from the score JSON", async () =
     {
       type: "text_delta",
       index: 0,
-      text: JSON.stringify({
-        decisions: [
-          { id: "seq:1#t1", tier: "summary", summary: "file a" },
-          { id: "seq:3#t2", tier: "full" },
-        ],
-      }),
+      text: JSON.stringify([
+        { id: "seq:1#t1", tier: "summary", summary: "file a" },
+        { id: "seq:3#t2", tier: "full" },
+      ]),
     },
     { type: "block_end", index: 0 },
     { type: "usage", usage: USAGE },
@@ -378,7 +376,12 @@ it("falls back to rule tiers when the model returns invalid JSON", async () => {
   const manifest = view.manifest as typeof view.manifest & {
     scorer?: { calls: number; usage: Usage; fallback: boolean };
   };
-  expect(manifest.scorer).toEqual({ calls: 1, usage: USAGE, fallback: true });
+  expect(manifest.scorer).toEqual({
+    calls: 1,
+    usage: USAGE,
+    fallback: true,
+    raw: { text: "not json", finish: "stop" },
+  });
 });
 
 it("keeps a summary note on the next turn of the same epoch without scoring again", async () => {
