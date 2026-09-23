@@ -13,27 +13,29 @@
  */
 
 import { createHash } from "node:crypto";
-import type { Head, Message, ToolDef } from "@sage/provider/contract";
+import {
+  type Head,
+  isRecord,
+  type Message,
+  type ToolDef,
+} from "@sage/provider/contract";
 import type { RequestHeaderPayload } from "../log/kinds.js";
 import { HeadChangedMidEpochError, UnpairedToolCallError } from "./errors.js";
 import type { CompiledView } from "./types.js";
 
 function canonicalJson(value: unknown): string {
   if (value === undefined) return "null";
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "null";
-  }
   if (Array.isArray(value)) {
     return `[${value
       .map((item) => canonicalJson(item === undefined ? null : item))
       .join(",")}]`;
   }
-  const record = value as Record<string, unknown>;
-  const keys = Object.keys(record)
-    .filter((key) => record[key] !== undefined)
+  if (!isRecord(value)) return JSON.stringify(value) ?? "null";
+  const keys = Object.keys(value)
+    .filter((key) => value[key] !== undefined)
     .sort();
   return `{${keys
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
     .join(",")}}`;
 }
 

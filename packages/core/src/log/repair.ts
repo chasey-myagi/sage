@@ -7,17 +7,10 @@
  * retrying blindly.
  *
  * Intentionally not in the Log: this function does not scan history and does
- * not append. Finding dangling calls is the projection layer (#5). The block
- * shape matches provider `ToolResultBlock`; that type is not exported on this
- * branch, so the shape is local. No value import from provider.
+ * not append. Finding dangling calls is the projection layer (#5).
  */
 
-export type ToolResultBlock = {
-  type: "tool_result";
-  toolUseId: string;
-  content: string;
-  isError: boolean;
-};
+import type { ToolResultBlock } from "@sage/provider/contract";
 
 export const DANGLING = {
   TOOL_NOT_STARTED:

@@ -20,6 +20,7 @@
 
 import { prepareModel, resolveMaxTokens } from "../catalog.js";
 import type { PreparedCall, ProviderAdapter } from "../contract/adapter.js";
+import type { Sleeper } from "../contract/backoff.js";
 import type { Message, ModelRef, Request } from "../contract/message.js";
 import type { StreamChunk } from "../contract/stream.js";
 import type { Usage } from "../contract/usage.js";
@@ -29,7 +30,7 @@ import type { ClientOptions } from "../http.js";
 import { joinUrl } from "../http.js";
 import { normalizeForApi } from "../normalize.js";
 import { asRecord, indexOf, num } from "../record.js";
-import type { RetryPolicy, Sleeper } from "../retry.js";
+import type { RetryPolicy } from "../retry.js";
 import type { SseEvent } from "../sse.js";
 
 const DEFAULT_BASE = "https://api.openai.com/v1";

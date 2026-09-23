@@ -11,16 +11,18 @@
  * recoverable from message and request_header entries.
  */
 
-import type { ContentBlock, Message, Request } from "@sage/provider/contract";
+import {
+  type ContentBlock,
+  isRecord,
+  type Message,
+  type Request,
+} from "@sage/provider/contract";
 
 function sortedReplacer(_key: string, value: unknown): unknown {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return value;
-  }
-  const record = value as Record<string, unknown>;
+  if (!isRecord(value)) return value;
   const sorted: Record<string, unknown> = {};
-  for (const key of Object.keys(record).sort()) {
-    sorted[key] = record[key];
+  for (const key of Object.keys(value).sort()) {
+    sorted[key] = value[key];
   }
   return sorted;
 }

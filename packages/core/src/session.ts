@@ -64,23 +64,31 @@
  * request.
  */
 
-import type {
-  AssistantMessage,
-  ContentBlock,
-  Head,
-  Message,
-  ModelRef,
-  PreparedCall,
-  ProviderAdapter,
-  Request,
-  Sampling,
-  ToolResultBlock,
-  ToolUseBlock,
-  Usage,
+import {
+  type AssistantMessage,
+  addUsage,
+  backoffMs,
+  type ContentBlock,
+  collect,
+  emptyUsage,
+  type Head,
+  isRecord,
+  type Message,
+  type ModelRef,
+  type PreparedCall,
+  type ProviderAdapter,
+  type Request,
+  type Sampling,
+  type Sleeper,
+  sleep,
+  type ToolResultBlock,
+  type ToolUseBlock,
+  type Usage,
 } from "@sage/provider/contract";
 import { type RunHealth, runHealth } from "./health.js";
 import { HookDispatcher } from "./hooks/dispatcher.js";
 import type { Hooks } from "./hooks/types.js";
+import { latestViewEpoch } from "./log/epoch.js";
 import type { RequestHeaderPayload } from "./log/kinds.js";
 import type { LogStore } from "./log/store.js";
 import type { EntryId, StoredEntry } from "./log/types.js";
@@ -115,36 +123,10 @@ export type RunSummary = {
 /** Turn cap `AgentSession.run` uses when the caller passes no `maxTurns`. */
 export const DEFAULT_MAX_TURNS = 80;
 
-const EMPTY_USAGE: Usage = {
-  inputOther: 0,
-  inputCacheRead: 0,
-  inputCacheCreation: 0,
-  output: 0,
-};
-
+/** Whole-turn resends after a transport error, on top of the first call. */
 const TURN_RETRY_LIMIT = 2;
+/** First whole-turn retry delay; the shared curve makes the second 8s. */
 const TURN_RETRY_BASE_MS = 2000;
-
-function turnBackoffMs(attempt: number): number {
-  return TURN_RETRY_BASE_MS * 4 ** (attempt - 1);
-}
-
-function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) {
-      resolve();
-      return;
-    }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (): void => {
-      if (timer !== undefined) clearTimeout(timer);
-      signal?.removeEventListener("abort", finish);
-      resolve();
-    };
-    timer = setTimeout(finish, ms);
-    signal?.addEventListener("abort", finish, { once: true });
-  });
-}
 
 function turnTransportReason(
   finish: AssistantMessage["finish"],
@@ -153,21 +135,20 @@ function turnTransportReason(
   return finish.error.transport === true ? finish.error.message : undefined;
 }
 
-function assistantAfterLatestHeader(path: readonly StoredEntry[]): boolean {
-  let header = -1;
-  for (let index = 0; index < path.length; index += 1) {
-    if (path[index]?.kind === "request_header") header = index;
+/** Index of the last request_header on `path`, or -1. */
+function lastHeaderIndex(path: readonly StoredEntry[]): number {
+  for (let index = path.length - 1; index >= 0; index -= 1) {
+    if (path[index]?.kind === "request_header") return index;
   }
+  return -1;
+}
+
+function assistantAfterLatestHeader(path: readonly StoredEntry[]): boolean {
+  const header = lastHeaderIndex(path);
   if (header < 0) return false;
   for (const entry of path.slice(header + 1)) {
     if (entry.kind !== "message") continue;
-    const payload = entry.payload;
-    if (
-      typeof payload === "object" &&
-      payload !== null &&
-      !Array.isArray(payload) &&
-      (payload as { role?: unknown }).role === "assistant"
-    ) {
+    if (isRecord(entry.payload) && entry.payload.role === "assistant") {
       return true;
     }
   }
@@ -187,15 +168,6 @@ function routeReason(view: CompiledView): string {
   return "route:";
 }
 
-function addUsage(left: Usage, right: Usage): Usage {
-  return {
-    inputOther: left.inputOther + right.inputOther,
-    inputCacheRead: left.inputCacheRead + right.inputCacheRead,
-    inputCacheCreation: left.inputCacheCreation + right.inputCacheCreation,
-    output: left.output + right.output,
-  };
-}
-
 function mergeSampling(
   defaults: Record<string, unknown>,
   sampling: Sampling | undefined,
@@ -213,46 +185,29 @@ function mergeSampling(
 }
 
 function asHeader(payload: unknown): RequestHeaderPayload | undefined {
-  if (
-    typeof payload !== "object" ||
-    payload === null ||
-    Array.isArray(payload)
-  ) {
-    return undefined;
-  }
-  return payload as RequestHeaderPayload;
+  // The request_header validator already ran on append and on load.
+  return isRecord(payload) ? (payload as RequestHeaderPayload) : undefined;
 }
 
+/**
+ * `latest` is the newest view_epoch on the path. `frozen` is the newest one
+ * at or before the last request_header, or `latest` when there is no header.
+ */
 function epochState(path: readonly StoredEntry[]): {
   latest: number;
   frozen: number;
 } {
-  let latest = 0;
-  let frozen = 0;
-  let sawHeader = false;
-  for (const entry of path) {
-    if (entry.kind === "view_epoch") {
-      const epoch = (entry.payload as { epoch?: unknown }).epoch;
-      if (typeof epoch === "number") latest = epoch;
-      continue;
-    }
-    if (entry.kind === "request_header") {
-      frozen = latest;
-      sawHeader = true;
-    }
-  }
-  if (!sawHeader) frozen = latest;
+  const header = lastHeaderIndex(path);
+  const latest = latestViewEpoch(path);
+  const frozen =
+    header < 0 ? latest : latestViewEpoch(path.slice(0, header + 1));
   return { latest, frozen };
 }
 
 function lastHeader(
   path: readonly StoredEntry[],
 ): RequestHeaderPayload | undefined {
-  for (let i = path.length - 1; i >= 0; i -= 1) {
-    const entry = path[i];
-    if (entry?.kind === "request_header") return asHeader(entry.payload);
-  }
-  return undefined;
+  return asHeader(path[lastHeaderIndex(path)]?.payload);
 }
 
 function toolUses(content: ContentBlock[]): ToolUseBlock[] {
@@ -275,7 +230,7 @@ export class AgentSession {
   private readonly tools: HarnessTool[];
   private readonly viewProvider: ViewProvider;
   private readonly sampling: Sampling | undefined;
-  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+  private readonly sleep: Sleeper;
   private readonly parent?: {
     sessionId: string;
     leafId: EntryId;
@@ -291,7 +246,7 @@ export class AgentSession {
       tools: HarnessTool[];
       viewProvider?: ViewProvider;
       sampling?: Sampling;
-      sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+      sleep?: Sleeper;
       parent?: { sessionId: string; leafId: EntryId; depth: number };
     } & (
       | { adapter: ProviderAdapter; adapters?: Record<string, ProviderAdapter> }
@@ -317,7 +272,7 @@ export class AgentSession {
     this.tools = opts.tools;
     this.viewProvider = opts.viewProvider ?? passthroughView;
     this.sampling = opts.sampling;
-    this.sleep = opts.sleep ?? defaultSleep;
+    this.sleep = opts.sleep ?? sleep;
     this.parent = opts.parent;
     this.dispatcher = new HookDispatcher(this.observerErrors);
     this.hooks = this.dispatcher;
@@ -336,7 +291,7 @@ export class AgentSession {
     this.appendUser(userText);
 
     let turns = 0;
-    let usage = { ...EMPTY_USAGE };
+    let usage: Usage = emptyUsage();
     try {
       while (turns < maxTurns) {
         if (signal?.aborted) {
@@ -393,7 +348,7 @@ export class AgentSession {
       await this.dispatcher.emit("turn_end", { turn, outcome: "error" });
       return {
         kind: "error",
-        usage: { ...EMPTY_USAGE },
+        usage: emptyUsage(),
         error: routed.error,
         prepared,
       };
@@ -422,7 +377,7 @@ export class AgentSession {
     );
     if (streamed === "aborted") {
       await this.dispatcher.emit("turn_end", { turn, outcome: "aborted" });
-      return { kind: "aborted", usage: { ...EMPTY_USAGE }, prepared: active };
+      return { kind: "aborted", usage: emptyUsage(), prepared: active };
     }
     const assistant = streamed;
     this.store.append(this.sessionId, {
@@ -480,9 +435,6 @@ export class AgentSession {
     active: PreparedCall,
     signal: AbortSignal | undefined,
   ): Promise<AssistantMessage | "aborted"> {
-    // Dynamic so dist/index.js can load under plain Node for the log manifest.
-    // The contract barrel is TypeScript source; a static import breaks that load.
-    const { collect } = await import("@sage/provider/contract");
     let attempt = 0;
     while (true) {
       const assistant = await collect(
@@ -498,7 +450,7 @@ export class AgentSession {
       );
       if (reason !== undefined && !committed && attempt < TURN_RETRY_LIMIT) {
         attempt += 1;
-        await this.sleep(turnBackoffMs(attempt), signal);
+        await this.sleep(backoffMs(attempt, TURN_RETRY_BASE_MS), signal);
         if (signal?.aborted) return "aborted";
         this.store.append(this.sessionId, {
           kind: "turn_retry",
@@ -568,18 +520,8 @@ export class AgentSession {
   }
 
   private appendViewEpoch(view: CompiledView): void {
-    const path = this.store.path(this.sessionId);
-    let latest = 0;
-    let seen = false;
-    for (const entry of path) {
-      if (entry.kind !== "view_epoch") continue;
-      const epoch = (entry.payload as { epoch?: unknown }).epoch;
-      if (typeof epoch !== "number") continue;
-      latest = epoch;
-      seen = true;
-    }
-    const baseline = seen ? latest : 0;
-    if (!view.epochStart && view.epoch <= baseline) return;
+    const latest = latestViewEpoch(this.store.path(this.sessionId));
+    if (!view.epochStart && view.epoch <= latest) return;
     const epochHead = view.messages[0];
     this.store.append(this.sessionId, {
       kind: "view_epoch",

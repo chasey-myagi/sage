@@ -13,7 +13,12 @@
  * Callers append a synthesized result themselves if they want it in history.
  */
 
-import type { ContentBlock, Message } from "@sage/provider/contract";
+import {
+  type ContentBlock,
+  isRecord,
+  type Message,
+} from "@sage/provider/contract";
+import { latestViewEpoch } from "../log/epoch.js";
 import { synthesizeToolResult } from "../log/repair.js";
 import type { StoredEntry } from "../log/types.js";
 import type {
@@ -24,28 +29,11 @@ import type {
   ViewProvider,
 } from "./types.js";
 
-function latestEpoch(path: readonly StoredEntry[]): number {
-  let epoch = 0;
-  for (const entry of path) {
-    if (entry.kind !== "view_epoch") continue;
-    const value = (entry.payload as { epoch?: unknown }).epoch;
-    if (typeof value === "number") epoch = value;
-  }
-  return epoch;
-}
-
 function isMessage(payload: unknown): payload is Message {
-  if (
-    typeof payload !== "object" ||
-    payload === null ||
-    Array.isArray(payload)
-  ) {
-    return false;
-  }
-  const record = payload as { role?: unknown; content?: unknown };
   return (
-    (record.role === "user" || record.role === "assistant") &&
-    Array.isArray(record.content)
+    isRecord(payload) &&
+    (payload.role === "user" || payload.role === "assistant") &&
+    Array.isArray(payload.content)
   );
 }
 
@@ -105,7 +93,7 @@ function project(path: readonly StoredEntry[]): {
 
 export const passthroughView: ViewProvider = {
   view(ctx: ViewContext): CompiledView {
-    const epoch = latestEpoch(ctx.path);
+    const epoch = latestViewEpoch(ctx.path);
     const projected = project(ctx.path);
     return {
       epoch,

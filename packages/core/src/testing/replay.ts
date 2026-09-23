@@ -16,11 +16,12 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import type {
-  Message,
-  ProviderAdapter,
-  Request,
-  StreamChunk,
+import {
+  isRecord,
+  type Message,
+  type ProviderAdapter,
+  type Request,
+  type StreamChunk,
 } from "@sage/provider/contract";
 import { JsonlLogStore } from "../log/jsonl.js";
 import { MemoryLogStore } from "../log/memory.js";
@@ -105,10 +106,6 @@ export async function replaySession(
 
 function isChunkScript(value: unknown): value is StreamChunk[][] {
   return Array.isArray(value) && value.every((turn) => Array.isArray(turn));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function recordedModel(log: readonly StoredEntry[]): {

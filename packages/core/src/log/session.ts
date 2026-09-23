@@ -11,13 +11,13 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { isRecord } from "@sage/provider/contract";
 import { InvalidEntryError, UnknownEntryKindError } from "./errors.js";
 import { kindDef } from "./registry.js";
 import {
   asEntryId,
   type EntryId,
   type EntryInput,
-  isRecord,
   type StoredEntry,
 } from "./types.js";
 

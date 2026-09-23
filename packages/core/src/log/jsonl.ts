@@ -25,6 +25,7 @@ import {
   writeSync,
 } from "node:fs";
 import path from "node:path";
+import { isRecord } from "@sage/provider/contract";
 import { LogCorruptedError, UnknownEntryKindError } from "./errors.js";
 import "./kinds.js";
 import { kindDef } from "./registry.js";
@@ -34,7 +35,6 @@ import {
   asEntryId,
   type EntryId,
   type EntryInput,
-  isRecord,
   type StoredEntry,
 } from "./types.js";
 

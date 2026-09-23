@@ -33,6 +33,7 @@ import type {
   Message,
   ModelRef,
   PreparedCall,
+  TokenCounts,
 } from "@sage/provider/contract";
 import type { StoredEntry } from "../log/types.js";
 import type { HarnessTool } from "../tools.js";
@@ -116,24 +117,14 @@ export type ScorerRaw = {
 export type ShadowReport = {
   scorer: string;
   decisions: ShadowDecisionRecord[];
-  usage?: {
-    inputOther: number;
-    inputCacheRead: number;
-    inputCacheCreation: number;
-    output: number;
-  };
+  usage?: TokenCounts;
   fallback?: string;
   raw?: ScorerRaw;
 };
 
 export type ScorerReport = {
   calls: number;
-  usage: {
-    inputOther: number;
-    inputCacheRead: number;
-    inputCacheCreation: number;
-    output: number;
-  };
+  usage: TokenCounts;
   fallback: boolean;
   raw?: ScorerRaw;
 };
@@ -151,12 +142,7 @@ export type EntryScoredReport = {
   summary: number;
   full: number;
   summaryRejected: number;
-  usage?: {
-    inputOther: number;
-    inputCacheRead: number;
-    inputCacheCreation: number;
-    output: number;
-  };
+  usage?: TokenCounts;
 };
 
 export type Manifest = {

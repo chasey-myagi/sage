@@ -1,7 +1,9 @@
 /**
- * Contract barrel. Types, plus the pure `collect` fold.
+ * Contract barrel. Types, the pure `collect` fold, and the dependency-free
+ * helpers every layer above shares (`isRecord`, usage arithmetic, backoff).
  *
- * Deliberately not a Log entry: nothing in this module performs I/O.
+ * Deliberately not a Log entry: nothing in this module performs I/O. The
+ * only side effect anywhere in it is the timer inside `sleep`.
  */
 
 export type {
@@ -10,6 +12,7 @@ export type {
   Pricing,
   ProviderAdapter,
 } from "./adapter.js";
+export { backoffMs, type Sleeper, sleep } from "./backoff.js";
 export { collect } from "./collect.js";
 export type {
   CacheBreakpoint,
@@ -27,6 +30,14 @@ export type {
   ToolResultBlock,
   ToolUseBlock,
 } from "./message.js";
+export { isRecord } from "./record.js";
 export type { FinishError, FinishKind, StreamChunk } from "./stream.js";
-export type { Usage } from "./usage.js";
+export {
+  addUsage,
+  emptyUsage,
+  inputTokens,
+  type TokenCounts,
+  totalTokens,
+  type Usage,
+} from "./usage.js";
 export type { ContractVersion } from "./version.js";

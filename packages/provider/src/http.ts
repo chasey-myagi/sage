@@ -6,7 +6,9 @@
  * response bytes never leave this module as a fact to append.
  */
 
+import type { Sleeper } from "./contract/backoff.js";
 import { asRecord } from "./record.js";
+import type { RetryPolicy } from "./retry.js";
 
 export type ClientOptions = {
   apiKey: string;
@@ -16,9 +18,9 @@ export type ClientOptions = {
    * Retries before the response body starts. Omitted means 2 retries
    * and a 1000ms base (1s, then 4s). Not a Log entry.
    */
-  retry?: { attempts: number; baseMs: number };
+  retry?: RetryPolicy;
   /** Replaces the real timer. Tests pass this so they do not wait. */
-  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  sleep?: Sleeper;
 };
 
 export function joinUrl(base: string, path: string): string {

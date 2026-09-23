@@ -16,6 +16,7 @@
 
 import { prepareModel, resolveMaxTokens } from "../catalog.js";
 import type { PreparedCall, ProviderAdapter } from "../contract/adapter.js";
+import type { Sleeper } from "../contract/backoff.js";
 import type {
   CacheBreakpoint,
   ContentBlock,
@@ -30,7 +31,7 @@ import type { ClientOptions } from "../http.js";
 import { joinUrl } from "../http.js";
 import { normalizeForApi } from "../normalize.js";
 import { asRecord, indexOf, num } from "../record.js";
-import type { RetryPolicy, Sleeper } from "../retry.js";
+import type { RetryPolicy } from "../retry.js";
 import type { SseEvent } from "../sse.js";
 
 const DEFAULT_BASE = "https://api.anthropic.com";

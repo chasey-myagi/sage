@@ -9,6 +9,7 @@
  * ride on the usage object the caller already logs. No new entry kind.
  */
 
+import { backoffMs, type Sleeper, sleep } from "./contract/backoff.js";
 import type { PostFail, PostOk } from "./http.js";
 import { postJson } from "./http.js";
 
@@ -16,8 +17,6 @@ export type RetryPolicy = {
   attempts: number;
   baseMs: number;
 };
-
-export type Sleeper = (ms: number, signal?: AbortSignal) => Promise<void>;
 
 const DEFAULT_RETRY: RetryPolicy = { attempts: 2, baseMs: 1000 };
 
@@ -40,27 +39,6 @@ type OpenedCall =
       reason: string;
     };
 
-function backoffMs(attempt: number, baseMs: number): number {
-  return baseMs * 4 ** (attempt - 1);
-}
-
-function delay(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) {
-      resolve();
-      return;
-    }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (): void => {
-      if (timer !== undefined) clearTimeout(timer);
-      signal?.removeEventListener("abort", finish);
-      resolve();
-    };
-    timer = setTimeout(finish, ms);
-    signal?.addEventListener("abort", finish, { once: true });
-  });
-}
-
 function isRetryable(fail: PostFail): boolean {
   if (fail.aborted) return false;
   if (fail.transport) return true;
@@ -79,7 +57,7 @@ export async function openWithRetry(args: {
 }): Promise<OpenedCall> {
   const attempts = args.retry?.attempts ?? DEFAULT_RETRY.attempts;
   const baseMs = args.retry?.baseMs ?? DEFAULT_RETRY.baseMs;
-  const sleep = args.sleep ?? delay;
+  const wait = args.sleep ?? sleep;
   let retries = 0;
   let reason: string | undefined;
 
@@ -101,7 +79,7 @@ export async function openWithRetry(args: {
     }
     retries += 1;
     reason = opened.message;
-    await sleep(backoffMs(retries, baseMs), args.signal);
+    await wait(backoffMs(retries, baseMs), args.signal);
   }
 }
 
