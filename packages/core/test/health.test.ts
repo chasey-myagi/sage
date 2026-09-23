@@ -330,6 +330,7 @@ it("counts each shadow manifest once and sums its usage quadruple", () => {
     manifest(0, {
       shadow: {
         scorer: "model",
+        calls: 1,
         decisions: [{ id: "a", tier: "none", reason: LEAK }],
         usage: {
           inputOther: 2,
@@ -341,7 +342,7 @@ it("counts each shadow manifest once and sums its usage quadruple", () => {
       },
     }),
     manifest(1, {
-      shadow: { scorer: "model", decisions: [], fallback: "boom" },
+      shadow: { scorer: "model", calls: 1, decisions: [], fallback: "boom" },
     }),
     manifest(2, {}),
   ]);
@@ -421,3 +422,18 @@ function valuesAreCounts(value: unknown): boolean {
   }
   return false;
 }
+
+it("adds nothing for a shadow manifest that sent no request or lacks calls", () => {
+  const health = runHealth([
+    manifest(0, {
+      shadow: {
+        scorer: "jev",
+        calls: 0,
+        decisions: [],
+        fallback: "no-api-key",
+      },
+    }),
+    manifest(1, { shadow: { scorer: "model", decisions: [] } }),
+  ]);
+  expect(health.shadow.calls).toBe(0);
+});

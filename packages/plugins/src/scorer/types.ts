@@ -56,8 +56,8 @@ export type ScoreResult = {
   /** Why the caller must keep the deterministic tiers; written to the Log. */
   fallback?: string;
   /**
-   * `false` when the scorer fell back before sending any request; rebuild
-   * and entry reports then count 0 calls. Absent counts as one call.
+   * `false` when the scorer fell back before sending any request; rebuild,
+   * entry, and shadow reports then count 0 calls. Absent counts as one call.
    * Not written to the Log.
    */
   requested?: false;

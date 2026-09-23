@@ -104,7 +104,7 @@ CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https:
 
 `contextCompiler({ shadowScorer })` 在这一轮的档位、冻结和预算都已经定下来之后，再对**本轮新进入视图的工具块**调用 `shadowScorer.score`。新块是上一份清单的 `chunks` 里没有的 chunk id。第一轮没有上一份清单，全部工具块都算新的。散文块不打。`prevRequest` 是这一轮已经编译好的视图（head、messages、缓存断点），不是上一轮发出去的请求。
 
-结果只写 `manifest.shadow`：`{ scorer, decisions: [{ id, tier, reason? }], usage?, fallback?, raw? }`。`raw` 与上面的打分记录一样，只在 fallback 时有。影子只记不生效。它不改任何档次，不改冻结，不改预算，也不改模型看到的消息。打分器抛错时 `shadow.fallback` 记下错误文本，`decisions` 为空，这一轮照常返回。打分器自己返回的 `fallback` 同样只记在这个字段上。没有新的工具块就不调用，清单上也不写 `shadow`。
+结果只写 `manifest.shadow`：`{ scorer, calls, decisions: [{ id, tier, reason? }], usage?, fallback?, raw? }`。`calls` 与重建打分、入场打分同一口径，只数真正发出的请求：打分器在发请求前就放弃（`requested: false`，例如 jev 缺 key）或请求没能构造出来时为 0，其余为 1，打分器抛错也算 1。`raw` 与上面的打分记录一样，只在 fallback 时有。影子只记不生效。它不改任何档次，不改冻结，不改预算，也不改模型看到的消息。打分器抛错时 `shadow.fallback` 记下错误文本，`decisions` 为空，这一轮照常返回。打分器自己返回的 `fallback` 同样只记在这个字段上。没有新的工具块就不调用，清单上也不写 `shadow`。
 
 子任务重编译不跑影子打分。任务结束后用 `sage stats` 对账：被影子判为 `none` 的块，后来有没有被 `expand` 取回，或者作为 `read` 结果在后续轮次被同一路径再次读取。口径见 [`apps/sage/README.md`](../../apps/sage/README.md)。
 

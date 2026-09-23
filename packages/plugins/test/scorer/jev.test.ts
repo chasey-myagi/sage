@@ -1,4 +1,4 @@
-import { MemoryLogStore, type ViewContext } from "@sage/core";
+import { MemoryLogStore, runHealth, type ViewContext } from "@sage/core";
 import { listModels } from "@sage/provider";
 import type { Request, Usage } from "@sage/provider/contract";
 import { expect, it } from "vitest";
@@ -426,6 +426,42 @@ it("records zero rebuild scorer calls when the api key is missing", async () => 
     fallback: true,
   });
   expect(attempts).toBe(0);
+});
+
+it("records zero shadow calls when the api key is missing and one when it is sent", async () => {
+  async function shadowCalls(apiKey?: string) {
+    const store = new MemoryLogStore();
+    seed(store);
+    let attempts = 0;
+    const view = await contextCompiler({
+      budget: 100_000,
+      claims: [],
+      shadowScorer: jevScorer({
+        ...(apiKey ? { apiKey } : {}),
+        fetchImpl: async () => {
+          attempts += 1;
+          return jsonResponse(systemOne({}, 5));
+        },
+      }),
+    }).view(context(store));
+    store.append("s", { kind: "manifest", payload: view.manifest });
+    return {
+      attempts,
+      manifestCalls: view.manifest.shadow?.calls,
+      healthCalls: runHealth(store.path("s")).shadow.calls,
+    };
+  }
+
+  expect(await shadowCalls()).toEqual({
+    attempts: 0,
+    manifestCalls: 0,
+    healthCalls: 0,
+  });
+  expect(await shadowCalls("k")).toEqual({
+    attempts: 1,
+    manifestCalls: 1,
+    healthCalls: 1,
+  });
 });
 
 it("falls back on invalid JSON and on a non-retryable status", async () => {

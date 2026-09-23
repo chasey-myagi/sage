@@ -59,7 +59,8 @@ export type ModelChangePayload = {
  * finite, and `calibration`'s `measured`, `estimated`, `ratio`, and `head`
  * are finite when present (older manifests omit `head`). `shadow` needs a
  * string `scorer` and a `decisions` array of `{id, tier}` strings with
- * optional string `reason`; optional `fallback` is a string. `entryScored`
+ * optional string `reason`; optional `fallback` is a string and `calls` is
+ * finite when present (manifests written before it existed omit it). `entryScored`
  * needs finite `calls`, `none`, `summary`, and `full`, and an optional
  * finite `summaryRejected`. A `usage` on `shadow` or `entryScored` is an
  * object whose four token fields are finite when present. A `raw` on
@@ -208,6 +209,7 @@ function isShadow(value: unknown): boolean {
   if (value.fallback !== undefined && typeof value.fallback !== "string") {
     return false;
   }
+  if (!isOptionalFinite(value.calls)) return false;
   if (value.usage !== undefined && !isShadowUsage(value.usage)) return false;
   if (!rawFieldOk(value)) return false;
   return value.decisions.every(isShadowDecision);
