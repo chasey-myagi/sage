@@ -60,6 +60,10 @@ export type EpochDecisionReport = {
   rebuild: boolean;
   oldTokens: number;
   newTokens: number;
+  /**
+   * Horizon the inequality compared against payback. The compiler sets it to
+   * max(1, expectedTurns - started, ceil(alpha * started)).
+   */
   remainingTurns: number;
   readRate: number;
   writeRate: number;

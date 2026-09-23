@@ -52,6 +52,9 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 - 重建额外成本 = 新 × 写价 − 旧 × 读价。减掉的那一项是因为重建的那一轮本来也要付旧视图的读价，不能重复计
 - 回本轮数 = 额外成本 ÷ 每轮节省，向上取整
 - 额外成本不大于 0 就是立即回本
+- 剩余轮数 = max(1, `expectedTurns` − 已开始轮数, ceil(`alpha` × 已开始轮数))。已开始轮数是这一轮的 turn 减 1。`expectedTurns` 默认 20，`alpha` 默认 0.5，都是 `contextCompiler` 的选项。清单 `epochDecision.remainingTurns` 记下这一轮实际用的数
+
+前十几轮里，`expectedTurns` 减去已开始轮数仍然更大，视界和固定 20 相同。再往后，`ceil(alpha × 已开始轮数)` 抬过那条直线：跑得越久，假定后面还有大约一半那么多轮。固定 20 会从 turn 20 起把剩余夹成 1，回本要几十轮的长任务就永远开不了新阶段。不设上限会让任何正节省都立刻重开，冻结前缀每轮作废。这个下界只改「还打算走多少轮」，不改上面的不等式。
 
 读价是 `cacheRead / input`。写价是 `max(cacheWrite, input) / input`。缓存写价为 0 不是免费：新前缀第一次仍按未命中的输入价付一遍（无附加费 ≠ 免费，首次仍付未命中价）。Anthropic 的写价倍率是 1.25，DeepSeek 和 OpenAI 是 1.0。目录没有定价时退回 0.1 与 1.25。清单 `budget.used` 只含申领单和块，不含系统提示、工具 schema 和任务消息这截固定头。校准记在 `calibration`：`measured` 是上一轮 assistant usage 的输入合计，`estimated` 是那一轮的 `budget.used`。`head` 取本阶段第一轮（没有 usage 时取路径上最近一次算得出的轮）的 `measured − budget.used`，小于 0 记 0：负的头会把新视图 token 打成负数，成本式会把它当成立即回本，再开一阶段。之后各轮 `ratio = (measured − head) / estimated`，记在清单上，给离线 `policyTokens` 用。缺实测或 `estimated` 为 0 时不写校准，调用方用 `head = 0`。旧视图 token 是 `head + 冻结视图 used × ratio`。新视图 token 是 `head + 全量重编译 used × ratio`。锚点那一轮的 ratio 正好是 1。ratio 大于 1 也照乘，否则估算系统性低于实测，安全阀会漏报。ratio 小于 1 时同样乘回去，把计数器偏高的部分收回来。两边都加同一截头，差值仍只来自块的档位。省下的比例小于 `minSavingsRatio`（默认 0.2）就不开新阶段。`head + used × ratio` 超过上下文窗口的 0.9 时强制重开一次；这是安全阀，不是策略。重开后仍然超限就记在 `budget.overrun`，不再为同一道安全阀重复重开。重开那一轮的视图是全量重编译，随后按新阶段重新冻结，头也从新阶段的第一轮重算。
 

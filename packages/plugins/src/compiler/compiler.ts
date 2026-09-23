@@ -56,8 +56,11 @@
  * turn. If that rebuilt view is still over 90% of the context window,
  * `budget.overrun` records the excess when the compile budget itself did
  * not, and a later turn of that epoch does not open another one for the
- * same guard. `expectedTurns` defaults to 20. `minSavingsRatio` defaults
- * to 0.2. Remaining turns are max(1, expectedTurns - turns already started).
+ * same guard. `expectedTurns` defaults to 20. `alpha` defaults to 0.5.
+ * `minSavingsRatio` defaults to 0.2. Turns already started are
+ * max(0, turn - 1). Remaining turns are max(1, expectedTurns - started,
+ * ceil(alpha * started)): a long task assumes about half as many turns
+ * again. The inequality itself is unchanged.
  * Cache breakpoints are `head`, the end of the frozen prefix, and the last
  * message. An epoch-head message is rendered once. Later turns of that epoch
  * copy `view_epoch.details.epochHead` when that message is not itself a
@@ -149,6 +152,7 @@ export function contextCompiler(opts: {
   count?: TokenCounter;
   keepRecent?: number;
   expectedTurns?: number;
+  alpha?: number;
   minSavingsRatio?: number;
   route?: RoutePolicy;
   scorer?: Scorer;
@@ -157,6 +161,7 @@ export function contextCompiler(opts: {
   const count = opts.count ?? defaultTokenCount;
   const keepRecent = opts.keepRecent ?? 6;
   const expectedTurns = opts.expectedTurns ?? 20;
+  const alpha = opts.alpha ?? 0.5;
   const minSavingsRatio = opts.minSavingsRatio ?? 0.2;
   const scorer = opts.scorer ?? ruleScorer;
 
@@ -198,9 +203,11 @@ export function contextCompiler(opts: {
       const ratio = calibration?.ratio ?? 1;
       const project = (used: number) => head + used * ratio;
       const rates = ratesFor(ctx.prepared.pricing);
+      const started = Math.max(0, ctx.turn - 1);
       const remainingTurns = Math.max(
         1,
-        expectedTurns - Math.max(0, ctx.turn - 1),
+        expectedTurns - started,
+        Math.ceil(alpha * started),
       );
       const window = ctx.prepared.contextWindow;
       const guarded =

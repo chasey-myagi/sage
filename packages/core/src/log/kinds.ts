@@ -17,10 +17,11 @@
  * `total`, `used`, and `overrun`. `frozenTokens` and `staleOmittable`, when
  * present, are finite numbers. Other fields are left unchecked. The kernel
  * does not interpret the object.
- * `epochDecision`, `calibration`, and `cache` are optional objects. The
- * kernel checks that shape and does not read the fields. When `calibration`
- * is present, `measured`, `estimated`, `ratio`, and `head` are finite
- * numbers if they are present. Older manifests may omit `head`.
+ * `epochDecision`, `calibration`, and `cache` are optional objects. When
+ * `epochDecision` is present, `remainingTurns` is a finite number. The
+ * kernel checks that shape and does not interpret the decision. When
+ * `calibration` is present, `measured`, `estimated`, `ratio`, and `head`
+ * are finite numbers if they are present. Older manifests may omit `head`.
  *
  * `terminal.health`, when present, is an object. The kernel does not read
  * its fields. A missing health is valid. A non-object health is rejected.
@@ -148,7 +149,10 @@ function isManifest(payload: unknown): payload is ManifestPayload {
     return false;
   }
   if (payload.budget !== undefined && !isBudget(payload.budget)) return false;
-  if (payload.epochDecision !== undefined && !isRecord(payload.epochDecision)) {
+  if (
+    payload.epochDecision !== undefined &&
+    !isEpochDecision(payload.epochDecision)
+  ) {
     return false;
   }
   if (
@@ -163,6 +167,11 @@ function isManifest(payload: unknown): payload is ManifestPayload {
     Array.isArray(payload.chunks) &&
     Array.isArray(payload.anomalies)
   );
+}
+
+function isEpochDecision(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return isFiniteNumber(value.remainingTurns);
 }
 
 function isCalibration(value: unknown): boolean {
