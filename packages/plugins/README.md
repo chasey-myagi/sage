@@ -94,11 +94,11 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 CLI `--scorer model` 给根编译器装上模型打分，沿用已装配的 adapter 和当前模型。不写这个参数就是规则打分。
 
-`jevScorer` 调用 TypeSafe System One（模型 `jev-latest`）。它不读上一轮请求，请求里也不带历史。`POST <baseUrl>/v1/systemone`（默认 `https://api.typesafe.ai`），header 为 `Authorization: Bearer <key>` 和 `Content-Type: application/json`。`state` 是 `{ query, chunks: [{ id, tool, summary, tokens }] }`，`summary` 是那一行桩摘要，不是原文。`questions` 里每块一个 `choice`，标准是 `full`（需要原文）和 `none`（一行摘要够用）。`probabilities.full` 不低于 `minConfidence`（默认 0.5）判 full，否则 none。清单上的 reason 是 `scorer:jev:<p>`，p 为 full 的概率，保留两位。不写 summary。回答里没有的块保持 `kept`。
+`jevScorer` 调用 TypeSafe System One。`model` 缺省 `jev-latest`；传入 `model` 就改用那个名字，用来对准 LLM2Jev 的 `--served-model-name`。它不读上一轮请求，请求里也不带历史。`POST <baseUrl>/v1/systemone`（默认 `https://api.typesafe.ai`），header 为 `Authorization: Bearer <key>` 和 `Content-Type: application/json`。`state` 是 `{ query, chunks: [{ id, tool, summary, tokens }] }`，`summary` 是那一行桩摘要，不是原文。`questions` 里每块一个 `choice`，标准是 `full`（需要原文）和 `none`（一行摘要够用）。`probabilities.full` 不低于 `minConfidence`（默认 0.5）判 full，否则 none。清单上的 reason 是 `scorer:jev:<p>`，p 为 full 的概率，保留两位。不写 summary。回答里没有的块保持 `kept`。
 
 每批最多 `batchSize` 块（默认 40）。state 字符数按 `query.length + Σ(tokens × 4)` 估算，不超过 24000；单块超了也单独发出。没有 key、非 2xx、超时（默认 10000ms）或正文不是 answers 对象时，返回 `{ decisions: [], fallback }`，不抛。429 和 529 最多再试 3 次，间隔 `500ms × 2^n`。各批 `usage.input_tokens` 相加，写入返回 usage 的 `inputOther`，其余三项为 0。
 
-CLI `--scorer jev` 读取 `TYPESAFE_API_KEY`。这个变量缺失时进程以退出码 2 结束，并在 stderr 点名它。目录里的 provider `typesafe` 只有 `jev-latest` 的定价（输入 $0.042/MTok，输出和缓存读写都是 0），`listModels("typesafe")` 可见。`--provider typesafe` 会报错：它不是聊天端点。
+CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https://api.typesafe.ai`）、`JEV_API_KEY`（缺省回退 `TYPESAFE_API_KEY`）和 `JEV_MODEL`（缺省 `jev-latest`）。两个 key 都没有时进程以退出码 2 结束，stderr 点名这两个变量。接到本地 LLM2Jev 时，例如 `JEV_BASE_URL=http://127.0.0.1:30000 JEV_API_KEY=local JEV_MODEL=<served-model-name>`。目录里的 provider `typesafe` 只有 `jev-latest` 的定价（输入 $0.042/MTok，输出和缓存读写都是 0），`listModels("typesafe")` 可见。`--provider typesafe` 会报错：它不是聊天端点。
 
 ## 影子打分
 
