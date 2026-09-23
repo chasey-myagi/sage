@@ -19,7 +19,7 @@ import {
   optionalInt,
   requiredString,
 } from "./input.js";
-import { PathOutsideWorkspaceError, resolveInside } from "./path-safety.js";
+import { resolveInside } from "./path-safety.js";
 import { splitLines, truncate } from "./truncate.js";
 
 export const READ_MAX_LINES = 2000;
@@ -83,14 +83,15 @@ function run(cwd: string, input: unknown) {
   const limit = limitArg.value ?? READ_MAX_LINES;
   if (offset < 1) return fail("offset must be >= 1");
   if (limit < 1) return fail("limit must be >= 1");
-  const abs = resolveInside(cwd, filePath);
+  const resolved = resolveInside(cwd, filePath);
+  if (!resolved.ok) return resolved.result;
+  const abs = resolved.path;
   let text: string;
   try {
     const stat = statSync(abs);
     if (!stat.isFile()) return fail(`not a file: ${filePath}`);
     text = readFileSync(abs, "utf8");
   } catch (error) {
-    if (error instanceof PathOutsideWorkspaceError) throw error;
     return fail(errorText(error));
   }
   if (text.includes("\0"))

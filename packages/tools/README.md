@@ -6,7 +6,7 @@
 
 ### What the model sees
 
-七个 JSON Schema。`read` 默认只给前 2000 行，超长时末行是 `[truncated: showing lines 1-2000 of N; call read with offset=… to continue]`。`bash` 结果以 `[bash exit code N]` 开头；输出超过 30000 字节时保留头 20000 与尾 5000，中间一行是 `[… omitted N bytes; full output saved to <path>; read it with read(path, offset=…) …]`。`bash` 的网络策略不出现在 schema 里，也不写进工具结果正文。断网时模型只看到命令自己的报错，例如 curl 解析主机失败。`grep` 每条是 `file:line: text`。超过 300 字符的行只留匹配附近的 300 字符：匹配起点在前 300 字符里就留开头，否则留匹配点前 150 与后 150；被截掉的一侧加 `…`，行末加 `[+N chars]`。`edit` 在 0 次或多次匹配时返回错误并写明次数。
+七个 JSON Schema。越出工作区的路径不抛异常：`read` / `write` / `edit` / `grep` / `find` / `ls` 返回 `isError` 的 tool_result，正文是 `[error] Path is outside the workspace: …`，不读不写。`accesses()` 对这种路径返回空列表，同样不抛。工具错误不能结束会话。`read` 默认只给前 2000 行，超长时末行是 `[truncated: showing lines 1-2000 of N; call read with offset=… to continue]`。`bash` 结果以 `[bash exit code N]` 开头；输出超过 30000 字节时保留头 20000 与尾 5000，中间一行是 `[… omitted N bytes; full output saved to <path>; read it with read(path, offset=…) …]`。`bash` 的网络策略不出现在 schema 里，也不写进工具结果正文。断网时模型只看到命令自己的报错，例如 curl 解析主机失败。`grep` 每条是 `file:line: text`。超过 300 字符的行只留匹配附近的 300 字符：匹配起点在前 300 字符里就留开头，否则留匹配点前 150 与后 150；被截掉的一侧加 `…`，行末加 `[+N chars]`。`edit` 在 0 次或多次匹配时返回错误并写明次数。
 
 ### Token effect
 

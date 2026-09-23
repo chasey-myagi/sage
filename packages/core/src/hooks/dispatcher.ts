@@ -4,7 +4,10 @@
  * Contract: observers run in registration order. A throw is recorded and the
  * next observer still runs. The tool pipeline is fixed: tool_pre, then guard,
  * then around(execute), then tool_post, then tool_result. A pre deny is final.
- * A guard may only add a deny. Neither denial executes the tool.
+ * A guard may only add a deny. Neither denial executes the tool. A throw from
+ * execute, synchronous or rejected, or from around, becomes a tool_result
+ * `{ isError: true, content: "<name>: <message>" }` and does not escape
+ * runTool.
  *
  * Intentionally not in the Log: the callback lists. This object never sees
  * the store.
@@ -34,6 +37,15 @@ function denied(id: string, reason: string): ToolResultBlock {
     type: "tool_result",
     toolUseId: id,
     content: `Denied: ${reason}`,
+    isError: true,
+  };
+}
+
+function toolFailure(call: ToolUseBlock, error: unknown): ToolResultBlock {
+  return {
+    type: "tool_result",
+    toolUseId: call.id,
+    content: `${call.name}: ${errorText(error)}`,
     isError: true,
   };
 }
@@ -159,12 +171,7 @@ export class HookDispatcher implements Hooks {
           isError: raw.isError,
         };
       } catch (error) {
-        return {
-          type: "tool_result",
-          toolUseId: call.id,
-          content: errorText(error),
-          isError: true,
-        };
+        return toolFailure(call, error);
       }
     };
 
@@ -175,7 +182,13 @@ export class HookDispatcher implements Hooks {
       const inner = wrapped;
       wrapped = () => around(call, inner);
     }
-    return this.finishTool(call, await wrapped());
+    let result: ToolResultBlock;
+    try {
+      result = await wrapped();
+    } catch (error) {
+      result = toolFailure(call, error);
+    }
+    return this.finishTool(call, result);
   }
 
   private async finishTool(

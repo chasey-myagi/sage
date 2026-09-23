@@ -63,7 +63,9 @@ export function createFind(cwd: string): HarnessTool {
         if (!glob) return fail("glob must be a string");
         const pathArg = optionalString(record, "path");
         if (!pathArg.ok) return fail("path must be a string");
-        const root = resolveInside(cwd, pathArg.value ?? ".");
+        const resolved = resolveInside(cwd, pathArg.value ?? ".");
+        if (!resolved.ok) return resolved.result;
+        const root = resolved.path;
         const matcher = globToRegExp(glob);
         const found = walk(cwd, root, matcher);
         if (found.length === 0) return ok("No matches.");

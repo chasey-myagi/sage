@@ -52,7 +52,9 @@ export function createWrite(cwd: string): HarnessTool {
         const content = requiredString(record, "content");
         if (!filePath) return fail("path must be a string");
         if (content === undefined) return fail("content must be a string");
-        const abs = resolveInside(cwd, filePath);
+        const resolved = resolveInside(cwd, filePath);
+        if (!resolved.ok) return resolved.result;
+        const abs = resolved.path;
         mkdirSync(path.dirname(abs), { recursive: true });
         writeFileSync(abs, content, "utf8");
         return ok(`Wrote ${filePath}`);

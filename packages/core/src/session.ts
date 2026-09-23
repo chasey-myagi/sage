@@ -20,7 +20,9 @@
  * append one user message of results (tool details on the entry, not the
  * block), then turn_end continue;
  * otherwise turn_end done.
- * abort, an adapter finish error, or a throw appends terminal and stops.
+ * abort or an adapter finish error appends terminal and stops. A throw from
+ * tool execute is a tool_result and the turn continues. Any other throw
+ * appends terminal and stops.
  * Using up maxTurns appends terminal {outcome:"max_turns"}.
  * The default maxTurns is 80 when run is called without that option.
  *
