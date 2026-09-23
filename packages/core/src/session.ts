@@ -368,8 +368,9 @@ export class AgentSession {
   /**
    * Appends the assistant message, then emits `llm_end`. Details are
    * `{responseModel, responseId, api, usage, finish}`; the response id and
-   * model come from the stream's response chunk and are empty when the call
-   * failed before the body began.
+   * model come from the stream's response chunk and are empty when no such
+   * chunk came: the call failed before the body began, or the body never
+   * named the response before content started.
    */
   private async recordAssistant(assistant: AssistantMessage): Promise<void> {
     this.store.append(this.sessionId, {

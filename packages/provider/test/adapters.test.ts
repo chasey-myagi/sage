@@ -558,3 +558,30 @@ describe("deepseek reasoning_content", () => {
     expect(encoded).toContain("Hi");
   });
 });
+
+describe("openai response identity", () => {
+  it("takes the id from the first frame that carries one, not from a leading frame without it", async () => {
+    const body = [
+      'data: {"object":"chat.completion.chunk","choices":[]}',
+      "",
+      'data: {"id":"chatcmpl-real","object":"chat.completion.chunk","model":"gpt-5","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}',
+      "",
+      openaiStop("stop"),
+    ].join("\n");
+    const { fetchImpl } = fixtureFetch(body);
+    const adapter = new OpenAIAdapter({ apiKey: "test-key", fetchImpl });
+    const model = { provider: "openai", model: "gpt-5" };
+    const req: Request = {
+      model,
+      head: { system: "sys", tools: [] },
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      cacheBreakpoints: [],
+      sampling: { maxTokens: 16 },
+    };
+    const chunks = await drain(adapter.stream(req, adapter.prepare(model)));
+    expect(chunks.filter((chunk) => chunk.type === "response")).toEqual([
+      { type: "response", id: "chatcmpl-real", model: "gpt-5" },
+    ]);
+    expect(chunks[0]?.type).toBe("response");
+  });
+});
