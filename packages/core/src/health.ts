@@ -21,6 +21,8 @@
  * `spawn_subtask` and `spawn_subtasks` tool results stored on the user
  * message as `details.toolResults`. `spawn_subtasks` counts each item in
  * `details.results`. `cacheHitRatio` and `expandRate` ignore that usage.
+ * `toolErrors` counts `tool_result` blocks whose `isError` is true. The
+ * count does not end the run.
  *
  * Intentionally not in the Log: this function. It does not copy claim
  * text, chunk text, reasons, paths, or child session ids.
@@ -78,6 +80,7 @@ export type RunHealth = {
       total: number;
     };
   };
+  toolErrors: number;
 };
 
 export function runHealth(path: readonly StoredEntry[]): RunHealth {
@@ -146,7 +149,22 @@ export function runHealth(path: readonly StoredEntry[]): RunHealth {
     shadow: shadowHealth(path),
     entryScored: entryHealth(path),
     subtasks: subtaskHealth(path),
+    toolErrors: toolErrorCount(path),
   };
+}
+
+function toolErrorCount(path: readonly StoredEntry[]): number {
+  let count = 0;
+  for (const entry of path) {
+    if (entry.kind !== "message" || !isRecord(entry.payload)) continue;
+    const content = entry.payload.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (!isRecord(block) || block.type !== "tool_result") continue;
+      if (block.isError === true) count += 1;
+    }
+  }
+  return count;
 }
 
 function shadowHealth(path: readonly StoredEntry[]): RunHealth["shadow"] {

@@ -9,10 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  PathOutsideWorkspaceError,
-  resolveInside,
-} from "../src/path-safety.ts";
+import { resolveInside } from "../src/path-safety.ts";
 
 let dir = "";
 const outsidePaths: string[] = [];
@@ -29,48 +26,55 @@ afterEach(() => {
   }
 });
 
+function inside(cwd: string, input: string, abs: string) {
+  expect(resolveInside(cwd, input)).toEqual({
+    ok: true,
+    path: realpathSync(abs),
+  });
+}
+
+function outside(cwd: string, input: string) {
+  expect(resolveInside(cwd, input)).toEqual({
+    ok: false,
+    result: {
+      content: `[error] Path is outside the workspace: ${input}`,
+      isError: true,
+    },
+  });
+}
+
 describe("resolveInside", () => {
   it("returns the real absolute path of a file inside the workspace", () => {
     const cwd = freshDir();
     const file = path.join(cwd, "a.txt");
     writeFileSync(file, "hi");
-    expect(resolveInside(cwd, "a.txt")).toBe(realpathSync(file));
-    expect(resolveInside(cwd, path.join(cwd, "sub", "..", "a.txt"))).toBe(
-      realpathSync(file),
-    );
+    inside(cwd, "a.txt", file);
+    inside(cwd, path.join(cwd, "sub", "..", "a.txt"), file);
   });
 
   it("rejects a lexical escape before any read", () => {
     const cwd = freshDir();
-    const outside = path.join(path.dirname(cwd), "passwd-lookalike");
-    outsidePaths.push(outside);
-    writeFileSync(outside, "root:secret");
-    expect(() => resolveInside(cwd, "../../etc/passwd")).toThrow(
-      PathOutsideWorkspaceError,
-    );
-    expect(() => resolveInside(cwd, outside)).toThrow(
-      PathOutsideWorkspaceError,
-    );
+    const escaped = path.join(path.dirname(cwd), "passwd-lookalike");
+    outsidePaths.push(escaped);
+    writeFileSync(escaped, "root:secret");
+    outside(cwd, "../../etc/passwd");
+    outside(cwd, escaped);
   });
 
   it("rejects a symlink whose target is outside the workspace", () => {
     const cwd = freshDir();
-    const outside = path.join(path.dirname(cwd), "secret.txt");
-    outsidePaths.push(outside);
-    writeFileSync(outside, "secret");
-    symlinkSync(outside, path.join(cwd, "link.txt"));
-    expect(() => resolveInside(cwd, "link.txt")).toThrow(
-      PathOutsideWorkspaceError,
-    );
+    const secret = path.join(path.dirname(cwd), "secret.txt");
+    outsidePaths.push(secret);
+    writeFileSync(secret, "secret");
+    symlinkSync(secret, path.join(cwd, "link.txt"));
+    outside(cwd, "link.txt");
 
     const outsideDir = path.join(path.dirname(cwd), "outside-dir");
     outsidePaths.push(outsideDir);
     mkdirSync(outsideDir);
     writeFileSync(path.join(outsideDir, "x.txt"), "secret");
     symlinkSync(outsideDir, path.join(cwd, "link-dir"));
-    expect(() => resolveInside(cwd, path.join("link-dir", "x.txt"))).toThrow(
-      PathOutsideWorkspaceError,
-    );
+    outside(cwd, path.join("link-dir", "x.txt"));
   });
 
   it("allows a symlink that stays inside the workspace", () => {
@@ -78,6 +82,6 @@ describe("resolveInside", () => {
     const file = path.join(cwd, "a.txt");
     writeFileSync(file, "hi");
     symlinkSync(file, path.join(cwd, "inner.txt"));
-    expect(resolveInside(cwd, "inner.txt")).toBe(realpathSync(file));
+    inside(cwd, "inner.txt", file);
   });
 });

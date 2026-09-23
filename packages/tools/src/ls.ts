@@ -45,7 +45,9 @@ export function createLs(cwd: string): HarnessTool {
         const record = asRecord(input) ?? {};
         const pathArg = optionalString(record, "path");
         if (!pathArg.ok) return fail("path must be a string");
-        const abs = resolveInside(cwd, pathArg.value ?? ".");
+        const resolved = resolveInside(cwd, pathArg.value ?? ".");
+        if (!resolved.ok) return resolved.result;
+        const abs = resolved.path;
         const stat = statSync(abs);
         if (!stat.isDirectory())
           return fail(`not a directory: ${pathArg.value ?? "."}`);

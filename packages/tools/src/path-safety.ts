@@ -2,21 +2,28 @@
  * Workspace path check.
  *
  * Contract: a tool path is accepted only when both the lexically resolved
- * path and the realpath (symlink-resolved) stay inside cwd. Callers turn a
- * throw into an isError tool result and must not read or write.
+ * path and the realpath (symlink-resolved) stay inside cwd. An outside path
+ * returns `{ ok: false, result }` where `result` is `fail` with content
+ * `[error] Path is outside the workspace: <input>`. It does not throw.
+ * Callers must not read or write that path.
  *
- * Intentionally not in the Log: the resolved path and this error. The model
- * sees only the tool result string, which the session logs.
+ * Intentionally not in the Log: the resolved path. The model sees only the
+ * tool result string, which the session logs.
  */
 
 import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { fail, type ToolResult } from "./input.js";
 
-export class PathOutsideWorkspaceError extends Error {
-  constructor(input: string) {
-    super(`Path is outside the workspace: ${input}`);
-    this.name = "PathOutsideWorkspaceError";
-  }
+export type ResolvedPath =
+  | { ok: true; path: string }
+  | { ok: false; result: ToolResult };
+
+function outside(input: string): ResolvedPath {
+  return {
+    ok: false,
+    result: fail(`[error] Path is outside the workspace: ${input}`),
+  };
 }
 
 function isInside(root: string, target: string): boolean {
@@ -61,35 +68,33 @@ function resolvedExisting(target: string): string {
   }
 }
 
-export function resolveInside(cwd: string, input: string): string {
+export function resolveInside(cwd: string, input: string): ResolvedPath {
   const lexicalRoot = path.resolve(cwd);
   const lexical = path.resolve(lexicalRoot, input);
-  if (!isInside(lexicalRoot, lexical)) {
-    throw new PathOutsideWorkspaceError(input);
-  }
+  if (!isInside(lexicalRoot, lexical)) return outside(input);
   let realRoot: string;
   try {
     realRoot = realpathSync(lexicalRoot);
   } catch {
-    throw new PathOutsideWorkspaceError(cwd);
+    return outside(cwd);
   }
   const existing = nearestExisting(lexical);
   let existingReal: string;
   try {
     existingReal = resolvedExisting(existing);
   } catch {
-    throw new PathOutsideWorkspaceError(input);
+    return outside(input);
   }
   const remainder = path.relative(existing, lexical);
   const finalPath = path.resolve(existingReal, remainder);
   if (!isInside(realRoot, existingReal) || !isInside(realRoot, finalPath)) {
-    throw new PathOutsideWorkspaceError(input);
+    return outside(input);
   }
-  if (!existsSync(finalPath)) return finalPath;
+  if (!existsSync(finalPath)) return { ok: true, path: finalPath };
   try {
-    return realpathSync(finalPath);
+    return { ok: true, path: realpathSync(finalPath) };
   } catch {
-    return finalPath;
+    return { ok: true, path: finalPath };
   }
 }
 

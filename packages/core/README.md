@@ -38,10 +38,17 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 | 缓存命中率 | `cacheHitRatio` = Σ cacheRead / Σ (cacheRead + inputOther + cacheCreation)。分子分母都按 token 加总，不是把每一轮的比率再平均。没有 assistant usage，或分母为 0 时，值为 null。 |
 | expand 率 | 最后一条 manifest 的 `budget.expands / budget.omitted`。这两个字段已经是累计值，只读最后一条。`omitted` 为 0 时值为 null。 |
 | 子任务 | `subtasks.count` 与 `subtasks.tokens` 汇总父 Log 里 `spawn_subtask` / `spawn_subtasks` 的 tool result details。`cacheHitRatio` 和 `expandRate` 不含这些 token。 |
+| 工具错误 | `toolErrors` 是路径上 `isError: true` 的 `tool_result` 条数。这个数不结束 run。 |
 
 `turns` 是 assistant 消息条数。`epochs` 是最大 `view_epoch.epoch` 加 1，没有 `view_epoch` 时为 1。`modelChanges` 是路径上的 `model_change` 条数。`scorerCalls` 与 `scorerFallbacks` 把每条 manifest 的 `scorer.calls` 和 `scorer.fallback` 加起来；`fallback: true` 计 1。`shadow.calls` 数带 `shadow` 对象的清单条数。`shadow.usage` 把这些对象里的 `usage` 四元组加起来：`input` 是 `inputOther`，另外三项是 `inputCacheRead`、`inputCacheCreation`、`output`。
 
 `health` 里只有这些数字和 null。块原文、claim 文本、路径、子会话 id 都不进这个对象。离线看同一份数用 `sage stats <session.jsonl>`。子 usage 只出现在 `subtasks`，不进上面的 token 总量和两个比率。
+
+## 工具错误
+
+工具永远不能杀会话。`execute` 抛出的同步异常和被拒绝的 Promise，以及包住它的 `around` 抛错，都变成一条 `tool_result`：`isError` 为 true，正文是 `<工具名>: <message>`。这条结果写进下一条用户消息，模型下一轮看得到。连续多次也一样，默认看 5 次也不会追加 `outcome: "error"` 的 terminal。`runHealth.toolErrors` 只计数。
+
+会终止的是内核自己的失败和 provider 的失败：视图断言、没有适配器、适配器 finish error、以及工具管线以外的抛错。
 
 构造可以传 `adapters`（provider 到适配器），也可以继续传单个 `adapter`。单个适配器记在起始型号的 provider 名下。
 

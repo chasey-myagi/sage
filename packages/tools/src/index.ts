@@ -4,8 +4,9 @@
  * Contract: createTools returns read, write, edit, bash, grep, find, and ls.
  * Each declares isReadOnly, isDestructive, isOpenWorld, and accesses().
  * `network` defaults to "full". "none" throws ToolNetworkError unless this
- * platform can enforce it (darwin, or linux with `unshare -n`). The kernel
- * does not import this package.
+ * platform can enforce it (darwin, or linux with `unshare -n`). A path
+ * outside the workspace returns an isError tool result and does not throw
+ * from execute or accesses. The kernel does not import this package.
  *
  * Intentionally not in the Log: Access lists, exec injection, and spilled
  * files under `.sage/tool-output`. Model-visible text leaves only as tool

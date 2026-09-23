@@ -59,7 +59,9 @@ export function createEdit(cwd: string): HarnessTool {
           return fail("old_string and new_string must be strings");
         }
         if (oldString.length === 0) return fail("old_string must not be empty");
-        const abs = resolveInside(cwd, filePath);
+        const resolved = resolveInside(cwd, filePath);
+        if (!resolved.ok) return resolved.result;
+        const abs = resolved.path;
         let text: string;
         try {
           text = readFileSync(abs, "utf8");

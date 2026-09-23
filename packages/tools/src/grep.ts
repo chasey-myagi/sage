@@ -92,7 +92,9 @@ export function createGrep(cwd: string): HarnessTool {
         }
         const maxResults = maxArg.value ?? GREP_MAX_RESULTS;
         if (maxResults < 1) return fail("max_results must be >= 1");
-        const root = resolveInside(cwd, pathArg.value ?? ".");
+        const resolved = resolveInside(cwd, pathArg.value ?? ".");
+        if (!resolved.ok) return resolved.result;
+        const root = resolved.path;
         if (await hasRg()) {
           try {
             const hits = await searchWithRg({
@@ -141,7 +143,9 @@ export async function searchWithoutRg(opts: {
       return fail(errorText(error));
     }
   }
-  const root = resolveInside(opts.cwd, opts.root);
+  const resolved = resolveInside(opts.cwd, opts.root);
+  if (!resolved.ok) return resolved.result;
+  const root = resolved.path;
   const hits = collectHits(opts.cwd, root, regex, matcher);
   return ok(formatHits(hits, opts.maxResults));
 }

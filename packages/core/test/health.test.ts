@@ -182,6 +182,7 @@ it("returns zeros and null rates for an empty path", () => {
         total: 0,
       },
     },
+    toolErrors: 0,
   });
 });
 
