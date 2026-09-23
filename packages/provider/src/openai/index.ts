@@ -4,10 +4,10 @@
  * Guarantees: cacheBreakpoints are ignored, since this wire format has no
  * cache field. Thinking blocks and foreign tool ids are normalized before
  * encoding; thinking is never sent back. Streamed `reasoning_content`
- * opens its own thinking block. The first parsed SSE object's `id` and
- * `model` become the response chunk. `toolChoice` is sent as
- * `tool_choice` unchanged; an absent toolChoice omits the field. Messages
- * and tools are otherwise sent unchanged. A frame with an `error` object
+ * opens its own thinking block. The first SSE object with a non-empty
+ * `id` or a choice supplies the response chunk's `id` and `model`.
+ * `toolChoice` is sent as `tool_choice` unchanged; an absent toolChoice
+ * omits the field. Messages and tools are otherwise sent unchanged. A frame with an `error` object
  * ends the call as a non-transport error finish carrying its message.
  *
  * Intentionally not in the Log: the API key, request bytes, and abort
@@ -178,14 +178,16 @@ function interpret(event: SseEvent, state: OpenState, driver: Driver): void {
     return;
   }
   const choice = firstRecord(record.choices);
-  // Announce on the first frame that names the response. A frame with a
+  // Announce on the first frame that names the response. An empty id does
+  // not name it: Azure leads with `id: ""` and no choices. A frame with a
   // choice may open a block, so announce before it even without an id: the
   // response chunk must precede every block_start.
-  if (!state.announced && (typeof record.id === "string" || choice)) {
+  const id = nonEmpty(record.id);
+  if (!state.announced && (id !== undefined || choice)) {
     state.announced = true;
     driver.push({
       type: "response",
-      id: typeof record.id === "string" ? record.id : "",
+      id: id ?? "",
       model: typeof record.model === "string" ? record.model : "",
     });
   }
@@ -285,6 +287,10 @@ function closeOpen(state: OpenState, driver: Driver): void {
   if (!state.open) return;
   driver.push({ type: "block_end", index: state.open.index });
   state.open = undefined;
+}
+
+function nonEmpty(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function firstRecord(value: unknown): Record<string, unknown> | undefined {
