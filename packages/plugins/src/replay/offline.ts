@@ -14,7 +14,12 @@
  * The recorded session is the fact. Replay does not append to it.
  */
 
-import type { CompiledView, Manifest, ViewContext } from "@sage/core";
+import type {
+  CompiledView,
+  Manifest,
+  ViewContext,
+  ViewProvider,
+} from "@sage/core";
 import {
   type HarnessTool,
   isMessage,
@@ -130,16 +135,7 @@ export async function replayOffline(
   const views: CompiledView[] = [];
   const diffs: TurnDiff[] = [];
   const swapped = policy.scorer !== undefined && !policy.scorer.isNoop;
-  const scorer = swapped ? ruleScorer : policy.scorer;
-  const provider = policy.passthrough
-    ? passthroughView
-    : contextCompiler({
-        budget: policy.budget ?? DEFAULT_COMPILER_BUDGET,
-        claims: [],
-        keepRecent: policy.keepRecent ?? DEFAULT_KEEP_RECENT,
-        expectedTurns: policy.expectedTurns ?? DEFAULT_EXPECTED_TURNS,
-        ...(scorer ? { scorer } : {}),
-      });
+  const provider = replayProvider(policy, swapped ? ruleScorer : policy.scorer);
 
   for (const slice of slices) {
     if (!policy.passthrough) {
@@ -153,40 +149,74 @@ export async function replayOffline(
     const view = await provider.view(ctx);
     const previous = views.at(-1);
     views.push(view);
-    const recordedTokens = inputTotal(slice.assistant);
-    const policyTokens = policy.passthrough
-      ? recordedTokens
-      : estimateTokens(view.manifest);
-    const omittedIds = omittedChunkIds(view.manifest);
-    const decision = view.manifest.epochDecision;
-    diffs.push({
-      turn: slice.turn,
-      recordedTokens,
-      policyTokens,
-      saved: recordedTokens - policyTokens,
-      prefixStable: previous ? prefixStable(previous, view) : true,
-      omittedIds,
-      likelyNeededOmissions: likelyNeeded(
-        omittedIds,
-        recorded,
-        slice,
-        deps.tools,
-      ),
-      epoch: view.epoch,
-      rebuild: decision?.rebuild ?? false,
-      oldTokens: decision?.oldTokens ?? 0,
-      newTokens: decision?.newTokens ?? 0,
-      decisionReason: decision?.reason ?? "",
-      chunkTiers: view.manifest.chunks.map((chunk) => ({
-        id: chunk.id,
-        tier: chunk.tier,
-      })),
-    });
+    diffs.push(
+      turnDiff({ policy, recorded, slice, view, previous, tools: deps.tools }),
+    );
     if (!policy.passthrough) commitView(shadow, shadowId, view, ctx);
   }
 
   if (swapped) scorerSwappedRuns.add(diffs);
   return diffs;
+}
+
+/** passthroughView, or a compiler with no claims under `policy`. */
+function replayProvider(
+  policy: Policy,
+  scorer: Scorer | undefined,
+): ViewProvider {
+  if (policy.passthrough) return passthroughView;
+  return contextCompiler({
+    budget: policy.budget ?? DEFAULT_COMPILER_BUDGET,
+    claims: [],
+    keepRecent: policy.keepRecent ?? DEFAULT_KEEP_RECENT,
+    expectedTurns: policy.expectedTurns ?? DEFAULT_EXPECTED_TURNS,
+    ...(scorer ? { scorer } : {}),
+  });
+}
+
+/**
+ * One turn's diff. Passthrough reports the recorded tokens as its own;
+ * a compiler estimates them from the manifest. The prefix is stable on
+ * the first turn.
+ */
+function turnDiff(input: {
+  policy: Policy;
+  recorded: readonly StoredEntry[];
+  slice: Slice;
+  view: CompiledView;
+  previous: CompiledView | undefined;
+  tools: readonly HarnessTool[];
+}): TurnDiff {
+  const { slice, view } = input;
+  const recordedTokens = inputTotal(slice.assistant);
+  const policyTokens = input.policy.passthrough
+    ? recordedTokens
+    : estimateTokens(view.manifest);
+  const omittedIds = omittedChunkIds(view.manifest);
+  const decision = view.manifest.epochDecision;
+  return {
+    turn: slice.turn,
+    recordedTokens,
+    policyTokens,
+    saved: recordedTokens - policyTokens,
+    prefixStable: input.previous ? prefixStable(input.previous, view) : true,
+    omittedIds,
+    likelyNeededOmissions: likelyNeeded(
+      omittedIds,
+      input.recorded,
+      slice,
+      input.tools,
+    ),
+    epoch: view.epoch,
+    rebuild: decision?.rebuild ?? false,
+    oldTokens: decision?.oldTokens ?? 0,
+    newTokens: decision?.newTokens ?? 0,
+    decisionReason: decision?.reason ?? "",
+    chunkTiers: view.manifest.chunks.map((chunk) => ({
+      id: chunk.id,
+      tier: chunk.tier,
+    })),
+  };
 }
 
 /**
