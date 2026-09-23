@@ -2,8 +2,9 @@
  * POSTs JSON and classifies the response.
  *
  * Guarantees: nothing here throws for a failed call. Non-2xx responses and
- * transport failures come back as data (`PostFail`), and a fetch throw is
- * marked `transport: true`; callers turn them into finish chunks.
+ * transport failures come back as data (`PostFail`). A fetch throw, or a
+ * throw while reading a non-2xx body, is marked `transport: true`; callers
+ * turn them into finish chunks.
  *
  * Intentionally not in the Log: the API key, the abort signal, and the
  * response bytes never leave this module as a fact to append.
@@ -83,18 +84,10 @@ export async function postJson(args: {
       signal: args.signal,
     });
   } catch (error) {
-    if (args.signal?.aborted || isAbortError(error)) {
-      return { ok: false, aborted: true, message: "aborted" };
-    }
-    return {
-      ok: false,
-      aborted: false,
-      message: messageOf(error),
-      transport: true,
-    };
+    return thrownFailure(error, args.signal);
   }
   if (!response.ok) {
-    return readFailure(response);
+    return readFailure(response, args.signal);
   }
   if (!response.body) {
     return {
@@ -106,8 +99,34 @@ export async function postJson(args: {
   return { ok: true, body: response.body };
 }
 
-async function readFailure(response: Response): Promise<PostFail> {
-  const text = await response.text();
+/**
+ * Classifies an exception thrown by fetch or by a body read: an abort stays
+ * an abort, anything else is a transport failure the caller may retry.
+ */
+function thrownFailure(error: unknown, signal?: AbortSignal): PostFail {
+  if (signal?.aborted || isAbortError(error)) {
+    return { ok: false, aborted: true, message: "aborted" };
+  }
+  return {
+    ok: false,
+    aborted: false,
+    message: messageOf(error),
+    transport: true,
+  };
+}
+
+async function readFailure(
+  response: Response,
+  signal?: AbortSignal,
+): Promise<PostFail> {
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (error) {
+    // The connection dropped while the error body streamed in. That is a
+    // failure below HTTP, so it carries no status, the same as a fetch throw.
+    return thrownFailure(error, signal);
+  }
   let raw: unknown;
   let message = `HTTP ${response.status}`;
   if (text.length > 0) {

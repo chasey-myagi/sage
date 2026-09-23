@@ -10,7 +10,9 @@
  * - for each index, block_start precedes that index's deltas, and no delta
  *   for that index appears after its block_end
  * - finish.error.transport is true exactly when the call failed below HTTP:
- *   fetch threw, or reading the response body threw. HTTP statuses, error
+ *   fetch threw, or reading a response body threw (the SSE body, or the
+ *   body of a non-2xx response). Such a failure carries no status. HTTP
+ *   statuses whose body was read, error
  *   events inside the stream, and a body that closes without a stop leave
  *   it unset. Callers classify transport failures by this flag alone.
  *

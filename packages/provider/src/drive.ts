@@ -100,8 +100,8 @@ export async function* driveStream(
     else if (!opened.ok) finish = openFailure(opened);
     else finish = yield* readBody(opened.body, call, decode);
   } catch (error) {
-    // Once the call opened, only the body read can throw here: a failure
-    // below HTTP, the same class as a fetch throw.
+    // postJson already turned fetch and error-body throws into data, so
+    // only the SSE body read can throw here: a failure below HTTP.
     finish = failureFinish(signal, error, opened?.ok === true);
   }
   const usage = withRetry(decode.usage, opened?.retries ?? 0, opened?.reason);
