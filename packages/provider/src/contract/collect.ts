@@ -2,6 +2,8 @@
  * Fold a chunk stream into one assistant message.
  * Tool input is the concatenation of partial JSON, parsed once at the end.
  * A parse failure keeps rawInput and sets input to null.
+ * responseId and responseModel come from the response chunk. Without one
+ * (the call failed before the body began) both are the empty string.
  *
  * Deliberately not a Log entry: collect does not append. The caller decides
  * whether the resulting message becomes an assistant entry.
@@ -30,13 +32,11 @@ const EMPTY_USAGE: Usage = {
 
 export async function collect(
   chunks: AsyncIterable<StreamChunk>,
-  meta: {
-    responseModel: string;
-    responseId: string;
-    api: ProviderAdapter["api"];
-  },
+  meta: { api: ProviderAdapter["api"] },
 ): Promise<AssistantMessage> {
   const blocks = new Map<number, Acc>();
+  let responseId = "";
+  let responseModel = "";
   let usage: Usage = EMPTY_USAGE;
   let finish: Extract<StreamChunk, { type: "finish" }> = {
     type: "finish",
@@ -46,6 +46,10 @@ export async function collect(
 
   for await (const chunk of chunks) {
     switch (chunk.type) {
+      case "response":
+        responseId = chunk.id;
+        responseModel = chunk.model;
+        break;
       case "block_start":
         blocks.set(chunk.index, {
           index: chunk.index,
@@ -83,8 +87,8 @@ export async function collect(
     content,
     usage,
     finish,
-    responseModel: meta.responseModel,
-    responseId: meta.responseId,
+    responseModel,
+    responseId,
     api: meta.api,
   };
 }

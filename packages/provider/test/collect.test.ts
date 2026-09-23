@@ -21,6 +21,7 @@ describe("scenario 7 collect", () => {
   it("assembles blocks, parses tool input, and copies the envelope", async () => {
     const message = await collect(
       from([
+        { type: "response", id: "msg_01", model: "claude-sonnet-4-5" },
         { type: "block_start", index: 0, blockType: "text" },
         { type: "text_delta", index: 0, text: "H" },
         { type: "text_delta", index: 0, text: "i" },
@@ -41,11 +42,7 @@ describe("scenario 7 collect", () => {
         { type: "usage", usage },
         finish,
       ]),
-      {
-        responseModel: "claude-sonnet-4-5",
-        responseId: "msg_01",
-        api: "anthropic-messages",
-      },
+      { api: "anthropic-messages" },
     );
     expect(message).toEqual({
       role: "assistant",
@@ -83,11 +80,7 @@ describe("scenario 7 collect", () => {
         { type: "usage", usage },
         finish,
       ]),
-      {
-        responseModel: "gpt-5",
-        responseId: "chatcmpl-abc",
-        api: "openai-chat",
-      },
+      { api: "openai-chat" },
     );
     expect(message.content).toEqual([
       {
@@ -98,6 +91,18 @@ describe("scenario 7 collect", () => {
         rawInput: "{",
       },
     ]);
+  });
+
+  it("leaves response identity empty when no response chunk arrives", async () => {
+    const message = await collect(
+      from([
+        { type: "usage", usage },
+        { type: "finish", kind: "error", error: { message: "HTTP 500" } },
+      ]),
+      { api: "openai-chat" },
+    );
+    expect(message.responseId).toBe("");
+    expect(message.responseModel).toBe("");
   });
 
   it("collects an Anthropic stream into one assistant message", async () => {
@@ -114,11 +119,7 @@ describe("scenario 7 collect", () => {
       },
       adapter.prepare(model),
     );
-    const message = await collect(stream, {
-      responseModel: "claude-sonnet-4-5",
-      responseId: "msg_01",
-      api: adapter.api,
-    });
+    const message = await collect(stream, { api: adapter.api });
     expect(message.role).toBe("assistant");
     expect(message.api).toBe("anthropic-messages");
     expect(message.responseId).toBe("msg_01");
@@ -135,7 +136,10 @@ describe("scenario 7 collect", () => {
     ]);
     expect(quadruple(message.usage)).toEqual(usage);
     expect(message.finish).toEqual({ type: "finish", kind: "tool_use" });
-    expect(stream.responseTrace).toEqual({
+    expect({
+      responseId: message.responseId,
+      responseModel: message.responseModel,
+    }).toEqual({
       responseId: "msg_01",
       responseModel: "claude-sonnet-4-5",
     });
@@ -155,11 +159,7 @@ describe("scenario 7 collect", () => {
       },
       adapter.prepare(model),
     );
-    const message = await collect(stream, {
-      responseModel: "gpt-5",
-      responseId: "chatcmpl-abc",
-      api: adapter.api,
-    });
+    const message = await collect(stream, { api: adapter.api });
     expect(message.content).toEqual([
       { type: "text", text: "Hi" },
       {
@@ -173,7 +173,10 @@ describe("scenario 7 collect", () => {
     expect(quadruple(message.usage)).toEqual(usage);
     expect(message.finish).toEqual({ type: "finish", kind: "tool_use" });
     expect(message.api).toBe("openai-chat");
-    expect(stream.responseTrace).toEqual({
+    expect({
+      responseId: message.responseId,
+      responseModel: message.responseModel,
+    }).toEqual({
       responseId: "chatcmpl-abc",
       responseModel: "gpt-5",
     });

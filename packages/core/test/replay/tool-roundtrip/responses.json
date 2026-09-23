@@ -1,5 +1,6 @@
 [
   [
+    { "type": "response", "id": "msg_replay_tool_1", "model": "claude-test" },
     {
       "type": "block_start",
       "index": 0,
@@ -25,6 +26,7 @@
     { "type": "finish", "kind": "tool_use" }
   ],
   [
+    { "type": "response", "id": "msg_replay_tool_2", "model": "claude-test" },
     { "type": "block_start", "index": 0, "blockType": "text" },
     { "type": "text_delta", "index": 0, "text": "done" },
     { "type": "block_end", "index": 0 },

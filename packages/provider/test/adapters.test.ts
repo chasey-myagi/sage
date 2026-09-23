@@ -126,6 +126,7 @@ runContractSuite(
   {
     happy: readFixture("anthropic-text-tool.sse"),
     truncated: readFixture("anthropic-truncated.sse"),
+    response: { type: "response", id: "msg_01", model: "claude-sonnet-4-5" },
   },
 );
 
@@ -135,6 +136,7 @@ runContractSuite(
   {
     happy: readFixture("openai-text-tool.sse"),
     truncated: readFixture("openai-truncated.sse"),
+    response: { type: "response", id: "chatcmpl-abc", model: "gpt-5" },
   },
 );
 
@@ -162,7 +164,18 @@ describe("scenario 1 cross-adapter", () => {
       anthropic.stream(req, anthropic.prepare(model)),
     );
     const oChunks = await drain(openai.stream(req, openai.prepare(model)));
-    expect(stripRaw(aChunks)).toEqual(stripRaw(oChunks));
+    // Response identity is per provider by nature; every other chunk matches.
+    expect(aChunks[0]).toEqual({
+      type: "response",
+      id: "msg_01",
+      model: "claude-sonnet-4-5",
+    });
+    expect(oChunks[0]).toEqual({
+      type: "response",
+      id: "chatcmpl-abc",
+      model: "gpt-5",
+    });
+    expect(stripRaw(aChunks.slice(1))).toEqual(stripRaw(oChunks.slice(1)));
   });
 });
 
@@ -506,11 +519,7 @@ describe("deepseek reasoning_content", () => {
       sampling: { maxTokens: 16 },
     };
     const stream = adapter.stream(first, adapter.prepare(model));
-    const message = await collect(stream, {
-      responseModel: model.model,
-      responseId: "chatcmpl-reason",
-      api: adapter.api,
-    });
+    const message = await collect(stream, { api: adapter.api });
     expect(message.content).toEqual([
       { type: "thinking", text: "REASON_STEP" },
       { type: "text", text: "Hi" },

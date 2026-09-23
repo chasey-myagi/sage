@@ -3,8 +3,9 @@
  *
  * Contract: `prepare` returns the partial call filled in with the model the
  * session asked for. `stream` records a structured clone of each request,
- * then yields that turn's chunks. It does not open a socket. Running out of
- * turns throws. An already-aborted signal finishes as `aborted`.
+ * then yields that turn's chunks. It does not open a socket. A script that
+ * carries no response chunk collects to empty responseId and responseModel.
+ * Running out of turns throws. An already-aborted signal finishes as `aborted`.
  *
  * Intentionally not in the Log: the script and the captured requests. The
  * session writes the request envelope and the collected assistant message.

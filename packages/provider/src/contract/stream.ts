@@ -2,6 +2,9 @@
  * Stream vocabulary shared by every adapter.
  *
  * Invariants, guarded by the shared contract suite:
+ * - at most one response chunk, carrying the provider's response id and
+ *   model as sent on the wire; it precedes every block_start. A call that
+ *   fails before the body begins has none
  * - a usage chunk appears before finish
  * - finish is the last chunk
  * - for each index, block_start precedes that index's deltas, and no delta
@@ -34,6 +37,7 @@ export type StreamChunk =
       id?: string;
       name?: string;
     }
+  | { type: "response"; id: string; model: string }
   | { type: "text_delta"; index: number; text: string }
   | { type: "thinking_delta"; index: number; text: string }
   | { type: "tool_input_delta"; index: number; partialJson: string }
