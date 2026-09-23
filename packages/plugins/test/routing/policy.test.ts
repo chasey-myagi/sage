@@ -58,7 +58,7 @@ function input(
   };
 }
 
-describe("scenario 4 sensitive filter", () => {
+describe("sensitive provider filter", () => {
   const filter = sensitivePolicy({
     rules: [{ pattern: ENV, denyProviders: ["openai"] }],
   });
@@ -108,7 +108,7 @@ describe("scenario 4 sensitive filter", () => {
   });
 });
 
-describe("scenario 5 cost tier", () => {
+describe("cheapest-allowed cost ladder", () => {
   const policy = costTierPolicy({
     ladder: [...LADDER],
     pick: "cheapest-allowed",

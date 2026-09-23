@@ -8,16 +8,20 @@
  * by the tool is what the session logs.
  */
 
+/** A tool result as tools build it: text for the model and the error flag. */
 export type ToolResult = { content: string; isError: boolean };
 
+/** A successful result with `content`. */
 export function ok(content: string): ToolResult {
   return { content, isError: false };
 }
 
+/** An isError result with `content`; tools return it instead of throwing. */
 export function fail(content: string): ToolResult {
   return { content, isError: true };
 }
 
+/** `input` as an object, or undefined for null, arrays, and primitives. */
 export function asRecord(input: unknown): Record<string, unknown> | undefined {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     return undefined;
@@ -25,6 +29,7 @@ export function asRecord(input: unknown): Record<string, unknown> | undefined {
   return input as Record<string, unknown>;
 }
 
+/** `record[key]` when it is a string (possibly empty), otherwise undefined. */
 export function requiredString(
   record: Record<string, unknown>,
   key: string,
@@ -33,6 +38,10 @@ export function requiredString(
   return typeof value === "string" ? value : undefined;
 }
 
+/**
+ * Reads an optional string field. Absent is `{ ok: true }` without a
+ * value; present but not a string is `{ ok: false }`.
+ */
 export function optionalString(
   record: Record<string, unknown>,
   key: string,
@@ -43,6 +52,10 @@ export function optionalString(
   return { ok: true, value };
 }
 
+/**
+ * Reads an optional integer field. Absent is `{ ok: true }` without a
+ * value; present but not an integer is `{ ok: false }`.
+ */
 export function optionalInt(
   record: Record<string, unknown>,
   key: string,
@@ -54,6 +67,7 @@ export function optionalInt(
   return { ok: true, value };
 }
 
+/** The message of an Error, or `String(error)` for anything else. */
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

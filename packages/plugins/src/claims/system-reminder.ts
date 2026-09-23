@@ -11,6 +11,10 @@
 import type { ClaimProvider } from "../compiler/claim.js";
 import { escapeClaimText } from "./escape.js";
 
+/** Default priority of the system reminder claim. */
+const DEFAULT_REMINDER_PRIORITY = 20;
+
+/** Creates the claim provider for claim `system-reminder`. */
 export function systemReminder(opts: {
   text: string;
   priority?: number;
@@ -18,7 +22,7 @@ export function systemReminder(opts: {
   return () => [
     {
       id: "system-reminder",
-      priority: opts.priority ?? 20,
+      priority: opts.priority ?? DEFAULT_REMINDER_PRIORITY,
       placement: "tail",
       tiers: { line: escapeClaimText(opts.text) },
     },

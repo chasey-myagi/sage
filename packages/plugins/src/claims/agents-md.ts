@@ -18,7 +18,12 @@ import type { ViewContext } from "@sage/core";
 import type { Claim, ClaimProvider } from "../compiler/claim.js";
 import { escapeClaimText } from "./escape.js";
 
+/** Lines the summary tier keeps from the top of the file. */
 const SUMMARY_LINES = 40;
+/** Default priority of the workspace AGENTS.md claim. */
+const DEFAULT_AGENTS_MD_PRIORITY = 80;
+/** Priority of each nested AGENTS.md claim. */
+const NESTED_AGENTS_MD_PRIORITY = 70;
 
 type AgentsFs = {
   readFileSync: (file: string, encoding: "utf8") => string;
@@ -30,8 +35,16 @@ const nodeFs: AgentsFs = {
   readFileSync: (file, encoding) => readFileSync(file, encoding),
 };
 
+/**
+ * Creates the AGENTS.md claim provider. The workspace file, when present,
+ * is claim `agents-md` at `priority` (default 80). A nested file becomes
+ * claim `agents-md:<dir>` once an assistant tool_use has touched that
+ * directory; nested claims are sorted by directory. Files are read on every
+ * compile.
+ */
 export function agentsMd(opts: {
   cwd: string;
+  /** Test seam. Production reads the real filesystem. */
   fs?: AgentsFs;
   priority?: number;
 }): ClaimProvider {
@@ -44,7 +57,7 @@ export function agentsMd(opts: {
     if (root !== undefined) {
       claims.push({
         id: "agents-md",
-        priority: opts.priority ?? 80,
+        priority: opts.priority ?? DEFAULT_AGENTS_MD_PRIORITY,
         placement: "epoch-head",
         tiers: tiersFor(root),
       });
@@ -62,7 +75,7 @@ export function agentsMd(opts: {
       if (text === undefined) continue;
       claims.push({
         id: `agents-md:${rel}`,
-        priority: 70,
+        priority: NESTED_AGENTS_MD_PRIORITY,
         placement: "tail-if-changed",
         tiers: tiersFor(text),
       });

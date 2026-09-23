@@ -16,6 +16,11 @@
 import { type CatalogEntry, listModels } from "@sage/provider";
 import type { RouteInput, RoutePolicy, RouteResult } from "./types.js";
 
+/**
+ * Runs `policies` in order. Each sees the previous chosen model as
+ * `current`; one returning undefined keeps the previous result and current.
+ * Returns the last defined result, or undefined when none chose.
+ */
 export function composePolicies(...policies: RoutePolicy[]): RoutePolicy {
   return (input) => {
     let current = input.current;
@@ -30,6 +35,12 @@ export function composePolicies(...policies: RoutePolicy[]): RoutePolicy {
   };
 }
 
+/**
+ * Creates a candidate filter. Any view chunk whose tier is not `none` and
+ * has an access key matching a rule removes that rule's providers from the
+ * candidates and adds the reason `sensitive:<key>` once per key. Each
+ * pattern's `lastIndex` is reset before testing.
+ */
 export function sensitivePolicy(opts: {
   rules: { pattern: RegExp; denyProviders: string[] }[];
 }): (input: RouteInput) => { candidates: CatalogEntry[]; reasons: string[] } {
@@ -60,6 +71,11 @@ export function sensitivePolicy(opts: {
   };
 }
 
+/**
+ * Runs `policy` on the filtered candidates. Returns undefined when the
+ * policy abstains or picks a model the filter removed; otherwise prefixes
+ * the filter's reasons, `;`-joined, to the policy reason.
+ */
 export function withSensitiveFilter(
   policy: RoutePolicy,
   filter: (input: RouteInput) => {
@@ -85,6 +101,12 @@ export function withSensitiveFilter(
   };
 }
 
+/**
+ * Picks the ladder entry with the lowest catalog input price that is still
+ * a candidate; reason `cheapest-allowed:<provider>/<model>`. Unpriced
+ * entries and models off the ladder are skipped; returns undefined when no
+ * entry qualifies.
+ */
 export function costTierPolicy(opts: {
   ladder: { provider: string; model: string }[];
   pick: "cheapest-allowed";

@@ -11,6 +11,7 @@
  * through the manifest entry the kernel appends.
  */
 
+/** The package name. */
 export const PACKAGE = "@sage/plugins" as const;
 
 export {

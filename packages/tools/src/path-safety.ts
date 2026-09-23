@@ -15,6 +15,14 @@ import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fail, type ToolResult } from "./input.js";
 
+/** Directory names find and grep never descend into. */
+export const SKIPPED_DIR_NAMES: ReadonlySet<string> = new Set([
+  ".git",
+  ".sage",
+  "node_modules",
+]);
+
+/** A path cleared for use, or the isError result to return instead. */
 export type ResolvedPath =
   | { ok: true; path: string }
   | { ok: false; result: ToolResult };
@@ -68,6 +76,12 @@ function resolvedExisting(target: string): string {
   }
 }
 
+/**
+ * Resolves `input` against `cwd` and checks both the lexical path and the
+ * realpath of its nearest existing ancestor stay inside. The returned path
+ * is the realpath when the target exists, else the resolved would-be path.
+ * A dangling symlink is followed by its link text.
+ */
 export function resolveInside(cwd: string, input: string): ResolvedPath {
   const lexicalRoot = path.resolve(cwd);
   const lexical = path.resolve(lexicalRoot, input);
@@ -98,6 +112,11 @@ export function resolveInside(cwd: string, input: string): ResolvedPath {
   }
 }
 
+/**
+ * `abs` as a posix path relative to the workspace realpath (`.` for the
+ * root). A path outside the workspace comes back absolute. Throws when
+ * `cwd` does not exist.
+ */
 export function workspaceRelative(cwd: string, abs: string): string {
   const base = realpathSync(path.resolve(cwd));
   let target = abs;

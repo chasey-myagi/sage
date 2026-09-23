@@ -49,12 +49,19 @@ const inputSchema = {
  * from the Log by this name.
  */
 export const LEDGER_TOOL_NAME = "update_ledger";
+/** Default priority of the ledger claim. */
+const DEFAULT_LEDGER_PRIORITY = 100;
 
+/**
+ * Creates the `update_ledger` tool and the claim provider that folds its
+ * calls from the path. The provider rereads the whole path on every
+ * compile.
+ */
 export function progressLedger(opts?: { priority?: number }): {
   tool: HarnessTool;
   provider: ClaimProvider;
 } {
-  const priority = opts?.priority ?? 100;
+  const priority = opts?.priority ?? DEFAULT_LEDGER_PRIORITY;
   const tool: HarnessTool = {
     def: {
       name: LEDGER_TOOL_NAME,

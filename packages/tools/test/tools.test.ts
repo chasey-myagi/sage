@@ -44,7 +44,7 @@ function outsideFile(name: string, content: string): string {
   return target;
 }
 
-describe("scenario 1 tool declarations", () => {
+describe("tool declarations", () => {
   it("declares danger flags and accesses for all seven tools", () => {
     const cwd = freshDir();
     const file = path.join(cwd, "a.txt");
@@ -123,7 +123,7 @@ describe("scenario 1 tool declarations", () => {
   });
 });
 
-describe("scenario 2 path escape", () => {
+describe("paths outside the workspace", () => {
   it("returns isError and does not read or write outside the workspace", async () => {
     const cwd = freshDir();
     const secret = outsideFile("sage-secret.txt", "secret-token");
@@ -167,7 +167,7 @@ describe("scenario 2 path escape", () => {
   });
 });
 
-describe("scenario 3 read paging", () => {
+describe("read paging", () => {
   it("returns the first 2000 lines and a continuation stub", async () => {
     const cwd = freshDir();
     const lines = Array.from({ length: 5000 }, (_, index) => `L${index + 1}`);
@@ -209,7 +209,7 @@ describe("scenario 3 read paging", () => {
   });
 });
 
-describe("scenario 4 bash spill", () => {
+describe("bash output spill", () => {
   it("spills output past 30000 bytes and names the file after the tool use id", async () => {
     const cwd = freshDir();
     const output = "x".repeat(30_001);
@@ -237,7 +237,7 @@ describe("scenario 4 bash spill", () => {
   });
 });
 
-describe("scenario 5 bash exec injection", () => {
+describe("bash with an injected exec", () => {
   it("uses the injected exec and forwards cwd, signal, and timeout", async () => {
     const cwd = freshDir();
     const seen: Array<{
@@ -285,7 +285,7 @@ describe("scenario 5 bash exec injection", () => {
   );
 });
 
-describe("scenario 6 edit", () => {
+describe("edit exact-match replacement", () => {
   it("replaces old_string only when it occurs exactly once", async () => {
     const cwd = freshDir();
     const file = path.join(cwd, "a.txt");

@@ -13,8 +13,7 @@ import type { HarnessTool } from "@sage/core";
 import { pathAccess } from "./access.js";
 import { asRecord, errorText, fail, ok, optionalString } from "./input.js";
 import { resolveInside } from "./path-safety.js";
-
-const LIST_MAX = 500;
+import { LIST_MAX_ENTRIES } from "./truncate.js";
 
 const inputSchema = {
   type: "object",
@@ -26,6 +25,11 @@ const inputSchema = {
   },
 };
 
+/**
+ * Creates the ls tool bound to `cwd`. Names are sorted; more than
+ * `LIST_MAX_ENTRIES` end with a `[truncated: ...]` line. A path that is not
+ * a directory is an isError result.
+ */
 export function createLs(cwd: string): HarnessTool {
   return {
     def: {
@@ -58,10 +62,10 @@ export function createLs(cwd: string): HarnessTool {
             return entry.name;
           })
           .sort();
-        const shown = names.slice(0, LIST_MAX);
-        if (names.length > LIST_MAX) {
+        const shown = names.slice(0, LIST_MAX_ENTRIES);
+        if (names.length > LIST_MAX_ENTRIES) {
           shown.push(
-            `[truncated: showing ${LIST_MAX} of ${names.length} entries]`,
+            `[truncated: showing ${LIST_MAX_ENTRIES} of ${names.length} entries]`,
           );
         }
         return ok(shown.join("\n"));

@@ -1,9 +1,9 @@
 /**
  * Deterministic scorer. Every candidate stays full.
  *
- * Contract: `name` is `rule` and `isNoop` is true. `score` returns one full decision per
- * candidate and omits both `usage` and `fallback`. It does not read
- * `prevRequest` or `query`.
+ * Contract: `name` is `rule` and `isNoop` is true. `score` returns one
+ * full decision per candidate and omits both `usage` and `fallback`. It
+ * does not read `prevRequest` or `query`.
  *
  * Intentionally not in the Log: this function. The compiler leaves
  * eliminate reasons unchanged when this scorer is installed.
@@ -11,6 +11,7 @@
 
 import type { Scorer } from "./types.js";
 
+/** The default scorer: every candidate stays full, with no call. */
 export const ruleScorer: Scorer = {
   name: "rule",
   isNoop: true,

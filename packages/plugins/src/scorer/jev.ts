@@ -1,28 +1,10 @@
 /**
- * Jev scorer. One choice per kept chunk, and no history.
+ * Jev scorer: one `choice` question per kept chunk, sent to TypeSafe
+ * System One without any conversation history.
  *
- * Contract: `name` is `jev`. `score` POSTs `{ state, model, questions }` to
- * `<baseUrl>/v1/systemone` (default `https://api.typesafe.ai`) with
- * `Authorization: Bearer <apiKey>` and `Content-Type: application/json`.
- * `state` is `{ query, chunks: [{ id, tool, summary, tokens }] }`. `summary`
- * is the one-line stub summary, not the original tool text. `model` is
- * `opts.model` when that string is non-empty, otherwise `jev-latest`.
- * Each chunk is one `choice` question keyed by its id, with
- * criteria `full` and `none`. `probabilities.full` >= `minConfidence`
- * (default 0.5) becomes tier `full`; otherwise `none`. The decision `reason`
- * is `scorer:jev:<p>` with p rounded to two decimals. Decisions do not set
- * `summary`. A chunk missing from `answers` is omitted so the compiler
- * leaves it `kept`.
- * Batches hold at most `batchSize` chunks (default 40). Estimated state
- * characters are `query.length + Σ(tokens × 4)` and stay at or below 24000.
- * A chunk that alone exceeds the cap is still sent. Each batch's
- * `usage.input_tokens` sums into the returned `usage.inputOther`; the other
- * three usage fields are 0.
- * A missing `apiKey`, a non-2xx status, a timeout (`timeoutMs` default
- * 10000), and a body that is not an answers object resolve
- * `{ decisions: [], fallback }` and do not throw. 429 and 529 retry at most
- * 3 times, sleeping `500 × 2^n` milliseconds (`n` starts at 0). `fetchImpl`
- * and `sleepImpl` are injectable. `prevRequest` is ignored.
+ * Guarantees: the scorer never throws; every failure resolves
+ * `{ decisions: [], fallback }`, so the compiler keeps the deterministic
+ * tiers. Request fields, batching, and retries: `jevScorer`.
  *
  * Intentionally not in the Log: this call. The compiler copies decisions,
  * usage, and fallback onto the manifest.
@@ -45,6 +27,7 @@ const RETRY_BASE_MS = 500;
 const FULL_CRITERION = "The original text is needed.";
 const NONE_CRITERION = "The one-line summary is enough.";
 
+/** The subset of `fetch` the jev scorer calls. */
 export type JevFetch = (
   url: string,
   init?: {
@@ -66,11 +49,40 @@ type Posted =
   | { ok: true; answers: Record<string, unknown>; inputTokens: number }
   | { ok: false; fallback: string };
 
+/**
+ * Creates the jev scorer. Its `name` is `jev`.
+ *
+ * `score` POSTs `{ state, model, questions }` to `<baseUrl>/v1/systemone`
+ * (default `https://api.typesafe.ai`) with `Authorization: Bearer <apiKey>`
+ * and `Content-Type: application/json`. `state` is
+ * `{ query, chunks: [{ id, tool, summary, tokens }] }`; `summary` is the
+ * one-line stub summary, not the original tool text. `model` is
+ * `opts.model` when that string is non-empty, otherwise `jev-latest`. Each
+ * chunk is one `choice` question keyed by its id, with criteria `full` and
+ * `none`. `probabilities.full` >= `minConfidence` (default 0.5) becomes tier
+ * `full`, otherwise `none`; the reason is `scorer:jev:<p>` with p rounded to
+ * two decimals. Decisions do not set `summary`. A chunk missing from
+ * `answers` is omitted, so the compiler leaves it `kept`.
+ *
+ * Batches hold at most `batchSize` chunks (default 40). Estimated state
+ * characters are `query.length + Σ(tokens × 4)` and stay at or below 24000;
+ * a chunk that alone exceeds the cap is still sent. Each batch's
+ * `usage.input_tokens` sums into the returned `usage.inputOther`; the other
+ * three usage fields are 0.
+ *
+ * Never throws. A missing `apiKey`, a non-2xx status, a timeout
+ * (`timeoutMs`, default 10000), and a body that is not an answers object
+ * resolve `{ decisions: [], fallback }`. 429 and 529 retry at most 3 times,
+ * sleeping `500 × 2^n` milliseconds (`n` starts at 0). `prevRequest` is
+ * ignored.
+ */
 export function jevScorer(opts: {
   apiKey?: string;
   baseUrl?: string;
   model?: string;
+  /** Test seam. Production uses the global `fetch`. */
   fetchImpl?: JevFetch;
+  /** Test seam. Production sleeps with `setTimeout`. */
   sleepImpl?: (ms: number) => Promise<void>;
   batchSize?: number;
   minConfidence?: number;

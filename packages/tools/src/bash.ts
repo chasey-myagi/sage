@@ -1,41 +1,26 @@
 /**
- * bash tool. Runs one shell command in the workspace.
+ * bash tool: runs one shell command in the workspace, optionally inside an
+ * OS sandbox that cuts the child's network and hides other bench
+ * workspaces from it.
  *
- * The default exec is for trusted environments. It does not confine the
- * filesystem. `sandbox.network` defaults to "full" and runs the command in
- * a shell. "none" cuts off only that child: darwin wraps it in
- * `sandbox-exec` and still allows localhost; linux wraps it in `unshare -n`
- * when that command works. Other platforms, and linux without `unshare -n`,
- * throw ToolNetworkError when the tools are created. There is no fallback
- * to an open network. A custom exec replaces the spawn and still receives
- * the wrapped argv.
+ * Guarantees: the result starts with `[bash exit code N]`. Output over
+ * `SPILL_LIMIT_BYTES` is written to `<cwd>/.sage/tool-output/<toolUseId>.txt`
+ * and the model gets a head/tail preview. A sandbox the platform cannot
+ * enforce fails with `ToolNetworkError` when the tool is created; there is
+ * no fallback to an open network. A command the sandbox denies is not
+ * rewritten; the child prints its own error. Without a sandbox the default
+ * exec does not confine the filesystem and is meant for trusted
+ * environments. Sandbox rules per platform: `createBash`.
  *
- * `sandbox.fsIsolate` defaults to true when network is none. On darwin the
- * profile then denies file reads of other bench workspaces under the
- * realpath of os.tmpdir(): `(deny file-read* (regex #"^<tmpRoot>/<prefix>"))`.
- * Regex metacharacters in that path and prefix are escaped. `benchPrefix`
- * defaults to `sage-bench-`. `sandbox.allowRoot` is the directory tree the
- * profile allows after that deny; it defaults to the cwd realpath. Later
- * rules win, so the deny is written first. macOS `/var` is stored as
- * `/private/var`. Ordinary files in the temp directory stay readable. linux
- * `unshare -n` cannot restrict files; fsIsolate does not change that argv
- * and does not fail a network-none launch. Filesystem isolation with
- * network full is darwin-only.
- *
- * Bash cannot declare resource accesses statically, so accesses() always
+ * Bash cannot declare resource accesses statically, so `accesses()` always
  * returns [] and the tool never joins the read-only concurrency pool.
- *
- * Contract: output over 30000 bytes is spilled under
- * `<cwd>/.sage/tool-output/<toolUseId>.txt`. The result starts with
- * `[bash exit code N]`. timeout_ms defaults to 120000. When network is
- * none, execute returns `details: { network: "none" }`. The kernel stores
- * that on the user message as `details.toolResults`, keyed by toolUseId.
- * It is not model-visible. A denied command is not rewritten; the child
- * prints its own error. fsIsolate is not a details field.
  *
  * Intentionally not in the Log: the child process, the abort signal, the
  * sandbox profile, the temp root, allowRoot, and the spilled file. The
- * preview the model sees is the tool result.
+ * preview the model sees is the tool result. With network none, execute
+ * returns `details: { network: "none" }`; the kernel stores it on the user
+ * message as `details.toolResults`, keyed by toolUseId, and it is not
+ * model-visible. fsIsolate is not a details field.
  */
 
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
@@ -53,8 +38,20 @@ import {
 } from "./input.js";
 import { spill } from "./spill.js";
 
+/** Default `timeout_ms` of a bash call, in milliseconds. */
 export const BASH_TIMEOUT_MS = 120_000;
 
+/**
+ * Exit code reported when the timeout killed the child, as GNU `timeout(1)`
+ * reports it. The note `timed out after <ms>ms` is appended to stderr.
+ */
+const TIMEOUT_EXIT_CODE = 124;
+/** Exit code reported when the child closed without one (killed by a signal). */
+const SIGNALED_EXIT_CODE = 1;
+/** How long the `unshare -n true` probe may run before it counts as missing. */
+const UNSHARE_PROBE_TIMEOUT_MS = 2000;
+
+/** Network policy of the bash child: `full` is unrestricted, `none` is cut off. */
 export type ToolNetwork = "full" | "none";
 
 const DEFAULT_BENCH_PREFIX = "sage-bench-";
@@ -62,13 +59,19 @@ const DEFAULT_BENCH_PREFIX = "sage-bench-";
 /** Child env bench uses to pass the run root. Not a CLI flag. */
 export const SANDBOX_ALLOW_ROOT_ENV = "SAGE_SANDBOX_ALLOW_ROOT";
 
+/** Sandbox settings after defaults; see `resolveToolSandbox`. */
 export type ToolSandbox = {
   network: ToolNetwork;
+  /** Deny reads of other bench workspaces under the temp root (darwin). */
   fsIsolate: boolean;
   /** Directory tree bash may read. Omitted means the cwd realpath. */
   allowRoot?: string;
 };
 
+/**
+ * Fills sandbox defaults: `network` is `full`, and `fsIsolate` is true
+ * exactly when network is `none`. An empty `allowRoot` is dropped.
+ */
 export function resolveToolSandbox(sandbox?: {
   network?: ToolNetwork;
   fsIsolate?: boolean;
@@ -83,19 +86,33 @@ export function resolveToolSandbox(sandbox?: {
   return { network, fsIsolate };
 }
 
+/** What a `BashExec` receives besides the command string. */
 export type BashExecOpts = {
+  /** The workspace realpath; the child runs there. */
   cwd: string;
   signal?: AbortSignal;
   timeoutMs: number;
+  /** The launch argv, already wrapped in the sandbox command when one applies. */
   argv: readonly string[];
+  /** True when `command` runs through a shell instead of `argv`. */
   shell: boolean;
 };
 
+/**
+ * Runs one bash call. A custom exec replaces the spawn and still receives
+ * the sandbox-wrapped argv. It resolves with the exit code; a rejection
+ * becomes an isError tool result.
+ */
 export type BashExec = (
   command: string,
   opts: BashExecOpts,
 ) => Promise<{ stdout: string; stderr: string; code: number }>;
 
+/**
+ * The requested sandbox cannot be enforced on this platform. Thrown when
+ * the tools are created, never from execute. `exitCode` is the process exit
+ * code the CLI uses for this startup configuration error.
+ */
 export class ToolNetworkError extends Error {
   readonly exitCode = 2;
   constructor(message: string) {
@@ -110,6 +127,12 @@ const UNSUPPORTED = (platform: string) =>
 const UNSHARE_MISSING =
   "tool network none requires unshare -n, which is not available";
 
+/**
+ * Says whether this platform can enforce the sandbox. Network none follows
+ * `toolNetworkSupport`. linux `unshare -n` cannot restrict files, so with
+ * network none fsIsolate neither changes the argv nor fails the launch.
+ * Filesystem isolation with network full is darwin-only.
+ */
 export function toolSandboxSupport(opts: {
   platform: NodeJS.Platform;
   network: ToolNetwork;
@@ -133,6 +156,12 @@ export function toolSandboxSupport(opts: {
   return { ok: true };
 }
 
+/**
+ * Says whether this platform can cut the child's network. darwin always can
+ * (`sandbox-exec`, localhost still allowed); linux can when `unshare -n`
+ * works, probed on each call unless `unshareAvailable` is given; every
+ * other platform cannot.
+ */
 export function toolNetworkSupport(opts: {
   platform: NodeJS.Platform;
   unshareAvailable?: boolean;
@@ -159,15 +188,30 @@ const inputSchema = {
     timeout_ms: {
       type: "integer",
       minimum: 1,
-      description: "Timeout in milliseconds. Defaults to 120000.",
+      description: `Timeout in milliseconds. Defaults to ${BASH_TIMEOUT_MS}.`,
     },
   },
   required: ["command"],
 };
 
+/**
+ * Creates the bash tool.
+ *
+ * `cwd` is the workspace path as the caller spelled it; the spill path the
+ * model sees is built from it. `realCwd` is its realpath: the child runs
+ * there, and it is the default sandbox allow root, because `sandbox-exec`
+ * matches resolved paths (macOS `/var` is `/private/var`).
+ *
+ * Network full without fsIsolate runs the command in a shell. Otherwise
+ * darwin wraps it in `sandbox-exec` (see `sandboxProfile`) and linux with
+ * network none wraps it in `unshare -n`; any other combination throws
+ * `ToolNetworkError` from execute's launch step, which becomes an isError
+ * result. `tmpRoot` defaults to the realpath of `os.tmpdir()` and
+ * `benchPrefix` to `sage-bench-`.
+ */
 export function createBash(
   cwd: string,
-  execCwd: string,
+  realCwd: string,
   exec: BashExec,
   opts: {
     sandbox?: {
@@ -208,12 +252,12 @@ export function createBash(
         const timeoutMs = timeoutArg.value ?? BASH_TIMEOUT_MS;
         if (timeoutMs < 1) return fail("timeout_ms must be >= 1");
         const launch = bashLaunch(command, sandbox, platform, {
-          cwd: execCwd,
+          cwd: realCwd,
           tmpRoot,
           benchPrefix,
         });
         const result = await exec(command, {
-          cwd: execCwd,
+          cwd: realCwd,
           signal: ctx.signal,
           timeoutMs,
           argv: launch.argv,
@@ -232,6 +276,11 @@ export function createBash(
   };
 }
 
+/**
+ * Spawns the command and collects stdout and stderr. A sandboxed launch
+ * runs detached so a timeout or abort kills the whole process group with
+ * SIGKILL. Spawn errors reject; every exit, including a kill, resolves.
+ */
 export function defaultExec(
   command: string,
   opts: BashExecOpts,
@@ -293,7 +342,7 @@ export function defaultExec(
       resolve({
         stdout: Buffer.concat(stdout).toString("utf8"),
         stderr: `${errText}${note}`,
-        code: timedOut ? 124 : (code ?? 1),
+        code: timedOut ? TIMEOUT_EXIT_CODE : (code ?? SIGNALED_EXIT_CODE),
       });
     });
   });
@@ -335,6 +384,13 @@ function bashLaunch(
   throw new ToolNetworkError(UNSUPPORTED(platform));
 }
 
+/**
+ * The darwin `sandbox-exec` profile. Network none denies network except
+ * localhost. fsIsolate denies file reads matching
+ * `^<tmpRoot>/<benchPrefix>` (regex metacharacters escaped), then allows
+ * the allow root. Other files in the temp directory stay readable, and
+ * paths outside the temp root fall under `(allow default)`.
+ */
 function sandboxProfile(
   sandbox: ToolSandbox,
   paths: { cwd: string; tmpRoot: string; benchPrefix: string },
@@ -364,7 +420,7 @@ function escapeSandboxRegex(value: string): string {
 
 function probeUnshare(): boolean {
   const result = spawnSync("unshare", ["-n", "true"], {
-    timeout: 2000,
+    timeout: UNSHARE_PROBE_TIMEOUT_MS,
     stdio: "ignore",
   });
   return result.status === 0;

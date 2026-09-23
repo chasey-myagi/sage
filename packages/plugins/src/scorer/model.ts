@@ -1,30 +1,11 @@
 /**
- * Model scorer. One auxiliary call, only as a prefix extension.
+ * Model scorer: one auxiliary call that extends the previous main request
+ * as a prefix, so it reads that request's prompt cache.
  *
- * Contract: when `prevRequest` is missing, score resolves
- * `{ decisions: [], fallback: "no-previous-request", requested: false }` and
- * does not call an adapter; a missing adapter likewise sets `requested`. Otherwise the request copies that previous head and messages
- * byte for byte, keeps its tools, sets `toolChoice` to `"none"`, and
- * appends one user message: a fixed instruction, the query, and a JSON
- * list of `{id, tool, summary, tokens}`. Candidates beyond `maxCandidates`
- * (default 60) drop the oldest. The instruction says this is a side
- * judgment of earlier tool results, not a continuation of the task, and
- * that the reply is a JSON array of `{id, tier, summary?}`. A summary must
- * locate the result: a file read names the path, key symbols, and line
- * range; grep or ls names hit paths and line numbers; command output names
- * the command and conclusive counts. A judgment-only note is not a summary.
- * `timeoutMs`
- * defaults to 20000. The parser strips one fenced json block, then takes the
- * first top-level JSON value (`[` or `{`). Brackets pair, and brackets
- * inside strings do not count. Text before or after that value is ignored.
- * It wraps a single object that has `id` into a one-item array, drops items
- * whose id is not in the listed candidates (`dropped`), and treats `[]` as
- * keep-all. A malformed item fails the parse. No extractable value, invalid
- * JSON, timeout, a missing adapter, and a finish error resolve `fallback`
- * and no decisions. When that fallback follows a model reply, `raw` is
- * `{ text, finish }` with at most 300 characters of text. A completed call,
- * including one whose reply has surrounding prose, returns the parsed
- * decisions and the stream usage, and does not set `raw`.
+ * Guarantees: the auxiliary request repeats the previous head and messages
+ * byte for byte and only appends, with `toolChoice` `"none"`. The scorer never
+ * throws; every failure resolves `fallback` with no decisions. Request
+ * text, parsing, and fallbacks: `modelScorer`.
  *
  * Intentionally not in the Log: this call, and `dropped`. The compiler
  * copies usage, fallback, and `raw` onto the manifest; the kernel stores
@@ -53,7 +34,7 @@ const INSTRUCTION = [
   "Output a JSON array only.",
   'Each item is {"id":"<candidate id>","tier":"none"|"summary"|"full","summary"?:string}.',
   "Copy id from the candidate list.",
-  "summary is optional and at most 200 characters.",
+  `summary is optional and at most ${SUMMARY_LIMIT} characters.`,
   "A summary must let a later turn locate the result without rereading it.",
   "File read: path, key symbols or exports, and the line range.",
   "grep or ls: the matching paths and line numbers.",
@@ -67,6 +48,41 @@ const INSTRUCTION = [
 
 const TIERS = new Set(["none", "summary", "full"]);
 
+/**
+ * Creates the model scorer. Its `name` is `model`.
+ *
+ * When `prevRequest` is missing, score resolves
+ * `{ decisions: [], fallback: "no-previous-request", requested: false }`
+ * and does not call an adapter; a missing adapter for `model.provider`
+ * resolves `no-adapter`, likewise with `requested: false`. Otherwise the
+ * request copies the previous head and messages byte for byte, keeps its
+ * tools, sets `toolChoice` to `"none"`, and appends one user message: a
+ * fixed instruction, the query, and a JSON list of
+ * `{id, tool, summary, tokens}`. Candidates beyond `maxCandidates`
+ * (default 60) drop the oldest.
+ *
+ * The instruction says this is a side judgment of earlier tool results,
+ * not a continuation of the task, and that the reply is a JSON array of
+ * `{id, tier, summary?}`. A summary must locate the result: a file read
+ * names the path, key symbols, and line range; grep or ls names hit paths
+ * and line numbers; command output names the command and conclusive
+ * counts. A judgment-only note is not a summary. `timeoutMs` defaults to
+ * 20000.
+ *
+ * The parser strips one fenced json block, then takes the first top-level
+ * JSON value (`[` or `{`). Brackets pair, and brackets inside strings do
+ * not count. Text before or after that value is ignored. It wraps a single
+ * object that has `id` into a one-item array, drops items whose id is not
+ * in the listed candidates (`dropped`), and treats `[]` as keep-all. A
+ * malformed item fails the parse.
+ *
+ * Never throws. No extractable value, invalid JSON, a timeout, an abort,
+ * and a finish error resolve `fallback` and no decisions. When that
+ * fallback follows a model reply, `raw` is `{ text, finish }` with at most
+ * 300 characters of text. A completed call, including one whose reply has
+ * surrounding prose, returns the parsed decisions and the stream usage,
+ * and does not set `raw`.
+ */
 export function modelScorer(opts: {
   adapters: Record<string, ProviderAdapter>;
   model: ModelRef;

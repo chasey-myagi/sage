@@ -228,7 +228,7 @@ function capture() {
   };
 }
 
-describe("scenario 7 one-shot cli", () => {
+describe("one-shot sage -p run", () => {
   it("prints one JSON summary and a stderr turn line", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "sage-cli-"));
     const { adapter } = createFaux([stopScript("done")]);
@@ -514,7 +514,7 @@ describe("scenario 7 one-shot cli", () => {
   });
 });
 
-describe("scenario 8 faux read then edit", () => {
+describe("read-then-edit run against a faux model", () => {
   it("edits the workspace and logs passthrough manifests", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "sage-e2e-"));
     writeFileSync(
@@ -668,7 +668,7 @@ describe("first-party claims in the coding session", () => {
   });
 });
 
-describe("scenario 6 expand an omitted chunk", () => {
+describe("expanding an omitted chunk", () => {
   it("shows the logged original as the expand tool result on the third request", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "sage-expand-"));
     const original = "ORIGINAL_BYTES";
@@ -745,7 +745,7 @@ describe("scenario 6 expand an omitted chunk", () => {
   });
 });
 
-describe("scenario 9 two adapters", () => {
+describe("routing across two assembled adapters", () => {
   it("keeps the current model when both providers are assembled and no ladder is set", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "sage-route-"));
     const anthropic = routedFaux("anthropic-messages");

@@ -30,6 +30,7 @@ const inputSchema = {
   required: ["path", "content"],
 };
 
+/** Creates the write tool bound to `cwd`. Success returns `Wrote <path>`. */
 export function createWrite(cwd: string): HarnessTool {
   return {
     def: {
