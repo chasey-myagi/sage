@@ -22,7 +22,7 @@
  * message as `details.toolResults`. `spawn_subtasks` counts each item in
  * `details.results`. `cacheHitRatio` and `expandRate` ignore that usage.
  * `toolErrors` counts `tool_result` blocks whose `isError` is true. The
- * count does not end the run.
+ * count does not end the run. `turnRetries` counts `turn_retry` entries.
  *
  * Intentionally not in the Log: this function. It does not copy claim
  * text, chunk text, reasons, paths, or child session ids.
@@ -81,6 +81,7 @@ export type RunHealth = {
     };
   };
   toolErrors: number;
+  turnRetries: number;
 };
 
 export function runHealth(path: readonly StoredEntry[]): RunHealth {
@@ -150,7 +151,16 @@ export function runHealth(path: readonly StoredEntry[]): RunHealth {
     entryScored: entryHealth(path),
     subtasks: subtaskHealth(path),
     toolErrors: toolErrorCount(path),
+    turnRetries: turnRetryCount(path),
   };
+}
+
+function turnRetryCount(path: readonly StoredEntry[]): number {
+  let count = 0;
+  for (const entry of path) {
+    if (entry.kind === "turn_retry") count += 1;
+  }
+  return count;
 }
 
 function toolErrorCount(path: readonly StoredEntry[]): number {

@@ -26,7 +26,12 @@ export type FauxChunk =
       type: "finish";
       kind: string;
       rawFinishReason?: string;
-      error?: { message: string; status?: number; raw?: unknown };
+      error?: {
+        message: string;
+        status?: number;
+        raw?: unknown;
+        transport?: boolean;
+      };
     };
 
 export type FauxRequest = {

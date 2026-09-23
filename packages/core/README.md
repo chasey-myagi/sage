@@ -39,6 +39,7 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 | expand 率 | 最后一条 manifest 的 `budget.expands / budget.omitted`。这两个字段已经是累计值，只读最后一条。`omitted` 为 0 时值为 null。 |
 | 子任务 | `subtasks.count` 与 `subtasks.tokens` 汇总父 Log 里 `spawn_subtask` / `spawn_subtasks` 的 tool result details。`cacheHitRatio` 和 `expandRate` 不含这些 token。 |
 | 工具错误 | `toolErrors` 是路径上 `isError: true` 的 `tool_result` 条数。这个数不结束 run。 |
+| 整轮重试 | `turnRetries` 是路径上 `turn_retry` 的条数。 |
 
 `turns` 是 assistant 消息条数。`epochs` 是最大 `view_epoch.epoch` 加 1，没有 `view_epoch` 时为 1。`modelChanges` 是路径上的 `model_change` 条数。`scorerCalls` 与 `scorerFallbacks` 把每条 manifest 的 `scorer.calls` 和 `scorer.fallback` 加起来；`fallback: true` 计 1。`shadow.calls` 数带 `shadow` 对象的清单条数。`shadow.usage` 把这些对象里的 `usage` 四元组加起来：`input` 是 `inputOther`，另外三项是 `inputCacheRead`、`inputCacheCreation`、`output`。
 
@@ -48,9 +49,17 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 
 工具永远不能杀会话。`execute` 抛出的同步异常和被拒绝的 Promise，以及包住它的 `around` 抛错，都变成一条 `tool_result`：`isError` 为 true，正文是 `<工具名>: <message>`。这条结果写进下一条用户消息，模型下一轮看得到。连续多次也一样，默认看 5 次也不会追加 `outcome: "error"` 的 terminal。`runHealth.toolErrors` 只计数。
 
-会终止的是内核自己的失败和 provider 的失败：视图断言、没有适配器、适配器 finish error、以及工具管线以外的抛错。
+会终止的是内核自己的失败和 provider 的失败：视图断言、没有适配器、非传输类的适配器 finish error、传输类错误在整轮重试耗尽之后，以及工具管线以外的抛错。
 
 构造可以传 `adapters`（provider 到适配器），也可以继续传单个 `adapter`。单个适配器记在起始型号的 provider 名下。
+
+## 整轮重试
+
+流还没开始时的重试在 provider：`fetch` 抛错、HTTP 429、HTTP 5xx，最多 2 次。响应体一开始，provider 就不再重试。
+
+流已经开始之后，如果 finish 是传输类错误，并且这一轮还没有把 assistant 消息写进 Log，core 重发同一条请求。传输类是消息里含有 `terminated`、`fetch failed`、`ECONNRESET`、`socket hang up`、`aborted by peer`，或者 finish error 上 `transport: true`。HTTP 4xx 不重试。最多再发 2 次，先等 2 秒，再等 8 秒。构造参数 `sleep` 可注入，测试不真等。第 3 次仍失败，才把这次的 assistant 写入，并追加 terminal，outcome 为 `error`。
+
+每次重发之前追加 `turn_retry`，payload 是 `{ turn, attempt, reason }`。这条持久化，不进模型请求。被重发丢掉的半截文本不进 Log。
 
 ## 测试
 

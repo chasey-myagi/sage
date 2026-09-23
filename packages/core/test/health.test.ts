@@ -183,6 +183,7 @@ it("returns zeros and null rates for an empty path", () => {
       },
     },
     toolErrors: 0,
+    turnRetries: 0,
   });
 });
 
