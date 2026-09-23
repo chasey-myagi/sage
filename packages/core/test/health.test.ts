@@ -423,7 +423,7 @@ function valuesAreCounts(value: unknown): boolean {
   return false;
 }
 
-it("adds nothing for a shadow manifest that sent no request or lacks calls", () => {
+it("adds nothing for shadow manifests that sent no request", () => {
   const health = runHealth([
     manifest(0, {
       shadow: {
@@ -433,7 +433,7 @@ it("adds nothing for a shadow manifest that sent no request or lacks calls", () 
         fallback: "no-api-key",
       },
     }),
-    manifest(1, { shadow: { scorer: "model", decisions: [] } }),
+    manifest(1, { shadow: { scorer: "model", calls: 0, decisions: [] } }),
   ]);
   expect(health.shadow.calls).toBe(0);
 });

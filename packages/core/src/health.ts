@@ -61,8 +61,8 @@ export type RunHealth = {
   /** Sum of numeric manifest `scorer.fallback`; `true` counts as 1. */
   scorerFallbacks: number;
   /**
-   * Sum of manifest `shadow.calls` (shadow requests actually sent; a
-   * missing or non-finite `calls` adds 0), and the sum of shadow usage.
+   * Sum of manifest `shadow.calls` (shadow requests actually sent), and
+   * the sum of shadow usage.
    */
   shadow: {
     calls: number;
