@@ -14,6 +14,7 @@
  * open reason onto `view_epoch`.
  */
 
+import type { EpochStart } from "@sage/core";
 import { listModels } from "@sage/provider";
 import type { ModelRef } from "@sage/provider/contract";
 import type { RoutePolicy } from "../routing/types.js";
@@ -205,8 +206,9 @@ function exceedsGuard(projected: number, contextWindow: number): boolean {
  * Opens a new epoch when the decision says rebuild: `epoch` is the
  * previous epoch plus one, and `epochStart.reason` is the open reason.
  * `route` runs only then; when it returns a model, that model becomes
- * `epochStart.model` and `;route:<reason>` is appended to the decision
- * reason. Its candidates are `listModels` of the current provider, and the
+ * `epochStart.model`, `route:<reason>` becomes `epochStart.routeReason`
+ * (the kernel's `model_change.reason`), and `;route:<reason>` is appended
+ * to the decision reason. Its candidates are `listModels` of the current provider, and the
  * chunk accesses it sees come from the chunk index and are not copied onto
  * the manifest. Without a rebuild the epoch is unchanged and
  * `assembledStart` (a first-time epoch-head message) is kept.
@@ -222,7 +224,7 @@ export function openEpoch(input: {
   rows: readonly ChunkRow[];
 }): {
   epoch: number;
-  epochStart: { reason: string; model?: ModelRef } | undefined;
+  epochStart: EpochStart | undefined;
   choice: EpochChoice;
 } {
   if (!input.choice.decision.rebuild) {
@@ -243,10 +245,11 @@ export function openEpoch(input: {
     budget: input.budget,
   });
   if (!routed) return { epoch, epochStart, choice: input.choice };
+  const routeReason = `route:${routed.reason}`;
   return {
     epoch,
-    epochStart: { ...epochStart, model: routed.model },
-    choice: appendReason(input.choice, `route:${routed.reason}`),
+    epochStart: { ...epochStart, model: routed.model, routeReason },
+    choice: appendReason(input.choice, routeReason),
   };
 }
 

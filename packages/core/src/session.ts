@@ -99,20 +99,6 @@ function sameModel(left: ModelRef, right: ModelRef): boolean {
   return left.provider === right.provider && left.model === right.model;
 }
 
-/**
- * `model_change.reason`: `route:` plus the text after the last `;route:` in
- * `epochDecision.reason`; a reason that already starts with `route:` as is;
- * otherwise bare `route:`.
- */
-function routeReason(view: CompiledView): string {
-  const reason = view.manifest.epochDecision?.reason ?? "";
-  const marker = ";route:";
-  const at = reason.lastIndexOf(marker);
-  if (at >= 0) return `route:${reason.slice(at + marker.length)}`;
-  if (reason.startsWith("route:")) return reason;
-  return "route:";
-}
-
 /** Adapter defaults, overridden field by field by the session's sampling. */
 function mergeSampling(
   defaults: Record<string, unknown>,
@@ -428,7 +414,8 @@ export class AgentSession {
 
   /**
    * Switches model when `view.epochStart.model` names a different one:
-   * appends `model_change {from, to, reason}` first, then switches adapter
+   * appends `model_change {from, to, reason}` first, with `reason` taken
+   * verbatim from `epochStart.routeReason`, then switches adapter
    * and prepares again. The head is not rewritten on a switch. Returns an
    * error, after the model_change entry, when no adapter serves the new
    * provider; no request is sent then.
@@ -437,13 +424,16 @@ export class AgentSession {
     view: CompiledView,
     prepared: PreparedCall,
   ): { prepared: PreparedCall } | { error: string } {
-    const next = view.epochStart?.model;
-    if (!next || sameModel(next, this.model)) return { prepared };
+    const start = view.epochStart;
+    if (!start?.model || sameModel(start.model, this.model)) {
+      return { prepared };
+    }
+    const next = start.model;
     const from = { provider: this.model.provider, model: this.model.model };
     const to = { provider: next.provider, model: next.model };
     this.store.append(this.sessionId, {
       kind: "model_change",
-      payload: { from, to, reason: routeReason(view) },
+      payload: { from, to, reason: start.routeReason },
     });
     this.modelChanges += 1;
     const adapter = this.adapters[to.provider];

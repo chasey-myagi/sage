@@ -69,6 +69,7 @@ export type {
   ClaimRecord,
   CompiledView,
   EntryScoredReport,
+  EpochStart,
   Manifest,
   Tier,
   TierRecord,
