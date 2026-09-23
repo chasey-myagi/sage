@@ -22,6 +22,7 @@
  * otherwise turn_end done.
  * abort, an adapter finish error, or a throw appends terminal and stops.
  * Using up maxTurns appends terminal {outcome:"max_turns"}.
+ * The default maxTurns is 80 when run is called without that option.
  *
  * Contract: the kernel does not compress. Hooks never receive the store.
  * ViewContext.path is a structured clone taken before view().
@@ -253,7 +254,7 @@ export class AgentSession {
     opts?: { signal?: AbortSignal; maxTurns?: number },
   ): Promise<RunSummary> {
     const signal = opts?.signal;
-    const maxTurns = opts?.maxTurns ?? 50;
+    const maxTurns = opts?.maxTurns ?? 80;
     this.observerErrors.length = 0;
     this.modelChanges = 0;
     let prepared = this.adapter.prepare(this.model);

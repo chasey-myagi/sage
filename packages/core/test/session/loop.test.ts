@@ -114,4 +114,31 @@ describe("scenario 9 max turns", () => {
       outcome: "max_turns",
     });
   });
+
+  it("stops with max_turns after 80 requests when maxTurns is omitted", async () => {
+    const store = new MemoryLogStore();
+    const sessionId = "s9-default";
+    const { adapter } = createFaux(
+      Array.from({ length: 81 }, (_, index) =>
+        toolScript(`c${index + 1}`, "echo"),
+      ),
+    );
+    const session = new AgentSession({
+      store,
+      sessionId,
+      adapter,
+      model: MODEL,
+      system: SYSTEM,
+      tools: [tool()],
+    });
+
+    const summary = await session.run("go");
+    expect(summary.outcome).toBe("max_turns");
+    expect(summary.turns).toBe(80);
+    const path = store.path(sessionId);
+    const headers = path.filter((entry) => entry.kind === "request_header");
+    expect(headers).toHaveLength(80);
+    expect(path.at(-1)?.kind).toBe("terminal");
+    expect(path.at(-1)?.payload).toMatchObject({ outcome: "max_turns" });
+  });
 });

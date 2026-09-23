@@ -10,6 +10,9 @@
  * `--budget <tokens>` replaces 40000. The value must be a positive integer;
  * anything else exits 2 with one stderr line. `--passthrough` ignores a
  * valid `--budget` and writes one stderr line.
+ * `--max-turns <n>` replaces the kernel default of 80. The value must be a
+ * positive integer; anything else exits 2 with one stderr line. It is passed
+ * to `session.run` under both the compiler and `--passthrough`.
  * `--tool-network none|full` defaults to full. `none` cuts network only for
  * bash child processes. On a platform that cannot enforce it, sage exits 2
  * before the run. Provider calls stay in this process.
@@ -37,6 +40,8 @@
  * `--budget` on `bench run` is forwarded on each `sage -p` argv.
  * `results.json` records that number, or null when the flag is omitted
  * or the policy is passthrough. `bench report` copies it onto `a` and `b`.
+ * `--max-turns` on `bench run` is forwarded the same way. `results.json`
+ * records that positive integer, or 80 when the flag is omitted.
  * It exits 2 when the selected provider has no API key. `bench report`
  * prints JSON `{ a, b, delta }` for two result directories. The kernel
  * appends each turn's manifest. Exit 0 when the outcome is done, otherwise
@@ -329,7 +334,10 @@ export async function runCli(
     );
   });
   try {
-    const summary = await session.run(parsed.task);
+    const summary = await session.run(
+      parsed.task,
+      parsed.maxTurns !== undefined ? { maxTurns: parsed.maxTurns } : undefined,
+    );
     stdout.write(`${JSON.stringify(summary)}\n`);
     return summary.outcome === "done" ? 0 : 1;
   } catch (error) {
@@ -438,6 +446,7 @@ type FlagName =
   | "base-url"
   | "api-key-env"
   | "budget"
+  | "max-turns"
   | "tool-network";
 
 type Parsed =
@@ -453,6 +462,7 @@ type Parsed =
       scorer?: "rule" | "model" | "jev";
       ladder?: { provider: string; model: string }[];
       budget?: number;
+      maxTurns?: number;
       toolNetwork?: ToolNetwork;
     }
   | { ok: false; message: string; exitCode?: number };
@@ -468,6 +478,7 @@ export function parseArgs(argv: string[]): Parsed {
   let scorer: "rule" | "model" | "jev" | undefined;
   let ladder: { provider: string; model: string }[] | undefined;
   let budget: number | undefined;
+  let maxTurns: number | undefined;
   let toolNetwork: ToolNetwork | undefined;
   const positional: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -526,6 +537,17 @@ export function parseArgs(argv: string[]): Parsed {
         }
         budget = parsedBudget;
       }
+      if (taken.name === "max-turns") {
+        const parsedMaxTurns = positiveInt(taken.value);
+        if (parsedMaxTurns === undefined) {
+          return {
+            ok: false,
+            exitCode: 2,
+            message: invalidMaxTurns(taken.value),
+          };
+        }
+        maxTurns = parsedMaxTurns;
+      }
       if (taken.name === "tool-network") {
         if (taken.value !== "none" && taken.value !== "full") {
           return {
@@ -557,15 +579,16 @@ export function parseArgs(argv: string[]): Parsed {
     scorer,
     ladder,
     ...(budget !== undefined ? { budget } : {}),
+    ...(maxTurns !== undefined ? { maxTurns } : {}),
     ...(toolNetwork !== undefined ? { toolNetwork } : {}),
   };
 }
 
 function usage(): string {
   return [
-    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--tool-network none|full] [--passthrough] [--scorer rule|model|jev] [--json]",
+    "usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--passthrough] [--scorer rule|model|jev] [--json]",
     "       sage stats <session.jsonl>",
-    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--tool-network none|full] --out <dir>",
+    "       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] --out <dir>",
     "       sage bench report <runA> <runB>",
   ].join("\n");
 }
@@ -604,6 +627,7 @@ function flagName(arg: string): FlagName | "unknown" | undefined {
   if (arg === "--base-url") return "base-url";
   if (arg === "--api-key-env") return "api-key-env";
   if (arg === "--budget") return "budget";
+  if (arg === "--max-turns") return "max-turns";
   if (arg === "--tool-network") return "tool-network";
   if (arg.startsWith("-")) return "unknown";
   return undefined;
@@ -621,6 +645,7 @@ function inlineFlag(
     "base-url",
     "api-key-env",
     "budget",
+    "max-turns",
     "tool-network",
   ] as const;
   for (const name of names) {
@@ -642,6 +667,10 @@ function positiveInt(value: string): number | undefined {
 
 function invalidBudget(value: string): string {
   return `Invalid --budget ${JSON.stringify(value)}: expected a positive integer`;
+}
+
+function invalidMaxTurns(value: string): string {
+  return `Invalid --max-turns ${JSON.stringify(value)}: expected a positive integer`;
 }
 
 function invalidToolNetwork(value: string): string {

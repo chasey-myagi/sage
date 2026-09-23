@@ -2,6 +2,10 @@
 
 内核：只追加的 Log，以及每次调用模型前的 View seam。
 
+## 轮数上限
+
+`AgentSession.run` 不传 `maxTurns` 时，上限是 80。适配器一直以 `tool_use` 结束时，第 80 轮结束后追加 `terminal`，`outcome` 为 `max_turns`，不抛。调用方传入的正整数覆盖这个默认值。
+
 ## Model Experience
 
 ### What the model sees
