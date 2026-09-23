@@ -1,9 +1,9 @@
 # sage
 
-one-shot CLI。`node apps/sage/bin/sage.mjs -p "任务"`（或 `sage "任务"`）在当前目录跑完一轮，把 `RunSummary`（含 `health`）打成一行 JSON 写到 stdout。结果为 `done` 时退出 0，否则退出 1。`--json` 要的也是这同一行。
+one-shot CLI。`node apps/sage/bin/sage.mjs -p "任务"`（或 `sage "任务"`）在当前目录跑完一轮，把 `RunSummary`（含 `health`）打成一行 JSON 写到 stdout。结果为 `done` 时退出 0，否则退出 1。
 
 ```
-usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--passthrough] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] [--json]
+usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--passthrough] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild]
        sage stats <session.jsonl>
        sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>
        sage bench report <runA> <runB>
