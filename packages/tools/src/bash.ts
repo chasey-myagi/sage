@@ -2,13 +2,21 @@
  * bash tool. Runs one shell command in the workspace.
  *
  * The default exec is for trusted environments. It does not confine the
- * filesystem. `network: "full"` (the default) runs the command in a shell.
- * `network: "none"` cuts off only that child: darwin wraps it in
+ * filesystem. `sandbox.network` defaults to "full" and runs the command in
+ * a shell. "none" cuts off only that child: darwin wraps it in
  * `sandbox-exec` and still allows localhost; linux wraps it in `unshare -n`
  * when that command works. Other platforms, and linux without `unshare -n`,
  * throw ToolNetworkError when the tools are created. There is no fallback
  * to an open network. A custom exec replaces the spawn and still receives
  * the wrapped argv.
+ *
+ * `sandbox.fsIsolate` defaults to true when network is none. On darwin the
+ * profile then denies file reads under the realpath of os.tmpdir() and
+ * allows file reads under the realpath of the cwd. Later rules win, so the
+ * deny is written first. macOS `/var` is stored as `/private/var`. linux
+ * `unshare -n` cannot restrict files; fsIsolate does not change that argv
+ * and does not fail a network-none launch. Filesystem isolation with
+ * network full is darwin-only.
  *
  * Bash cannot declare resource accesses statically, so accesses() always
  * returns [] and the tool never joins the read-only concurrency pool.
@@ -19,14 +27,16 @@
  * none, execute returns `details: { network: "none" }`. The kernel stores
  * that on the user message as `details.toolResults`, keyed by toolUseId.
  * It is not model-visible. A denied command is not rewritten; the child
- * prints its own error.
+ * prints its own error. fsIsolate is not a details field.
  *
  * Intentionally not in the Log: the child process, the abort signal, the
- * sandbox profile, and the spilled file. The preview the model sees is the
- * tool result.
+ * sandbox profile, the temp root, and the spilled file. The preview the
+ * model sees is the tool result.
  */
 
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { HarnessTool } from "@sage/core";
 import {
@@ -41,10 +51,21 @@ import { spill } from "./spill.js";
 
 export const BASH_TIMEOUT_MS = 120_000;
 
-const SANDBOX_PROFILE =
-  '(version 1)(allow default)(deny network*)(allow network* (local ip "localhost:*"))';
-
 export type ToolNetwork = "full" | "none";
+
+export type ToolSandbox = {
+  network: ToolNetwork;
+  fsIsolate: boolean;
+};
+
+export function resolveToolSandbox(sandbox?: {
+  network?: ToolNetwork;
+  fsIsolate?: boolean;
+}): ToolSandbox {
+  const network = sandbox?.network ?? "full";
+  const fsIsolate = sandbox?.fsIsolate ?? network === "none";
+  return { network, fsIsolate };
+}
 
 export type BashExecOpts = {
   cwd: string;
@@ -72,6 +93,29 @@ const UNSUPPORTED = (platform: string) =>
 
 const UNSHARE_MISSING =
   "tool network none requires unshare -n, which is not available";
+
+export function toolSandboxSupport(opts: {
+  platform: NodeJS.Platform;
+  network: ToolNetwork;
+  fsIsolate: boolean;
+  unshareAvailable?: boolean;
+}): { ok: true } | { ok: false; message: string } {
+  if (opts.network === "none") {
+    return toolNetworkSupport({
+      platform: opts.platform,
+      ...(opts.unshareAvailable !== undefined
+        ? { unshareAvailable: opts.unshareAvailable }
+        : {}),
+    });
+  }
+  if (opts.fsIsolate && opts.platform !== "darwin") {
+    return {
+      ok: false,
+      message: `tool filesystem isolation is not supported on ${opts.platform}`,
+    };
+  }
+  return { ok: true };
+}
 
 export function toolNetworkSupport(opts: {
   platform: NodeJS.Platform;
@@ -109,10 +153,15 @@ export function createBash(
   cwd: string,
   execCwd: string,
   exec: BashExec,
-  opts: { network?: ToolNetwork; platform?: NodeJS.Platform } = {},
+  opts: {
+    sandbox?: { network?: ToolNetwork; fsIsolate?: boolean };
+    platform?: NodeJS.Platform;
+    tmpRoot?: string;
+  } = {},
 ): HarnessTool {
-  const network = opts.network ?? "full";
+  const sandbox = resolveToolSandbox(opts.sandbox);
   const platform = opts.platform ?? process.platform;
+  const tmpRoot = opts.tmpRoot ?? realpathSync(tmpdir());
   return {
     def: {
       name: "bash",
@@ -136,7 +185,10 @@ export function createBash(
         if (!timeoutArg.ok) return fail("timeout_ms must be an integer");
         const timeoutMs = timeoutArg.value ?? BASH_TIMEOUT_MS;
         if (timeoutMs < 1) return fail("timeout_ms must be >= 1");
-        const launch = bashLaunch(command, network, platform);
+        const launch = bashLaunch(command, sandbox, platform, {
+          cwd: execCwd,
+          tmpRoot,
+        });
         const result = await exec(command, {
           cwd: execCwd,
           signal: ctx.signal,
@@ -148,7 +200,7 @@ export function createBash(
         const body = spill(combined, spillPath(cwd, ctx.toolUseId)).text;
         const content = `[bash exit code ${result.code}]\n${body}`;
         const base = result.code === 0 ? ok(content) : fail(content);
-        if (network !== "none") return base;
+        if (sandbox.network !== "none") return base;
         return { ...base, details: { network: "none" } };
       } catch (error) {
         return fail(errorText(error));
@@ -226,23 +278,56 @@ export function defaultExec(
 
 function bashLaunch(
   command: string,
-  network: ToolNetwork,
+  sandbox: ToolSandbox,
   platform: NodeJS.Platform,
+  paths: { cwd: string; tmpRoot: string },
 ): { argv: string[]; shell: boolean } {
-  if (network === "full") return { argv: [command], shell: true };
+  if (sandbox.network === "full" && !sandbox.fsIsolate) {
+    return { argv: [command], shell: true };
+  }
   if (platform === "darwin") {
     return {
-      argv: ["sandbox-exec", "-p", SANDBOX_PROFILE, "sh", "-c", command],
+      argv: [
+        "sandbox-exec",
+        "-p",
+        sandboxProfile(sandbox, paths),
+        "sh",
+        "-c",
+        command,
+      ],
       shell: false,
     };
   }
-  if (platform === "linux") {
+  if (platform === "linux" && sandbox.network === "none") {
     return {
       argv: ["unshare", "-n", "sh", "-c", command],
       shell: false,
     };
   }
+  if (sandbox.fsIsolate) {
+    throw new ToolNetworkError(
+      `tool filesystem isolation is not supported on ${platform}`,
+    );
+  }
   throw new ToolNetworkError(UNSUPPORTED(platform));
+}
+
+function sandboxProfile(
+  sandbox: ToolSandbox,
+  paths: { cwd: string; tmpRoot: string },
+): string {
+  const rules = ["(version 1)", "(allow default)"];
+  if (sandbox.network === "none") {
+    rules.push("(deny network*)", '(allow network* (local ip "localhost:*"))');
+  }
+  if (sandbox.fsIsolate) {
+    // Later rules win. Deny the temp root, then allow this workspace.
+    rules.push(
+      `(deny file-read* (subpath ${JSON.stringify(paths.tmpRoot)}))`,
+      `(allow file-read* (subpath ${JSON.stringify(paths.cwd)}))`,
+    );
+  }
+  return rules.join("");
 }
 
 function probeUnshare(): boolean {

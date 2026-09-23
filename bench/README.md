@@ -78,7 +78,11 @@ node apps/sage/bin/sage.mjs bench run \
 
 可选 `--scorer rule|model|jev` 和 `--scorer-apply entry|rebuild`。写了就原样透传，没写就不传。别的值在开跑之前退出，并打印用法。`results.json` 顶层 `scorerApply` 记下 `entry` 或 `rebuild`；没写旗标时是 `rebuild`。`entry` 要配 `--scorer model` 或 `--scorer jev`，否则每个任务里的 sage 以退出码 2 结束。对照是 `bench run --policy compiler --scorer model --scorer-apply entry`。真机对照不进 CI。
 
-默认还给每个任务加上 `--tool-network none`。要让 bash 子进程上网，写 `--tool-network full`。`results.json` 顶层 `toolNetwork` 记下这次的值。断网只作用于工具子进程；父进程里的 provider 请求不受影响。评测必须默认断网：clone 只留 baseCommit 之后，agent 仍会 `curl` GitHub 上的上游提交，把修复抄进工作区，隐藏测试因此通过，这组结果作废。
+默认还给每个任务加上 `--tool-network none`。`--tool-sandbox none|full` 是同一个开关，后写的覆盖先写的。要让 bash 子进程上网，写 `--tool-network full` 或 `--tool-sandbox full`。`results.json` 顶层 `toolNetwork` 记下这次的值。断网只作用于工具子进程；父进程里的 provider 请求不受影响。评测必须默认断网：clone 只留 baseCommit 之后，agent 仍会 `curl` GitHub 上的上游提交，把修复抄进工作区，隐藏测试因此通过，这组结果作废。
+
+`none` 同时打开文件系统隔离。每次运行用一个根目录，真实路径是 `<tmpdir 的 realpath>/sage-bench-<runId>/<taskId>/`。同一轮的任务都在这个 `runId` 下面，目录名是任务 id。一个任务结束就删掉它的目录，整轮结束再删根目录。进程中途被杀掉时，根目录会留在临时目录里。下次 `bench run` 在创建新根之前，把临时根下所有名字以 `sage-bench-` 开头的目录打到 stderr，每行一条 `warning: leftover bench workspace <path>; remove it manually`，不自动删。
+
+agent 能读到什么：darwin 上，默认沙箱允许读当前任务目录，拒绝读临时根目录以及其他 `sage-bench-*`（包括上一轮没删掉的 clone 和同一轮里别的任务目录）。linux 的 `unshare -n` 做不到文件隔离，这一点写在 [`packages/tools/README.md`](../packages/tools/README.md)。`--tool-network full` 关掉网络限制，也关掉这层文件隔离。
 
 TS/JS 这 10 条：
 
@@ -95,7 +99,7 @@ node apps/sage/bin/sage.mjs bench run \
 
 每个任务：
 
-1. 在临时目录 `git init`，`git remote add origin <url>`，`git fetch --depth 1 --no-tags origin <baseCommit>`，`git checkout -q FETCH_HEAD`，再 `git remote remove origin`。fetch 失败记 `error`，`reason` 为 `clone-failed`。起 agent 之前，`git rev-list --all --count` 必须是 1，`git tag` 和 `git remote` 必须为空；否则记 `error`，`reason` 为 `clone-unclean`，不起 agent，也不跑 `setupCommand`
+1. 在 `<tmpdir>/sage-bench-<runId>/<taskId>/` 里 `git init`，`git remote add origin <url>`，`git fetch --depth 1 --no-tags origin <baseCommit>`，`git checkout -q FETCH_HEAD`，再 `git remote remove origin`。fetch 失败记 `error`，`reason` 为 `clone-failed`。起 agent 之前，`git rev-list --all --count` 必须是 1，`git tag` 和 `git remote` 必须为空；否则记 `error`，`reason` 为 `clone-unclean`，不起 agent，也不跑 `setupCommand`。任务结束删除该目录；全部任务结束后删除 `sage-bench-<runId>`
 2. 有 `setupCommand` 时，在该目录 `sh -c` 执行，时限 `timeoutSec` 秒。退出码非 0 记 `error`，`reason` 为 `setup-failed`，不起 agent，不跑测试
 3. 在该目录执行 `sage -p <problem>`。argv 里有 `--max-turns <n>`，没写旗标时 n 是 80。argv 里有 `--tool-network none`，除非这次 run 写了 `--tool-network full`。写了 `--budget` 时，argv 里同时有 `--budget <tokens>`。时限 `timeoutSec` 秒
 4. 复制 session。这一步在应用 `testPatch` 之前，session 里没有隐藏测试

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { HarnessTool } from "@sage/core";
@@ -47,7 +47,10 @@ describe("bash network policy", () => {
     "denies external hosts and still reaches localhost when network is none",
     async () => {
       const cwd = freshDir();
-      const bash = tool(createTools({ cwd, network: "none" }), "bash");
+      const bash = tool(
+        createTools({ cwd, sandbox: { network: "none" } }),
+        "bash",
+      );
       const curl = await bash.execute(
         { command: "curl -s --max-time 5 https://api.github.com/" },
         ctx,
@@ -75,7 +78,11 @@ describe("bash network policy", () => {
     const cwd = freshDir();
     const seen: SpawnOpts[] = [];
     const bash = tool(
-      createTools({ cwd, network: "full", exec: watchingExec(seen) }),
+      createTools({
+        cwd,
+        sandbox: { network: "full" },
+        exec: watchingExec(seen),
+      }),
       "bash",
     );
     const result = await bash.execute({ command: "echo hi" }, ctx);
@@ -90,16 +97,23 @@ describe("bash network policy", () => {
     const bash = tool(
       createTools({
         cwd,
-        network: "none",
+        sandbox: { network: "none" },
         platform: "darwin",
         exec: watchingExec(seen),
       }),
       "bash",
     );
     const result = await bash.execute({ command: "echo hi" }, ctx);
+    const root = realpathSync(tmpdir());
+    const realCwd = realpathSync(cwd);
+    const profile = [
+      PROFILE,
+      `(deny file-read* (subpath ${JSON.stringify(root)}))`,
+      `(allow file-read* (subpath ${JSON.stringify(realCwd)}))`,
+    ].join("");
     expect(seen).toEqual([
       {
-        argv: ["sandbox-exec", "-p", PROFILE, "sh", "-c", "echo hi"],
+        argv: ["sandbox-exec", "-p", profile, "sh", "-c", "echo hi"],
         shell: false,
       },
     ]);
@@ -112,7 +126,7 @@ describe("bash network policy", () => {
     const bash = tool(
       createTools({
         cwd,
-        network: "none",
+        sandbox: { network: "none" },
         platform: "linux",
         unshareAvailable: true,
         exec: watchingExec(seen),
@@ -131,7 +145,11 @@ describe("bash network policy", () => {
   it("refuses network none on a platform other than darwin or linux", () => {
     const cwd = freshDir();
     expect(() =>
-      createTools({ cwd, network: "none", platform: "win32" }),
+      createTools({
+        cwd,
+        sandbox: { network: "none" },
+        platform: "win32",
+      }),
     ).toThrow("tool network none is not supported on win32");
   });
 
@@ -140,7 +158,7 @@ describe("bash network policy", () => {
     expect(() =>
       createTools({
         cwd,
-        network: "none",
+        sandbox: { network: "none" },
         platform: "linux",
         unshareAvailable: false,
       }),
