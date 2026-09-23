@@ -17,6 +17,7 @@ export type FauxChunk =
       id?: string;
       name?: string;
     }
+  | { type: "response"; id: string; model: string }
   | { type: "text_delta"; index: number; text: string }
   | { type: "thinking_delta"; index: number; text: string }
   | { type: "tool_input_delta"; index: number; partialJson: string }

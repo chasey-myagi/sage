@@ -21,7 +21,9 @@
  * {turn, attempt, reason} and stream the same request again, at most
  * twice →
  * append message(assistant) with details
- * {responseModel, responseId, api, usage, finish} → llm_end →
+ * {responseModel, responseId, api, usage, finish} (responseModel and
+ * responseId are the stream's response chunk, empty when the call failed
+ * before the body began) → llm_end →
  * if finish.kind is tool_use, run the tool pipeline for each tool_use and
  * append one user message of results (tool details on the entry, not the
  * block), then turn_end continue;
@@ -482,11 +484,7 @@ export class AgentSession {
     while (true) {
       const assistant = await collect(
         this.adapter.stream(request, active, signal),
-        {
-          responseModel: this.model.model,
-          responseId: "",
-          api: this.adapter.api,
-        },
+        { api: this.adapter.api },
       );
       if (assistant.finish.kind === "aborted" || signal?.aborted) {
         return assistant;

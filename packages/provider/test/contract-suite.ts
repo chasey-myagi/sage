@@ -51,6 +51,15 @@ export function expectStreamInvariants(chunks: StreamChunk[]): void {
   const finishAt = chunks.findIndex((chunk) => chunk.type === "finish");
   expect(finishAt).toBe(chunks.length - 1);
   expect(chunks.filter((chunk) => chunk.type === "finish")).toHaveLength(1);
+  const responses = chunks.filter((chunk) => chunk.type === "response");
+  expect(responses.length).toBeLessThanOrEqual(1);
+  if (responses.length === 1) {
+    const responseAt = chunks.findIndex((chunk) => chunk.type === "response");
+    const firstBlockAt = chunks.findIndex(
+      (chunk) => chunk.type === "block_start",
+    );
+    if (firstBlockAt >= 0) expect(responseAt).toBeLessThan(firstBlockAt);
+  }
   const usageAt = chunks.findIndex((chunk) => chunk.type === "usage");
   expect(usageAt).toBeGreaterThanOrEqual(0);
   expect(usageAt).toBeLessThan(finishAt);
@@ -80,7 +89,11 @@ export function expectStreamInvariants(chunks: StreamChunk[]): void {
 export function runContractSuite(
   name: string,
   makeAdapter: (fetchImpl: typeof fetch) => ProviderAdapter,
-  fixtures: { happy: string; truncated: string },
+  fixtures: {
+    happy: string;
+    truncated: string;
+    response: Extract<StreamChunk, { type: "response" }>;
+  },
 ): void {
   describe(name, () => {
     it("scenario 1: drops raw and matches the shared transcript", async () => {
@@ -92,7 +105,7 @@ export function runContractSuite(
       const usage = chunks.find((chunk) => chunk.type === "usage");
       expect(usage?.type).toBe("usage");
       if (usage?.type === "usage") expect(usage.usage.raw).toBeDefined();
-      expect(stripRaw(chunks)).toEqual(SHARED_HAPPY);
+      expect(stripRaw(chunks)).toEqual([fixtures.response, ...SHARED_HAPPY]);
     });
 
     it("scenario 2: usage precedes finish, and blocks stay framed", async () => {
@@ -129,7 +142,7 @@ export function runContractSuite(
       expectStreamInvariants(chunks);
     });
 
-    it("scenario 5: abort after two chunks finishes aborted", async () => {
+    it("scenario 5: abort after the response and two chunks finishes aborted", async () => {
       const { fetchImpl } = fixtureFetch(fixtures.happy);
       const adapter = makeAdapter(fetchImpl);
       const controller = new AbortController();
@@ -140,10 +153,11 @@ export function runContractSuite(
         controller.signal,
       )) {
         chunks.push(chunk);
-        if (chunks.length === 2) controller.abort();
+        if (chunks.length === 3) controller.abort();
       }
-      expect(chunks[0]).toEqual(SHARED_HAPPY[0]);
-      expect(chunks[1]).toEqual(SHARED_HAPPY[1]);
+      expect(chunks[0]).toEqual(fixtures.response);
+      expect(chunks[1]).toEqual(SHARED_HAPPY[0]);
+      expect(chunks[2]).toEqual(SHARED_HAPPY[1]);
       expect(chunks.some((chunk) => chunk.type === "tool_input_delta")).toBe(
         false,
       );

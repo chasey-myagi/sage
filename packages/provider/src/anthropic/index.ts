@@ -7,6 +7,8 @@
  * request_header can store what this adapter filled in. Pre-stream
  * retries are not adapter defaults and are not a request_header field.
  *
+ * `message_start` becomes the response chunk (message.id, message.model).
+ *
  * `toolChoice` becomes `tool_choice: { type }` for `"none"` and `"auto"`.
  * An absent toolChoice omits the field. messages and tools are otherwise
  * unchanged.
@@ -32,8 +34,6 @@ import type { RetryPolicy, Sleeper } from "../retry.js";
 import type { SseEvent } from "../sse.js";
 
 const DEFAULT_BASE = "https://api.anthropic.com";
-
-type Trace = { responseId: string; responseModel: string };
 
 type AnthropicState = {
   rawUsage: Record<string, unknown>;
@@ -65,30 +65,23 @@ export class AnthropicAdapter implements ProviderAdapter {
     prepared: PreparedCall,
     signal?: AbortSignal,
   ): AsyncIterable<StreamChunk> {
-    const responseTrace: Trace = { responseId: "", responseModel: "" };
-    const iterable: AsyncIterable<StreamChunk> & { responseTrace: Trace } = {
-      responseTrace,
-      [Symbol.asyncIterator]: (): AsyncIterator<StreamChunk> => {
-        const state: AnthropicState = { rawUsage: {}, stopReason: null };
-        return driveStream({
-          url: joinUrl(this.baseUrl, "/v1/messages"),
-          headers: {
-            "content-type": "application/json",
-            "x-api-key": this.apiKey,
-            "anthropic-version": "2023-06-01",
-          },
-          json: encodeRequest(request, prepared),
-          signal,
-          fetchImpl: this.fetchImpl,
-          retry: this.retry,
-          sleep: this.sleep,
-          onEvent(event, driver) {
-            interpret(event, responseTrace, state, driver);
-          },
-        });
+    const state: AnthropicState = { rawUsage: {}, stopReason: null };
+    return driveStream({
+      url: joinUrl(this.baseUrl, "/v1/messages"),
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": this.apiKey,
+        "anthropic-version": "2023-06-01",
       },
-    };
-    return iterable;
+      json: encodeRequest(request, prepared),
+      signal,
+      fetchImpl: this.fetchImpl,
+      retry: this.retry,
+      sleep: this.sleep,
+      onEvent(event, driver) {
+        interpret(event, state, driver);
+      },
+    });
   }
 }
 
@@ -197,7 +190,6 @@ function encodeBlock(
 
 function interpret(
   event: SseEvent,
-  trace: Trace,
   state: AnthropicState,
   driver: Driver,
 ): void {
@@ -211,7 +203,7 @@ function interpret(
   if (!record || typeof record.type !== "string") return;
   switch (record.type) {
     case "message_start":
-      onMessageStart(record, trace, state, driver);
+      onMessageStart(record, state, driver);
       return;
     case "content_block_start":
       onBlockStart(record, driver);
@@ -235,14 +227,16 @@ function interpret(
 
 function onMessageStart(
   record: Record<string, unknown>,
-  trace: Trace,
   state: AnthropicState,
   driver: Driver,
 ): void {
   const message = asRecord(record.message);
   if (!message) return;
-  if (typeof message.id === "string") trace.responseId = message.id;
-  if (typeof message.model === "string") trace.responseModel = message.model;
+  driver.push({
+    type: "response",
+    id: typeof message.id === "string" ? message.id : "",
+    model: typeof message.model === "string" ? message.model : "",
+  });
   const usage = asRecord(message.usage);
   if (!usage) return;
   state.rawUsage = { ...usage };

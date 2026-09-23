@@ -7,7 +7,8 @@
  * through normalizeForApi and does not send reasoning_content back. Usage
  * prefers prompt_cache_hit_tokens, then prompt_tokens_details.cached_tokens,
  * then the whole prompt_tokens. inputCacheCreation stays 0. raw is the
- * provider usage object unchanged. `toolChoice: "none"` is
+ * provider usage object unchanged. The first parsed SSE object's `id` and
+ * `model` become the response chunk. `toolChoice: "none"` is
  * `tool_choice: "none"` and `"auto"` is `"auto"`. An absent toolChoice
  * omits the field. messages and tools are otherwise unchanged.
  *
@@ -33,13 +34,13 @@ import type { SseEvent } from "../sse.js";
 
 const DEFAULT_BASE = "https://api.openai.com/v1";
 
-type Trace = { responseId: string; responseModel: string };
-
 type OpenState = {
   nextIndex: number;
   open?: { index: number; kind: "text" | "tool" | "thinking" };
   toolBlocks: Map<number, number>;
   finishReason?: string;
+  /** Set once the response chunk has been pushed. */
+  announced: boolean;
 };
 
 export class OpenAIAdapter implements ProviderAdapter {
@@ -67,29 +68,26 @@ export class OpenAIAdapter implements ProviderAdapter {
     prepared: PreparedCall,
     signal?: AbortSignal,
   ): AsyncIterable<StreamChunk> {
-    const responseTrace: Trace = { responseId: "", responseModel: "" };
-    const iterable: AsyncIterable<StreamChunk> & { responseTrace: Trace } = {
-      responseTrace,
-      [Symbol.asyncIterator]: (): AsyncIterator<StreamChunk> => {
-        const state: OpenState = { nextIndex: 0, toolBlocks: new Map() };
-        return driveStream({
-          url: joinUrl(this.baseUrl, "/chat/completions"),
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${this.apiKey}`,
-          },
-          json: encodeRequest(request, prepared),
-          signal,
-          fetchImpl: this.fetchImpl,
-          retry: this.retry,
-          sleep: this.sleep,
-          onEvent(event, driver) {
-            interpret(event, responseTrace, state, driver);
-          },
-        });
-      },
+    const state: OpenState = {
+      nextIndex: 0,
+      toolBlocks: new Map(),
+      announced: false,
     };
-    return iterable;
+    return driveStream({
+      url: joinUrl(this.baseUrl, "/chat/completions"),
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${this.apiKey}`,
+      },
+      json: encodeRequest(request, prepared),
+      signal,
+      fetchImpl: this.fetchImpl,
+      retry: this.retry,
+      sleep: this.sleep,
+      onEvent(event, driver) {
+        interpret(event, state, driver);
+      },
+    });
   }
 }
 
@@ -175,12 +173,7 @@ function pushUser(messages: Record<string, unknown>[], message: Message): void {
   flush();
 }
 
-function interpret(
-  event: SseEvent,
-  trace: Trace,
-  state: OpenState,
-  driver: Driver,
-): void {
+function interpret(event: SseEvent, state: OpenState, driver: Driver): void {
   if (event.data.trim() === "[DONE]") {
     closeOpen(state, driver);
     driver.complete(mapStop(state.finishReason));
@@ -194,8 +187,14 @@ function interpret(
   }
   const record = asRecord(payload);
   if (!record) return;
-  if (typeof record.id === "string") trace.responseId = record.id;
-  if (typeof record.model === "string") trace.responseModel = record.model;
+  if (!state.announced) {
+    state.announced = true;
+    driver.push({
+      type: "response",
+      id: typeof record.id === "string" ? record.id : "",
+      model: typeof record.model === "string" ? record.model : "",
+    });
+  }
   const choice = firstRecord(record.choices);
   if (choice) {
     const delta = asRecord(choice.delta);

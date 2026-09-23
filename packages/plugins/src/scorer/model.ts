@@ -130,11 +130,7 @@ export function modelScorer(opts: {
 
       const collected = collect(
         adapter.stream(request, adapter.prepare(opts.model), controller.signal),
-        {
-          responseModel: opts.model.model,
-          responseId: "",
-          api: adapter.api,
-        },
+        { api: adapter.api },
       ).then(
         (value) => ({ ok: true as const, value }),
         (error: unknown) => ({ ok: false as const, error }),

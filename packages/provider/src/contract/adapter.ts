@@ -46,6 +46,10 @@ export interface ProviderAdapter {
   ): AsyncIterable<StreamChunk>;
 }
 
+/**
+ * responseModel and responseId are what the provider sent in the response
+ * chunk, not the requested model. Both are "" when no response chunk came.
+ */
 export type AssistantMessage = {
   role: "assistant";
   content: ContentBlock[];
