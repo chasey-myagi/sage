@@ -41,7 +41,7 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 | 工具错误 | `toolErrors` 是路径上 `isError: true` 的 `tool_result` 条数。这个数不结束 run。 |
 | 整轮重试 | `turnRetries` 是路径上 `turn_retry` 的条数。 |
 
-`turns` 是 assistant 消息条数。`epochs` 是最大 `view_epoch.epoch` 加 1，没有 `view_epoch` 时为 1。`modelChanges` 是路径上的 `model_change` 条数。`scorerCalls` 与 `scorerFallbacks` 把每条 manifest 的 `scorer.calls` 和 `scorer.fallback` 加起来；`fallback: true` 计 1。`calls` 只数真正发出的打分请求，所以打分器在发请求前就放弃的那一轮计 0 次调用、1 次 fallback。`entryScored.calls` 与 `shadow.calls` 同一口径：`shadow.calls` 加总各清单 `shadow.calls`，影子打分缺 key 这类没发请求的轮次计 0，没有 `calls` 字段的旧清单也计 0。`shadow.usage` 把各 `shadow` 对象里的 `usage` 四元组加起来：`input` 是 `inputOther`，另外三项是 `inputCacheRead`、`inputCacheCreation`、`output`。
+`turns` 是 assistant 消息条数。`epochs` 是最大 `view_epoch.epoch` 加 1，没有 `view_epoch` 时为 1。`modelChanges` 是路径上的 `model_change` 条数。`scorerCalls` 与 `scorerFallbacks` 把每条 manifest 的 `scorer.calls` 和 `scorer.fallback` 加起来；`fallback: true` 计 1。`calls` 只数真正发出的打分请求，所以打分器在发请求前就放弃的那一轮计 0 次调用、1 次 fallback。`entryScored.calls` 与 `shadow.calls` 同一口径：`shadow.calls` 加总各清单 `shadow.calls`，影子打分缺 key 这类没发请求的轮次计 0。`shadow` 对象必须带 `calls`，缺了校验不通过。`shadow.usage` 把各 `shadow` 对象里的 `usage` 四元组加起来：`input` 是 `inputOther`，另外三项是 `inputCacheRead`、`inputCacheCreation`、`output`。
 
 `health` 里只有这些数字和 null。块原文、claim 文本、路径、子会话 id 都不进这个对象。离线看同一份数用 `sage stats <session.jsonl>`。子 usage 只出现在 `subtasks`，不进上面的 token 总量和两个比率。
 

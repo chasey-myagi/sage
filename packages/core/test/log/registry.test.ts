@@ -253,7 +253,7 @@ describe("entry kinds", () => {
     ).toThrow(InvalidEntryError);
   });
 
-  it("accepts manifest shadow and rejects a shadow object without scorer", () => {
+  it("accepts manifest shadow and rejects a shadow object without scorer or calls", () => {
     const store = new MemoryLogStore();
     store.append("shadow-ok", {
       kind: "manifest",
@@ -265,6 +265,7 @@ describe("entry kinds", () => {
         anomalies: [],
         shadow: {
           scorer: "rule",
+          calls: 1,
           decisions: [{ id: "seq:1#t", tier: "none", reason: "shadow" }],
           usage: { inputOther: 1, inputCacheRead: 0, output: 1 },
           fallback: "boom",
@@ -282,6 +283,19 @@ describe("entry kinds", () => {
           chunks: [],
           anomalies: [],
           shadow: { decisions: [] },
+        },
+      }),
+    ).toThrow(InvalidEntryError);
+    expect(() =>
+      store.append("shadow-no-calls", {
+        kind: "manifest",
+        payload: {
+          epoch: 0,
+          turn: 1,
+          claims: [],
+          chunks: [],
+          anomalies: [],
+          shadow: { scorer: "model", decisions: [] },
         },
       }),
     ).toThrow(InvalidEntryError);
@@ -386,6 +400,7 @@ describe("entry kinds", () => {
         scorer: { calls: 1, fallback: true, raw },
         shadow: {
           scorer: "model",
+          calls: 1,
           decisions: [],
           fallback: "invalid-json",
           raw,

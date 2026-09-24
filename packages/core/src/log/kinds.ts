@@ -57,11 +57,10 @@ export type ModelChangePayload = {
  * `staleOmittable` when present). `epochDecision`, `calibration`, and
  * `cache` are optional objects; `epochDecision.remainingTurns` must be
  * finite, and `calibration`'s `measured`, `estimated`, `ratio`, and
- * `overheadTokens` are finite when present. `shadow` needs a
- * string `scorer` and a `decisions` array of `{id, tier}` strings with
- * optional string `reason`; optional `fallback` is a string and `calls` is
- * finite when present (manifests written before it existed omit it). `entryScored`
- * needs finite `calls`, `none`, `summary`, and `full`, and an optional
+ * `overheadTokens` are finite when present. `shadow` needs a string
+ * `scorer`, a finite `calls`, and a `decisions` array of `{id, tier}`
+ * strings with optional string `reason`; optional `fallback` is a string.
+ * `entryScored` needs finite `calls`, `none`, `summary`, and `full`, and an optional
  * finite `summaryRejected`. A `usage` on `shadow` or `entryScored` is an
  * object whose four token fields are finite when present. A `raw` on
  * `shadow` or `scorer` is `{text, finish}` strings or absent. Other fields
@@ -209,7 +208,7 @@ function isShadow(value: unknown): boolean {
   if (value.fallback !== undefined && typeof value.fallback !== "string") {
     return false;
   }
-  if (!isOptionalFinite(value.calls)) return false;
+  if (!isFiniteNumber(value.calls)) return false;
   if (value.usage !== undefined && !isShadowUsage(value.usage)) return false;
   if (!rawFieldOk(value)) return false;
   return value.decisions.every(isShadowDecision);

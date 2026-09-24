@@ -18,7 +18,7 @@
 
 在 `shadow` 上记 `requested?: false`，与 `ScoreResult` 同形：core 计数时还得把「缺省」翻译成 1，和另外两份报告写 `calls` 的做法不对称。
 
-`kinds.ts` 把 `calls` 设为必填：已有的 bench 会话 jsonl 重开时会整份报 `LogCorruptedError`，`sage stats` 读不了旧文件。可选校验只放宽了一个新字段，`calibration.head` 已有同样的先例。
+`kinds.ts` 把 `calls` 设为必填：已有的 bench 会话 jsonl 重开时会整份报 `LogCorruptedError`，`sage stats` 读不了旧文件。可选校验只放宽了一个新字段，`calibration.head` 已有同样的先例。后来改为必填，见 Consequences。
 
 core 按 `shadow.fallback` 文字判断：字符串协议，上一轮刚去掉。
 
@@ -26,7 +26,7 @@ core 按 `shadow.fallback` 文字判断：字符串协议，上一轮刚去掉�
 
 这是有意的行为修改：`shadow.calls` 从「清单条数」变为「请求数」。
 
-旧 Log 的 `shadow` 没有 `calls`，重放或 `sage stats` 时这些轮次计 0，比旧口径少。首个 tag 之前不迁移。
+旧 Log 的 `shadow` 没有 `calls`。最初按可选字段校验、健康度计 0，让旧会话还能重开；复审指出这是兼容垫片，违反 G4，也与字段改名不迁移的口径不一致，已改为必填：`log/kinds.ts` 要求 `calls` 为有限数，旧会话重开时报 `LogCorruptedError`，`sage stats` 读不了它们。首个 tag 之前不迁移。
 
 `packages/core/test/health.test.ts` 的「counts each shadow manifest once and sums its usage quadruple」输入的两条 `shadow` 是旧形状（没有 `calls`），新口径下会算出 0。这次只在两条输入上补 `calls: 1`（一条有 usage、一条是抛错的 `boom`，按新口径都发过请求），期望值 `calls: 2` 与其余断言不变，用例标题不变。
 

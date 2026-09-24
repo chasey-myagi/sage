@@ -51,7 +51,7 @@ function addDecision(
     ? [...existing.decisions]
     : [];
   decisions.push(decision);
-  entry.payload.shadow = { scorer: "rule", decisions };
+  entry.payload.shadow = { scorer: "rule", calls: 0, decisions };
 }
 
 function firstManifestWith(entries: Entry[], chunkId: string): Entry {
@@ -134,6 +134,7 @@ function appendSynthetic(entries: Entry[]): void {
       anomalies: [],
       shadow: {
         scorer: "rule",
+        calls: 0,
         decisions: [{ id: chunkId, tier: "none", reason: "shadow" }],
       },
     },
