@@ -171,7 +171,11 @@ function interpret(event: SseEvent, state: OpenState, driver: Driver): void {
   }
   const record = parseRecord(event.data);
   if (!record) return;
-  if (!state.announced) {
+  const choice = firstRecord(record.choices);
+  // Announce on the first frame that names the response. A frame with a
+  // choice may open a block, so announce before it even without an id: the
+  // response chunk must precede every block_start.
+  if (!state.announced && (typeof record.id === "string" || choice)) {
     state.announced = true;
     driver.push({
       type: "response",
@@ -179,7 +183,6 @@ function interpret(event: SseEvent, state: OpenState, driver: Driver): void {
       model: typeof record.model === "string" ? record.model : "",
     });
   }
-  const choice = firstRecord(record.choices);
   if (choice) {
     const delta = asRecord(choice.delta);
     if (delta && typeof delta.reasoning_content === "string") {
