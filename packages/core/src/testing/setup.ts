@@ -1,7 +1,7 @@
 /**
  * Vitest setup. Runs before every test file.
  *
- * Contract: strip every `*_API_KEY` from `process.env`, then refuse to
+ * Guarantees: strip every `*_API_KEY` from `process.env`, then refuse to
  * continue if any remain. Replace global `fetch` with a stub that throws.
  * No test in this process can call a provider.
  *

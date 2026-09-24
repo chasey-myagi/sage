@@ -1,16 +1,27 @@
 /**
- * Test harness public surface.
+ * Test harness public surface: `@sage/core/testing`, not part of the kernel
+ * index. The faux provider, replay, snapshots, and the credential strip live
+ * here so a test can run without an API key; every package's tests take
+ * their doubles from here.
  *
- * Contract: this subpath is `@sage/core/testing`. It is not part of the kernel
- * index. Replay, snapshots, and the credential strip live here so a test can
- * run without an API key. `setup.ts` is a vitest setupFile only and is not
- * re-exported, so importing this module does not strip the caller environment.
+ * Guarantees: `setup.ts` is a vitest setupFile only and is not re-exported,
+ * so importing this module does not strip the caller's environment.
  *
  * Intentionally not in the Log: harness helpers, the record switch, and
  * expected-file diffs. A recorded `session.jsonl` is itself a Log.
  */
 
-export { fauxAdapter } from "./faux.js";
+export {
+  createFaux,
+  FAUX_CONTEXT_WINDOW,
+  FAUX_MODEL,
+  FAUX_SYSTEM,
+  FAUX_USAGE,
+  type FauxScript,
+  fauxAdapter,
+  stopScript,
+  toolScript,
+} from "./faux.js";
 export { expectFile } from "./files.js";
 export { renderLlmInput } from "./render.js";
 export { loadCase, replaySession } from "./replay.js";

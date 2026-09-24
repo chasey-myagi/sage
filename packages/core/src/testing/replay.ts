@@ -1,14 +1,15 @@
 /**
  * Keyless replay of a recorded session.
  *
- * Contract: `session.jsonl` is a JsonlLogStore file for session id `session`.
- * `responses.json` is `StreamChunk[][]`, one script per model turn. Replay
- * reads the user text, model, and adapter defaults back out of that log,
- * plays the script through the faux adapter, and returns the new requests,
- * log, and per-turn manifests. The prepared call uses `contextWindow` 8000
- * and `pricing` null; the log does not store those. `SAGE_RECORD=1` is the
- * record lane switch.
- * This module does not open a network connection. The live recorder is #16.
+ * Guarantees: `session.jsonl` is a JsonlLogStore file for session id
+ * `session`. `responses.json` is `StreamChunk[][]`, one script per model
+ * turn. Replay reads the user text, model, and adapter defaults back out of
+ * that log, plays the script through the faux adapter, and returns the new
+ * requests, log, and per-turn manifests. The prepared call uses
+ * `FAUX_CONTEXT_WINDOW` and `pricing` null; the log does not store those.
+ * `SAGE_RECORD=1` selects the record lane, which has no live network
+ * recorder yet, so replay refuses it. This module never opens a network
+ * connection.
  *
  * Intentionally not in the Log: the script, the switch, and the manifest
  * list collected at runtime. The session log is the recorded fact.
@@ -30,10 +31,14 @@ import { AgentSession } from "../session.js";
 import type { HarnessTool } from "../tools.js";
 import { passthroughView } from "../view/passthrough.js";
 import type { Manifest, ViewProvider } from "../view/types.js";
-import { fauxAdapter } from "./faux.js";
+import { FAUX_CONTEXT_WINDOW, fauxAdapter } from "./faux.js";
 
 const RECORD_SWITCH = "SAGE_RECORD";
 
+/**
+ * Reads a recorded case directory. Throws when `session.jsonl` is missing or
+ * `responses.json` is not `StreamChunk[][]`.
+ */
 export function loadCase(dir: string): {
   log: StoredEntry[];
   responses: StreamChunk[][];
@@ -56,6 +61,11 @@ export function loadCase(dir: string): {
   };
 }
 
+/**
+ * Replays a recorded case keylessly through a fresh in-memory session.
+ * Throws when `SAGE_RECORD=1`, and when the recording lacks a user message
+ * or a request_header model and adapter defaults.
+ */
 export async function replaySession(
   dir: string,
   opts: {
@@ -73,7 +83,7 @@ export async function replaySession(
   const adapter = fauxAdapter(responses, {
     api: recordedApi(log),
     prepared: {
-      contextWindow: 8000,
+      contextWindow: FAUX_CONTEXT_WINDOW,
       pricing: null,
       adapterDefaults: recordedDefaults(log),
     },

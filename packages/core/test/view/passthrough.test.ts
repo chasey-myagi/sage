@@ -4,7 +4,7 @@ import {
   passthroughView,
   synthesizeToolResult,
 } from "../../src/index.ts";
-import { MODEL } from "../support/faux.ts";
+import { FAUX_MODEL as MODEL } from "../../src/testing/index.ts";
 
 const head = {
   system: "sys",

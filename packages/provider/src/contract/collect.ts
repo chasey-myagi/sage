@@ -1,17 +1,18 @@
 /**
- * Fold a chunk stream into one assistant message.
- * Tool input is the concatenation of partial JSON, parsed once at the end.
- * A parse failure keeps rawInput and sets input to null.
- * responseId and responseModel come from the response chunk. Without one
- * (the call failed before the body began) both are the empty string.
+ * Folds a chunk stream into one assistant message. Pure: no I/O.
  *
- * Deliberately not a Log entry: collect does not append. The caller decides
+ * Guarantees: blocks come out in index order. Tool input is the
+ * concatenation of partial JSON, parsed once at the end; a parse failure
+ * keeps rawInput and sets input to null. A stream that ends without a
+ * finish chunk yields `finish {kind:"error"}` with `INCOMPLETE_STREAM`.
+ *
+ * Intentionally not in the Log: collect does not append. The caller decides
  * whether the resulting message becomes an assistant entry.
  */
 
 import type { AssistantMessage, ProviderAdapter } from "./adapter.js";
 import type { ContentBlock } from "./message.js";
-import type { StreamChunk } from "./stream.js";
+import { INCOMPLETE_STREAM, type StreamChunk } from "./stream.js";
 import { emptyUsage, type Usage } from "./usage.js";
 
 type Acc = {
@@ -23,6 +24,12 @@ type Acc = {
   rawInput: string;
 };
 
+/**
+ * Consumes `chunks` to the end and returns the message. responseId and
+ * responseModel come from the response chunk, or are "" without one (the
+ * call failed before the body began). Usage is the last usage chunk, or
+ * all zeros. Deltas for an index with no block_start are dropped.
+ */
 export async function collect(
   chunks: AsyncIterable<StreamChunk>,
   meta: { api: ProviderAdapter["api"] },
@@ -34,7 +41,7 @@ export async function collect(
   let finish: Extract<StreamChunk, { type: "finish" }> = {
     type: "finish",
     kind: "error",
-    error: { message: "stream ended before completion" },
+    error: { message: INCOMPLETE_STREAM },
   };
 
   for await (const chunk of chunks) {
@@ -44,14 +51,7 @@ export async function collect(
         responseModel = chunk.model;
         break;
       case "block_start":
-        blocks.set(chunk.index, {
-          index: chunk.index,
-          blockType: chunk.blockType,
-          id: chunk.id,
-          name: chunk.name,
-          text: "",
-          rawInput: "",
-        });
+        blocks.set(chunk.index, startBlock(chunk));
         break;
       case "text_delta":
       case "thinking_delta":
@@ -83,6 +83,17 @@ export async function collect(
     responseModel,
     responseId,
     api: meta.api,
+  };
+}
+
+function startBlock(chunk: Extract<StreamChunk, { type: "block_start" }>): Acc {
+  return {
+    index: chunk.index,
+    blockType: chunk.blockType,
+    id: chunk.id,
+    name: chunk.name,
+    text: "",
+    rawInput: "",
   };
 }
 

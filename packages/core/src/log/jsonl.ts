@@ -1,14 +1,15 @@
 /**
  * JSONL log. One file per session: `<dir>/<sessionId>.jsonl`.
  *
- * Contract: append writes the line with `writeSync` on a cached append fd, then
+ * Guarantees: append writes the line with `writeSync` on a cached append fd, then
  * `fsyncSync`, and only then commits the entry to memory. Disk is a superset of
  * memory. On open, a JSON parse failure on the last line is discarded,
  * recorded as torn, and truncated off the file before the next append so the
  * new line is not glued to the partial one. A parse failure on any earlier
  * line throws `LogCorruptedError`. An unregistered kind throws
- * `UnknownEntryKindError` and is not skipped. There is no high-water mark; the
- * next seq is the number of entries loaded.
+ * `UnknownEntryKindError` and is not skipped. There is no high-water mark
+ * (no persisted "written up to here" counter) anywhere in the Log: the next
+ * seq is the number of entries loaded.
  *
  * Intentionally not in the Log: the torn flag, the cached fd, and this index.
  * Torn does not participate in seq assignment.
@@ -38,6 +39,7 @@ import {
   type StoredEntry,
 } from "./types.js";
 
+/** The `node:fs` calls the store makes. Test seam; production uses `node:fs`. */
 export type LogFs = {
   mkdirSync(path: string, options?: { recursive?: boolean }): void;
   existsSync(path: string): boolean;
@@ -62,6 +64,11 @@ const nodeFs: LogFs = {
   closeSync,
 };
 
+/**
+ * Durable `LogStore`: one JSONL file per session under `dir`, created on
+ * construction. A session file is read on first use of that session id.
+ * Throws on a session id that is empty or contains a path separator or `..`.
+ */
 export class JsonlLogStore implements LogStore {
   private readonly dir: string;
   private readonly fs: LogFs;

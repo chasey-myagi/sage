@@ -1,12 +1,12 @@
 /**
- * Usage quadruple shared by every adapter.
+ * Token usage every adapter reports, and the arithmetic on it.
  *
- * Deliberately not a Log entry by itself. The assistant entry that lands
- * in the Log copies this object (#4). `raw` is the provider payload escape
- * hatch and is not a second source of the four numbers. `details` is the
- * pre-stream retry count and the last failure reason. It is omitted when
- * the call was not retried. It is not model-visible and not a new entry
- * kind.
+ * Guarantees: the four counts are the only source of token numbers; `raw`
+ * is the provider payload kept for inspection, never a second source.
+ *
+ * Intentionally not in the Log by itself: the assistant entry copies a
+ * `Usage` into its details. `details` on it is not model-visible and not a
+ * separate entry kind.
  */
 
 /** The four token counts, without the provider payload or retry details. */
@@ -17,6 +17,10 @@ export type TokenCounts = {
   output: number;
 };
 
+/**
+ * Usage of one call. `details` is the pre-stream retry count and the last
+ * failure reason, omitted when the call was not retried.
+ */
 export type Usage = TokenCounts & {
   raw?: unknown;
   details?: {

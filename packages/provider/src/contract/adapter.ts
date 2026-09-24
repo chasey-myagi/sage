@@ -1,15 +1,20 @@
 /**
- * Adapter surface. Adapters translate; they do not choose cache breakpoints.
+ * The adapter interface every provider implements. Adapters translate
+ * requests and streams; they do not choose cache breakpoints.
  *
- * Deliberately not a Log entry: `adapterDefaults` is reported so a later
- * request_header entry can store it (#4). Pricing stays null until a source
- * URL is checked (docs/design/references.md §3).
+ * Guarantees: `stream` never throws; failures end as a finish chunk.
+ * Pricing stays null until a source URL is checked
+ * (docs/design/references.md §3).
+ *
+ * Intentionally not in the Log: the adapter object. `adapterDefaults` is
+ * reported so the session can store it on the request_header entry.
  */
 
 import type { ContentBlock, ModelRef, Request } from "./message.js";
 import type { StreamChunk } from "./stream.js";
 import type { Usage } from "./usage.js";
 
+/** Prices per million tokens, with the page they were checked against. */
 export type Pricing = {
   inputPerMTok: number;
   outputPerMTok: number;
@@ -23,6 +28,11 @@ export type Pricing = {
   currency?: "USD" | "CNY";
 };
 
+/**
+ * What an adapter knows about a model before calling it. `contextWindow` is
+ * in tokens. `adapterDefaults` are the values the adapter fills in when the
+ * request leaves them unset (for example `maxTokens`).
+ */
 export type PreparedCall = {
   model: ModelRef;
   contextWindow: number;
@@ -30,8 +40,10 @@ export type PreparedCall = {
   adapterDefaults: Record<string, unknown>;
 };
 
+/** One provider protocol. Adapters are long-lived and hold no per-call state. */
 export interface ProviderAdapter {
   readonly api: "anthropic-messages" | "openai-chat";
+  /** Catalog lookup for `model`. Never throws; unknown models get fallbacks. */
   prepare(model: ModelRef): PreparedCall;
   /**
    * Does not throw. Transport and protocol failures end as
@@ -47,8 +59,9 @@ export interface ProviderAdapter {
 }
 
 /**
- * responseModel and responseId are what the provider sent in the response
- * chunk, not the requested model. Both are "" when no response chunk came.
+ * One model call folded into a message by `collect`. responseModel and
+ * responseId are what the provider sent in the response chunk, not the
+ * requested model. Both are "" when no response chunk came.
  */
 export type AssistantMessage = {
   role: "assistant";

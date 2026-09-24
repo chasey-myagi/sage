@@ -1,7 +1,7 @@
 /**
  * Log store seam.
  *
- * Contract: `append` is synchronous. Persistence, when there is any, finishes
+ * Guarantees: `append` is synchronous. Persistence, when there is any, finishes
  * before the entry is visible in memory. Callers must serialize `append` on
  * one sessionId. The call reads the leaf and writes the next entry; overlapping
  * appends on the same session can reuse `seq` and fork the chain by accident.
@@ -10,15 +10,22 @@
  * `replay` folds entries with the pure reducers registered for their kinds.
  * Kinds without a reducer are skipped. The reducer does not receive the store.
  *
- * Intentionally not in the Log: the store object, open descriptors, and any
- * high-water mark. The next `seq` is the count of entries already accepted.
+ * Intentionally not in the Log: the store object and open descriptors. The
+ * next `seq` is the count of entries already accepted.
  */
 
 import { kindDef } from "./registry.js";
 import type { EntryId, EntryInput, StoredEntry } from "./types.js";
 
+/** Append-only entry tree per session. Implemented in memory and as JSONL. */
 export interface LogStore {
+  /**
+   * Validates, then stores. Throws `UnknownEntryKindError` or
+   * `InvalidEntryError` and leaves the session unchanged on bad input.
+   * `input.parentId` defaults to the current leaf.
+   */
   append(sessionId: string, input: EntryInput): StoredEntry;
+  /** The current leaf, or null for an empty session. */
   leaf(sessionId: string): EntryId | null;
   get(sessionId: string, id: EntryId): StoredEntry | undefined;
   /** Root to leaf. `leaf` entries themselves are not part of the chain. */
@@ -27,6 +34,10 @@ export interface LogStore {
   all(sessionId: string): readonly StoredEntry[];
 }
 
+/**
+ * Folds `entries` in `seq` order with each kind's registered reducer,
+ * starting from `init`. Kinds without a reducer are skipped.
+ */
 export function replay<S>(entries: readonly StoredEntry[], init: S): S {
   const ordered = [...entries].sort((a, b) => a.seq - b.seq);
   let state = init;

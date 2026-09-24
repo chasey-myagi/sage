@@ -1,12 +1,12 @@
+import type { StreamChunk as FauxChunk } from "@sage/provider/contract";
 import { describe, expect, it } from "vitest";
 import { AgentSession, MemoryLogStore } from "../../src/index.ts";
 import {
   createFaux,
-  type FauxChunk,
-  MODEL,
-  SYSTEM,
+  FAUX_MODEL as MODEL,
+  FAUX_SYSTEM as SYSTEM,
   toolScript,
-} from "../support/faux.ts";
+} from "../../src/testing/index.ts";
 
 function tool() {
   return {

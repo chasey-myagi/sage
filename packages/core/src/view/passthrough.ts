@@ -1,7 +1,7 @@
 /**
  * Passthrough view. Projects message entries in path order.
  *
- * Contract: the kernel's default ViewProvider. It does not compress. A dangling
+ * Guarantees: the kernel's default ViewProvider. It does not compress. A dangling
  * tool_use left by a crash gets a synthesized TOOL_OUTCOME_UNKNOWN result and
  * an anomaly. An orphan tool_result is dropped and recorded. An empty message
  * left by that drop is dropped and recorded. The head is the one the session
@@ -18,7 +18,7 @@ import {
   isRecord,
   type Message,
 } from "@sage/provider/contract";
-import { latestViewEpoch } from "../log/epoch.js";
+import { latestViewEpoch } from "../log/path.js";
 import { synthesizeToolResult } from "../log/repair.js";
 import type { StoredEntry } from "../log/types.js";
 import type {
@@ -91,6 +91,7 @@ function project(path: readonly StoredEntry[]): {
   return { messages, chunks, anomalies };
 }
 
+/** The kernel's default ViewProvider. Synchronous; never throws on a valid path. */
 export const passthroughView: ViewProvider = {
   view(ctx: ViewContext): CompiledView {
     const epoch = latestViewEpoch(ctx.path);

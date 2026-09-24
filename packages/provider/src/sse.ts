@@ -1,16 +1,21 @@
 /**
  * Server-sent events, split on blank lines.
  *
- * A trailing buffer that does not end in a newline is dropped: the sender
+ * Guarantees: a trailing buffer that does not end in a newline is dropped: the sender
  * closed mid-line. A final event that ends on a newline but has no blank
  * line after it is still delivered.
  *
- * Deliberately not a Log entry: frames are wire bytes. The assistant entry
+ * Intentionally not in the Log: frames are wire bytes. The assistant entry
  * is the collected message, not these events.
  */
 
+/** One event. `event` is "" when the frame named none; data lines are joined by "\n". */
 export type SseEvent = { event: string; data: string };
 
+/**
+ * Yields events as frames complete; comment lines and frames without data
+ * are skipped. Cancels the reader when iteration stops early.
+ */
 export async function* parseSse(
   body: ReadableStream<Uint8Array>,
 ): AsyncGenerator<SseEvent> {

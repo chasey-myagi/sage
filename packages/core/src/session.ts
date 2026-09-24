@@ -1,78 +1,31 @@
 /**
- * Minimal agent loop.
+ * Agent loop. One `AgentSession` drives turns until the model stops, the
+ * run is aborted, a turn fails, or `maxTurns` runs out.
  *
- * One turn, in order:
- * turn_start → view = await viewProvider.view(ctx) → assertPaired →
- * assertHeadFrozen → structuredClone(view) is what observe("view_compiled")
- * receives → if view.epochStart.model is set and differs from the current
- * model, append model_change {from, to, reason} then switch adapter and
- * prepare again (no adapter for that provider → terminal error, no request) →
- * if view.epochStart is set, or view.epoch is greater than the latest
- * view_epoch on the path (0 when none exists), append view_epoch
- * { epoch, reason } with details.epochHead = messages[0] →
- * append request_header (system and tools text only when that hash differs
- * from the previous request_header, or there is none) →
- * append manifest (payload is view.manifest, details is view.details) →
- * adapter.stream →
- * collect → when finish.error.transport is true (the provider sets it for
- * fetch and body-read failures; message text is not inspected) and this
- * turn has not yet appended an assistant message, wait (2s then 8s; `sleep` may replace
- * the wait) and, unless aborted during the wait, append turn_retry
- * {turn, attempt, reason} and stream the same request again, at most
- * twice →
- * append message(assistant) with details
- * {responseModel, responseId, api, usage, finish} (responseModel and
- * responseId are the stream's response chunk, empty when the call failed
- * before the body began) → llm_end →
- * if finish.kind is tool_use, run the tool pipeline for each tool_use and
- * append one user message of results (tool details on the entry, not the
- * block), then turn_end continue;
- * otherwise turn_end done.
- * abort, a non-transport finish error, or a transport error after two
- * retries appends terminal and stops. An HTTP status error is not resent
- * here: the provider already retried 429 and 5xx before the body began.
- * A throw from tool execute is a tool_result and the turn continues. Any
- * other throw appends terminal and stops.
- * Using up maxTurns appends terminal {outcome:"max_turns"}.
- * The default maxTurns is 80 when run is called without that option.
+ * Guarantees to callers:
+ * - Everything a request carries is in the Log before the request is sent:
+ *   message entries plus that turn's request_header. The manifest entry is
+ *   the kernel's record of the view that produced the request.
+ * - The kernel does not compress, drop, or rewrite the ViewProvider's view.
+ *   It checks tool pairing and the frozen head, and sends nothing otherwise.
+ * - A tool that throws becomes an error tool_result and the turn continues.
+ *   Any other throw appends a terminal entry, then propagates.
+ * - Once the user message is appended, every run ends with one terminal
+ *   entry. Hooks never receive the store.
  *
- * Contract: the kernel does not compress. Hooks never receive the store.
- * ViewContext.path is a structured clone taken before view().
- * ViewContext.tools is the tool list given to the constructor.
- * prepare runs at the start of the run and again when the model changes.
- * model_change.reason is `route:` plus the text after `;route:` in
- * epochDecision.reason. Head bytes are not rewritten on a switch.
- * RunSummary.modelChanges counts model_change entries appended in this run.
- * RunSummary.health is runHealth of the path at finish, and the terminal
- * payload stores that same object. When a tool returns `details`, the user
- * message that carries the results stores `details.toolResults`
- * (`toolUseId`, `name`, `details`). Those fields are not on the
- * model-visible tool_result block.
- * Constructor takes `adapters` (provider → adapter) or one `adapter`, which
- * is stored under the starting model's provider.
- * `sleep`, when set, replaces the wait between turn retries.
- * `parent`, when set, snapshots `store.path(parent.sessionId, parent.leafId)`
- * onto `ViewContext.parentPath` and sets `ViewContext.depth`. The kernel
- * does not copy those entries onto this session. Child usage is not added
- * to this run's usage.
+ * The per-turn order is documented on `turn()` and the methods it calls.
  *
  * Intentionally not in the Log: the hook list, the abort signal, observer
  * errors, the adapter table, the sleep function, and assistant text
- * discarded by a turn retry. Model-visible text is the message and
- * request_header entries. `turn_retry` is persisted and is not model-visible.
- * The manifest entry is the kernel's record of the view that produced that
- * request.
+ * discarded by a turn retry. `turn_retry` is persisted and is not
+ * model-visible.
  */
 
 import {
   type AssistantMessage,
   addUsage,
-  backoffMs,
-  type ContentBlock,
-  collect,
   emptyUsage,
   type Head,
-  isRecord,
   type Message,
   type ModelRef,
   type PreparedCall,
@@ -82,27 +35,28 @@ import {
   type Sleeper,
   sleep,
   type ToolResultBlock,
-  type ToolUseBlock,
   type Usage,
 } from "@sage/provider/contract";
 import { type RunHealth, runHealth } from "./health.js";
 import { HookDispatcher } from "./hooks/dispatcher.js";
 import type { Hooks } from "./hooks/types.js";
-import { latestViewEpoch } from "./log/epoch.js";
 import type { RequestHeaderPayload } from "./log/kinds.js";
+import { lastRequestHeader, latestViewEpoch } from "./log/path.js";
 import type { LogStore } from "./log/store.js";
 import type { EntryId, StoredEntry } from "./log/types.js";
+import { runToolCalls, type ToolResultDetails, toolUses } from "./tool-run.js";
 import type { HarnessTool } from "./tools.js";
+import { collectWithTurnRetry } from "./turn-retry.js";
 import {
-  assertHeadFrozen,
+  assertHeadFrozenOnPath,
   assertPaired,
   systemHash,
   toolsHash,
 } from "./view/assert.js";
-import { HeadChangedMidEpochError } from "./view/errors.js";
 import { passthroughView } from "./view/passthrough.js";
 import type { CompiledView, ViewProvider } from "./view/types.js";
 
+/** How one turn ended. `max_turns` is only ever a run outcome. */
 export type TurnOutcome =
   | "continue"
   | "done"
@@ -110,12 +64,20 @@ export type TurnOutcome =
   | "aborted"
   | "max_turns";
 
+/**
+ * Result of `AgentSession.run`. The same `outcome`, `usage`, `health`, and
+ * `error` are stored on the terminal entry.
+ */
 export type RunSummary = {
   outcome: Exclude<TurnOutcome, "continue">;
   turns: number;
+  /** Sum of this run's assistant usage. Child session usage is not added. */
   usage: Usage;
+  /** model_change entries appended by this run. */
   modelChanges: number;
+  /** Observer throws, in order. Reset at the start of each run. */
   observerErrors: { event: string; error: string }[];
+  /** `runHealth` of the path at finish. */
   health: RunHealth;
   error?: string;
 };
@@ -123,42 +85,24 @@ export type RunSummary = {
 /** Turn cap `AgentSession.run` uses when the caller passes no `maxTurns`. */
 export const DEFAULT_MAX_TURNS = 80;
 
-/** Whole-turn resends after a transport error, on top of the first call. */
-const TURN_RETRY_LIMIT = 2;
-/** First whole-turn retry delay; the shared curve makes the second 8s. */
-const TURN_RETRY_BASE_MS = 2000;
-
-function turnTransportReason(
-  finish: AssistantMessage["finish"],
-): string | undefined {
-  if (finish.kind !== "error" || !finish.error) return undefined;
-  return finish.error.transport === true ? finish.error.message : undefined;
-}
-
-/** Index of the last request_header on `path`, or -1. */
-function lastHeaderIndex(path: readonly StoredEntry[]): number {
-  for (let index = path.length - 1; index >= 0; index -= 1) {
-    if (path[index]?.kind === "request_header") return index;
-  }
-  return -1;
-}
-
-function assistantAfterLatestHeader(path: readonly StoredEntry[]): boolean {
-  const header = lastHeaderIndex(path);
-  if (header < 0) return false;
-  for (const entry of path.slice(header + 1)) {
-    if (entry.kind !== "message") continue;
-    if (isRecord(entry.payload) && entry.payload.role === "assistant") {
-      return true;
-    }
-  }
-  return false;
-}
+type TurnResult =
+  | { kind: "continue"; usage: Usage; prepared: PreparedCall }
+  | {
+      kind: "done" | "aborted" | "error";
+      usage: Usage;
+      error?: string;
+      prepared: PreparedCall;
+    };
 
 function sameModel(left: ModelRef, right: ModelRef): boolean {
   return left.provider === right.provider && left.model === right.model;
 }
 
+/**
+ * `model_change.reason`: `route:` plus the text after the last `;route:` in
+ * `epochDecision.reason`; a reason that already starts with `route:` as is;
+ * otherwise bare `route:`.
+ */
 function routeReason(view: CompiledView): string {
   const reason = view.manifest.epochDecision?.reason ?? "";
   const marker = ";route:";
@@ -168,6 +112,7 @@ function routeReason(view: CompiledView): string {
   return "route:";
 }
 
+/** Adapter defaults, overridden field by field by the session's sampling. */
 function mergeSampling(
   defaults: Record<string, unknown>,
   sampling: Sampling | undefined,
@@ -184,39 +129,12 @@ function mergeSampling(
   return merged;
 }
 
-function asHeader(payload: unknown): RequestHeaderPayload | undefined {
-  // The request_header validator already ran on append and on load.
-  return isRecord(payload) ? (payload as RequestHeaderPayload) : undefined;
-}
-
 /**
- * `latest` is the newest view_epoch on the path. `frozen` is the newest one
- * at or before the last request_header, or `latest` when there is no header.
+ * The agent loop over one Log session. Not safe for overlapping `run` calls:
+ * appends on one session must be serial.
  */
-function epochState(path: readonly StoredEntry[]): {
-  latest: number;
-  frozen: number;
-} {
-  const header = lastHeaderIndex(path);
-  const latest = latestViewEpoch(path);
-  const frozen =
-    header < 0 ? latest : latestViewEpoch(path.slice(0, header + 1));
-  return { latest, frozen };
-}
-
-function lastHeader(
-  path: readonly StoredEntry[],
-): RequestHeaderPayload | undefined {
-  return asHeader(path[lastHeaderIndex(path)]?.payload);
-}
-
-function toolUses(content: ContentBlock[]): ToolUseBlock[] {
-  return content.filter(
-    (block): block is ToolUseBlock => block.type === "tool_use",
-  );
-}
-
 export class AgentSession {
+  /** Registration surface for observers, tool hooks, guards, and arounds. */
   readonly hooks: Hooks;
   private readonly dispatcher: HookDispatcher;
   private readonly observerErrors: { event: string; error: string }[] = [];
@@ -237,6 +155,18 @@ export class AgentSession {
     depth: number;
   };
 
+  /**
+   * Takes `adapters` (provider name → adapter), or one `adapter`, which is
+   * stored under the starting model's provider unless `adapters` already has
+   * one there. Throws when no adapter serves the starting provider.
+   *
+   * `viewProvider` defaults to the passthrough view. `sleep` replaces the
+   * wait between turn retries (test seam; production uses a real timer).
+   * `parent`, when set, marks a child session: each turn snapshots
+   * `store.path(parent.sessionId, parent.leafId)` onto
+   * `ViewContext.parentPath` and sets `ViewContext.depth`. The kernel does
+   * not copy those entries onto this session.
+   */
   constructor(
     opts: {
       store: LogStore;
@@ -278,6 +208,18 @@ export class AgentSession {
     this.hooks = this.dispatcher;
   }
 
+  /**
+   * Appends `userText` as a user message, then runs turns until one ends the
+   * run. `prepare` runs here and again on each model change.
+   *
+   * Ends with a terminal entry and `session_end`: `done`; `aborted` (checked
+   * before each turn and inside it); `error` (no adapter for a routed
+   * provider, a non-transport finish error, or a transport error that
+   * outlasted the whole-turn retries); or `max_turns` once `maxTurns` turns ran
+   * (default 80). A throw that is not a tool failure, such as a seam
+   * assertion or a store error, writes a terminal `error` entry and is
+   * rethrown.
+   */
   async run(
     userText: string,
     opts?: { signal?: AbortSignal; maxTurns?: number },
@@ -312,25 +254,79 @@ export class AgentSession {
     }
   }
 
+  /**
+   * One turn, in order: `turn_start`; `compileView`; `applyRoute` (a
+   * missing adapter ends the turn as `error` before any request entry);
+   * `recordRequest`; `collectWithTurnRetry`, which streams the request and
+   * may resend it after a transport error; `recordAssistant`; then
+   * `settleAssistant` picks the outcome. `turn_end` carries that outcome.
+   * The result's `prepared` is the call the next turn uses.
+   */
   private async turn(
     turn: number,
     prepared: PreparedCall,
     signal: AbortSignal | undefined,
-  ): Promise<
-    | { kind: "continue"; usage: Usage; prepared: PreparedCall }
-    | {
-        kind: "done" | "aborted" | "error";
-        usage: Usage;
-        error?: string;
-        prepared: PreparedCall;
-      }
-  > {
+  ): Promise<TurnResult> {
     await this.dispatcher.emit("turn_start", { turn });
+    const view = await this.compileView(turn, prepared);
+    const routed = this.applyRoute(view, prepared);
+    if ("error" in routed) {
+      return this.endTurn(turn, {
+        kind: "error",
+        usage: emptyUsage(),
+        error: routed.error,
+        prepared,
+      });
+    }
+    const active = routed.prepared;
+    const request = this.recordRequest(view, active);
+    const streamed = await collectWithTurnRetry({
+      store: this.store,
+      sessionId: this.sessionId,
+      adapter: this.adapter,
+      sleep: this.sleep,
+      turn,
+      request,
+      prepared: active,
+      signal,
+    });
+    if (streamed === "aborted") {
+      return this.endTurn(turn, {
+        kind: "aborted",
+        usage: emptyUsage(),
+        prepared: active,
+      });
+    }
+    await this.recordAssistant(streamed);
+    return this.endTurn(
+      turn,
+      await this.settleAssistant(streamed, active, signal),
+    );
+  }
+
+  private async endTurn(turn: number, result: TurnResult): Promise<TurnResult> {
+    await this.dispatcher.emit("turn_end", { turn, outcome: result.kind });
+    return result;
+  }
+
+  /**
+   * Asks the ViewProvider for this turn's view and checks it before anything
+   * is appended. `ViewContext.path` is a structured clone of the path taken
+   * before `view()`; `tools` is the constructor's tool list; `head` is the
+   * session's system prompt and tool schemas. Throws `UnpairedToolCallError`
+   * or `HeadChangedMidEpochError` (see `assertHeadFrozenOnPath`). Observers of
+   * `view_compiled` receive a structured clone, so their edits never reach
+   * the request.
+   */
+  private async compileView(
+    turn: number,
+    prepared: PreparedCall,
+  ): Promise<CompiledView> {
     const parentPath = this.parentSnapshot();
     const view = await this.viewProvider.view({
       sessionId: this.sessionId,
       turn,
-      path: structuredClone(this.store.path(this.sessionId)) as StoredEntry[],
+      path: structuredClone(this.store.path(this.sessionId)),
       model: this.model,
       prepared,
       head: this.injectedHead(),
@@ -339,29 +335,20 @@ export class AgentSession {
       ...(parentPath ? { parentPath } : {}),
     });
     assertPaired(view.messages);
-    this.assertEpoch(view);
+    assertHeadFrozenOnPath(view, this.store.path(this.sessionId));
     await this.dispatcher.emit("view_compiled", {
       view: structuredClone(view),
     });
-    const routed = this.applyRoute(view, prepared);
-    if ("error" in routed) {
-      await this.dispatcher.emit("turn_end", { turn, outcome: "error" });
-      return {
-        kind: "error",
-        usage: emptyUsage(),
-        error: routed.error,
-        prepared,
-      };
-    }
-    const active = routed.prepared;
+    return view;
+  }
+
+  /**
+   * Appends this turn's request entries in order (`view_epoch` when due,
+   * `request_header`, `manifest`) and returns the request they describe.
+   * The manifest payload is `view.manifest`; its details are `view.details`.
+   */
+  private recordRequest(view: CompiledView, active: PreparedCall): Request {
     const sampling = mergeSampling(active.adapterDefaults, this.sampling);
-    const request: Request = {
-      model: this.model,
-      head: view.head,
-      messages: view.messages,
-      cacheBreakpoints: [...view.cacheBreakpoints],
-      sampling,
-    };
     this.appendViewEpoch(view);
     this.appendHeader(view, sampling, active);
     this.store.append(this.sessionId, {
@@ -369,17 +356,22 @@ export class AgentSession {
       payload: view.manifest,
       ...(view.details ? { details: view.details } : {}),
     });
-    const streamed = await this.collectWithTurnRetry(
-      turn,
-      request,
-      active,
-      signal,
-    );
-    if (streamed === "aborted") {
-      await this.dispatcher.emit("turn_end", { turn, outcome: "aborted" });
-      return { kind: "aborted", usage: emptyUsage(), prepared: active };
-    }
-    const assistant = streamed;
+    return {
+      model: this.model,
+      head: view.head,
+      messages: view.messages,
+      cacheBreakpoints: [...view.cacheBreakpoints],
+      sampling,
+    };
+  }
+
+  /**
+   * Appends the assistant message, then emits `llm_end`. Details are
+   * `{responseModel, responseId, api, usage, finish}`; the response id and
+   * model come from the stream's response chunk and are empty when the call
+   * failed before the body began.
+   */
+  private async recordAssistant(assistant: AssistantMessage): Promise<void> {
     this.store.append(this.sessionId, {
       kind: "message",
       payload: { role: "assistant", content: assistant.content },
@@ -392,76 +384,54 @@ export class AgentSession {
       },
     });
     await this.dispatcher.emit("llm_end", { assistant });
+  }
 
+  /**
+   * Maps a recorded assistant message to the turn outcome. An aborted finish
+   * or signal is `aborted`; a finish error is `error`; `tool_use` runs the
+   * tools and appends one user message with every result, then `continue`
+   * (or `aborted`, with nothing appended, when the signal fired meanwhile);
+   * any other finish is `done`.
+   */
+  private async settleAssistant(
+    assistant: AssistantMessage,
+    active: PreparedCall,
+    signal: AbortSignal | undefined,
+  ): Promise<TurnResult> {
+    const usage = assistant.usage;
     if (assistant.finish.kind === "aborted" || signal?.aborted) {
-      await this.dispatcher.emit("turn_end", { turn, outcome: "aborted" });
-      return { kind: "aborted", usage: assistant.usage, prepared: active };
+      return { kind: "aborted", usage, prepared: active };
     }
     if (assistant.finish.kind === "error") {
-      await this.dispatcher.emit("turn_end", { turn, outcome: "error" });
       return {
         kind: "error",
-        usage: assistant.usage,
+        usage,
         error: assistant.finish.error?.message ?? "model request failed",
         prepared: active,
       };
     }
-    if (assistant.finish.kind === "tool_use") {
-      const ran = await this.runTools(toolUses(assistant.content), signal);
-      if (signal?.aborted) {
-        await this.dispatcher.emit("turn_end", { turn, outcome: "aborted" });
-        return { kind: "aborted", usage: assistant.usage, prepared: active };
-      }
-      if (ran.results.length > 0) {
-        const payload: Message = { role: "user", content: ran.results };
-        this.store.append(this.sessionId, {
-          kind: "message",
-          payload,
-          ...(ran.toolResults.length > 0
-            ? { details: { toolResults: ran.toolResults } }
-            : {}),
-        });
-      }
-      await this.dispatcher.emit("turn_end", { turn, outcome: "continue" });
-      return { kind: "continue", usage: assistant.usage, prepared: active };
+    if (assistant.finish.kind !== "tool_use") {
+      return { kind: "done", usage, prepared: active };
     }
-    await this.dispatcher.emit("turn_end", { turn, outcome: "done" });
-    return { kind: "done", usage: assistant.usage, prepared: active };
+    const ran = await runToolCalls({
+      dispatcher: this.dispatcher,
+      tools: this.tools,
+      sessionId: this.sessionId,
+      calls: toolUses(assistant.content),
+      signal,
+    });
+    if (signal?.aborted) return { kind: "aborted", usage, prepared: active };
+    this.appendToolResults(ran.results, ran.toolResults);
+    return { kind: "continue", usage, prepared: active };
   }
 
-  private async collectWithTurnRetry(
-    turn: number,
-    request: Request,
-    active: PreparedCall,
-    signal: AbortSignal | undefined,
-  ): Promise<AssistantMessage | "aborted"> {
-    let attempt = 0;
-    while (true) {
-      const assistant = await collect(
-        this.adapter.stream(request, active, signal),
-        { api: this.adapter.api },
-      );
-      if (assistant.finish.kind === "aborted" || signal?.aborted) {
-        return assistant;
-      }
-      const reason = turnTransportReason(assistant.finish);
-      const committed = assistantAfterLatestHeader(
-        this.store.path(this.sessionId),
-      );
-      if (reason !== undefined && !committed && attempt < TURN_RETRY_LIMIT) {
-        attempt += 1;
-        await this.sleep(backoffMs(attempt, TURN_RETRY_BASE_MS), signal);
-        if (signal?.aborted) return "aborted";
-        this.store.append(this.sessionId, {
-          kind: "turn_retry",
-          payload: { turn, attempt, reason },
-        });
-        continue;
-      }
-      return assistant;
-    }
-  }
-
+  /**
+   * Switches model when `view.epochStart.model` names a different one:
+   * appends `model_change {from, to, reason}` first, then switches adapter
+   * and prepares again. The head is not rewritten on a switch. Returns an
+   * error, after the model_change entry, when no adapter serves the new
+   * provider; no request is sent then.
+   */
   private applyRoute(
     view: CompiledView,
     prepared: PreparedCall,
@@ -486,7 +456,7 @@ export class AgentSession {
     if (!this.parent) return undefined;
     return structuredClone(
       this.store.path(this.parent.sessionId, this.parent.leafId),
-    ) as StoredEntry[];
+    );
   }
 
   private injectedHead(): Head {
@@ -494,21 +464,6 @@ export class AgentSession {
       system: this.system,
       tools: this.tools.map((tool) => tool.def),
     };
-  }
-
-  private assertEpoch(view: CompiledView): void {
-    const path = this.store.path(this.sessionId);
-    const prev = lastHeader(path);
-    const { latest, frozen } = epochState(path);
-    const systemSame =
-      prev !== undefined &&
-      prev.systemPromptHash === systemHash(view.head.system);
-    const toolsSame =
-      prev !== undefined && prev.toolsHash === toolsHash(view.head.tools);
-    if (prev && (!systemSame || !toolsSame) && view.epoch !== latest) {
-      throw new HeadChangedMidEpochError();
-    }
-    assertHeadFrozen(view, prev, frozen);
   }
 
   private appendUser(text: string): void {
@@ -519,26 +474,37 @@ export class AgentSession {
     this.store.append(this.sessionId, { kind: "message", payload });
   }
 
+  /**
+   * Appends `view_epoch {epoch, reason}` when `view.epochStart` is set, or
+   * when `view.epoch` is greater than the latest view_epoch on the path
+   * (0 when there is none). `reason` is `epochStart.reason`, else
+   * `epoch-advanced`. `details.epochHead` is the view's first message.
+   */
   private appendViewEpoch(view: CompiledView): void {
     const latest = latestViewEpoch(this.store.path(this.sessionId));
     if (!view.epochStart && view.epoch <= latest) return;
-    const epochHead = view.messages[0];
+    const firstMessage = view.messages[0];
     this.store.append(this.sessionId, {
       kind: "view_epoch",
       payload: {
         epoch: view.epoch,
         reason: view.epochStart?.reason ?? "epoch-advanced",
       },
-      ...(epochHead ? { details: { epochHead } } : {}),
+      ...(firstMessage ? { details: { epochHead: firstMessage } } : {}),
     });
   }
 
+  /**
+   * Appends the request envelope. `system` and `tools` carry full text only
+   * when their hash differs from the previous request_header on the path,
+   * or when there is none; otherwise the hashes alone identify them.
+   */
   private appendHeader(
     view: CompiledView,
     sampling: Sampling,
     prepared: PreparedCall,
   ): void {
-    const prev = lastHeader(this.store.path(this.sessionId));
+    const prev = lastRequestHeader(this.store.path(this.sessionId));
     const systemPromptHash = systemHash(view.head.system);
     const toolsDigest = toolsHash(view.head.tools);
     const payload: RequestHeaderPayload = {
@@ -546,7 +512,7 @@ export class AgentSession {
       model: this.model.model,
       systemPromptHash,
       toolsHash: toolsDigest,
-      sampling: { ...sampling } as Record<string, unknown>,
+      sampling: { ...sampling },
       adapterDefaults: { ...prepared.adapterDefaults },
     };
     if (!prev || prev.systemPromptHash !== systemPromptHash) {
@@ -558,60 +524,29 @@ export class AgentSession {
     this.store.append(this.sessionId, { kind: "request_header", payload });
   }
 
-  private async runTools(
-    calls: ToolUseBlock[],
-    signal: AbortSignal | undefined,
-  ): Promise<{
-    results: ToolResultBlock[];
-    toolResults: {
-      toolUseId: string;
-      name: string;
-      details: Record<string, unknown>;
-    }[];
-  }> {
-    const results = [];
-    const toolResults: {
-      toolUseId: string;
-      name: string;
-      details: Record<string, unknown>;
-    }[] = [];
-    for (const call of calls) {
-      if (signal?.aborted) break;
-      const tool = this.tools.find((item) => item.def.name === call.name);
-      const wrapped = tool
-        ? {
-            ...tool,
-            execute: async (
-              input: unknown,
-              ctx: {
-                sessionId: string;
-                toolUseId: string;
-                signal?: AbortSignal;
-              },
-            ) => {
-              const raw = await tool.execute(input, ctx);
-              if (raw.details) {
-                toolResults.push({
-                  toolUseId: call.id,
-                  name: call.name,
-                  details: raw.details,
-                });
-              }
-              return raw;
-            },
-          }
-        : undefined;
-      results.push(
-        await this.dispatcher.runTool(call, wrapped, {
-          sessionId: this.sessionId,
-          toolUseId: call.id,
-          signal,
-        }),
-      );
-    }
-    return { results, toolResults };
+  /**
+   * Appends one user message holding every tool_result, with
+   * `details.toolResults` when any tool returned details. Appends nothing
+   * when there are no results.
+   */
+  private appendToolResults(
+    results: ToolResultBlock[],
+    toolResults: ToolResultDetails[],
+  ): void {
+    if (results.length === 0) return;
+    const payload: Message = { role: "user", content: results };
+    this.store.append(this.sessionId, {
+      kind: "message",
+      payload,
+      ...(toolResults.length > 0 ? { details: { toolResults } } : {}),
+    });
   }
 
+  /**
+   * Appends the terminal entry `{outcome, usage, health, error?}` and emits
+   * `session_end`. `health` is `runHealth` of the path before the terminal
+   * entry; the returned summary holds the same object.
+   */
   private async finish(
     outcome: RunSummary["outcome"],
     turns: number,

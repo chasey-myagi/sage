@@ -2,8 +2,11 @@
  * Contract barrel. Types, the pure `collect` fold, and the dependency-free
  * helpers every layer above shares (`isRecord`, usage arithmetic, backoff).
  *
- * Deliberately not a Log entry: nothing in this module performs I/O. The
- * only side effect anywhere in it is the timer inside `sleep`.
+ * Guarantees: nothing under this path performs I/O or imports anything
+ * outside it; the only side effect is the timer inside `sleep`. core may
+ * import only this subpath of the provider package.
+ *
+ * Intentionally not in the Log: nothing here appends.
  */
 
 export type {
@@ -31,7 +34,12 @@ export type {
   ToolUseBlock,
 } from "./message.js";
 export { isRecord } from "./record.js";
-export type { FinishError, FinishKind, StreamChunk } from "./stream.js";
+export {
+  type FinishError,
+  type FinishKind,
+  INCOMPLETE_STREAM,
+  type StreamChunk,
+} from "./stream.js";
 export {
   addUsage,
   emptyUsage,

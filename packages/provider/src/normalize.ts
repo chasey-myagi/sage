@@ -1,7 +1,7 @@
 /**
  * Cross-provider message normalization. Pure function.
  *
- * Contract: `openai-chat` drops every thinking block. Tool ids that start
+ * Guarantees: `openai-chat` drops every thinking block. Tool ids that start
  * with `toolu_` become `call_` plus the first 24 hex chars of sha256(id);
  * matching tool_result ids change with them. Other ids stay. `anthropic-messages`
  * drops thinking blocks that have no signature and leaves every other block
@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import type { ProviderAdapter } from "./contract/adapter.js";
 import type { ContentBlock, Message } from "./contract/message.js";
 
+/** A normalized copy of `messages` for `api`; the input is not mutated. */
 export function normalizeForApi(
   messages: Message[],
   api: ProviderAdapter["api"],

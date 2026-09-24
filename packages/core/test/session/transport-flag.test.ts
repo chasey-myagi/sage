@@ -1,7 +1,11 @@
 import { OpenAIAdapter } from "@sage/provider";
 import { describe, expect, it } from "vitest";
 import { AgentSession, MemoryLogStore } from "../../src/index.ts";
-import { createFaux, SYSTEM, stopScript } from "../support/faux.ts";
+import {
+  createFaux,
+  FAUX_SYSTEM as SYSTEM,
+  stopScript,
+} from "../../src/testing/index.ts";
 
 const MODEL = { provider: "openai", model: "gpt-5" };
 

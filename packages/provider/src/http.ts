@@ -1,15 +1,20 @@
 /**
- * POST JSON and classify the response. Non-2xx and transport failures stay
- * data; callers turn them into finish chunks.
+ * POSTs JSON and classifies the response.
  *
- * Deliberately not a Log entry: the API key, the abort signal, and the
+ * Guarantees: nothing here throws for a failed call. Non-2xx responses and
+ * transport failures come back as data (`PostFail`), and a fetch throw is
+ * marked `transport: true`; callers turn them into finish chunks.
+ *
+ * Intentionally not in the Log: the API key, the abort signal, and the
  * response bytes never leave this module as a fact to append.
  */
 
 import type { Sleeper } from "./contract/backoff.js";
+import { INCOMPLETE_STREAM } from "./contract/stream.js";
 import { asRecord } from "./record.js";
 import type { RetryPolicy } from "./retry.js";
 
+/** Adapter constructor options. */
 export type ClientOptions = {
   apiKey: string;
   baseUrl?: string;
@@ -23,13 +28,27 @@ export type ClientOptions = {
   sleep?: Sleeper;
 };
 
+/** `ClientOptions` with the base URL resolved; what an adapter keeps. */
+export type Client = Omit<ClientOptions, "baseUrl"> & { baseUrl: string };
+
+/** Fills in `defaultBaseUrl` when `options.baseUrl` is absent. */
+export function resolveClient(
+  options: ClientOptions,
+  defaultBaseUrl: string,
+): Client {
+  return { ...options, baseUrl: options.baseUrl ?? defaultBaseUrl };
+}
+
+/** `base` plus `path`, with at most one slash between them. */
 export function joinUrl(base: string, path: string): string {
   const root = base.endsWith("/") ? base.slice(0, -1) : base;
   return `${root}${path}`;
 }
 
+/** The call reached a 2xx with a body; the caller now owns `body`. */
 export type PostOk = { ok: true; body: ReadableStream<Uint8Array> };
 
+/** A failed call. `raw` is the parsed error body (or its text), if any. */
 export type PostFail = {
   ok: false;
   aborted: boolean;
@@ -40,6 +59,10 @@ export type PostFail = {
   transport?: boolean;
 };
 
+/**
+ * One POST. The error message comes from the body's `error.message` or
+ * `message` when present, else the body text, else `HTTP <status>`.
+ */
 export async function postJson(args: {
   url: string;
   headers: Record<string, string>;
@@ -77,7 +100,7 @@ export async function postJson(args: {
     return {
       ok: false,
       aborted: false,
-      message: "stream ended before completion",
+      message: INCOMPLETE_STREAM,
     };
   }
   return { ok: true, body: response.body };
@@ -114,11 +137,13 @@ function messageFromPayload(raw: unknown): string | undefined {
   return undefined;
 }
 
+/** True for the `AbortError` fetch throws when its signal fires. */
 export function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
+/** The error's message, or `INCOMPLETE_STREAM` when it has none. */
 export function messageOf(error: unknown): string {
   if (error instanceof Error && error.message.length > 0) return error.message;
-  return "stream ended before completion";
+  return INCOMPLETE_STREAM;
 }

@@ -1,42 +1,50 @@
 /**
- * Read one SSE response and let the adapter translate events.
- * Every exit yields usage and then a single finish chunk.
- * Fetch throws, HTTP 429, and HTTP 5xx are retried before the body
- * starts. Once parseSse is entered, a later failure is not retried.
- * A fetch throw, and a throw while reading the body, finish with
- * error.transport = true. A throw from the adapter's onEvent does not.
+ * Reads one SSE response and lets the adapter translate its events: the
+ * protocol-independent half of every adapter.
  *
- * Deliberately not a Log entry: this is the live decode of one call.
- * Wire frames stay in the SSE parser. The abort signal stays here.
- * Intermediate failure bodies are not entries. Retry count and the
- * last failure reason are copied onto the usage chunk.
+ * Guarantees: every exit yields usage and then a single finish chunk.
+ * Fetch throws, HTTP 429, and HTTP 5xx are retried before the body starts;
+ * once parsing begins, a later failure is not retried. A fetch throw, and
+ * a throw while reading the body, finish with `error.transport = true`; a
+ * throw from the adapter's `onEvent` does not.
+ *
+ * Intentionally not in the Log: this is the live decode of one call. Wire
+ * frames stay in the SSE parser and the abort signal stays here.
+ * Intermediate failure bodies are not entries. Retry count and the last
+ * failure reason are copied onto the usage chunk.
  */
 
-import type { Sleeper } from "./contract/backoff.js";
 import type { ContentBlock } from "./contract/message.js";
-import type {
-  FinishError,
-  FinishKind,
-  StreamChunk,
+import {
+  type FinishError,
+  type FinishKind,
+  INCOMPLETE_STREAM,
+  type StreamChunk,
 } from "./contract/stream.js";
 import { emptyUsage, type Usage } from "./contract/usage.js";
-import { isAbortError, messageOf } from "./http.js";
-import type { RetryPolicy } from "./retry.js";
-import { openWithRetry } from "./retry.js";
+import { type Client, isAbortError, joinUrl, messageOf } from "./http.js";
+import { type OpenedCall, openWithRetry } from "./retry.js";
 import type { SseEvent } from "./sse.js";
 import { parseSse } from "./sse.js";
 
+/** The stop an adapter decoded from the wire; becomes the finish chunk. */
 export type WireStop = {
   kind: FinishKind;
   rawFinishReason?: string;
 };
 
+/**
+ * What `onEvent` may do: queue chunks, replace the running usage, and
+ * record the stop. Only the first `complete` counts; the stream finishes
+ * after the event that called it.
+ */
 export type Driver = {
   push(chunk: StreamChunk): void;
   setUsage(usage: Usage): void;
   complete(stop: WireStop): void;
 };
 
+/** A block_start chunk; `id` and `name` are omitted when undefined. */
 export function blockStart(
   index: number,
   blockType: ContentBlock["type"],
@@ -53,128 +61,117 @@ export function blockStart(
   return chunk;
 }
 
-export async function* driveStream(args: {
-  url: string;
+/** One streamed POST: what differs between adapters. */
+export type SseCall = {
+  /** Appended to the client's base URL. */
+  path: string;
   headers: Record<string, string>;
   json: unknown;
   signal?: AbortSignal;
-  fetchImpl?: typeof fetch;
-  retry?: RetryPolicy;
-  sleep?: Sleeper;
+  /** Translates one wire event; runs synchronously between yields. */
   onEvent(event: SseEvent, driver: Driver): void;
-}): AsyncGenerator<StreamChunk> {
-  let usage: Usage | undefined;
-  let stop: WireStop | undefined;
-  let sealed = false;
-  let reading = false;
-  let retries = 0;
-  let retryReason: string | undefined;
+};
+
+/**
+ * Streams one call. Never throws; see the guarantees above. Aborting
+ * `call.signal` finishes as `aborted` at the next chunk boundary.
+ */
+export async function* driveStream(
+  client: Client,
+  call: SseCall,
+): AsyncGenerator<StreamChunk> {
+  const signal = call.signal;
+  const decode = startDecode();
+  let opened: OpenedCall | undefined;
+  let finish: StreamChunk;
+  try {
+    if (!signal?.aborted) {
+      opened = await openWithRetry({
+        url: joinUrl(client.baseUrl, call.path),
+        headers: call.headers,
+        json: call.json,
+        signal,
+        fetchImpl: client.fetchImpl,
+        retry: client.retry,
+        sleep: client.sleep,
+      });
+    }
+    if (!opened) finish = abortedFinish();
+    else if (!opened.ok) finish = openFailure(opened);
+    else finish = yield* readBody(opened.body, call, decode);
+  } catch (error) {
+    // Once the call opened, only the body read can throw here: a failure
+    // below HTTP, the same class as a fetch throw.
+    finish = failureFinish(signal, error, opened?.ok === true);
+  }
+  const usage = withRetry(decode.usage, opened?.retries ?? 0, opened?.reason);
+  yield* end(usage, finish);
+}
+
+/** Decoder state `onEvent` writes through its `Driver`. */
+type Decode = {
+  usage?: Usage;
+  stop?: WireStop;
+  pending: StreamChunk[];
+  driver: Driver;
+};
+
+function startDecode(): Decode {
   const pending: StreamChunk[] = [];
-  const driver: Driver = {
-    push(chunk) {
-      pending.push(chunk);
-    },
-    setUsage(next) {
-      usage = next;
-    },
-    complete(next) {
-      if (!stop) stop = next;
+  const decode: Decode = {
+    pending,
+    driver: {
+      push(chunk) {
+        pending.push(chunk);
+      },
+      setUsage(next) {
+        decode.usage = next;
+      },
+      complete(next) {
+        decode.stop ??= next;
+      },
     },
   };
-  const noted = (): Usage | undefined => withRetry(usage, retries, retryReason);
+  return decode;
+}
 
-  try {
-    if (args.signal?.aborted) {
-      sealed = true;
-      yield* end(noted(), {
-        type: "finish",
-        kind: "aborted",
-      });
-      return;
+/**
+ * Feeds SSE events to `onEvent` and yields the chunks it queues. Returns
+ * the finish chunk: the recorded stop, `aborted`, an `onEvent` failure
+ * (after yielding what it queued first), or `INCOMPLETE_STREAM` when the
+ * body ends without a stop. A throw while reading the body propagates.
+ */
+async function* readBody(
+  body: ReadableStream<Uint8Array>,
+  call: SseCall,
+  decode: Decode,
+): AsyncGenerator<StreamChunk, StreamChunk> {
+  const signal = call.signal;
+  for await (const event of parseSse(body)) {
+    if (signal?.aborted) return abortedFinish();
+    try {
+      call.onEvent(event, decode.driver);
+    } catch (error) {
+      yield* decode.pending.splice(0, decode.pending.length);
+      return failureFinish(signal, error, false);
     }
-    const opened = await openWithRetry({
-      url: args.url,
-      headers: args.headers,
-      json: args.json,
-      signal: args.signal,
-      fetchImpl: args.fetchImpl,
-      retry: args.retry,
-      sleep: args.sleep,
-    });
-    retries = opened.retries;
-    retryReason = opened.reason;
-    if (!opened.ok) {
-      sealed = true;
-      if (opened.aborted) {
-        yield* end(noted(), {
-          type: "finish",
-          kind: "aborted",
-        });
-      } else {
-        yield* end(
-          noted(),
-          errorFinish({
-            message: opened.message,
-            status: opened.status,
-            raw: opened.raw,
-            transport: opened.transport,
-          }),
-        );
-      }
-      return;
-    }
-    reading = true;
-    for await (const event of parseSse(opened.body)) {
-      if (args.signal?.aborted) {
-        sealed = true;
-        yield* end(noted(), {
-          type: "finish",
-          kind: "aborted",
-        });
-        return;
-      }
-      try {
-        args.onEvent(event, driver);
-      } catch (error) {
-        yield* pending.splice(0, pending.length);
-        sealed = true;
-        yield* end(noted(), failureFinish(args.signal, error, false));
-        return;
-      }
-      yield* take(pending, args.signal);
-      if (args.signal?.aborted) {
-        sealed = true;
-        yield* end(noted(), {
-          type: "finish",
-          kind: "aborted",
-        });
-        return;
-      }
-      if (stop) {
-        sealed = true;
-        yield* end(noted(), successFinish(stop));
-        return;
-      }
-    }
-    if (args.signal?.aborted) {
-      sealed = true;
-      yield* end(noted(), {
-        type: "finish",
-        kind: "aborted",
-      });
-      return;
-    }
-    sealed = true;
-    yield* end(
-      noted(),
-      errorFinish({ message: "stream ended before completion" }),
-    );
-  } catch (error) {
-    if (sealed) return;
-    // Only the body read can throw here once reading is set; that is a
-    // failure below HTTP, the same class as a fetch throw.
-    yield* end(noted(), failureFinish(args.signal, error, reading));
+    yield* take(decode.pending, signal);
+    if (signal?.aborted) return abortedFinish();
+    if (decode.stop) return successFinish(decode.stop);
   }
+  return signal?.aborted
+    ? abortedFinish()
+    : errorFinish({ message: INCOMPLETE_STREAM });
+}
+
+function openFailure(opened: Extract<OpenedCall, { ok: false }>): StreamChunk {
+  if (opened.aborted) return abortedFinish();
+  return errorFinish({
+    message: opened.message,
+    status: opened.status,
+    raw: opened.raw,
+    transport: opened.transport,
+  });
 }
 
 function* take(
@@ -188,14 +185,16 @@ function* take(
   }
 }
 
+function abortedFinish(): StreamChunk {
+  return { type: "finish", kind: "aborted" };
+}
+
 function failureFinish(
   signal: AbortSignal | undefined,
   error: unknown,
   transport: boolean,
 ): StreamChunk {
-  if (signal?.aborted || isAbortError(error)) {
-    return { type: "finish", kind: "aborted" };
-  }
+  if (signal?.aborted || isAbortError(error)) return abortedFinish();
   return errorFinish({ message: messageOf(error), transport });
 }
 

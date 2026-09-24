@@ -1,7 +1,7 @@
 /**
  * Prefix-aware rendering of one model request.
  *
- * Contract: the text is `system:`, `tools:`, then `messages:`. Tools are
+ * Guarantees: the text is `system:`, `tools:`, then `messages:`. Tools are
  * JSON with sorted object keys. Each message starts with `[role]` and then
  * one line per block. When `previous` has the same head and its messages are
  * a JSON prefix of this request, the render collapses to `<same>` / `<last>`
@@ -75,6 +75,7 @@ function fullRender(request: Request): string {
   return messages.length === 0 ? head : `${head}\n${messages}`;
 }
 
+/** Renders `request`, collapsed against `previous` when it is a prefix. */
 export function renderLlmInput(request: Request, previous?: Request): string {
   if (
     previous === undefined ||

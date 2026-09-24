@@ -1,10 +1,13 @@
 /**
- * Provider package entry.
+ * Provider package entry: the two adapters, the model catalog, endpoint
+ * presets, and the contract types. Callers above core use this; core uses
+ * `@sage/provider/contract` only.
  *
- * Deliberately not a Log entry: this module only re-exports. API keys,
+ * Intentionally not in the Log: this module only re-exports. API keys,
  * wire bytes, and abort signals stay inside the adapters.
  */
 
+/** Package name, for diagnostics. */
 export const PACKAGE = "@sage/provider" as const;
 
 export { AnthropicAdapter } from "./anthropic/index.js";

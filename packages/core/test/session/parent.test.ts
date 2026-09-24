@@ -7,7 +7,12 @@ import {
   UnknownEntryKindError,
   type ViewContext,
 } from "../../src/index.ts";
-import { createFaux, MODEL, SYSTEM, stopScript } from "../support/faux.ts";
+import {
+  createFaux,
+  FAUX_MODEL as MODEL,
+  FAUX_SYSTEM as SYSTEM,
+  stopScript,
+} from "../../src/testing/index.ts";
 
 function user(text: string) {
   return {
