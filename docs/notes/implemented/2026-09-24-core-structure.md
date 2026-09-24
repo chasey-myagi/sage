@@ -26,7 +26,7 @@
 
 **类型与术语。**`ChunkRecord` 与 `ClaimRecord` 字段相同、语义相同（manifest 上一行档位决定：id、档位、理由、token 数），改为一个 `TierRecord` 加两个别名，档位联合提成 `Tier`，都从 `@sage/core` 导出。`view/types.ts` 在对应类型上定义了 chunk、tier（四档各是什么形态）、claim、epoch、stub、manifest、payback / alpha / expectedTurns（`EpochDecisionReport`）、影子打分与入口打分。`BudgetReport` 补上编译器一直在写、类型里却没有的 `omitted`（本轮 none 档块数）与 `expands`（路径上 expand 调用的累计数），可选字段，运行时不变。
 
-**head。**只改了纯代码内的标识符：`appendViewEpoch` 里指 `messages[0]` 的局部变量改名 `firstMessage`。写进 Log 的 `details.epochHead`、`calibration.head` 不改名，在 `Head`、`ViewEpochPayload`、`CalibrationReport.head` 的 JSDoc 写清含义；持久化字段怎么改见 [head 命名提议](../proposed/2026-09-24-head-naming.md)。
+**head。**只改了纯代码内的标识符：`appendViewEpoch` 里指 `messages[0]` 的局部变量改名 `firstMessage`。写进 Log 的 `details.epochHead`、`calibration.head` 不改名，在 `Head`、`ViewEpochPayload`、`CalibrationReport.head` 的 JSDoc 写清含义；持久化字段怎么改见 [head 命名](./2026-09-24-head-naming.md)。
 
 **注释。**core 与 provider 每个 `src` 文件的文件头改成职责、保证、`Intentionally not in the Log:` 三段，都不超过 25 行（`session.ts` 65→22，`log/kinds.ts` 53→14，`health.ts` 30→12，`view/types.ts` 28→16）；`kinds.ts` 的逐字段校验规则挪到各 payload 类型上，`health.ts` 的计算口径挪到 `RunHealth` 的字段上。每个导出符号补了 JSDoc。裸 issue 编号换成结论。「no high-water mark」只留在 `log/jsonl.ts`，并解释了是什么。`log/kinds.ts` 的文件头、`RequestHeaderPayload` 与 `request_header` 的 `doc` 改成与 session 实际行为一致，`docs/log-manifest.md` 随之重新生成。
 
