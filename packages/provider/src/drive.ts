@@ -7,7 +7,7 @@
  * once parsing begins, a later failure is not retried. A fetch throw, a
  * throw while reading the body, and a body that ends before the adapter
  * records a stop finish with `error.transport = true`; a throw from the
- * adapter's `onEvent` does not.
+ * adapter's `onEvent` and an error event the adapter records do not.
  *
  * Intentionally not in the Log: this is the live decode of one call. Wire
  * frames stay in the SSE parser and the abort signal stays here.
@@ -23,7 +23,13 @@ import {
   type StreamChunk,
 } from "./contract/stream.js";
 import { emptyUsage, type Usage } from "./contract/usage.js";
-import { type Client, isAbortError, joinUrl, messageOf } from "./http.js";
+import {
+  type Client,
+  isAbortError,
+  joinUrl,
+  messageFromPayload,
+  messageOf,
+} from "./http.js";
 import { type OpenedCall, openWithRetry } from "./retry.js";
 import type { SseEvent } from "./sse.js";
 import { parseSse } from "./sse.js";
@@ -36,14 +42,24 @@ export type WireStop = {
 
 /**
  * What `onEvent` may do: queue chunks, replace the running usage, and
- * record the stop. Only the first `complete` counts; the stream finishes
- * after the event that called it.
+ * record how the response ended: `complete` for a stop, `fail` for an
+ * error event the server sent inside the stream. Only the first `complete`
+ * or `fail` counts; the stream finishes after the event that called it.
  */
 export type Driver = {
   push(chunk: StreamChunk): void;
   setUsage(usage: Usage): void;
   complete(stop: WireStop): void;
+  /**
+   * Records a server error event. `raw` is the parsed event object; the
+   * finish message is its `error.message` (or `message`), else
+   * `STREAM_ERROR_EVENT`. The finish is not a transport failure.
+   */
+  fail(raw: Record<string, unknown>): void;
 };
+
+/** Finish message for an in-stream error event that carries no message. */
+const STREAM_ERROR_EVENT = "provider sent an error event";
 
 /** A block_start chunk; `id` and `name` are omitted when undefined. */
 export function blockStart(
@@ -109,10 +125,15 @@ export async function* driveStream(
   yield* end(usage, finish);
 }
 
+/** How the response ended, as the adapter recorded it. */
+type WireEnd =
+  | { type: "stop"; stop: WireStop }
+  | { type: "error"; raw: Record<string, unknown> };
+
 /** Decoder state `onEvent` writes through its `Driver`. */
 type Decode = {
   usage?: Usage;
-  stop?: WireStop;
+  end?: WireEnd;
   pending: StreamChunk[];
   driver: Driver;
 };
@@ -128,8 +149,11 @@ function startDecode(): Decode {
       setUsage(next) {
         decode.usage = next;
       },
-      complete(next) {
-        decode.stop ??= next;
+      complete(stop) {
+        decode.end ??= { type: "stop", stop };
+      },
+      fail(raw) {
+        decode.end ??= { type: "error", raw };
       },
     },
   };
@@ -138,7 +162,7 @@ function startDecode(): Decode {
 
 /**
  * Feeds SSE events to `onEvent` and yields the chunks it queues. Returns
- * the finish chunk: the recorded stop, `aborted`, an `onEvent` failure
+ * the finish chunk: the recorded stop or error event, `aborted`, an `onEvent` failure
  * (after yielding what it queued first), or a transport `INCOMPLETE_STREAM`
  * when the body ends without a stop. A throw while reading the body
  * propagates.
@@ -159,7 +183,7 @@ async function* readBody(
     }
     yield* take(decode.pending, signal);
     if (signal?.aborted) return abortedFinish();
-    if (decode.stop) return successFinish(decode.stop);
+    if (decode.end) return endFinish(decode.end);
   }
   // The connection closed before the response completed: the same failure
   // as a proxy cutting the socket, only without a thrown error.
@@ -208,6 +232,14 @@ function* end(
 ): Generator<StreamChunk> {
   yield { type: "usage", usage: usage ?? emptyUsage() };
   yield finish;
+}
+
+function endFinish(end: WireEnd): StreamChunk {
+  if (end.type === "stop") return successFinish(end.stop);
+  return errorFinish({
+    message: messageFromPayload(end.raw) ?? STREAM_ERROR_EVENT,
+    raw: end.raw,
+  });
 }
 
 function successFinish(stop: WireStop): StreamChunk {

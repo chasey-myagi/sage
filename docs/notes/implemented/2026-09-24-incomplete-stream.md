@@ -17,7 +17,7 @@ SSE body 正常关闭、却没有收到结束信号（OpenAI 的 `[DONE]`、Anth
 - `http.ts` 的 `messageOf`：抛出的值没有消息时的回退文案。经 fetch 抛错、读 body 抛错的路径本来就打标；经 adapter `onEvent` 抛错的路径是解析缺陷，不打标，不变。
 - `contract/collect.ts`：流里没有 finish chunk 时的默认值。那是 adapter 违反契约，不是传输失败，不打标，不变。
 
-`contract/stream.ts` 的不变量改写：`transport` 为 true 当且仅当失败发生在 HTTP 之下，包括 fetch 抛错、读 body 抛错、响应在完成前结束（2xx 没有 body，或 SSE body 没收到 stop 就关闭）。读完错误体的 HTTP 状态和流内 error 事件仍不打标。
+`contract/stream.ts` 的不变量改写：`transport` 为 true 当且仅当失败发生在 HTTP 之下，包括 fetch 抛错、读 body 抛错、响应在完成前结束（2xx 没有 body，或 SSE body 没收到 stop 就关闭）。读完错误体的 HTTP 状态和流内 error 事件仍不打标。当时两个 adapter 还不解码流内 error 事件，服务端报错后关连接会落进「未收到 stop」而被打标；后来改为解码成不打标的 finish error，见 [流内 error 事件](./2026-09-24-stream-error-event.md)。
 
 整轮重发是安全的，论证同 [整轮重试](./2026-09-23-turn-retry.md)：finish 为 error 时这一轮的 assistant 还没落 Log，工具还没执行，重发同一请求不会重放副作用，半截文本也不进下一轮视图。
 

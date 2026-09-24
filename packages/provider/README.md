@@ -51,6 +51,8 @@ usage 按三种形状映射，`raw` 原样保留，`inputCacheCreation` 恒为 0
 
 finish error 上的 `transport: true` 标出传输失败：`fetch` 抛错、读响应体抛错（SSE 体或非 2xx 的错误体）、响应在完成前结束（2xx 没有 body，或 SSE 体在收到结束信号前正常关闭，消息为 `stream ended before completion`）。读完错误体的 HTTP 状态和流内 error 事件不打标。core 只凭这个标记决定是否整轮重发。
 
+流内 error 事件是服务端在 200 响应里明确报错：Anthropic 的 `event: error`，OpenAI 兼容接口里带 `error` 对象的帧。adapter 把它解码成 `finish{kind:"error"}`，`error.message` 取服务端文本（例如 `Overloaded`），`error.raw` 是整个事件对象，不打 `transport`，之后的帧不再产出块。服务端已经给出结论，不是连接意外断开，所以 core 不整轮重发。
+
 重试次数和最后一次失败原因写在这一轮的 usage 上：`details: { retries, reason }`。没重试就不写这个字段。会话本来会把 usage 和 finish 抄进 assistant 条目的 `details`，Log 因此能看见，不新增条目种类。中间几次失败的响应体不进 Log。成功那次如果前面失败过，`reason` 是最后一次失败的消息，不是成功本身。
 
 测试可以注入 `sleep`，不真等这 1 秒和 4 秒。

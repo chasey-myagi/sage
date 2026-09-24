@@ -5,17 +5,18 @@
  * - at most one response chunk, carrying the provider's response id and
  *   model as sent on the wire; it precedes every block_start. A call that
  *   fails before the body begins has none
- * - a usage chunk appears before finish
- * - finish is the last chunk
+ * - a usage chunk appears before finish; finish is the last chunk
  * - for each index, block_start precedes that index's deltas, and no delta
  *   for that index appears after its block_end
  * - finish.error.transport is true exactly when the call failed below HTTP:
  *   fetch threw, reading a response body threw (the SSE body, or the body
  *   of a non-2xx response), or the response ended before it completed (a
  *   2xx without a body, or an SSE body that closes without a stop). Such a
- *   failure carries no status. HTTP statuses whose body was read and error
- *   events inside the stream leave it unset. Callers classify transport
- *   failures by this flag alone.
+ *   failure carries no status. Callers classify transport failures by this
+ *   flag alone. HTTP statuses whose body was read leave it unset, and so
+ *   does an error event inside the stream (Anthropic `event: error`, an
+ *   OpenAI frame with an `error` object): that ends the call with the
+ *   server's message, the event object as `raw`, and no later block chunk
  *
  * Intentionally not in the Log: chunks, the live decode of one call. The
  * assistant entry that lands in the Log is the collected message. Wire SSE

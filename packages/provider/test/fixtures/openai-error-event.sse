@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-err","object":"chat.completion.chunk","created":1710000000,"model":"gpt-5","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}
+
+data: {"error":{"message":"Overloaded","type":"server_error","code":null}}
+
+data: {"id":"chatcmpl-err","object":"chat.completion.chunk","created":1710000000,"model":"gpt-5","choices":[{"index":0,"delta":{"content":" after"},"finish_reason":null}]}
+
