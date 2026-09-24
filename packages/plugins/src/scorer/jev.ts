@@ -111,7 +111,9 @@ export function jevScorer(opts: {
     name: "jev",
     async score(input) {
       try {
-        if (!apiKey) return { decisions: [], fallback: "no-api-key" };
+        if (!apiKey) {
+          return { decisions: [], fallback: "no-api-key", requested: false };
+        }
         if (input.candidates.length === 0) return { decisions: [] };
         const batches = packBatches(input.query, input.candidates, batchSize);
         const decisions: ScoreDecision[] = [];
