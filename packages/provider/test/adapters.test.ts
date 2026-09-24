@@ -588,4 +588,53 @@ describe("openai response identity", () => {
     ]);
     expect(chunks[0]?.type).toBe("response");
   });
+
+  it("skips a leading frame with an empty id, as Azure sends before the real one", async () => {
+    const body = [
+      'data: {"id":"","object":"","created":0,"model":"","choices":[],"prompt_filter_results":[{"prompt_index":0,"content_filter_results":{}}]}',
+      "",
+      'data: {"id":"chatcmpl-azure","object":"chat.completion.chunk","model":"gpt-5","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}',
+      "",
+      openaiStop("stop"),
+    ].join("\n");
+    const { fetchImpl } = fixtureFetch(body);
+    const adapter = new OpenAIAdapter({ apiKey: "test-key", fetchImpl });
+    const model = { provider: "openai", model: "gpt-5" };
+    const req: Request = {
+      model,
+      head: { system: "sys", tools: [] },
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      cacheBreakpoints: [],
+      sampling: { maxTokens: 16 },
+    };
+    const chunks = await drain(adapter.stream(req, adapter.prepare(model)));
+    expect(chunks.filter((chunk) => chunk.type === "response")).toEqual([
+      { type: "response", id: "chatcmpl-azure", model: "gpt-5" },
+    ]);
+    expect(chunks[0]?.type).toBe("response");
+  });
+
+  it("still announces before the first block when every id is empty", async () => {
+    const body = [
+      'data: {"id":"","object":"chat.completion.chunk","model":"","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}',
+      "",
+      openaiStop("stop"),
+    ].join("\n");
+    const { fetchImpl } = fixtureFetch(body);
+    const adapter = new OpenAIAdapter({ apiKey: "test-key", fetchImpl });
+    const model = { provider: "openai", model: "gpt-5" };
+    const req: Request = {
+      model,
+      head: { system: "sys", tools: [] },
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      cacheBreakpoints: [],
+      sampling: { maxTokens: 16 },
+    };
+    const chunks = await drain(adapter.stream(req, adapter.prepare(model)));
+    expect(chunks.filter((chunk) => chunk.type === "response")).toEqual([
+      { type: "response", id: "", model: "" },
+    ]);
+    expect(chunks[0]?.type).toBe("response");
+    expectStreamInvariants(chunks);
+  });
 });
