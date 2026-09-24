@@ -74,7 +74,7 @@ packages/<name>/
 
 `pnpm check` 依次运行，全部通过 PR 才能合：
 
-1. `check:lint`：biome 格式与 lint。
+1. `check:lint`：biome 格式与 lint，warning 也算失败。
 2. `check:types`：`tsc -b`。
 3. `check:layers`：分层规则表。
 4. `check:export-docs`：`packages/*/src` 与 `apps/*/src` 里每个导出声明上方有 `/** */`；re-export 不查。
