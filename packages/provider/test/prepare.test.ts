@@ -264,7 +264,7 @@ describe("catalog export", () => {
   });
 });
 
-describe("scenario 6 prepare", () => {
+describe("prepare reports the window, pricing, and adapter defaults", () => {
   it("returns the static window, sourced pricing, and maxTokens default", () => {
     const anthropic = new AnthropicAdapter({ apiKey: "k" });
     const openai = new OpenAIAdapter({ apiKey: "k" });

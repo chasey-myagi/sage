@@ -23,7 +23,7 @@ function tool() {
   };
 }
 
-describe("scenario 8 abort", () => {
+describe("an abort ends the run as aborted", () => {
   it("records aborted with the partial assistant already in the log", async () => {
     const store = new MemoryLogStore();
     const sessionId = "s8";
@@ -84,7 +84,7 @@ describe("scenario 8 abort", () => {
   });
 });
 
-describe("scenario 9 max turns", () => {
+describe("the run stops at the turn limit", () => {
   it("stops with max_turns after exactly two request headers", async () => {
     const store = new MemoryLogStore();
     const sessionId = "s9";

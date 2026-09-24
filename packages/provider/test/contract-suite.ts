@@ -188,7 +188,7 @@ export function runContractSuite(
   },
 ): void {
   describe(name, () => {
-    it("scenario 1: drops raw and matches the shared transcript", async () => {
+    it("drops raw and matches the shared transcript", async () => {
       const { fetchImpl } = fixtureFetch(fixtures.happy);
       const adapter = makeAdapter(fetchImpl);
       const chunks = await drain(
@@ -200,7 +200,7 @@ export function runContractSuite(
       expect(stripRaw(chunks)).toEqual([fixtures.response, ...SHARED_HAPPY]);
     });
 
-    it("scenario 2: usage precedes finish, and blocks stay framed", async () => {
+    it("emits usage before finish and keeps blocks framed", async () => {
       const { fetchImpl } = fixtureFetch(fixtures.happy);
       const adapter = makeAdapter(fetchImpl);
       const chunks = await drain(
@@ -209,7 +209,7 @@ export function runContractSuite(
       expectStreamInvariants(chunks);
     });
 
-    it("scenario 4: a cut stream finishes with error and keeps deltas", async () => {
+    it("finishes a cut stream with error and keeps its deltas", async () => {
       const { fetchImpl } = fixtureFetch(fixtures.truncated);
       const adapter = makeAdapter(fetchImpl);
       const chunks = await drain(
@@ -234,7 +234,7 @@ export function runContractSuite(
       expectStreamInvariants(chunks);
     });
 
-    it("scenario 5: abort after the response and two chunks finishes aborted", async () => {
+    it("finishes aborted when the signal fires after the response and two chunks", async () => {
       const { fetchImpl } = fixtureFetch(fixtures.happy);
       const adapter = makeAdapter(fetchImpl);
       const controller = new AbortController();

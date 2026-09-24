@@ -142,7 +142,7 @@ runContractSuite(
   },
 );
 
-describe("scenario 1 cross-adapter", () => {
+describe("both adapters decode equivalent wires to the same chunks", () => {
   it("matches chunk for chunk after raw is removed", async () => {
     const left = fixtureFetch(readFixture("anthropic-text-tool.sse"));
     const right = fixtureFetch(readFixture("openai-text-tool.sse"));
@@ -181,7 +181,7 @@ describe("scenario 1 cross-adapter", () => {
   });
 });
 
-describe("scenario 3 cache breakpoints", () => {
+describe("cache breakpoints reach the wire only where requested", () => {
   it("paints ephemeral cache_control only on the three requested spots", async () => {
     const { fetchImpl, calls } = fixtureFetch(
       readFixture("anthropic-text-tool.sse"),

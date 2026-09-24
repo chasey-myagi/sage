@@ -30,7 +30,7 @@ function tool(name = "echo") {
   };
 }
 
-describe("scenario 3 request envelope and L4 rebuild", () => {
+describe("the request envelope is logged and the request rebuilds from the Log", () => {
   it("logs the envelope and rebuilds the exact head and messages from the path", async () => {
     const store = new MemoryLogStore();
     const sessionId = "s3";
@@ -143,7 +143,7 @@ describe("scenario 3 request envelope and L4 rebuild", () => {
   });
 });
 
-describe("scenario 4 content-addressed request headers", () => {
+describe("request headers store system and tools text only when it changes", () => {
   it("omits system and tools text when the next head matches", async () => {
     const store = new MemoryLogStore();
     const sessionId = "s4";

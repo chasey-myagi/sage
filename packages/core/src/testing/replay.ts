@@ -76,7 +76,7 @@ export async function replaySession(
 ): Promise<{ requests: Request[]; log: StoredEntry[]; manifests: Manifest[] }> {
   if (process.env[RECORD_SWITCH] === "1") {
     throw new Error(
-      "SAGE_RECORD=1 selects the record lane. The on-disk format is session.jsonl plus responses.json. The live network recorder is #16.",
+      "SAGE_RECORD=1 selects the record lane, which replaySession does not implement: it only replays session.jsonl plus responses.json from disk and never calls the network. Unset SAGE_RECORD to replay.",
     );
   }
   const { log, responses } = loadCase(dir);
