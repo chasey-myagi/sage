@@ -1,18 +1,16 @@
-import type { StreamChunk } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import {
   AgentSession,
   MemoryLogStore,
   passthroughView,
 } from "../../src/index.ts";
-import { fauxAdapter, renderLlmInput } from "../../src/testing/index.ts";
-
-const USAGE = {
-  inputOther: 1,
-  inputCacheRead: 0,
-  inputCacheCreation: 0,
-  output: 1,
-};
+import {
+  FAUX_UNIT_USAGE,
+  fauxAdapter,
+  renderLlmInput,
+  stopScript,
+  toolScript,
+} from "../../src/testing/index.ts";
 
 function echo() {
   return {
@@ -33,37 +31,17 @@ function echo() {
   };
 }
 
-function toolTurn(): StreamChunk[] {
-  return [
-    {
-      type: "block_start",
-      index: 0,
-      blockType: "tool_use",
-      id: "c1",
-      name: "echo",
-    },
-    { type: "tool_input_delta", index: 0, partialJson: "{}" },
-    { type: "block_end", index: 0 },
-    { type: "usage", usage: USAGE },
-    { type: "finish", kind: "tool_use" },
-  ];
-}
-
-function textTurn(): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "text" },
-    { type: "text_delta", index: 0, text: "done" },
-    { type: "block_end", index: 0 },
-    { type: "usage", usage: USAGE },
-    { type: "finish", kind: "stop" },
-  ];
-}
-
 it("reprints the whole prompt when a view stamps the date into system", async () => {
   const store = new MemoryLogStore();
-  const adapter = fauxAdapter([toolTurn(), textTurn()], {
-    prepared: { adapterDefaults: { maxTokens: 16 } },
-  });
+  const adapter = fauxAdapter(
+    [
+      toolScript("c1", "echo", "{}", FAUX_UNIT_USAGE),
+      stopScript("done", FAUX_UNIT_USAGE),
+    ],
+    {
+      prepared: { adapterDefaults: { maxTokens: 16 } },
+    },
+  );
   const session = new AgentSession({
     store,
     sessionId: "date",

@@ -16,6 +16,7 @@ export {
   FAUX_CONTEXT_WINDOW,
   FAUX_MODEL,
   FAUX_SYSTEM,
+  FAUX_UNIT_USAGE,
   FAUX_USAGE,
   type FauxScript,
   fauxAdapter,

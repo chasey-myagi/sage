@@ -5,8 +5,13 @@ import {
   MemoryLogStore,
   type ViewContext,
 } from "@sage/core";
-import { fauxAdapter } from "@sage/core/testing";
-import type { Message, StreamChunk } from "@sage/provider/contract";
+import {
+  FAUX_UNIT_USAGE,
+  fauxAdapter,
+  stopScript,
+  toolScript,
+} from "@sage/core/testing";
+import type { Message } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import { applyDecisions } from "../../src/compiler/apply.ts";
 import type { Chunk } from "../../src/compiler/chunks.ts";
@@ -45,42 +50,6 @@ function declared(
       return { content, isError: false };
     },
   };
-}
-
-function toolTurn(id: string, name: string, inputJson: string): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "tool_use", id, name },
-    { type: "tool_input_delta", index: 0, partialJson: inputJson },
-    { type: "block_end", index: 0 },
-    {
-      type: "usage",
-      usage: {
-        inputOther: 1,
-        inputCacheRead: 0,
-        inputCacheCreation: 0,
-        output: 1,
-      },
-    },
-    { type: "finish", kind: "tool_use" },
-  ];
-}
-
-function stopTurn(text: string): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "text" },
-    { type: "text_delta", index: 0, text },
-    { type: "block_end", index: 0 },
-    {
-      type: "usage",
-      usage: {
-        inputOther: 1,
-        inputCacheRead: 0,
-        inputCacheCreation: 0,
-        output: 1,
-      },
-    },
-    { type: "finish", kind: "stop" },
-  ];
 }
 
 function resultsOf(messages: Message[], toolUseId: string) {
@@ -148,9 +117,9 @@ it("omits a superseded tool result in the compiled view and keeps anomalies empt
   const inputJson = JSON.stringify({ path: "/repo/a.ts" });
   const read = declared("read", "read", ["v1", "v2"]);
   const adapter = fauxAdapter([
-    toolTurn("r1", "read", inputJson),
-    toolTurn("r2", "read", inputJson),
-    stopTurn("done"),
+    toolScript("r1", "read", inputJson, FAUX_UNIT_USAGE),
+    toolScript("r2", "read", inputJson, FAUX_UNIT_USAGE),
+    stopScript("done", FAUX_UNIT_USAGE),
   ]);
   const store = new MemoryLogStore();
   const session = new AgentSession({

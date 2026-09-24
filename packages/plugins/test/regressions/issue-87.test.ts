@@ -4,6 +4,7 @@ import {
   runHealth,
   type ViewContext,
 } from "@sage/core";
+import { stopScript } from "@sage/core/testing";
 import type {
   ProviderAdapter,
   Request,
@@ -276,16 +277,6 @@ function prevRequest(): Request {
   };
 }
 
-function textScript(text: string): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "text" },
-    { type: "text_delta", index: 0, text },
-    { type: "block_end", index: 0 },
-    { type: "usage", usage: USAGE },
-    { type: "finish", kind: "stop" },
-  ];
-}
-
 function scripted(script: StreamChunk[]): ProviderAdapter {
   const adapter: ProviderAdapter = {
     api: "anthropic-messages",
@@ -317,7 +308,7 @@ function instructionOf(request: Request): string {
 
 async function score(text: string, candidates: Chunk[]) {
   const seen: Request[] = [];
-  const adapter = scripted(textScript(text));
+  const adapter = scripted(stopScript(text, USAGE));
   const wrapped: ProviderAdapter = {
     ...adapter,
     stream(request, prepared, signal) {

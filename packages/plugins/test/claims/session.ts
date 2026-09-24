@@ -12,41 +12,13 @@ import {
   type ViewContext,
   type ViewProvider,
 } from "@sage/core";
-import { fauxAdapter } from "@sage/core/testing";
+import {
+  FAUX_CONTEXT_WINDOW,
+  FAUX_MODEL,
+  FAUX_SYSTEM,
+  fauxAdapter,
+} from "@sage/core/testing";
 import type { StreamChunk } from "@sage/provider/contract";
-
-export const MODEL = { provider: "anthropic", model: "claude-test" };
-
-const USAGE = {
-  inputOther: 3,
-  inputCacheRead: 1,
-  inputCacheCreation: 0,
-  output: 2,
-};
-
-export function stopScript(text: string): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "text" },
-    { type: "text_delta", index: 0, text },
-    { type: "block_end", index: 0 },
-    { type: "usage", usage: { ...USAGE } },
-    { type: "finish", kind: "stop" },
-  ];
-}
-
-export function toolScript(
-  id: string,
-  name: string,
-  inputJson = "{}",
-): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "tool_use", id, name },
-    { type: "tool_input_delta", index: 0, partialJson: inputJson },
-    { type: "block_end", index: 0 },
-    { type: "usage", usage: { ...USAGE } },
-    { type: "finish", kind: "tool_use" },
-  ];
-}
 
 export async function runSession(opts: {
   scripts: StreamChunk[][];
@@ -61,8 +33,8 @@ export async function runSession(opts: {
     store,
     sessionId,
     adapter,
-    model: MODEL,
-    system: "You are sage.",
+    model: FAUX_MODEL,
+    system: FAUX_SYSTEM,
     tools: opts.tools ?? [],
     viewProvider: opts.viewProvider,
   });
@@ -79,14 +51,14 @@ export function contextOf(
     sessionId,
     turn,
     path: store.path(sessionId),
-    model: MODEL,
+    model: FAUX_MODEL,
     prepared: {
-      model: MODEL,
-      contextWindow: 8000,
+      model: FAUX_MODEL,
+      contextWindow: FAUX_CONTEXT_WINDOW,
       pricing: null,
       adapterDefaults: {},
     },
-    head: { system: "You are sage.", tools: [] },
+    head: { system: FAUX_SYSTEM, tools: [] },
     tools: [],
   };
 }

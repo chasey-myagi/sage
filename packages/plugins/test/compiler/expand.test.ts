@@ -1,47 +1,15 @@
 import { AgentSession, MemoryLogStore, type ViewContext } from "@sage/core";
-import { fauxAdapter } from "@sage/core/testing";
-import type { StreamChunk } from "@sage/provider/contract";
+import {
+  FAUX_UNIT_USAGE,
+  fauxAdapter,
+  stopScript,
+  toolScript,
+} from "@sage/core/testing";
 import { expect, it } from "vitest";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
 import { expandTool } from "../../src/compiler/expand.ts";
 
 const MODEL = { provider: "anthropic", model: "claude-test" };
-
-function toolTurn(id: string, name: string, inputJson: string): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "tool_use", id, name },
-    { type: "tool_input_delta", index: 0, partialJson: inputJson },
-    { type: "block_end", index: 0 },
-    {
-      type: "usage",
-      usage: {
-        inputOther: 1,
-        inputCacheRead: 0,
-        inputCacheCreation: 0,
-        output: 1,
-      },
-    },
-    { type: "finish", kind: "tool_use" },
-  ];
-}
-
-function stopTurn(text: string): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "text" },
-    { type: "text_delta", index: 0, text },
-    { type: "block_end", index: 0 },
-    {
-      type: "usage",
-      usage: {
-        inputOther: 1,
-        inputCacheRead: 0,
-        inputCacheCreation: 0,
-        output: 1,
-      },
-    },
-    { type: "finish", kind: "stop" },
-  ];
-}
 
 function fixed(name: string, content: string) {
   return {
@@ -143,10 +111,15 @@ it("keeps the expanded chunk omitted and shows the expand result in full next tu
   const store = new MemoryLogStore();
   const sessionId = "next";
   const adapter = fauxAdapter([
-    toolTurn("a", "read", "{}"),
-    toolTurn("b", "read", "{}"),
-    toolTurn("ex", "expand", JSON.stringify({ id: "seq:3#a" })),
-    stopTurn("done"),
+    toolScript("a", "read", "{}", FAUX_UNIT_USAGE),
+    toolScript("b", "read", "{}", FAUX_UNIT_USAGE),
+    toolScript(
+      "ex",
+      "expand",
+      JSON.stringify({ id: "seq:3#a" }),
+      FAUX_UNIT_USAGE,
+    ),
+    stopScript("done", FAUX_UNIT_USAGE),
   ]);
   const session = new AgentSession({
     store,

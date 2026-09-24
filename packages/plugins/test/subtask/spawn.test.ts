@@ -6,8 +6,13 @@ import {
   passthroughView,
   type ViewContext,
 } from "@sage/core";
-import { fauxAdapter, renderLlmInput } from "@sage/core/testing";
-import type { StreamChunk } from "@sage/provider/contract";
+import {
+  FAUX_USAGE,
+  fauxAdapter,
+  renderLlmInput,
+  stopScript,
+  toolScript,
+} from "@sage/core/testing";
 import { expect, it } from "vitest";
 import { defaultTokenCount } from "../../src/compiler/budget.ts";
 import { indexChunks } from "../../src/compiler/chunks.ts";
@@ -24,42 +29,6 @@ function user(text: string) {
     role: "user" as const,
     content: [{ type: "text" as const, text }],
   };
-}
-
-function toolTurn(id: string, name: string, inputJson: string): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "tool_use", id, name },
-    { type: "tool_input_delta", index: 0, partialJson: inputJson },
-    { type: "block_end", index: 0 },
-    {
-      type: "usage",
-      usage: {
-        inputOther: 3,
-        inputCacheRead: 1,
-        inputCacheCreation: 0,
-        output: 2,
-      },
-    },
-    { type: "finish", kind: "tool_use" },
-  ];
-}
-
-function stopTurn(text: string, output = 2): StreamChunk[] {
-  return [
-    { type: "block_start", index: 0, blockType: "text" },
-    { type: "text_delta", index: 0, text },
-    { type: "block_end", index: 0 },
-    {
-      type: "usage",
-      usage: {
-        inputOther: 3,
-        inputCacheRead: 1,
-        inputCacheCreation: 0,
-        output,
-      },
-    },
-    { type: "finish", kind: "stop" },
-  ];
 }
 
 function parentView(ctx: ViewContext) {
@@ -143,13 +112,13 @@ async function spawnFrozen(query = "find the needle") {
     });
   }
   const adapter = fauxAdapter([
-    toolTurn(
+    toolScript(
       "call-1",
       "spawn_subtask",
       JSON.stringify({ query, budget: 1000, readOnly: true }),
     ),
-    stopTurn("needle-found", 50),
-    stopTurn("parent-done", 2),
+    stopScript("needle-found", { ...FAUX_USAGE, output: 50 }),
+    stopScript("parent-done"),
   ]);
   const captured: {
     content: string;
@@ -230,14 +199,14 @@ it("keeps the parent tool list and denies writes in a read-only subtask", async 
   const store = new MemoryLogStore();
   let wrote = false;
   const adapter = fauxAdapter([
-    toolTurn(
+    toolScript(
       "call-1",
       "spawn_subtask",
       JSON.stringify({ query: "inspect", budget: 500, readOnly: true }),
     ),
-    toolTurn("w1", "write", "{}"),
-    stopTurn("child-done"),
-    stopTurn("parent-done"),
+    toolScript("w1", "write", "{}"),
+    stopScript("child-done"),
+    stopScript("parent-done"),
   ]);
   const tools: HarnessTool[] = [
     harness("write", false, async () => {
@@ -374,14 +343,14 @@ it("puts the child prefix breakpoint on the last parent message on every child t
   // The child runs two turns, so the last-message breakpoint moves while
   // the prefix breakpoint must stay on the parent's last message.
   const adapter = fauxAdapter([
-    toolTurn(
+    toolScript(
       "call-1",
       "spawn_subtask",
       JSON.stringify({ query: "inspect", budget: 1000, readOnly: true }),
     ),
-    toolTurn("r1", "read", "{}"),
-    stopTurn("child-done"),
-    stopTurn("parent-done"),
+    toolScript("r1", "read", "{}"),
+    stopScript("child-done"),
+    stopScript("parent-done"),
   ]);
   const tools: HarnessTool[] = [harness("read", true)];
   const parentViews: CompiledView[] = [];
@@ -444,7 +413,7 @@ it("allows a grandchild and rejects the next depth, and caps fan-out", async () 
   const store = new MemoryLogStore();
   seed(store, "parent");
   const adapter = fauxAdapter(
-    Array.from({ length: 4 }, () => stopTurn("leaf")),
+    Array.from({ length: 4 }, () => stopScript("leaf")),
   );
   const tools: HarnessTool[] = [];
   const { spawn } = subtaskTools({
@@ -479,7 +448,7 @@ it("allows a grandchild and rejects the next depth, and caps fan-out", async () 
   const capped = new MemoryLogStore();
   seed(capped, "parent");
   const capAdapter = fauxAdapter(
-    Array.from({ length: 8 }, () => stopTurn("ok")),
+    Array.from({ length: 8 }, () => stopScript("ok")),
   );
   const capTools: HarnessTool[] = [];
   const cap = subtaskTools({

@@ -1,8 +1,9 @@
+import { stopScript } from "@sage/core/testing";
 import type { ToolDef } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import { toolCatalog } from "../../src/claims/index.ts";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
-import { contextOf, runSession, stopScript } from "./session.ts";
+import { contextOf, runSession } from "./session.ts";
 
 const deferred: ToolDef[] = [
   {

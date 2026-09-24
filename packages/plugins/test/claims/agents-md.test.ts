@@ -1,11 +1,12 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { stopScript, toolScript } from "@sage/core/testing";
 import { afterEach, expect, it } from "vitest";
 import { agentsMd, escapeClaimText } from "../../src/claims/index.ts";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
 import { parseClaimMessage } from "../../src/compiler/format.ts";
-import { contextOf, runSession, stopScript, toolScript } from "./session.ts";
+import { contextOf, runSession } from "./session.ts";
 
 let dir = "";
 
