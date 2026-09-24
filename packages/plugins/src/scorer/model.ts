@@ -14,11 +14,13 @@
 
 import { isRecord } from "@sage/core";
 import {
+  type AssistantMessage,
   collect,
   type ModelRef,
   type ProviderAdapter,
   type Request,
 } from "@sage/provider/contract";
+import type { Chunk } from "../compiler/chunks.js";
 import {
   clampSummary,
   SCORE_TIERS,
@@ -26,7 +28,7 @@ import {
 } from "../compiler/score-common.js";
 import { summarizeInput } from "../compiler/stub.js";
 import { isTier } from "../guards.js";
-import type { ScoreDecision, ScoreRaw, Scorer } from "./types.js";
+import type { ScoreDecision, ScoreRaw, ScoreResult, Scorer } from "./types.js";
 
 const RAW_LIMIT = 300;
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -99,7 +101,8 @@ export function modelScorer(opts: {
   return {
     name: "model",
     async score(input) {
-      if (!input.prevRequest) {
+      const prevRequest = input.prevRequest;
+      if (!prevRequest) {
         return {
           decisions: [],
           fallback: "no-previous-request",
@@ -110,131 +113,158 @@ export function modelScorer(opts: {
       if (!adapter) {
         return { decisions: [], fallback: "no-adapter", requested: false };
       }
-
-      const limit = maxCandidates <= 0 ? 0 : maxCandidates;
-      const selected =
-        limit === 0
-          ? []
-          : input.candidates.slice(
-              Math.max(0, input.candidates.length - limit),
-            );
-      const listed = selected.map((chunk) => ({
-        id: chunk.id,
-        tool: chunk.toolName ?? "",
-        summary: summarizeInput(chunk.input),
-        tokens: chunk.tokens,
-      }));
-      const text = [
-        INSTRUCTION,
-        `Query: ${input.query}`,
-        JSON.stringify(listed),
-      ].join("\n");
-      const messages = structuredClone(input.prevRequest.messages);
-      messages.push({ role: "user", content: [{ type: "text", text }] });
-      const request: Request = {
-        model: opts.model,
-        head: structuredClone(input.prevRequest.head),
-        messages,
-        cacheBreakpoints: structuredClone(input.prevRequest.cacheBreakpoints),
-        sampling: { ...input.prevRequest.sampling },
-        toolChoice: "none",
-      };
-
-      const controller = new AbortController();
-      let cause: "timeout" | "aborted" | undefined;
-      const timer = setTimeout(() => {
-        cause = cause ?? "timeout";
-        controller.abort();
-      }, timeoutMs);
-      const onCallerAbort = () => {
-        cause = cause ?? "aborted";
-        controller.abort();
-      };
-      if (input.signal?.aborted) onCallerAbort();
-      else
-        input.signal?.addEventListener("abort", onCallerAbort, { once: true });
-
-      const collected = collect(
-        adapter.stream(request, adapter.prepare(opts.model), controller.signal),
-        { api: adapter.api },
-      ).then(
-        (value) => ({ ok: true as const, value }),
-        (error: unknown) => ({ ok: false as const, error }),
+      const selected = newestCandidates(input.candidates, maxCandidates);
+      const request = scoreRequest(
+        opts.model,
+        prevRequest,
+        input.query,
+        selected,
       );
-      const aborted = new Promise<{ ok: false; error: unknown }>((resolve) => {
-        const finish = () =>
-          resolve({ ok: false, error: new Error(cause ?? "aborted") });
-        if (controller.signal.aborted) finish();
-        else {
-          controller.signal.addEventListener("abort", finish, { once: true });
-        }
-      });
-
+      const deadline = startDeadline(timeoutMs, input.signal);
       try {
-        const raced = await Promise.race([collected, aborted]);
-        if (!raced.ok) {
-          return {
-            decisions: [],
-            fallback:
-              cause === "timeout"
-                ? "timeout"
-                : cause === "aborted"
-                  ? "aborted"
-                  : "error",
-          };
-        }
-        const assistant = raced.value;
-        const body = assistant.content
-          .filter((block) => block.type === "text")
-          .map((block) => block.text)
-          .join("");
-        const raw = replyRaw(body, assistant.finish.kind);
-        if (cause === "timeout") {
-          return {
-            decisions: [],
-            usage: assistant.usage,
-            fallback: "timeout",
-            raw,
-          };
-        }
-        if (cause === "aborted" || assistant.finish.kind === "aborted") {
-          return {
-            decisions: [],
-            usage: assistant.usage,
-            fallback: "aborted",
-            raw,
-          };
-        }
-        if (assistant.finish.kind === "error") {
-          return {
-            decisions: [],
-            usage: assistant.usage,
-            fallback: "finish:error",
-            raw,
-          };
-        }
-        const parsed = parseDecisions(
-          body,
+        const collected = collect(
+          adapter.stream(request, adapter.prepare(opts.model), deadline.signal),
+          { api: adapter.api },
+        ).then(
+          (value) => ({ ok: true as const, value }),
+          () => ({ ok: false as const }),
+        );
+        const raced = await Promise.race([collected, deadline.aborted]);
+        if (!raced.ok)
+          return { decisions: [], fallback: failureFallback(deadline.cause()) };
+        return readReply(
+          raced.value,
+          deadline.cause(),
           new Set(selected.map((chunk) => chunk.id)),
         );
-        if (!parsed) {
-          return {
-            decisions: [],
-            usage: assistant.usage,
-            fallback: "invalid-json",
-            raw,
-          };
-        }
-        return {
-          decisions: parsed.decisions,
-          usage: assistant.usage,
-          ...(parsed.dropped > 0 ? { dropped: parsed.dropped } : {}),
-        };
       } finally {
-        clearTimeout(timer);
-        input.signal?.removeEventListener("abort", onCallerAbort);
+        deadline.dispose();
       }
     },
+  };
+}
+
+/** The newest `limit` candidates; none when `limit` is 0 or less. */
+function newestCandidates(
+  candidates: readonly Chunk[],
+  limit: number,
+): readonly Chunk[] {
+  if (limit <= 0) return [];
+  return candidates.slice(Math.max(0, candidates.length - limit));
+}
+
+/**
+ * The previous request copied byte for byte, with `toolChoice` `"none"`
+ * and one appended user message: the instruction, the query, and the
+ * candidate list.
+ */
+function scoreRequest(
+  model: ModelRef,
+  prevRequest: Request,
+  query: string,
+  selected: readonly Chunk[],
+): Request {
+  const listed = selected.map((chunk) => ({
+    id: chunk.id,
+    tool: chunk.toolName ?? "",
+    summary: summarizeInput(chunk.input),
+    tokens: chunk.tokens,
+  }));
+  const text = [INSTRUCTION, `Query: ${query}`, JSON.stringify(listed)].join(
+    "\n",
+  );
+  const messages = structuredClone(prevRequest.messages);
+  messages.push({ role: "user", content: [{ type: "text", text }] });
+  return {
+    model,
+    head: structuredClone(prevRequest.head),
+    messages,
+    cacheBreakpoints: structuredClone(prevRequest.cacheBreakpoints),
+    sampling: { ...prevRequest.sampling },
+    toolChoice: "none",
+  };
+}
+
+type AbortCause = "timeout" | "aborted" | undefined;
+
+/**
+ * One abort signal for the scorer call, fired by the timer or the caller's
+ * signal. `cause` reports whichever fired first. `aborted` resolves once
+ * the signal fires. `dispose` clears the timer and the caller listener.
+ */
+function startDeadline(
+  timeoutMs: number,
+  callerSignal: AbortSignal | undefined,
+): {
+  signal: AbortSignal;
+  cause: () => AbortCause;
+  aborted: Promise<{ ok: false }>;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  let cause: AbortCause;
+  const abortWith = (next: "timeout" | "aborted") => {
+    cause = cause ?? next;
+    controller.abort();
+  };
+  const timer = setTimeout(() => abortWith("timeout"), timeoutMs);
+  const onCallerAbort = () => abortWith("aborted");
+  if (callerSignal?.aborted) onCallerAbort();
+  else callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+  const aborted = new Promise<{ ok: false }>((resolve) => {
+    const finish = () => resolve({ ok: false });
+    if (controller.signal.aborted) finish();
+    else controller.signal.addEventListener("abort", finish, { once: true });
+  });
+  return {
+    signal: controller.signal,
+    cause: () => cause,
+    aborted,
+    dispose() {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
+    },
+  };
+}
+
+/** Fallback when the call rejected or the deadline fired before a reply. */
+function failureFallback(cause: AbortCause): string {
+  if (cause === "timeout") return "timeout";
+  if (cause === "aborted") return "aborted";
+  return "error";
+}
+
+/**
+ * Decisions from a completed reply, or a fallback with the reply's usage
+ * and `raw` when the deadline fired, the reply finished aborted or with an
+ * error, or the text does not parse.
+ */
+function readReply(
+  assistant: AssistantMessage,
+  cause: AbortCause,
+  allowed: ReadonlySet<string>,
+): ScoreResult {
+  const body = assistant.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("");
+  const usage = assistant.usage;
+  const finish = assistant.finish.kind;
+  const fellBack = (fallback: string): ScoreResult => ({
+    decisions: [],
+    usage,
+    fallback,
+    raw: replyRaw(body, finish),
+  });
+  if (cause === "timeout") return fellBack("timeout");
+  if (cause === "aborted" || finish === "aborted") return fellBack("aborted");
+  if (finish === "error") return fellBack("finish:error");
+  const parsed = parseDecisions(body, allowed);
+  if (!parsed) return fellBack("invalid-json");
+  return {
+    decisions: parsed.decisions,
+    usage,
+    ...(parsed.dropped > 0 ? { dropped: parsed.dropped } : {}),
   };
 }
 

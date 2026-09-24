@@ -18,7 +18,12 @@ import {
   type Usage,
 } from "@sage/provider/contract";
 import { summarizeInput } from "../compiler/stub.js";
-import type { ScoreDecision, Scorer } from "./types.js";
+import type {
+  ScoreDecision,
+  ScoreInput,
+  ScoreResult,
+  Scorer,
+} from "./types.js";
 
 const DEFAULT_BASE_URL = "https://api.typesafe.ai";
 const MODEL_ID = "jev-latest";
@@ -110,38 +115,64 @@ export function jevScorer(opts: {
   return {
     name: "jev",
     async score(input) {
+      if (!apiKey) {
+        return { decisions: [], fallback: "no-api-key", requested: false };
+      }
+      if (input.candidates.length === 0) return { decisions: [] };
       try {
-        if (!apiKey) {
-          return { decisions: [], fallback: "no-api-key", requested: false };
-        }
-        if (input.candidates.length === 0) return { decisions: [] };
-        const batches = packBatches(input.query, input.candidates, batchSize);
-        const decisions: ScoreDecision[] = [];
-        let inputOther = 0;
-        for (const batch of batches) {
-          const posted = await postBatch({
-            fetchImpl,
-            sleepImpl,
-            url,
-            apiKey,
-            timeoutMs,
-            signal: input.signal,
-            body: JSON.stringify({
-              state: { query: input.query, chunks: batch },
-              model,
-              questions: questionsFor(batch),
+        return await scoreBatches(input, {
+          post: (body) =>
+            postBatch({
+              fetchImpl,
+              sleepImpl,
+              url,
+              apiKey,
+              timeoutMs,
+              signal: input.signal,
+              body,
             }),
-          });
-          if (!posted.ok) return { decisions: [], fallback: posted.fallback };
-          inputOther += posted.inputTokens;
-          decisions.push(...decisionsFor(batch, posted.answers, minConfidence));
-        }
-        return { decisions, usage: usageFrom(inputOther) };
+          model,
+          batchSize,
+          minConfidence,
+        });
       } catch {
+        // Scorers never throw: a bug in packing or answer reading becomes a
+        // fallback here, and the compiler keeps the deterministic tiers.
         return { decisions: [], fallback: "error" };
       }
     },
   };
+}
+
+/**
+ * Posts the candidates in batches and merges the answers. The first batch
+ * that fails ends the call with its fallback and no decisions.
+ */
+async function scoreBatches(
+  input: ScoreInput,
+  opts: {
+    post: (body: string) => Promise<Posted>;
+    model: string;
+    batchSize: number;
+    minConfidence: number;
+  },
+): Promise<ScoreResult> {
+  const batches = packBatches(input.query, input.candidates, opts.batchSize);
+  const decisions: ScoreDecision[] = [];
+  let inputOther = 0;
+  for (const batch of batches) {
+    const posted = await opts.post(
+      JSON.stringify({
+        state: { query: input.query, chunks: batch },
+        model: opts.model,
+        questions: questionsFor(batch),
+      }),
+    );
+    if (!posted.ok) return { decisions: [], fallback: posted.fallback };
+    inputOther += posted.inputTokens;
+    decisions.push(...decisionsFor(batch, posted.answers, opts.minConfidence));
+  }
+  return { decisions, usage: usageFrom(inputOther) };
 }
 
 function defaultFetch(

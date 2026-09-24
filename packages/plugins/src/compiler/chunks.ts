@@ -56,11 +56,33 @@ export function indexChunks(
   tools: readonly HarnessTool[],
   count: TokenCounter,
 ): Chunk[] {
+  const lookup = { byName: toolsByName(tools), results: resultsById(messages) };
+  const chunks: Chunk[] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (!message) continue;
+    const seq = seqs[index] ?? 0;
+    chunks.push(...messageChunks(message, index, seq, lookup, count));
+  }
+  return chunks;
+}
+
+type ToolResultText = { content: string; isError: boolean };
+
+/** Tools by name; the first tool with a name wins. */
+function toolsByName(tools: readonly HarnessTool[]): Map<string, HarnessTool> {
   const byName = new Map<string, HarnessTool>();
   for (const tool of tools) {
     if (!byName.has(tool.def.name)) byName.set(tool.def.name, tool);
   }
-  const results = new Map<string, { content: string; isError: boolean }>();
+  return byName;
+}
+
+/** Tool results by tool_use id; the first result for an id wins. */
+function resultsById(
+  messages: readonly Message[],
+): Map<string, ToolResultText> {
+  const results = new Map<string, ToolResultText>();
   for (const message of messages) {
     for (const block of message.content) {
       if (block.type !== "tool_result" || results.has(block.toolUseId)) {
@@ -72,45 +94,56 @@ export function indexChunks(
       });
     }
   }
+  return results;
+}
 
+/**
+ * The chunks one message contributes: none for a results-only message,
+ * else its prose chunk (when it has prose or no tool calls) followed by one
+ * chunk per tool_use.
+ */
+function messageChunks(
+  message: Message,
+  index: number,
+  seq: number,
+  lookup: {
+    byName: ReadonlyMap<string, HarnessTool>;
+    results: ReadonlyMap<string, ToolResultText>;
+  },
+  count: TokenCounter,
+): Chunk[] {
+  const onlyResults =
+    message.content.length > 0 &&
+    message.content.every((block) => block.type === "tool_result");
+  if (onlyResults) return [];
+  const toolUses = message.content.filter(
+    (block): block is ToolUseBlock => block.type === "tool_use",
+  );
+  const prose = proseText(message);
   const chunks: Chunk[] = [];
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index];
-    if (!message) continue;
-    const seq = seqs[index] ?? 0;
-    const toolUses = message.content.filter(
-      (block): block is ToolUseBlock => block.type === "tool_use",
-    );
-    const prose = proseText(message);
-    const onlyResults =
-      message.content.length > 0 &&
-      message.content.every((block) => block.type === "tool_result");
-    if (onlyResults) continue;
-    if (prose.length > 0 || toolUses.length === 0) {
-      chunks.push({
-        id: `seq:${seq}`,
-        kind: message.role,
-        messageIndex: index,
-        tokens: count(prose),
-        accesses: [],
-      });
-    }
-    for (const block of toolUses) {
-      const result = results.get(block.id);
-      const tool = byName.get(block.name);
-      const resultText = result?.content ?? "";
-      chunks.push({
-        id: `seq:${seq}#${block.id}`,
-        kind: "tool",
-        messageIndex: index,
-        toolUseId: block.id,
-        toolName: block.name,
-        input: block.input,
-        isError: result?.isError ?? false,
-        tokens: count(inputText(block)) + count(resultText),
-        accesses: tool ? tool.accesses(block.input) : [],
-      });
-    }
+  if (prose.length > 0 || toolUses.length === 0) {
+    chunks.push({
+      id: `seq:${seq}`,
+      kind: message.role,
+      messageIndex: index,
+      tokens: count(prose),
+      accesses: [],
+    });
+  }
+  for (const block of toolUses) {
+    const result = lookup.results.get(block.id);
+    const tool = lookup.byName.get(block.name);
+    chunks.push({
+      id: `seq:${seq}#${block.id}`,
+      kind: "tool",
+      messageIndex: index,
+      toolUseId: block.id,
+      toolName: block.name,
+      input: block.input,
+      isError: result?.isError ?? false,
+      tokens: count(inputText(block)) + count(result?.content ?? ""),
+      accesses: tool ? tool.accesses(block.input) : [],
+    });
   }
   return chunks;
 }

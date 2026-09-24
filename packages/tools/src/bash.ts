@@ -236,23 +236,17 @@ export function createBash(
     },
     async execute(input, ctx) {
       try {
-        const record = asRecord(input);
-        if (!record) return fail("input must be an object");
-        const command = requiredString(record, "command");
-        if (!command) return fail("command must be a string");
-        const timeoutArg = optionalInt(record, "timeout_ms");
-        if (!timeoutArg.ok) return fail("timeout_ms must be an integer");
-        const timeoutMs = timeoutArg.value ?? BASH_TIMEOUT_MS;
-        if (timeoutMs < 1) return fail("timeout_ms must be >= 1");
-        const launch = bashLaunch(command, sandbox, platform, {
+        const read = readBashInput(input);
+        if (!read.ok) return fail(read.error);
+        const launch = bashLaunch(read.command, sandbox, platform, {
           cwd: realCwd,
           tmpRoot,
           benchPrefix,
         });
-        const result = await exec(command, {
+        const result = await exec(read.command, {
           cwd: realCwd,
           signal: ctx.signal,
-          timeoutMs,
+          timeoutMs: read.timeoutMs,
           argv: launch.argv,
           shell: launch.shell,
         });
@@ -269,6 +263,25 @@ export function createBash(
   };
 }
 
+/** The command and timeout from the model's input, or why it is invalid. */
+function readBashInput(
+  input: unknown,
+):
+  | { ok: true; command: string; timeoutMs: number }
+  | { ok: false; error: string } {
+  const record = asRecord(input);
+  if (!record) return { ok: false, error: "input must be an object" };
+  const command = requiredString(record, "command");
+  if (!command) return { ok: false, error: "command must be a string" };
+  const timeoutArg = optionalInt(record, "timeout_ms");
+  if (!timeoutArg.ok) {
+    return { ok: false, error: "timeout_ms must be an integer" };
+  }
+  const timeoutMs = timeoutArg.value ?? BASH_TIMEOUT_MS;
+  if (timeoutMs < 1) return { ok: false, error: "timeout_ms must be >= 1" };
+  return { ok: true, command, timeoutMs };
+}
+
 /**
  * Spawns the command and collects stdout and stderr. A sandboxed launch
  * runs detached so a timeout or abort kills the whole process group with
@@ -279,41 +292,11 @@ export function defaultExec(
   opts: BashExecOpts,
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
-    const file = opts.argv[0] ?? command;
-    const child = opts.shell
-      ? spawn(command, {
-          cwd: opts.cwd,
-          shell: true,
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true,
-        })
-      : spawn(file, opts.argv.slice(1), {
-          cwd: opts.cwd,
-          shell: false,
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true,
-          detached: true,
-        });
+    const child = spawnChild(command, opts);
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let settled = false;
-    let timedOut = false;
-    const kill = () => killChild(child, !opts.shell);
-    const timer = setTimeout(() => {
-      timedOut = true;
-      kill();
-    }, opts.timeoutMs);
-    const onAbort = () => {
-      kill();
-    };
-    if (opts.signal) {
-      if (opts.signal.aborted) onAbort();
-      else opts.signal.addEventListener("abort", onAbort, { once: true });
-    }
-    const stop = () => {
-      clearTimeout(timer);
-      opts.signal?.removeEventListener("abort", onAbort);
-    };
+    const killer = armKill(child, opts);
     child.stdout?.on("data", (chunk: Buffer) => {
       stdout.push(chunk);
     });
@@ -323,13 +306,14 @@ export function defaultExec(
     child.on("error", (error) => {
       if (settled) return;
       settled = true;
-      stop();
+      killer.stop();
       reject(error);
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
-      stop();
+      killer.stop();
+      const timedOut = killer.timedOut();
       const errText = Buffer.concat(stderr).toString("utf8");
       const note = timedOut ? `\ntimed out after ${opts.timeoutMs}ms` : "";
       resolve({
@@ -339,6 +323,56 @@ export function defaultExec(
       });
     });
   });
+}
+
+/** A shell launch runs attached; an argv launch runs detached. */
+function spawnChild(command: string, opts: BashExecOpts): ChildProcess {
+  if (opts.shell) {
+    return spawn(command, {
+      cwd: opts.cwd,
+      shell: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+  }
+  const file = opts.argv[0] ?? command;
+  return spawn(file, opts.argv.slice(1), {
+    cwd: opts.cwd,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+    detached: true,
+  });
+}
+
+/**
+ * Kills the child when `opts.timeoutMs` elapses or `opts.signal` aborts.
+ * `timedOut` reports whether the timer fired; `stop` disarms both.
+ */
+function armKill(
+  child: ChildProcess,
+  opts: BashExecOpts,
+): { timedOut: () => boolean; stop: () => void } {
+  let timedOut = false;
+  const kill = () => killChild(child, !opts.shell);
+  const timer = setTimeout(() => {
+    timedOut = true;
+    kill();
+  }, opts.timeoutMs);
+  const onAbort = () => {
+    kill();
+  };
+  if (opts.signal) {
+    if (opts.signal.aborted) onAbort();
+    else opts.signal.addEventListener("abort", onAbort, { once: true });
+  }
+  return {
+    timedOut: () => timedOut,
+    stop() {
+      clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
+    },
+  };
 }
 
 function bashLaunch(

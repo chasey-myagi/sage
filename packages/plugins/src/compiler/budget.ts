@@ -36,44 +36,15 @@ export function allocate(
   budget: number,
   count: TokenCounter,
 ): { records: ClaimRecord[]; chosen: Map<string, Tier>; overrun: number } {
-  const byId = new Map<string, Claim>();
-  for (const claim of claims) byId.set(claim.id, claim);
-  const ordered = [...byId.values()].sort(
-    (left, right) =>
-      right.priority - left.priority || left.id.localeCompare(right.id),
-  );
-
+  const ordered = byPriority(claims);
   const chosen = new Map<string, Tier>();
   for (const claim of ordered) chosen.set(claim.id, highest(claim));
-
-  const usedOf = () => {
-    let total = 0;
-    for (const claim of ordered) {
-      const tier = chosen.get(claim.id) ?? "none";
-      total += tierTokens(claim, tier, count);
-    }
-    return total;
-  };
+  const usedOf = () => usedTokens(ordered, chosen, count);
 
   let used = usedOf();
   const steps = ordered.length * LADDER.length + 1;
   for (let step = 0; step < steps && used > budget; step += 1) {
-    const open = ordered.filter(
-      (claim) => !claim.pinned && chosen.get(claim.id) !== "none",
-    );
-    if (open.length === 0) break;
-    let top = LADDER.length;
-    for (const claim of open) {
-      const rank = LADDER.indexOf(chosen.get(claim.id) ?? "none");
-      if (rank < top) top = rank;
-    }
-    const victims = open
-      .filter((claim) => LADDER.indexOf(chosen.get(claim.id) ?? "none") === top)
-      .sort(
-        (left, right) =>
-          left.priority - right.priority || left.id.localeCompare(right.id),
-      );
-    const victim = victims[0];
+    const victim = nextVictim(ordered, chosen);
     if (!victim) break;
     const current = chosen.get(victim.id) ?? "none";
     const next = stepDown(victim, current);
@@ -82,22 +53,72 @@ export function allocate(
     used = usedOf();
   }
 
-  const records: ClaimRecord[] = ordered.map((claim) => {
-    const tier = chosen.get(claim.id) ?? "none";
-    const started = highest(claim);
-    return {
-      id: claim.id,
-      tier,
-      reason: claim.pinned
-        ? "pinned"
-        : tier === started
-          ? "fits"
-          : "budget:downgraded",
-      tokens: tierTokens(claim, tier, count),
-    };
-  });
-
+  const records = ordered.map((claim) => claimRecord(claim, chosen, count));
   return { records, chosen, overrun: Math.max(0, used - budget) };
+}
+
+/** Claims by descending priority, then id; a duplicate id keeps the last. */
+function byPriority(claims: readonly Claim[]): Claim[] {
+  const byId = new Map<string, Claim>();
+  for (const claim of claims) byId.set(claim.id, claim);
+  return [...byId.values()].sort(
+    (left, right) =>
+      right.priority - left.priority || left.id.localeCompare(right.id),
+  );
+}
+
+function usedTokens(
+  ordered: readonly Claim[],
+  chosen: ReadonlyMap<string, Tier>,
+  count: TokenCounter,
+): number {
+  let total = 0;
+  for (const claim of ordered) {
+    total += tierTokens(claim, chosen.get(claim.id) ?? "none", count);
+  }
+  return total;
+}
+
+/**
+ * The claim to drop next: among unpinned claims above `none`, those on the
+ * highest current tier, then the lowest priority, then the smallest id.
+ */
+function nextVictim(
+  ordered: readonly Claim[],
+  chosen: ReadonlyMap<string, Tier>,
+): Claim | undefined {
+  const open = ordered.filter(
+    (claim) => !claim.pinned && chosen.get(claim.id) !== "none",
+  );
+  let top = LADDER.length;
+  for (const claim of open) {
+    const rank = LADDER.indexOf(chosen.get(claim.id) ?? "none");
+    if (rank < top) top = rank;
+  }
+  return open
+    .filter((claim) => LADDER.indexOf(chosen.get(claim.id) ?? "none") === top)
+    .sort(
+      (left, right) =>
+        left.priority - right.priority || left.id.localeCompare(right.id),
+    )[0];
+}
+
+function claimRecord(
+  claim: Claim,
+  chosen: ReadonlyMap<string, Tier>,
+  count: TokenCounter,
+): ClaimRecord {
+  const tier = chosen.get(claim.id) ?? "none";
+  return {
+    id: claim.id,
+    tier,
+    reason: claim.pinned
+      ? "pinned"
+      : tier === highest(claim)
+        ? "fits"
+        : "budget:downgraded",
+    tokens: tierTokens(claim, tier, count),
+  };
 }
 
 function highest(claim: Claim): Tier {
