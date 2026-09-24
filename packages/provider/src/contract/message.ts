@@ -67,9 +67,9 @@ export type ToolDef = {
 
 /**
  * The head: system prompt plus tool schemas, the part of every request that
- * precedes the messages. Two persisted fields also say "head" for other
- * things (`calibration.head`, `details.epochHead`); see
- * docs/notes/proposed/2026-09-24-head-naming.md.
+ * precedes the messages. "Head" means only this; the persisted fields that
+ * once reused the word are `calibration.overheadTokens` and
+ * `details.prefixMessage` (docs/notes/implemented/2026-09-24-head-naming.md).
  */
 export type Head = { system: string; tools: ToolDef[] };
 

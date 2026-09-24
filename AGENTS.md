@@ -41,7 +41,7 @@
 
 - **L5 · 三域边界**：可重放的事实进 Log（纯 JSON，无活对象）；活的拦截与瞬时信号是运行时事件；同一事实不许两个来源。
 - **L4 · model-visible ⟺ logged**：任何进入模型请求的内容都必须能从 Log 重建；新增一种模型可见输入 = 新增一种 entry。请求信封（provider / model / 采样参数 / `systemPromptHash` / `toolsHash` / adapter 补的默认值）作为 `request_header` entry 落 Log，**内容寻址**：system prompt 与 tool schema 都按 hash 存，只有首见或与上一条 `request_header` 不同时才存全文。
-- **G2 · Agent Note 四段式**：Problem / Decision / Alternatives considered / Consequences，非平凡 PR 必带；归档即冻结。
+- **G2 · Agent Note**：Problem / Decision / Alternatives considered / Consequences / Testing 五段（模板见 [`docs/notes/TEMPLATE.md`](./docs/notes/TEMPLATE.md)），非平凡 PR 必带；归档即冻结。
 - **G4 · 预发布不留兼容层**：首个 tag 之前只有一种形状。
 - **G7 · 文件头即契约**，含「故意不进 Log 的东西」。
 
