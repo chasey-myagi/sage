@@ -408,7 +408,7 @@ it("keeps a summary note on the next turn of the same epoch without scoring agai
   store.append("s", {
     kind: "view_epoch",
     payload: { epoch: opened.epoch, reason: opened.epochStart?.reason ?? "" },
-    details: { epochHead: structuredClone(opened.messages[0]) },
+    details: { prefixMessage: structuredClone(opened.messages[0]) },
   });
   store.append("s", { kind: "manifest", payload: opened.manifest });
   const stayed = await compiler.view(context(store, 2, 1_000_000));

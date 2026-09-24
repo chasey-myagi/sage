@@ -57,7 +57,7 @@ describe("view_epoch is appended when the epoch advances", () => {
     ]);
     const epoch = path[1];
     expect(epoch?.payload).toEqual({ epoch: 1, reason: "test:advance" });
-    expect(epoch?.details?.epochHead).toEqual(HEAD);
+    expect(epoch?.details?.prefixMessage).toEqual(HEAD);
     expect(requests[0]?.messages[0]).toEqual(HEAD);
     expect(path[3]?.details).toEqual({ claimContent: { note: "kept" } });
   });

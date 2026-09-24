@@ -6,7 +6,7 @@
  * The content hash is sha256 of that exact string.
  *
  * Intentionally not in the Log: these helpers. The rendered string is what
- * gets stored, either as `view_epoch.details.epochHead` or as
+ * gets stored, either as `view_epoch.details.prefixMessage` or as
  * `manifest.details.claimContent`.
  */
 

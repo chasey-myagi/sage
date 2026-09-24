@@ -48,12 +48,12 @@ export const DEFAULT_ALPHA = 0.5;
 export const DEFAULT_MIN_SAVINGS_RATIO = 0.2;
 
 /**
- * Maps estimated tokens to measured input tokens: `head + used × ratio`.
- * `head` is the fixed overhead from the epoch's first measured input,
- * floored at 0 so a negative head cannot make the new view's tokens
- * negative and reopen as immediate. `ratio` is `(measured − head) /
- * budget.used`, applied even when above 1. Without a calibration, head 0
- * and ratio 1.
+ * Maps estimated tokens to measured input tokens:
+ * `overheadTokens + used × ratio`. `overheadTokens` is the fixed overhead
+ * from the epoch's first measured input, floored at 0 so a negative
+ * overhead cannot make the new view's tokens negative and reopen as
+ * immediate. `ratio` is `(measured − overheadTokens) / budget.used`,
+ * applied even when above 1. Without a calibration, overhead 0 and ratio 1.
  */
 export type Projection = (used: number) => number;
 
@@ -61,9 +61,9 @@ export type Projection = (used: number) => number;
 export function projectionFor(
   calibration: Calibration | undefined,
 ): Projection {
-  const head = calibration?.head ?? 0;
+  const overhead = calibration?.overheadTokens ?? 0;
   const ratio = calibration?.ratio ?? 1;
-  return (used) => head + used * ratio;
+  return (used) => overhead + used * ratio;
 }
 
 /**

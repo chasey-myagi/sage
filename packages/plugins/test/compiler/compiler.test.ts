@@ -207,7 +207,7 @@ it("freezes the epoch-head message for later turns of the same epoch", async () 
   store.append("s", {
     kind: "view_epoch",
     payload: { epoch: 0, reason: "compiler:first-turn" },
-    details: { epochHead: structuredClone(first.messages[0]) },
+    details: { prefixMessage: structuredClone(first.messages[0]) },
   });
   body = "CHANGED";
   const second = await compiler.view(context(store, 2));

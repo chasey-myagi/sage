@@ -1,7 +1,7 @@
 /**
  * Rebuild the model-facing head and messages for one turn from the Log.
  *
- * Contract: `view_epoch.details.epochHead` is the frozen prefix message.
+ * Contract: `view_epoch.details.prefixMessage` is the frozen prefix message.
  * Message entries before that turn's request_header are the history, projected
  * with the same repair as passthrough. Tail text comes from
  * `manifest.details.claimContent`, walking backward to the manifest that
@@ -64,13 +64,13 @@ export function rebuildFromLog(
     stubsFor(projected.messages, manifest),
   );
   const epoch = epochOf(manifest);
-  const epochHead = epochHeadFor(prefix, epoch);
+  const prefixMessage = prefixMessageFor(prefix, epoch);
   const messages = [...history];
   if (
-    epochHead &&
-    !history.some((message) => sameMessage(message, epochHead))
+    prefixMessage &&
+    !history.some((message) => sameMessage(message, prefixMessage))
   ) {
-    messages.unshift(structuredClone(epochHead));
+    messages.unshift(structuredClone(prefixMessage));
   }
   appendTail(messages, tailBlocks(path, manifestIndex));
   return { head, messages };
@@ -180,7 +180,7 @@ function epochOf(entry: StoredEntry): number {
   return typeof entry.payload.epoch === "number" ? entry.payload.epoch : 0;
 }
 
-function epochHeadFor(
+function prefixMessageFor(
   path: readonly StoredEntry[],
   epoch: number,
 ): Message | undefined {
@@ -188,9 +188,9 @@ function epochHeadFor(
   for (const entry of path) {
     if (entry.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
     if (entry.payload.epoch !== epoch) continue;
-    const head = entry.details?.epochHead;
-    if (!isMessage(head)) continue;
-    found = head;
+    const stored = entry.details?.prefixMessage;
+    if (!isMessage(stored)) continue;
+    found = stored;
   }
   return found;
 }

@@ -8,7 +8,7 @@
  * prefix cache keeps hitting; only the tail changes. A new epoch opens only
  * when the cost check or the context-window guard says rebuild. Every
  * model-visible byte is reproducible from the Log: the manifest, the
- * `view_epoch` head, and `details.claimContent`. A claim provider that
+ * `view_epoch.details.prefixMessage`, and `details.claimContent`. A claim provider that
  * throws becomes a manifest row; a scorer that throws or falls back
  * degrades to the deterministic tiers. Only kernel defects throw.
  *
@@ -464,8 +464,9 @@ async function scoreOnEntry(
 
 /**
  * `manifest.cache`. `expectedReadTokens` is the frozen-prefix estimate the
- * previous turn emitted (its own `head + ratio × budget.frozenTokens`), not
- * a projection with this turn's re-anchored head.
+ * previous turn emitted (its own
+ * `overheadTokens + ratio × budget.frozenTokens`), not a projection with
+ * this turn's re-anchored overhead.
  */
 function cacheReport(ctx: ViewContext): {
   expectedReadTokens: number;

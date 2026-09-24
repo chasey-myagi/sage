@@ -58,7 +58,7 @@ it("reads the previous assistant input total", () => {
   expect(measuredInput(store.path("s"))).toBe(120000);
 });
 
-it("records a fixed head and projects old and new tokens as head plus used", async () => {
+it("records a fixed overhead and projects old and new tokens as overhead plus used", async () => {
   const compiler = contextCompiler({
     budget: 8000,
     claims: [],
@@ -92,18 +92,18 @@ it("records a fixed head and projects old and new tokens as head plus used", asy
 
   const second = await compiler.view(context(store, 2));
   const calibration = second.manifest.calibration;
-  const head = 120000 - estimated.used;
+  const overhead = 120000 - estimated.used;
   expect(calibration?.measured).toBe(120000);
   expect(calibration?.estimated).toBe(estimated.used);
-  expect(calibration?.head).toBe(head);
+  expect(calibration?.overheadTokens).toBe(overhead);
   expect(calibration?.ratio).toBe(1);
   const decision = second.manifest.epochDecision;
   const secondUsed =
     typeof second.manifest.budget === "object" && second.manifest.budget
       ? second.manifest.budget.used
       : 0;
-  expect(decision?.newTokens).toBeCloseTo(head + secondUsed, 5);
-  expect(decision?.oldTokens).toBeCloseTo(head + secondUsed, 5);
+  expect(decision?.newTokens).toBeCloseTo(overhead + secondUsed, 5);
+  expect(decision?.oldTokens).toBeCloseTo(overhead + secondUsed, 5);
 
   store.append("s", { kind: "manifest", payload: second.manifest });
   store.append("s", {
@@ -114,7 +114,7 @@ it("records a fixed head and projects old and new tokens as head plus used", asy
     },
     details: {
       usage: {
-        inputOther: head + secondUsed + 4,
+        inputOther: overhead + secondUsed + 4,
         inputCacheRead: 0,
         inputCacheCreation: 0,
         output: 4,
@@ -125,7 +125,7 @@ it("records a fixed head and projects old and new tokens as head plus used", asy
   const third = await compiler.view(context(store, 3));
   const later = third.manifest.calibration;
   const laterRatio = 4 / secondUsed + 1;
-  expect(later?.head).toBe(head);
+  expect(later?.overheadTokens).toBe(overhead);
   expect(later?.ratio).toBeCloseTo(laterRatio, 5);
   expect(laterRatio).toBeGreaterThan(1);
   const thirdUsed =
@@ -133,12 +133,12 @@ it("records a fixed head and projects old and new tokens as head plus used", asy
       ? third.manifest.budget.used
       : 0;
   expect(third.manifest.epochDecision?.oldTokens).toBeCloseTo(
-    head + thirdUsed * laterRatio,
+    overhead + thirdUsed * laterRatio,
     5,
   );
 });
 
-it("floors head at 0 when the counter already exceeds the measured input", () => {
+it("floors overhead at 0 when the counter already exceeds the measured input", () => {
   const store = new MemoryLogStore();
   store.append("s", {
     kind: "manifest",
@@ -164,7 +164,7 @@ it("floors head at 0 when the counter already exceeds the measured input", () =>
     },
   });
   const calibration = calibrationFor(store.path("s"));
-  expect(calibration?.head).toBe(0);
+  expect(calibration?.overheadTokens).toBe(0);
   expect(calibration?.measured).toBe(20);
   expect(calibration?.estimated).toBe(100);
   expect(calibration?.ratio).toBe(0.2);
@@ -196,7 +196,7 @@ it("estimates the frozen prefix from the previous manifest's own calibration", a
       ],
       chunks: [],
       anomalies: [],
-      calibration: { measured: 20, estimated: 5, head: 10, ratio: 2 },
+      calibration: { measured: 20, estimated: 5, overheadTokens: 10, ratio: 2 },
     },
   });
   store.append("s", {
@@ -215,7 +215,7 @@ it("estimates the frozen prefix from the previous manifest's own calibration", a
   expect(view.manifest.cache?.expectedReadTokens).toBeCloseTo(20, 5);
 });
 
-it("uses head 0 and ratio 1 when the previous manifest has no calibration", async () => {
+it("uses overhead 0 and ratio 1 when the previous manifest has no calibration", async () => {
   const compiler = contextCompiler({
     budget: 8000,
     claims: [],
@@ -250,7 +250,7 @@ it("uses head 0 and ratio 1 when the previous manifest has no calibration", asyn
   expect(view.manifest.cache?.expectedReadTokens).toBe(7);
 });
 
-it("rejects a calibration head that is not a finite number", () => {
+it("rejects a calibration overheadTokens that is not a finite number", () => {
   const store = new MemoryLogStore();
   expect(() =>
     store.append("s", {
@@ -261,7 +261,12 @@ it("rejects a calibration head that is not a finite number", () => {
         claims: [],
         chunks: [],
         anomalies: [],
-        calibration: { measured: 1, estimated: 1, ratio: 1, head: "nope" },
+        calibration: {
+          measured: 1,
+          estimated: 1,
+          ratio: 1,
+          overheadTokens: "nope",
+        },
       },
     }),
   ).toThrow(InvalidEntryError);
