@@ -13,8 +13,8 @@ import "./log/kinds.js";
 /** Package name, for diagnostics. */
 export const PACKAGE = "@sage/core" as const;
 
-/** Re-exported so packages that depend only on core share the one guard. */
-export { isRecord } from "@sage/provider/contract";
+/** Re-exported so packages that depend only on core share the one definition. */
+export { errorText, isRecord } from "@sage/provider/contract";
 export { type HealthTokens, type RunHealth, runHealth } from "./health.js";
 export type { Decision, HookEvents, Hooks } from "./hooks/types.js";
 export {

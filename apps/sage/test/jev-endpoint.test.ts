@@ -1,13 +1,9 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createFaux, stopScript, toolScript } from "@sage/core/testing";
 import type { ProviderAdapter } from "@sage/provider";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  createFaux,
-  stopScript,
-  toolScript,
-} from "../../../packages/core/test/support/faux.ts";
 import { runCli } from "../src/main.ts";
 
 let dir = "";

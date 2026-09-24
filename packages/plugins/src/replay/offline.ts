@@ -17,7 +17,9 @@
 import type { CompiledView, Manifest, ViewContext } from "@sage/core";
 import {
   type HarnessTool,
+  isRecord,
   type LogStore,
+  latestViewEpoch,
   MemoryLogStore,
   passthroughView,
   type StoredEntry,
@@ -317,17 +319,7 @@ function commitView(
   ctx: ViewContext,
 ): void {
   const path = shadow.path(sessionId);
-  let latest = 0;
-  let seen = false;
-  for (const entry of path) {
-    if (entry.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
-    const epoch = finite(entry.payload.epoch);
-    if (epoch === undefined) continue;
-    latest = epoch;
-    seen = true;
-  }
-  const baseline = seen ? latest : 0;
-  if (view.epochStart || view.epoch > baseline) {
+  if (view.epochStart || view.epoch > latestViewEpoch(path)) {
     const epochHead = view.messages[0];
     shadow.append(sessionId, {
       kind: "view_epoch",
@@ -546,10 +538,6 @@ function isMessage(payload: unknown): payload is Message {
     (payload.role === "user" || payload.role === "assistant") &&
     Array.isArray(payload.content)
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function finite(value: unknown): number | undefined {

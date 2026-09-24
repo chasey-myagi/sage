@@ -12,6 +12,7 @@
  * that manifest.
  */
 
+import { isRecord } from "@sage/core";
 import {
   collect,
   type ModelRef,
@@ -357,8 +358,4 @@ function readItem(
 function clampSummary(summary: string): string {
   if (summary.length <= SUMMARY_LIMIT) return summary;
   return summary.slice(0, SUMMARY_LIMIT);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

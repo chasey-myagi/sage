@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isRecord } from "@sage/core";
 import { afterEach, expect, it } from "vitest";
 import { runCli } from "../src/main.ts";
 
@@ -33,10 +34,6 @@ type Entry = {
   kind: string;
   payload: Record<string, unknown>;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function loadFixture(): Entry[] {
   return readFileSync(FIXTURE, "utf8")

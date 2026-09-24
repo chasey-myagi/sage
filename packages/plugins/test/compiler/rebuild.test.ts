@@ -1,12 +1,12 @@
 import { AgentSession, MemoryLogStore } from "@sage/core";
-import { expect, it } from "vitest";
 import {
   createFaux,
-  MODEL,
-  SYSTEM,
+  FAUX_MODEL,
+  FAUX_SYSTEM,
   stopScript,
   toolScript,
-} from "../../../core/test/support/faux.ts";
+} from "@sage/core/testing";
+import { expect, it } from "vitest";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
 import { rebuildFromLog } from "../../src/compiler/rebuild.ts";
 
@@ -40,8 +40,8 @@ it("rebuilds each turn's head and messages from the log, including content addre
     store,
     sessionId,
     adapter,
-    model: MODEL,
-    system: SYSTEM,
+    model: FAUX_MODEL,
+    system: FAUX_SYSTEM,
     tools: [echoTool()],
     viewProvider: contextCompiler({
       budget: 10000,

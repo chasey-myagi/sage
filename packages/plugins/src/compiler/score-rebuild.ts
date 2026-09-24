@@ -12,7 +12,12 @@
  * re-tiered rows and `manifest.scorer` are the record.
  */
 
-import type { Message, Request, Usage } from "@sage/provider/contract";
+import {
+  emptyUsage,
+  type Message,
+  type Request,
+  type Usage,
+} from "@sage/provider/contract";
 import type {
   ScoreDecision,
   ScoreRaw,
@@ -30,7 +35,7 @@ import {
   stubRow,
   summaryRow,
 } from "./rows.js";
-import { clampSummary, EMPTY_USAGE, SCORE_TIERS } from "./score-common.js";
+import { clampSummary, SCORE_TIERS } from "./score-common.js";
 
 /** `manifest.scorer`: one rebuild scorer call. */
 export type RebuildScorerReport = {
@@ -170,7 +175,7 @@ function reportOf(result: ScoreResult): RebuildScorerReport | undefined {
   const fallback = result.fallback !== undefined;
   return {
     calls: result.requested === false ? 0 : 1,
-    usage: result.usage ?? EMPTY_USAGE,
+    usage: result.usage ?? emptyUsage(),
     fallback,
     ...(fallback && result.raw ? { raw: result.raw } : {}),
   };

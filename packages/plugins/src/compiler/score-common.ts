@@ -26,14 +26,6 @@ export const SCORE_TIERS: ReadonlySet<Tier> = new Set<Tier>([
 /** Maximum characters of a scorer's summary note kept on the chunk. */
 export const SUMMARY_LIMIT = 200;
 
-/** Usage reported when a scorer call made no request. */
-export const EMPTY_USAGE: Usage = {
-  inputOther: 0,
-  inputCacheRead: 0,
-  inputCacheCreation: 0,
-  output: 0,
-};
-
 /** Cuts a summary note to `SUMMARY_LIMIT` characters. */
 export function clampSummary(summary: string): string {
   if (summary.length <= SUMMARY_LIMIT) return summary;

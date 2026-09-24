@@ -20,7 +20,7 @@
  */
 
 import type { StoredEntry, ViewContext } from "@sage/core";
-import { passthroughView } from "@sage/core";
+import { isRecord, passthroughView } from "@sage/core";
 import type {
   Head,
   Message,
@@ -353,10 +353,6 @@ function findToolUse(
     }
   }
   return undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isMessage(value: unknown): value is Message {

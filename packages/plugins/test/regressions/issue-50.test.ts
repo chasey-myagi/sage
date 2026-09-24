@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type HarnessTool,
+  isRecord,
   JsonlLogStore,
   MemoryLogStore,
   type StoredEntry,
@@ -367,8 +368,4 @@ function finite(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

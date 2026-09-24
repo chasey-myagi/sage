@@ -11,7 +11,7 @@
 
 import type { RunHealth } from "@sage/core";
 import type { ToolNetwork, ToolSandbox } from "@sage/tools";
-import type { CommandIo } from "../io.js";
+import type { CommandIo } from "../command-io.js";
 import type { BenchPolicy, ScorerApply, ScorerName } from "../options.js";
 
 /**

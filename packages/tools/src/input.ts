@@ -8,6 +8,8 @@
  * by the tool is what the session logs.
  */
 
+import { isRecord } from "@sage/core";
+
 /** A tool result as tools build it: text for the model and the error flag. */
 export type ToolResult = { content: string; isError: boolean };
 
@@ -23,10 +25,7 @@ export function fail(content: string): ToolResult {
 
 /** `input` as an object, or undefined for null, arrays, and primitives. */
 export function asRecord(input: unknown): Record<string, unknown> | undefined {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    return undefined;
-  }
-  return input as Record<string, unknown>;
+  return isRecord(input) ? input : undefined;
 }
 
 /** `record[key]` when it is a string (possibly empty), otherwise undefined. */
@@ -65,9 +64,4 @@ export function optionalInt(
   if (typeof value !== "number" || !Number.isInteger(value))
     return { ok: false };
   return { ok: true, value };
-}
-
-/** The message of an Error, or `String(error)` for anything else. */
-export function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

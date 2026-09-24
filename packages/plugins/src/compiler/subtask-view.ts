@@ -14,7 +14,7 @@
  */
 
 import type { CompiledView, ViewContext } from "@sage/core";
-import { passthroughView } from "@sage/core";
+import { isRecord, latestViewEpoch, passthroughView } from "@sage/core";
 import type { Message } from "@sage/provider/contract";
 import { escapeClaimText } from "../claims/escape.js";
 import { applyDecisions } from "./apply.js";
@@ -27,11 +27,10 @@ import type { EpochDecision } from "./decide.js";
 import type { ChunkDecision } from "./eliminate.js";
 import { eliminate } from "./eliminate.js";
 import { contentHash, renderClaim } from "./format.js";
-import { currentEpoch, frozenDecisions } from "./freeze.js";
+import { frozenDecisions } from "./freeze.js";
 import {
   assertSeqsMatch,
   countExpands,
-  isRecord,
   latestManifest,
   manifestTurn,
   type PathEntry,
@@ -184,7 +183,7 @@ function queryClaimRecord(rendered: string, tokens: number): ManifestClaim {
 type ParentPrefix = { epoch: number; messages: Message[]; rows: ChunkRow[] };
 
 function parentPrefix(parentPath: readonly PathEntry[]): ParentPrefix {
-  const epoch = currentEpoch(parentPath);
+  const epoch = latestViewEpoch(parentPath);
   const manifest = latestManifest(parentPath);
   const turn = manifestTurn(manifest);
   if (turn === undefined) {

@@ -13,7 +13,7 @@
  * ledger text reaches the Log only as manifest claim content.
  */
 
-import type { HarnessTool } from "@sage/core";
+import { type HarnessTool, isRecord } from "@sage/core";
 import type { ClaimProvider } from "../compiler/claim.js";
 import { escapeClaimText } from "./escape.js";
 
@@ -136,8 +136,4 @@ function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

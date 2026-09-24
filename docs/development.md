@@ -6,7 +6,7 @@
 
 | 用途 | 工具 | 入口 |
 |---|---|---|
-| 运行时 | Node.js ≥ 22 | 根 `package.json` 的 `engines` |
+| 运行时 | Node.js ≥ 22.18 | 根 `package.json` 的 `engines`；`scripts/gen-log-manifest.mjs` 依赖 22.18 起默认开启的类型擦除 |
 | 包管理与工作区 | pnpm workspace | `pnpm-workspace.yaml`；包之间用 `workspace:*` 互引 |
 | 类型检查 | TypeScript 7，`tsc -b` 按 project references 逐包检查 | `tsconfig.json`（solution 根）、`tsconfig.base.json`（共享选项） |
 | 测试 | vitest | `vitest.config.ts` |

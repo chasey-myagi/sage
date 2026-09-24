@@ -1,6 +1,7 @@
 /**
  * Contract barrel. Types, the pure `collect` fold, and the dependency-free
- * helpers every layer above shares (`isRecord`, usage arithmetic, backoff).
+ * helpers every layer above shares (`isRecord`, `errorText`, usage
+ * arithmetic, backoff).
  *
  * Guarantees: nothing under this path performs I/O or imports anything
  * outside it; the only side effect is the timer inside `sleep`. core may
@@ -17,6 +18,7 @@ export type {
 } from "./adapter.js";
 export { backoffMs, type Sleeper, sleep } from "./backoff.js";
 export { collect } from "./collect.js";
+export { errorText } from "./error.js";
 export type {
   CacheBreakpoint,
   ContentBlock,

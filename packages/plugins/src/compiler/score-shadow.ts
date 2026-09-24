@@ -85,7 +85,11 @@ export async function runShadowScorer(input: {
 }
 
 function failedShadow(scorer: Scorer, error: unknown): ShadowBody {
-  return { scorer: scorer.name, decisions: [], fallback: errorText(error) };
+  return {
+    scorer: scorer.name,
+    decisions: [],
+    fallback: shadowFailureReason(error),
+  };
 }
 
 function shadowDecisions(
@@ -107,7 +111,11 @@ function shadowDecisions(
   return kept;
 }
 
-function errorText(error: unknown): string {
+/**
+ * The shadow `fallback` text for a thrown value. Unlike `errorText`, it never
+ * returns an empty string or "undefined": the Log field must name a reason.
+ */
+function shadowFailureReason(error: unknown): string {
   if (error instanceof Error && error.message.length > 0) return error.message;
   const text = String(error);
   return text.length > 0 && text !== "undefined" ? text : "error";

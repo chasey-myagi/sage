@@ -1,14 +1,9 @@
 /**
  * Type guards for the CLI's untrusted inputs: session jsonl payloads,
- * `results.json`, and task files.
+ * `results.json`, and task files. `isRecord` comes from `@sage/core`.
  *
  * Intentionally not in the Log: nothing. These are pure predicates.
  */
-
-/** True for a plain object. Arrays and null are rejected. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /** True for a number that is neither NaN nor infinite. */
 export function isFiniteNumber(value: unknown): value is number {

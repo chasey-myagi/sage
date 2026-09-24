@@ -10,9 +10,9 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { HarnessTool } from "@sage/core";
+import { errorText, type HarnessTool } from "@sage/core";
 import { pathAccess } from "./access.js";
-import { asRecord, errorText, fail, ok, requiredString } from "./input.js";
+import { asRecord, fail, ok, requiredString } from "./input.js";
 import { resolveInside } from "./path-safety.js";
 
 const inputSchema = {

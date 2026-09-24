@@ -1,4 +1,9 @@
-import { MemoryLogStore, runHealth, type ViewContext } from "@sage/core";
+import {
+  isRecord,
+  MemoryLogStore,
+  runHealth,
+  type ViewContext,
+} from "@sage/core";
 import { renderLlmInput } from "@sage/core/testing";
 import type { Message, Request } from "@sage/provider/contract";
 import { expect, it } from "vitest";
@@ -450,8 +455,4 @@ function requestOf(
     cacheBreakpoints,
     sampling: {},
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

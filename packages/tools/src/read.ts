@@ -9,16 +9,9 @@
  */
 
 import { readFileSync, statSync } from "node:fs";
-import type { HarnessTool } from "@sage/core";
+import { errorText, type HarnessTool } from "@sage/core";
 import { pathAccess } from "./access.js";
-import {
-  asRecord,
-  errorText,
-  fail,
-  ok,
-  optionalInt,
-  requiredString,
-} from "./input.js";
+import { asRecord, fail, ok, optionalInt, requiredString } from "./input.js";
 import { resolveInside } from "./path-safety.js";
 import { splitLines, truncate } from "./truncate.js";
 

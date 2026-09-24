@@ -9,7 +9,7 @@
  * already on the manifest entries.
  */
 
-import type { StoredEntry } from "@sage/core";
+import { isRecord, type StoredEntry } from "@sage/core";
 
 /** One cache-hit row per manifest that recorded both cache numbers. */
 export function cacheHitRatio(
@@ -49,8 +49,4 @@ function finite(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

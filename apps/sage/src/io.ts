@@ -1,6 +1,6 @@
 /**
- * Process handles every subcommand writes through, so tests can capture
- * stdout and stderr without touching the real process.
+ * The process handle `runCli` reads, so tests can capture stdout and stderr
+ * and swap adapters without touching the real process.
  *
  * Intentionally not in the Log: anything written here. stdout carries the
  * command's JSON result; stderr carries progress and errors.
@@ -9,17 +9,8 @@
 import type { ProviderAdapter } from "@sage/provider";
 import type { BashExec } from "@sage/tools";
 import type { BenchDeps } from "./bench/types.js";
+import type { CommandIo } from "./command-io.js";
 import type { JevFetch } from "./scorers.js";
-
-/** A text sink such as `process.stdout`. */
-export type TextOut = { write(chunk: string): void };
-
-/** Working directory and output streams for one subcommand. */
-export type CommandIo = {
-  cwd: string;
-  stdout: TextOut;
-  stderr: TextOut;
-};
 
 /**
  * Everything `runCli` reads from the process, each field overridable.
