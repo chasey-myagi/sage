@@ -60,7 +60,10 @@ export type RunHealth = {
   scorerCalls: number;
   /** Sum of numeric manifest `scorer.fallback`; `true` counts as 1. */
   scorerFallbacks: number;
-  /** Manifests carrying a `shadow` object, and the sum of their usage. */
+  /**
+   * Sum of manifest `shadow.calls` (shadow requests actually sent; a
+   * missing or non-finite `calls` adds 0), and the sum of shadow usage.
+   */
   shadow: {
     calls: number;
     usage: HealthTokens;
@@ -175,7 +178,7 @@ function shadowHealth(path: readonly StoredEntry[]): RunHealth["shadow"] {
   for (const entry of path) {
     if (entry.kind !== "manifest" || !isRecord(entry.payload)) continue;
     if (!isRecord(entry.payload.shadow)) continue;
-    calls += 1;
+    calls += finite(entry.payload.shadow.calls) ?? 0;
     tokens = addLogged(tokens, entry.payload.shadow.usage);
   }
   return { calls, usage: toHealthTokens(tokens) };

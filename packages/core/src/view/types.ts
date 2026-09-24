@@ -157,6 +157,11 @@ export type ScorerRaw = {
  */
 export type ShadowReport = {
   scorer: string;
+  /**
+   * Requests actually sent: 0 when the scorer gave up before sending (for
+   * example no API key), 1 otherwise, including when it threw.
+   */
+  calls: number;
   decisions: ShadowDecisionRecord[];
   usage?: TokenCounts;
   fallback?: string;

@@ -29,8 +29,8 @@ export const SUMMARY_LIMIT = 200;
 
 /**
  * Scorer calls to report for one `score` result: 0 when the scorer fell back
- * before sending any request (`requested: false`), otherwise 1. Rebuild and
- * entry scoring both count with this.
+ * before sending any request (`requested: false`), otherwise 1. Rebuild,
+ * entry, and shadow scoring all count with this.
  */
 export function requestCount(result: Pick<ScoreResult, "requested">): number {
   return result.requested === false ? 0 : 1;
