@@ -17,6 +17,7 @@
 import type { CompiledView, Manifest, ViewContext } from "@sage/core";
 import {
   type HarnessTool,
+  isMessage,
   isRecord,
   type LogStore,
   latestViewEpoch,
@@ -26,9 +27,10 @@ import {
   systemHash,
   toolsHash,
 } from "@sage/core";
-import type { Message, PreparedCall } from "@sage/provider/contract";
+import type { PreparedCall } from "@sage/provider/contract";
 import { contextCompiler, DEFAULT_KEEP_RECENT } from "../compiler/compiler.js";
 import { DEFAULT_EXPECTED_TURNS } from "../compiler/epoch.js";
+import { finite } from "../guards.js";
 import { ruleScorer } from "../scorer/rule.js";
 import type { Scorer } from "../scorer/types.js";
 
@@ -530,18 +532,4 @@ function isAssistantEntry(entry: StoredEntry): boolean {
 
 function isAssistant(payload: unknown): boolean {
   return isRecord(payload) && payload.role === "assistant";
-}
-
-function isMessage(payload: unknown): payload is Message {
-  if (!isRecord(payload)) return false;
-  return (
-    (payload.role === "user" || payload.role === "assistant") &&
-    Array.isArray(payload.content)
-  );
-}
-
-function finite(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
 }

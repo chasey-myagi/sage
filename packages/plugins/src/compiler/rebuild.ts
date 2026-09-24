@@ -20,7 +20,7 @@
  */
 
 import type { StoredEntry, ViewContext } from "@sage/core";
-import { isRecord, passthroughView } from "@sage/core";
+import { isRecord, passthroughView, prefixMessageFor } from "@sage/core";
 import type {
   Head,
   Message,
@@ -70,7 +70,7 @@ export function rebuildFromLog(
     prefixMessage &&
     !history.some((message) => sameMessage(message, prefixMessage))
   ) {
-    messages.unshift(structuredClone(prefixMessage));
+    messages.unshift(prefixMessage);
   }
   appendTail(messages, tailBlocks(path, manifestIndex));
   return { head, messages };
@@ -178,21 +178,6 @@ function sameMessage(left: Message, right: Message): boolean {
 function epochOf(entry: StoredEntry): number {
   if (!isRecord(entry.payload)) return 0;
   return typeof entry.payload.epoch === "number" ? entry.payload.epoch : 0;
-}
-
-function prefixMessageFor(
-  path: readonly StoredEntry[],
-  epoch: number,
-): Message | undefined {
-  let found: Message | undefined;
-  for (const entry of path) {
-    if (entry.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
-    if (entry.payload.epoch !== epoch) continue;
-    const stored = entry.details?.prefixMessage;
-    if (!isMessage(stored)) continue;
-    found = stored;
-  }
-  return found;
 }
 
 function tailBlocks(
@@ -353,12 +338,4 @@ function findToolUse(
     }
   }
   return undefined;
-}
-
-function isMessage(value: unknown): value is Message {
-  if (!isRecord(value)) return false;
-  return (
-    (value.role === "user" || value.role === "assistant") &&
-    Array.isArray(value.content)
-  );
 }

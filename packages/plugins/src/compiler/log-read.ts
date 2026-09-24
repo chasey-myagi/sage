@@ -11,7 +11,12 @@
  * entries already record.
  */
 
-import { isRecord, type ViewContext } from "@sage/core";
+import {
+  isMessage,
+  isRecord,
+  manifestsInEpoch,
+  type ViewContext,
+} from "@sage/core";
 import type { Message, Request, Sampling } from "@sage/provider/contract";
 import { EXPAND_TOOL_NAME } from "./expand.js";
 import { rebuildFromLog } from "./rebuild.js";
@@ -20,15 +25,6 @@ import { rebuildFromLog } from "./rebuild.js";
 export type SessionPath = ViewContext["path"];
 /** One entry of a `SessionPath`. */
 export type PathEntry = SessionPath[number];
-
-/** Narrows an untrusted value to a user or assistant `Message`. */
-export function isMessage(value: unknown): value is Message {
-  if (!isRecord(value)) return false;
-  return (
-    (value.role === "user" || value.role === "assistant") &&
-    Array.isArray(value.content)
-  );
-}
 
 /** Returns the last `manifest` entry on the path. */
 export function latestManifest(path: SessionPath): PathEntry | undefined {
@@ -86,25 +82,6 @@ export function previousHash(
       : undefined;
   }
   return undefined;
-}
-
-/**
- * Returns a clone of the last `view_epoch.details.prefixMessage` recorded for
- * `epoch`, or undefined when that epoch stored none.
- */
-export function prefixMessageFor(
-  path: SessionPath,
-  epoch: number,
-): Message | undefined {
-  let found: Message | undefined;
-  for (const entry of path) {
-    if (entry.kind !== "view_epoch") continue;
-    if (!isRecord(entry.payload) || entry.payload.epoch !== epoch) continue;
-    const stored = entry.details?.prefixMessage;
-    if (!isMessage(stored)) continue;
-    found = structuredClone(stored);
-  }
-  return found;
 }
 
 /**
@@ -229,7 +206,7 @@ export function loggedSummaries(
   path: SessionPath,
   epoch: number,
 ): Map<string, string> {
-  const entry = epochManifest(path, epoch);
+  const entry = manifestsInEpoch(path, epoch)[0];
   const notes = new Map<string, string>();
   if (
     !entry ||
@@ -244,30 +221,6 @@ export function loggedSummaries(
     notes.set(chunk.id, chunk.summary);
   }
   return notes;
-}
-
-function epochManifest(
-  path: SessionPath,
-  epoch: number,
-): PathEntry | undefined {
-  let start = -1;
-  let opened = false;
-  for (let index = 0; index < path.length; index += 1) {
-    const entry = path[index];
-    if (entry?.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
-    if (entry.payload.epoch !== epoch) continue;
-    start = index;
-    opened = true;
-    break;
-  }
-  if (!opened && epoch !== 0) return undefined;
-  for (let index = start + 1; index < path.length; index += 1) {
-    const entry = path[index];
-    if (!entry) continue;
-    if (entry.kind === "view_epoch") break;
-    if (entry.kind === "manifest") return entry;
-  }
-  return undefined;
 }
 
 /**

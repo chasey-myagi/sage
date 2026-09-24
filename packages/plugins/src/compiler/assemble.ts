@@ -13,7 +13,7 @@
  * records, and new claim text reach the Log through the manifest.
  */
 
-import { errorText, type ViewContext } from "@sage/core";
+import { errorText, prefixMessageFor, type ViewContext } from "@sage/core";
 import type { Message } from "@sage/provider/contract";
 import { applyDecisions, renderSummary } from "./apply.js";
 import { allocate, type TokenCounter } from "./budget.js";
@@ -28,7 +28,6 @@ import {
   isLoggedMessage,
   latestManifest,
   loggedSummaries,
-  prefixMessageFor,
   previousHash,
   type SessionPath,
 } from "./log-read.js";
