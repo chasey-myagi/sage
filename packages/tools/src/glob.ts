@@ -7,6 +7,11 @@
  * Intentionally not in the Log: compiled regular expressions.
  */
 
+/**
+ * Compiles a glob to an anchored RegExp: `*` and `?` stay inside one path
+ * segment, `**` crosses segments, and `**` followed by `/` also matches zero
+ * directories. Every other character is literal.
+ */
 export function globToRegExp(glob: string): RegExp {
   let source = "^";
   for (let index = 0; index < glob.length; index += 1) {

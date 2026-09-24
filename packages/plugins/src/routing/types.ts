@@ -15,15 +15,19 @@ import type { Access, ChunkRecord } from "@sage/core";
 import type { CatalogEntry, ModelRef } from "@sage/provider";
 import type { EpochDecision } from "../compiler/decide.js";
 
+/** What a route policy sees when an epoch rebuilds. */
 export type RouteInput = {
   epoch: number;
   current: ModelRef;
   candidates: readonly CatalogEntry[];
+  /** The new view's chunk tiers, with accesses from the chunk index. */
   viewChunks: readonly (ChunkRecord & { accesses?: Access[] })[];
   decision: EpochDecision;
   budget: number;
 };
 
+/** The next model and why, or undefined to keep the current model. */
 export type RouteResult = { model: ModelRef; reason: string } | undefined;
 
+/** Chooses the model for a rebuilt epoch. */
 export type RoutePolicy = (input: RouteInput) => RouteResult;

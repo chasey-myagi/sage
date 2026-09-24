@@ -1,31 +1,14 @@
 /**
- * Offline policy replay. Recompiles each recorded turn from its log prefix.
+ * Offline policy replay: recompiles each recorded turn under another
+ * policy and compares token estimates, without calling any model.
  *
- * Contract: `replayOffline` does not call a model. A scorer without
- * `isNoop` is replaced with `ruleScorer`; `compareOffline` then adds the
- * note `scorer:offline-rule` to its report for that returned array (the
- * array itself is remembered, not a copy of it). `recordedTokens` is that
- * turn's assistant `details.usage` input total (`inputOther + inputCacheRead +
- * inputCacheCreation`). Passthrough sets `policyTokens` to that total, so
- * `saved` is 0. A compiler policy sets `policyTokens` to `budget.used`
- * times `manifest.calibration.ratio`, or 1 when that turn has no
- * calibration. The log does not store `contextWindow` or pricing; replay
- * uses 8000 and null, the same stand-in as keyless replay.
- * Each turn's path is the recorded prefix before that turn's view commit
- * (`model_change`, `view_epoch`, `request_header`, and everything after).
- * Compiler policies then keep their own prior manifests on a shadow log so
- * later turns freeze the policy under test, not the recorded one.
- * `prefixStable` is true on the first turn, and afterwards when the previous
- * recompiled head matches and its messages are a JSON prefix of this turn.
- * `epoch`, `rebuild`, `oldTokens`, `newTokens`, `decisionReason`, and
- * `chunkTiers` copy that turn's recompiled manifest. `compareOffline` does
- * not print them.
- * `omittedIds` are manifest chunks at tier `none`. `likelyNeededOmissions`
- * are omitted tool chunks whose `toolUseId` (the id after `#`) or an
- * `accesses.key` occurs in a later assistant's text or tool_use input.
- * `compareOffline` reports per-turn policy tokens, total saved, prefix-stable
- * turn counts, and likely-needed counts. The report is numbers, ids, and
- * the scorer note only.
+ * Guarantees: each turn's view is compiled from the recorded prefix before
+ * that turn's view commit (`model_change`, `view_epoch`, `request_header`,
+ * and everything after). Compiler policies keep their own prior manifests
+ * on a shadow log, so later turns freeze the policy under test, not the
+ * recorded one. A scorer that would call out is swapped for `ruleScorer`,
+ * and the report says so. The report holds numbers, ids, and the scorer
+ * note only, never chunk text. Per-field meanings: `TurnDiff`.
  *
  * Intentionally not in the Log: the shadow log, the diffs, and the report.
  * The recorded session is the fact. Replay does not append to it.
@@ -42,26 +25,58 @@ import {
   toolsHash,
 } from "@sage/core";
 import type { Message, PreparedCall } from "@sage/provider/contract";
-import { contextCompiler } from "../compiler/compiler.js";
+import { contextCompiler, DEFAULT_KEEP_RECENT } from "../compiler/compiler.js";
+import { DEFAULT_EXPECTED_TURNS } from "../compiler/epoch.js";
 import { ruleScorer } from "../scorer/rule.js";
 import type { Scorer } from "../scorer/types.js";
 
+/** The policy a replay recompiles under. */
 export type Policy = {
+  /** Defaults to `REPLAY_DEFAULT_BUDGET`. */
   budget?: number;
+  /** Defaults to `DEFAULT_KEEP_RECENT`. */
   keepRecent?: number;
+  /** Without `isNoop`, replaced by `ruleScorer`. */
   scorer?: Scorer;
+  /** Defaults to `DEFAULT_EXPECTED_TURNS`. */
   expectedTurns?: number;
+  /** Replay the passthrough view instead of the compiler. */
   passthrough?: boolean;
 };
 
+/** One replayed turn: the recorded cost next to the policy's estimate. */
 export type TurnDiff = {
   turn: number;
+  /**
+   * That turn's assistant `details.usage` input total
+   * (`inputOther + inputCacheRead + inputCacheCreation`).
+   */
   recordedTokens: number;
+  /**
+   * Passthrough: `recordedTokens`, so `saved` is 0. Compiler policy:
+   * `budget.used` times `manifest.calibration.ratio`, or times 1 when that
+   * turn has no calibration.
+   */
   policyTokens: number;
+  /** `recordedTokens - policyTokens`. */
   saved: number;
+  /**
+   * True on the first turn; afterwards true when the previous recompiled
+   * head matches and its messages are a JSON prefix of this turn's.
+   */
   prefixStable: boolean;
+  /** Manifest chunk ids at tier `none`. */
   omittedIds: string[];
+  /**
+   * Omitted tool chunks whose `toolUseId` (the id after `#`) or an
+   * `accesses(input)` key occurs in a later assistant's text or tool_use
+   * input: a proxy for "referenced later".
+   */
   likelyNeededOmissions: string[];
+  /**
+   * This and the fields below copy the recompiled manifest;
+   * `compareOffline` does not print them.
+   */
   epoch: number;
   rebuild: boolean;
   oldTokens: number;
@@ -70,9 +85,15 @@ export type TurnDiff = {
   chunkTiers: { id: string; tier: string }[];
 };
 
+/** Default replay budget, the same as the sage CLI's default budget. */
+const REPLAY_DEFAULT_BUDGET = 40_000;
 const SCORER_NOTE = "scorer:offline-rule";
 /** Results of `replayOffline` runs whose scorer was swapped for `ruleScorer`. */
 const scorerSwappedRuns = new WeakSet<readonly TurnDiff[]>();
+/**
+ * The Log stores neither the context window nor pricing; replay uses this
+ * window and `pricing: null`, the same stand-in as keyless replay.
+ */
 const REPLAY_WINDOW = 8000;
 
 type Slice = {
@@ -82,6 +103,13 @@ type Slice = {
   header: StoredEntry;
 };
 
+/**
+ * Replays every recorded turn of `sessionId` under `policy` and returns one
+ * diff per turn that has an assistant reply. Reads `store` only. When the
+ * scorer was swapped, `compareOffline` notes it for this returned array
+ * (the array itself is remembered, not a copy). Throws when a recorded
+ * `request_header` is not an object or lacks provider or model.
+ */
 export async function replayOffline(
   store: LogStore,
   sessionId: string,
@@ -100,10 +128,10 @@ export async function replayOffline(
   const provider = policy.passthrough
     ? passthroughView
     : contextCompiler({
-        budget: policy.budget ?? 40_000,
+        budget: policy.budget ?? REPLAY_DEFAULT_BUDGET,
         claims: [],
-        keepRecent: policy.keepRecent ?? 6,
-        expectedTurns: policy.expectedTurns ?? 20,
+        keepRecent: policy.keepRecent ?? DEFAULT_KEEP_RECENT,
+        expectedTurns: policy.expectedTurns ?? DEFAULT_EXPECTED_TURNS,
         ...(scorer ? { scorer } : {}),
       });
 
@@ -155,6 +183,12 @@ export async function replayOffline(
   return diffs;
 }
 
+/**
+ * Compares two replays: per-turn `policyTokens`, total `saved`,
+ * prefix-stable turn counts, and likely-needed omission counts, as a
+ * Markdown table and the same numbers as JSON. Adds `scorer:offline-rule`
+ * once when either replay swapped its scorer.
+ */
 export function compareOffline(
   a: TurnDiff[],
   b: TurnDiff[],

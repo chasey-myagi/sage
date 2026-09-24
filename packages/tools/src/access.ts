@@ -13,6 +13,11 @@ import type { Access } from "@sage/core";
 import { asRecord } from "./input.js";
 import { resolveInside } from "./path-safety.js";
 
+/**
+ * One Access for the input's `path` field, or for `fallback` when that
+ * field is missing or empty. No usable path, or one outside the
+ * workspace, gives [].
+ */
 export function pathAccess(
   cwd: string,
   input: unknown,

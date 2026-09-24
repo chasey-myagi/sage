@@ -2,7 +2,8 @@
  * find tool. Lists workspace files matching a glob.
  *
  * Contract: paths are relative to the workspace, one per line, sorted.
- * Symlinks are not followed. `.git`, `.sage`, and `node_modules` are skipped.
+ * Symlinks are not followed. `SKIPPED_DIR_NAMES` (`.git`, `.sage`,
+ * `node_modules`) are skipped.
  *
  * Intentionally not in the Log: paths that did not match. The list is the
  * tool result the session logs.
@@ -21,10 +22,12 @@ import {
   optionalString,
   requiredString,
 } from "./input.js";
-import { resolveInside, workspaceRelative } from "./path-safety.js";
-
-const LIST_MAX = 500;
-const SKIP_DIRS = new Set([".git", ".sage", "node_modules"]);
+import {
+  resolveInside,
+  SKIPPED_DIR_NAMES,
+  workspaceRelative,
+} from "./path-safety.js";
+import { LIST_MAX_ENTRIES } from "./truncate.js";
 
 const inputSchema = {
   type: "object",
@@ -41,6 +44,10 @@ const inputSchema = {
   required: ["glob"],
 };
 
+/**
+ * Creates the find tool bound to `cwd`. No match returns `No matches.`;
+ * more than `LIST_MAX_ENTRIES` paths end with a `[truncated: ...]` line.
+ */
 export function createFind(cwd: string): HarnessTool {
   return {
     def: {
@@ -69,11 +76,11 @@ export function createFind(cwd: string): HarnessTool {
         const matcher = globToRegExp(glob);
         const found = walk(cwd, root, matcher);
         if (found.length === 0) return ok("No matches.");
-        const shown = found.slice(0, LIST_MAX);
+        const shown = found.slice(0, LIST_MAX_ENTRIES);
         const lines = [...shown];
-        if (found.length > LIST_MAX) {
+        if (found.length > LIST_MAX_ENTRIES) {
           lines.push(
-            `[truncated: showing ${LIST_MAX} of ${found.length} entries]`,
+            `[truncated: showing ${LIST_MAX_ENTRIES} of ${found.length} entries]`,
           );
         }
         return ok(lines.join("\n"));
@@ -107,7 +114,7 @@ function walk(cwd: string, root: string, matcher: RegExp): string[] {
       continue;
     }
     for (const entry of entries) {
-      if (SKIP_DIRS.has(entry.name)) continue;
+      if (SKIPPED_DIR_NAMES.has(entry.name)) continue;
       const abs = path.join(current, entry.name);
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {

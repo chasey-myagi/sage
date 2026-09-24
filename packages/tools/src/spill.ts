@@ -1,9 +1,10 @@
 /**
  * Spill oversized tool output to a file and return a head/tail preview.
  *
- * Contract: when output exceeds SPILL_LIMIT_BYTES, the full text is written
- * to the given path and the returned preview keeps a 20000 byte head and a
- * 5000 byte tail. The notice line is reserved inside the limit.
+ * Contract: when output exceeds `SPILL_LIMIT_BYTES`, the full text is
+ * written to the given path and the returned preview keeps up to a
+ * `SPILL_HEAD_BYTES` head and a `SPILL_TAIL_BYTES` tail. The notice line is
+ * reserved inside the limit, and cuts never split a UTF-8 character.
  *
  * Intentionally not in the Log: the spilled file. The preview, including the
  * path in the notice, is what the model sees and what the session logs.
@@ -12,10 +13,20 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+/** Output up to this many UTF-8 bytes is returned as is. */
 export const SPILL_LIMIT_BYTES = 30_000;
+/** Head bytes a spilled preview keeps before the notice line. */
 export const SPILL_HEAD_BYTES = 20_000;
+/** Tail bytes a spilled preview keeps after the notice line. */
 export const SPILL_TAIL_BYTES = 5_000;
+/** Shrink rounds `fit` tries before returning its last attempt. */
+const FIT_MAX_ATTEMPTS = 8;
 
+/**
+ * Returns `output` unchanged when it fits, else writes it to `filePath`
+ * (creating parent directories) and returns the preview with `saved: true`.
+ * Throws when the file cannot be written.
+ */
 export function spill(
   output: string,
   filePath: string,
@@ -36,7 +47,7 @@ function cutPrefix(text: string, maxBytes: number): string {
   const buf = Buffer.from(text, "utf8");
   if (buf.length <= maxBytes) return text;
   let end = maxBytes;
-  while (end > 0 && ((buf[end] ?? 0) & 0xc0) === 0x80) end -= 1;
+  while (end > 0 && isContinuationByte(buf[end])) end -= 1;
   return buf.subarray(0, end).toString("utf8");
 }
 
@@ -44,10 +55,15 @@ function cutSuffix(text: string, maxBytes: number): string {
   const buf = Buffer.from(text, "utf8");
   if (buf.length <= maxBytes) return text;
   let start = buf.length - maxBytes;
-  while (start < buf.length && ((buf[start] ?? 0) & 0xc0) === 0x80) {
+  while (start < buf.length && isContinuationByte(buf[start])) {
     start += 1;
   }
   return buf.subarray(start).toString("utf8");
+}
+
+/** True for a UTF-8 continuation byte (`10xxxxxx`), which cannot start a cut. */
+function isContinuationByte(byte: number | undefined): boolean {
+  return ((byte ?? 0) & 0xc0) === 0x80;
 }
 
 function fit(output: string, filePath: string): string {
@@ -55,7 +71,7 @@ function fit(output: string, filePath: string): string {
   let headBudget = Math.min(SPILL_HEAD_BYTES, total);
   let tailBudget = Math.min(SPILL_TAIL_BYTES, total);
   let body = output;
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+  for (let attempt = 0; attempt < FIT_MAX_ATTEMPTS; attempt += 1) {
     if (headBudget + tailBudget > total) {
       tailBudget = Math.max(0, total - headBudget);
     }

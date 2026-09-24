@@ -33,6 +33,10 @@ const inputSchema = {
   required: ["path", "old_string", "new_string"],
 };
 
+/**
+ * Creates the edit tool bound to `cwd`. Success returns `Edited <path>`; an
+ * empty old_string is an isError result.
+ */
 export function createEdit(cwd: string): HarnessTool {
   return {
     def: {

@@ -29,13 +29,21 @@ import {
   requiredString,
   type ToolResult,
 } from "./input.js";
-import { resolveInside, workspaceRelative } from "./path-safety.js";
+import {
+  resolveInside,
+  SKIPPED_DIR_NAMES,
+  workspaceRelative,
+} from "./path-safety.js";
 
+/** Default `max_results` of a grep call. */
 export const GREP_MAX_RESULTS = 200;
+/** Longest hit line returned as is, in characters. */
 export const GREP_MAX_LINE_CHARS = 300;
 const MATCH_CONTEXT = GREP_MAX_LINE_CHARS / 2;
+/** The in-process searcher skips files larger than this many bytes. */
 const MAX_FILE_BYTES = 1_000_000;
-const SKIP_DIRS = new Set([".git", ".sage", "node_modules"]);
+/** ripgrep exits 1 when nothing matched; that is an empty result, not a failure. */
+const RG_NO_MATCH_EXIT_CODE = 1;
 
 const inputSchema = {
   type: "object",
@@ -55,7 +63,7 @@ const inputSchema = {
     max_results: {
       type: "integer",
       minimum: 1,
-      description: "Maximum hits to return. Defaults to 200.",
+      description: `Maximum hits to return. Defaults to ${GREP_MAX_RESULTS}.`,
     },
   },
   required: ["pattern"],
@@ -65,6 +73,11 @@ type Hit = { file: string; line: number; text: string };
 
 let rgReady: Promise<boolean> | undefined;
 
+/**
+ * Creates the grep tool bound to `cwd`. Uses ripgrep when `rg --version`
+ * succeeds (checked once per process) and falls back to the in-process
+ * searcher when rg is missing; other rg failures are isError results.
+ */
 export function createGrep(cwd: string): HarnessTool {
   return {
     def: {
@@ -122,6 +135,12 @@ export function createGrep(cwd: string): HarnessTool {
   };
 }
 
+/**
+ * The in-process searcher: walks `root` without following symlinks, skips
+ * `SKIPPED_DIR_NAMES`, files over `MAX_FILE_BYTES`, and files with a NUL
+ * byte, and formats hits like the rg path. An invalid pattern or glob is an
+ * isError result.
+ */
 export async function searchWithoutRg(opts: {
   cwd: string;
   pattern: string;
@@ -183,7 +202,7 @@ function collectHits(
       continue;
     }
     for (const entry of entries) {
-      if (SKIP_DIRS.has(entry.name)) continue;
+      if (SKIPPED_DIR_NAMES.has(entry.name)) continue;
       const abs = path.join(current, entry.name);
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
@@ -255,6 +274,11 @@ function clipHitText(line: string, pattern: RegExp | undefined): string {
   return `${lead}${shown}${tail}[+${omitted} chars]`;
 }
 
+/**
+ * Formats hits as `file:line: text` lines, sorted by the caller. Returns
+ * `No matches.` for none, and appends a `[truncated: ...]` line past
+ * `maxResults`.
+ */
 export function formatHits(hits: Hit[], maxResults: number): string {
   if (hits.length === 0) return "No matches.";
   const shown = hits.slice(0, maxResults);
@@ -300,12 +324,7 @@ async function searchWithRg(opts: {
     "--no-heading",
     "--color",
     "never",
-    "--glob",
-    "!.git/**",
-    "--glob",
-    "!.sage/**",
-    "--glob",
-    "!node_modules/**",
+    ...[...SKIPPED_DIR_NAMES].flatMap((name) => ["--glob", `!${name}/**`]),
     "-e",
     opts.pattern,
   ];
@@ -344,7 +363,7 @@ function runRg(args: string[], cwd: string): Promise<string> {
     child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.on("error", reject);
     child.on("close", (code) => {
-      if (code === 0 || code === 1) {
+      if (code === 0 || code === RG_NO_MATCH_EXIT_CODE) {
         resolve(Buffer.concat(stdout).toString("utf8"));
         return;
       }

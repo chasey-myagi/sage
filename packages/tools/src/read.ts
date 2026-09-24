@@ -22,7 +22,9 @@ import {
 import { resolveInside } from "./path-safety.js";
 import { splitLines, truncate } from "./truncate.js";
 
+/** Default page length of a read, in lines. */
 export const READ_MAX_LINES = 2000;
+/** Byte cap of one read page. */
 export const READ_MAX_BYTES = 256 * 1024;
 
 const inputSchema = {
@@ -40,12 +42,18 @@ const inputSchema = {
     limit: {
       type: "integer",
       minimum: 1,
-      description: "Maximum lines to return. Defaults to 2000.",
+      description: `Maximum lines to return. Defaults to ${READ_MAX_LINES}.`,
     },
   },
   required: ["path"],
 };
 
+/**
+ * Creates the read tool bound to `cwd`. A cut page ends with
+ * `[truncated: showing lines A-B of N; call read with offset=B+1 to
+ * continue]`. A file containing a NUL byte, an offset past the end, and a
+ * first line over `READ_MAX_BYTES` are isError results.
+ */
 export function createRead(cwd: string): HarnessTool {
   return {
     def: {

@@ -41,7 +41,7 @@ function tool(tools: HarnessTool[], name: string): HarnessTool {
   return found;
 }
 
-describe("issue 51 grep line cap", () => {
+describe("grep hit line cap", () => {
   it("caps a 5000-character mid-line hit at 320 characters", async () => {
     const cwd = freshDir();
     const needle = "NEEDLE";
@@ -97,7 +97,7 @@ describe("issue 51 grep line cap", () => {
     expect(viaWalk.content).toBe(viaTool.content);
   });
 
-  it("replays the issue-46 grep call under 8000 characters", async () => {
+  it("keeps a recorded long-line grep call under 8000 characters", async () => {
     // Hermetic: the real call swept the whole repo, and later fixtures
     // (issue-50 and beyond) add more hits. Only the long-line fixture matters
     // for the cap, so copy that one file into an empty directory.

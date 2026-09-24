@@ -9,6 +9,7 @@
  * a claim provider puts on a tier; the compiler logs the rendered claim.
  */
 
+/** Returns `text` with every `</claim` replaced by `<\/claim`. */
 export function escapeClaimText(text: string): string {
   return text.replaceAll("</claim", "<\\/claim");
 }

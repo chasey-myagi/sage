@@ -8,11 +8,17 @@
  * the returned text into a tool result, which the session logs.
  */
 
+/** Most entries `find` and `ls` return before a truncation line. */
+export const LIST_MAX_ENTRIES = 500;
+
+/** A truncated text and what was cut from it. */
 export type Truncation = {
   text: string;
+  /** Whole lines and UTF-8 bytes dropped from the end; 0 when unchanged. */
   omitted: { lines: number; bytes: number };
 };
 
+/** Splits on `\n`; a trailing newline does not add an empty last line. */
 export function splitLines(input: string): string[] {
   if (input.length === 0) return [];
   const parts = input.split("\n");
@@ -20,6 +26,10 @@ export function splitLines(input: string): string[] {
   return parts;
 }
 
+/**
+ * Keeps the longest prefix of whole lines within both caps. The result is
+ * empty when the first line alone exceeds `maxBytes`.
+ */
 export function truncate(
   input: string,
   limits: { maxLines: number; maxBytes: number },
