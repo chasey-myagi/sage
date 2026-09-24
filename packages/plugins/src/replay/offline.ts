@@ -1,11 +1,11 @@
 /**
  * Offline policy replay. Recompiles each recorded turn from its log prefix.
  *
- * Contract: `replayOffline` does not call a model. A scorer whose `name` is
- * not `rule` is replaced with `ruleScorer`, and the returned array carries a
- * non-enumerable `scorerNote` of `scorer:offline-rule` that `compareOffline`
- * copies into the report. `recordedTokens` is that turn's assistant
- * `details.usage` input total (`inputOther + inputCacheRead +
+ * Contract: `replayOffline` does not call a model. A scorer without
+ * `isNoop` is replaced with `ruleScorer`; `compareOffline` then adds the
+ * note `scorer:offline-rule` to its report for that returned array (the
+ * array itself is remembered, not a copy of it). `recordedTokens` is that
+ * turn's assistant `details.usage` input total (`inputOther + inputCacheRead +
  * inputCacheCreation`). Passthrough sets `policyTokens` to that total, so
  * `saved` is 0. A compiler policy sets `policyTokens` to `budget.used`
  * times `manifest.calibration.ratio`, or 1 when that turn has no
@@ -71,6 +71,8 @@ export type TurnDiff = {
 };
 
 const SCORER_NOTE = "scorer:offline-rule";
+/** Results of `replayOffline` runs whose scorer was swapped for `ruleScorer`. */
+const scorerSwappedRuns = new WeakSet<readonly TurnDiff[]>();
 const REPLAY_WINDOW = 8000;
 
 type Slice = {
@@ -93,7 +95,7 @@ export async function replayOffline(
   let copiedThrough = 0;
   const views: CompiledView[] = [];
   const diffs: TurnDiff[] = [];
-  const swapped = policy.scorer !== undefined && policy.scorer.name !== "rule";
+  const swapped = policy.scorer !== undefined && !policy.scorer.isNoop;
   const scorer = swapped ? ruleScorer : policy.scorer;
   const provider = policy.passthrough
     ? passthroughView
@@ -149,12 +151,7 @@ export async function replayOffline(
     if (!policy.passthrough) commitView(shadow, shadowId, view, ctx);
   }
 
-  if (swapped) {
-    Object.defineProperty(diffs, "scorerNote", {
-      value: SCORER_NOTE,
-      enumerable: false,
-    });
-  }
+  if (swapped) scorerSwappedRuns.add(diffs);
   return diffs;
 }
 
@@ -219,8 +216,9 @@ function countLikely(diffs: readonly TurnDiff[]): number {
 function notesOf(a: readonly TurnDiff[], b: readonly TurnDiff[]): string[] {
   const notes: string[] = [];
   for (const diffs of [a, b]) {
-    const note = (diffs as { scorerNote?: unknown }).scorerNote;
-    if (note === SCORER_NOTE && !notes.includes(note)) notes.push(note);
+    if (scorerSwappedRuns.has(diffs) && !notes.includes(SCORER_NOTE)) {
+      notes.push(SCORER_NOTE);
+    }
   }
   return notes;
 }

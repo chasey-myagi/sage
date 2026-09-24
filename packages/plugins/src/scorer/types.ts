@@ -43,11 +43,24 @@ export type ScoreResult = {
   decisions: ScoreDecision[];
   usage?: Usage;
   fallback?: string;
+  /**
+   * `false` when the scorer fell back before sending any request; the
+   * rebuild scorer report then counts 0 calls. Absent counts as one call.
+   * Not written to the Log.
+   */
+  requested?: false;
   raw?: ScoreRaw;
   dropped?: number;
 };
 
 export interface Scorer {
+  /** Name recorded in the Log (`manifest.shadow.scorer`). */
   readonly name: string;
+  /**
+   * `true` only for a scorer that makes no call and returns every candidate
+   * full. The compiler then leaves tiers and reasons untouched instead of
+   * rewriting them, and offline replay keeps it instead of swapping it out.
+   */
+  readonly isNoop?: true;
   score(input: ScoreInput): Promise<ScoreResult>;
 }

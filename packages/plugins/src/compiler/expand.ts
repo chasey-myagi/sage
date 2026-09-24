@@ -18,6 +18,12 @@
 import type { EntryId, HarnessTool, LogStore, StoredEntry } from "@sage/core";
 import { OWN_CHUNK_PREFIX } from "./chunks.js";
 
+/**
+ * Model-visible name of the expand tool. The Log records tool calls by
+ * name only, so readers of the Log match on this constant.
+ */
+export const EXPAND_TOOL_NAME = "expand";
+
 const inputSchema = {
   type: "object",
   properties: {
@@ -39,7 +45,7 @@ export function expandTool(opts: {
 }): HarnessTool {
   return {
     def: {
-      name: "expand",
+      name: EXPAND_TOOL_NAME,
       description:
         "Retrieve the original text of an omitted chunk by its id. Does not re-run the tool.",
       inputSchema,
