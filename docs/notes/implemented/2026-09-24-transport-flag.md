@@ -16,7 +16,7 @@ core 只读类型化字段。`turnTransportReason` 直接看 `finish.error.trans
 
 ## Alternatives considered
 
-保留 `TRANSPORT_MARKS` 作兜底。不选。两条传输失败路径（fetch 抛出、读 body 抛出）现在都在 provider 打标，文案表覆盖的每条消息都来自这两条路径。留着就是同一事实两个来源，而且文案表只认识几条英文串，换一个运行时或 undici 改个措辞就漏。分类属于 provider：只有它知道失败发生在哪一层。
+保留 `TRANSPORT_MARKS` 作兜底。不选。传输失败路径（fetch 抛出、读 SSE body 抛出、读非 2xx 响应的错误体抛出）现在都在 provider 打标，文案表覆盖的每条消息都来自这些路径。第三条是评审时补上的：`readFailure` 的 `response.text()` 原先不在 try 里，5xx 错误体读到一半断开会穿出 `postJson`，finish 不带标记，删掉文案表后就不再整轮重试；现在它按 fetch 抛错同样处理，不带状态码。留着就是同一事实两个来源，而且文案表只认识几条英文串，换一个运行时或 undici 改个措辞就漏。分类属于 provider：只有它知道失败发生在哪一层。
 
 把 body 正常关闭但没收到 stop（`stream ended before completion`）也算传输失败。不在这次做。#86 之前它就不在文案表里，不重试；改它是行为变化，不是修标记丢失。它和截断的代理超时确实很像，值得另开一件事评估。
 
@@ -37,6 +37,7 @@ core 只读类型化字段。`turnTransportReason` 直接看 `finish.error.trans
 - 流中途读 body 抛出 `other side closed`（不在旧文案表里），Log 有一条 `turn_retry {turn:1, attempt:1, reason:"other side closed"}`，terminal `done`、`turnRetries === 1`，半截文本不进 Log。
 - fetch 连续抛出 `getaddrinfo EAI_AGAIN api.example`，provider 流前重试 2 次后放弃，core 整轮重试 1 次后成功，Log 同样有一条 `turn_retry`，terminal `done`。
 - faux 给出只有文案 `terminated`、没有标记的 finish error，不重试，terminal `error`。
+- 502 响应的错误体读到一半抛出 `terminated`，provider 按传输失败重试，第二次成功，terminal `done`。修复前 terminal 为 `error`。
 
 红灯时前两条都是 `expected [] to deeply equal [ { turn: 1, attempt: 1, … } ]`：`turn_retry` 为空。
 

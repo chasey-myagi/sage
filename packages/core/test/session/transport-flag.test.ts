@@ -29,7 +29,7 @@ const OK = [
 
 type Step =
   | { action: "throw"; message: string }
-  | { action: "cut"; body: string; message: string }
+  | { action: "cut"; body: string; message: string; status?: number }
   | { action: "sse"; body: string };
 
 function scriptedFetch(steps: Step[]): { fetchImpl: typeof fetch } {
@@ -58,7 +58,7 @@ function scriptedFetch(steps: Step[]): { fetchImpl: typeof fetch } {
       },
     });
     return new Response(body, {
-      status: 200,
+      status: step.status ?? 200,
       headers: { "content-type": "text/event-stream" },
     });
   };
@@ -124,6 +124,15 @@ describe("transport flag through the real adapter pipeline", () => {
       outcome: "done",
       health: { turnRetries: 1 },
     });
+  });
+
+  it("retries when the connection drops while reading an error response body", async () => {
+    const { path } = await runWith("error-body", [
+      { action: "cut", body: "upstream", message: "terminated", status: 502 },
+      { action: "sse", body: OK },
+    ]);
+
+    expect(path.at(-1)?.payload).toMatchObject({ outcome: "done" });
   });
 
   it("does not read transport from the message text", async () => {
