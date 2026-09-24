@@ -12,9 +12,8 @@
 
 import { createHash } from "node:crypto";
 import type { Message } from "@sage/provider/contract";
+import { isTier } from "../guards.js";
 import type { Tier } from "./claim.js";
-
-const TIERS = new Set<Tier>(["none", "line", "summary", "full"]);
 
 /** Renders one claim as `<claim id="…" tier="…">`, the body, `</claim>`. */
 export function renderClaim(id: string, tier: string, body: string): string {
@@ -47,8 +46,4 @@ export function parseClaimMessage(
     }
   }
   return found;
-}
-
-function isTier(value: string): value is Tier {
-  return TIERS.has(value as Tier);
 }

@@ -4,7 +4,8 @@
  * Contract: `renderStub` returns
  * `[#<id> · <toolName> · <summary> · <n>k tokens · omitted · expand("<id>") to retrieve]`.
  * `<n>k` is `chunk.tokens / 1000` with one decimal. `summary` is
- * `summarizeInput(chunk.input)`: one line, at most 80 characters, cut with `…`.
+ * `summarizeInput(chunk.input)`: one line, at most `INPUT_LINE_LIMIT`
+ * characters, cut with `…`.
  *
  * Intentionally not in the Log: this function. The stub is model-visible.
  * Rebuild reproduces it from `originalTokens` and the logged tool_use.
@@ -12,13 +13,14 @@
 
 import type { Chunk } from "./chunks.js";
 
-const SUMMARY_LIMIT = 80;
+/** Maximum characters of the one-line tool input shown in a stub. */
+const INPUT_LINE_LIMIT = 80;
 
-/** One-line summary of a tool input, at most 80 characters. */
+/** One-line summary of a tool input, at most `INPUT_LINE_LIMIT` characters. */
 export function summarizeInput(input: unknown): string {
   const line = compact(input);
-  if (line.length <= SUMMARY_LIMIT) return line;
-  return `${line.slice(0, SUMMARY_LIMIT - 1)}…`;
+  if (line.length <= INPUT_LINE_LIMIT) return line;
+  return `${line.slice(0, INPUT_LINE_LIMIT - 1)}…`;
 }
 
 /**

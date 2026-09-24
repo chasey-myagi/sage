@@ -9,13 +9,10 @@
  * object. The kernel logs the allocated record on the manifest entry.
  */
 
-import type { ViewContext } from "@sage/core";
+import type { Tier, ViewContext } from "@sage/core";
 
-/**
- * A tier is the form a chunk or claim takes in the view: nothing, one
- * line, a summary, or the full text. `none` is the floor.
- */
-export type Tier = "none" | "line" | "summary" | "full";
+/** Core's `Tier`, re-exported so claim providers import one module. */
+export type { Tier };
 
 /**
  * Where a claim renders: `epoch-head` is frozen for the epoch at the start

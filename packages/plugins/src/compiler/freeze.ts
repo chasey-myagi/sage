@@ -20,10 +20,8 @@
  */
 
 import { isRecord, manifestsInEpoch, type StoredEntry } from "@sage/core";
-import type { Tier } from "./claim.js";
+import { isTier } from "../guards.js";
 import type { ChunkDecision } from "./eliminate.js";
-
-const TIERS: readonly Tier[] = ["none", "line", "summary", "full"];
 
 /**
  * The epoch's frozen chunk decisions, first tier per id, or undefined on
@@ -98,8 +96,4 @@ function mergeFirst(map: Map<string, ChunkDecision>, entry: StoredEntry): void {
     if (typeof chunk.summary === "string") decision.summary = chunk.summary;
     map.set(chunk.id, decision);
   }
-}
-
-function isTier(value: unknown): value is Tier {
-  return typeof value === "string" && TIERS.includes(value as Tier);
 }

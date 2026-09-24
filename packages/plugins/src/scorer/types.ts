@@ -34,7 +34,7 @@ export type ScoreInput = {
 export type ScoreDecision = {
   id: string;
   tier: Tier;
-  /** The model's own note for tier `summary`, at most 200 characters. */
+  /** The model's own note for tier `summary`; the compiler keeps `SUMMARY_LIMIT` characters. */
   summary?: string;
   /** Chunk reason to store; empty or absent means `scorer:model`. */
   reason?: string;

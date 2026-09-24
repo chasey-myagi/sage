@@ -17,12 +17,12 @@ import type { CompiledView, ViewContext } from "@sage/core";
 import { isRecord, latestViewEpoch, passthroughView } from "@sage/core";
 import type { Message } from "@sage/provider/contract";
 import { escapeClaimText } from "../claims/escape.js";
+import { isTier } from "../guards.js";
 import { applyDecisions } from "./apply.js";
 import type { TokenCounter } from "./budget.js";
 import { measuredCacheRead } from "./calibrate.js";
 import type { Chunk } from "./chunks.js";
 import { indexChunks, OWN_CHUNK_PREFIX } from "./chunks.js";
-import type { Tier } from "./claim.js";
 import type { EpochDecision } from "./decide.js";
 import type { ChunkDecision } from "./eliminate.js";
 import { eliminate } from "./eliminate.js";
@@ -246,7 +246,7 @@ function chunkRows(entry: PathEntry | undefined): ChunkRow[] {
   const rows: ChunkRow[] = [];
   for (const value of entry.payload.chunks) {
     if (!isRecord(value) || typeof value.id !== "string") continue;
-    if (!isTierName(value.tier)) continue;
+    if (!isTier(value.tier)) continue;
     const row: ChunkRow = {
       id: value.id,
       tier: value.tier,
@@ -312,13 +312,4 @@ function appendSubtaskQuery(
     return;
   }
   messages.push({ role: "user", content: [block] });
-}
-
-function isTierName(value: unknown): value is Tier {
-  return (
-    value === "none" ||
-    value === "line" ||
-    value === "summary" ||
-    value === "full"
-  );
 }

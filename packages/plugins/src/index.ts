@@ -32,7 +32,10 @@ export type {
   Placement,
   Tier,
 } from "./compiler/claim.js";
-export { contextCompiler } from "./compiler/compiler.js";
+export {
+  contextCompiler,
+  DEFAULT_COMPILER_BUDGET,
+} from "./compiler/compiler.js";
 export type { ChunkDecision } from "./compiler/eliminate.js";
 export { eliminate } from "./compiler/eliminate.js";
 export { expandTool } from "./compiler/expand.js";

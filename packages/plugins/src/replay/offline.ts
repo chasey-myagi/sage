@@ -28,7 +28,11 @@ import {
   toolsHash,
 } from "@sage/core";
 import type { PreparedCall } from "@sage/provider/contract";
-import { contextCompiler, DEFAULT_KEEP_RECENT } from "../compiler/compiler.js";
+import {
+  contextCompiler,
+  DEFAULT_COMPILER_BUDGET,
+  DEFAULT_KEEP_RECENT,
+} from "../compiler/compiler.js";
 import { DEFAULT_EXPECTED_TURNS } from "../compiler/epoch.js";
 import { finite } from "../guards.js";
 import { ruleScorer } from "../scorer/rule.js";
@@ -36,7 +40,7 @@ import type { Scorer } from "../scorer/types.js";
 
 /** The policy a replay recompiles under. */
 export type Policy = {
-  /** Defaults to `REPLAY_DEFAULT_BUDGET`. */
+  /** Defaults to `DEFAULT_COMPILER_BUDGET`. */
   budget?: number;
   /** Defaults to `DEFAULT_KEEP_RECENT`. */
   keepRecent?: number;
@@ -89,8 +93,6 @@ export type TurnDiff = {
   chunkTiers: { id: string; tier: string }[];
 };
 
-/** Default replay budget, the same as the sage CLI's default budget. */
-const REPLAY_DEFAULT_BUDGET = 40_000;
 const SCORER_NOTE = "scorer:offline-rule";
 /** Results of `replayOffline` runs whose scorer was swapped for `ruleScorer`. */
 const scorerSwappedRuns = new WeakSet<readonly TurnDiff[]>();
@@ -132,7 +134,7 @@ export async function replayOffline(
   const provider = policy.passthrough
     ? passthroughView
     : contextCompiler({
-        budget: policy.budget ?? REPLAY_DEFAULT_BUDGET,
+        budget: policy.budget ?? DEFAULT_COMPILER_BUDGET,
         claims: [],
         keepRecent: policy.keepRecent ?? DEFAULT_KEEP_RECENT,
         expectedTurns: policy.expectedTurns ?? DEFAULT_EXPECTED_TURNS,
