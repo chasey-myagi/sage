@@ -5,7 +5,13 @@ import type {
   Request,
   StreamChunk,
 } from "../src/contract/index.ts";
-import { drain, fixtureFetch, stripRaw } from "./support.ts";
+import {
+  drain,
+  type FetchStep,
+  fixtureFetch,
+  scriptedFetch,
+  stripRaw,
+} from "./support.ts";
 
 export const SHARED_HAPPY: StreamChunk[] = [
   { type: "block_start", index: 0, blockType: "text" },
@@ -86,9 +92,95 @@ export function expectStreamInvariants(chunks: StreamChunk[]): void {
   }
 }
 
+type FailureCase = {
+  name: string;
+  steps: (fixtures: { truncated: string }) => FetchStep[];
+  /** The failure happened before the response body began. */
+  preBody: boolean;
+  transport: true | undefined;
+  status?: number;
+};
+
+const ERROR_BODY = '{"error":{"message":"upstream said no"}}';
+
+/** finish.error.transport for each way a call can fail. */
+const FAILURES: FailureCase[] = [
+  {
+    name: "fetch throws on every attempt",
+    steps: () => [{ action: "throw", message: "getaddrinfo EAI_AGAIN" }],
+    preBody: true,
+    transport: true,
+  },
+  {
+    name: "reading a non-2xx error body throws",
+    steps: () => [
+      { action: "cut", status: 502, body: "upst", message: "terminated" },
+    ],
+    preBody: true,
+    transport: true,
+  },
+  {
+    name: "a 2xx response has no body",
+    steps: () => [{ action: "respond", status: 200, body: null }],
+    preBody: true,
+    transport: true,
+  },
+  {
+    name: "HTTP 500 outlasts the pre-stream retries",
+    steps: () => [{ action: "respond", status: 500, body: ERROR_BODY }],
+    preBody: true,
+    transport: undefined,
+    status: 500,
+  },
+  {
+    name: "HTTP 400 is read and not retried",
+    steps: () => [{ action: "respond", status: 400, body: ERROR_BODY }],
+    preBody: true,
+    transport: undefined,
+    status: 400,
+  },
+  {
+    name: "the body read throws mid-stream",
+    steps: ({ truncated }) => [
+      {
+        action: "cut",
+        status: 200,
+        body: truncated,
+        message: "other side closed",
+      },
+    ],
+    preBody: false,
+    transport: true,
+  },
+  {
+    name: "the body closes before the stream completes",
+    steps: ({ truncated }) => [
+      { action: "respond", status: 200, body: truncated },
+    ],
+    preBody: false,
+    transport: true,
+  },
+];
+
+async function noSleep(): Promise<void> {}
+
+/** A fetch that never settles on its own and rejects once `signal` fires. */
+function hangingFetch(): typeof fetch {
+  return (_input, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      signal?.addEventListener("abort", () => {
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+      });
+    });
+}
+
 export function runContractSuite(
   name: string,
-  makeAdapter: (fetchImpl: typeof fetch) => ProviderAdapter,
+  makeAdapter: (
+    fetchImpl: typeof fetch,
+    sleep?: (ms: number) => Promise<void>,
+  ) => ProviderAdapter,
   fixtures: {
     happy: string;
     truncated: string;
@@ -162,6 +254,69 @@ export function runContractSuite(
         false,
       );
       expect(chunks.at(-1)).toEqual({ type: "finish", kind: "aborted" });
+      expectStreamInvariants(chunks);
+    });
+
+    for (const failure of FAILURES.filter((item) => item.preBody)) {
+      it(`has no response chunk when ${failure.name}`, async () => {
+        const { fetchImpl } = scriptedFetch(failure.steps(fixtures));
+        const adapter = makeAdapter(fetchImpl, noSleep);
+        const chunks = await drain(
+          adapter.stream(request(), adapter.prepare(model)),
+        );
+        expect(chunks.some((chunk) => chunk.type === "response")).toBe(false);
+        expect(chunks.at(-1)).toMatchObject({ type: "finish", kind: "error" });
+        expectStreamInvariants(chunks);
+      });
+    }
+
+    for (const failure of FAILURES) {
+      const flag = failure.transport ? "marks" : "does not mark";
+      it(`${flag} transport when ${failure.name}`, async () => {
+        const { fetchImpl } = scriptedFetch(failure.steps(fixtures));
+        const adapter = makeAdapter(fetchImpl, noSleep);
+        const chunks = await drain(
+          adapter.stream(request(), adapter.prepare(model)),
+        );
+        const finish = chunks.at(-1);
+        if (finish?.type !== "finish" || !finish.error) {
+          throw new Error(`expected an error finish, got ${String(finish)}`);
+        }
+        expect(finish.kind).toBe("error");
+        expect(Object.hasOwn(finish.error, "transport")).toBe(
+          failure.transport === true,
+        );
+        expect(finish.error.transport).toBe(failure.transport);
+        expect(finish.error.status).toBe(failure.status);
+        expectStreamInvariants(chunks);
+      });
+    }
+
+    it("finishes aborted, not error, when the signal fired before the call", async () => {
+      const { fetchImpl, calls } = scriptedFetch([
+        { action: "throw", message: "unreachable" },
+      ]);
+      const adapter = makeAdapter(fetchImpl, noSleep);
+      const controller = new AbortController();
+      controller.abort();
+      const chunks = await drain(
+        adapter.stream(request(), adapter.prepare(model), controller.signal),
+      );
+      expect(chunks.at(-1)).toEqual({ type: "finish", kind: "aborted" });
+      expect(calls()).toBe(0);
+      expectStreamInvariants(chunks);
+    });
+
+    it("finishes aborted, not error, when the signal fires during fetch", async () => {
+      const adapter = makeAdapter(hangingFetch(), noSleep);
+      const controller = new AbortController();
+      const pending = drain(
+        adapter.stream(request(), adapter.prepare(model), controller.signal),
+      );
+      controller.abort();
+      const chunks = await pending;
+      expect(chunks.at(-1)).toEqual({ type: "finish", kind: "aborted" });
+      expect(chunks.some((chunk) => chunk.type === "response")).toBe(false);
       expectStreamInvariants(chunks);
     });
   });
