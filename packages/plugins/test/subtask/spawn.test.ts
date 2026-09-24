@@ -1,5 +1,6 @@
 import {
   AgentSession,
+  type CompiledView,
   type HarnessTool,
   MemoryLogStore,
   passthroughView,
@@ -360,6 +361,83 @@ it("reuses parent chunk ids and does not rebuild the epoch", async () => {
     .filter((entry) => entry.kind === "view_epoch")
     .map((entry) => (entry.payload as { reason?: string }).reason ?? "");
   expect(reasons.some((reason) => reason.startsWith("cost:"))).toBe(false);
+});
+
+it("puts the child prefix breakpoint on the last parent message on every child turn", async () => {
+  const store = new MemoryLogStore();
+  for (let index = 0; index < 3; index += 1) {
+    store.append("parent", {
+      kind: "message",
+      payload: user(`frozen-${index}`),
+    });
+  }
+  // The child runs two turns, so the last-message breakpoint moves while
+  // the prefix breakpoint must stay on the parent's last message.
+  const adapter = fauxAdapter([
+    toolTurn(
+      "call-1",
+      "spawn_subtask",
+      JSON.stringify({ query: "inspect", budget: 1000, readOnly: true }),
+    ),
+    toolTurn("r1", "read", "{}"),
+    stopTurn("child-done"),
+    stopTurn("parent-done"),
+  ]);
+  const tools: HarnessTool[] = [harness("read", true)];
+  const parentViews: CompiledView[] = [];
+  const childViews: CompiledView[] = [];
+  const { spawn } = subtaskTools({
+    store,
+    adapters: { anthropic: adapter },
+    tools,
+    system: SYSTEM,
+    makeCompiler: ({ budget, query }) => {
+      const compiler = compilerFor(budget, query);
+      return {
+        async view(ctx: ViewContext) {
+          const view = await compiler.view(ctx);
+          childViews.push(view);
+          return view;
+        },
+      };
+    },
+  });
+  tools.push(spawn);
+  const session = new AgentSession({
+    store,
+    sessionId: "parent",
+    adapter,
+    model: MODEL,
+    system: SYSTEM,
+    tools,
+    viewProvider: {
+      view(ctx: ViewContext) {
+        const view = parentView(ctx);
+        parentViews.push(view);
+        return view;
+      },
+    },
+  });
+  await session.run("frozen-3");
+  const parent = parentViews[0];
+  if (!parent) throw new Error("missing parent view");
+  const parentCount = parent.messages.length;
+  expect(parentCount).toBe(5);
+  expect(childViews).toHaveLength(2);
+  const [first, second] = childViews;
+  if (!first || !second) throw new Error("missing child views");
+  expect(first.messages.slice(0, parentCount)).toEqual(parent.messages);
+  expect(first.cacheBreakpoints).toEqual([
+    "head",
+    { afterMessage: parentCount - 1 },
+    { afterMessage: parentCount },
+  ]);
+  expect(second.messages.slice(0, parentCount)).toEqual(parent.messages);
+  expect(second.cacheBreakpoints).toEqual([
+    "head",
+    { afterMessage: parentCount - 1 },
+    { afterMessage: parentCount + 2 },
+  ]);
 });
 
 it("allows a grandchild and rejects the next depth, and caps fan-out", async () => {
