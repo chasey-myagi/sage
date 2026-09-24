@@ -53,7 +53,7 @@ function writeLegal(root: string): void {
   write(
     root,
     "packages/core/src/index.ts",
-    'import "@sage/provider";\nexport const PACKAGE = "@sage/core" as const;\n',
+    'import "@sage/provider/contract";\nexport const PACKAGE = "@sage/core" as const;\n',
   );
   write(
     root,
@@ -191,6 +191,34 @@ describe("check-layers", () => {
       "packages/core/src/plugins.ts:1 违反规则 3：@sage/plugins",
     );
     expect(result.stdout).toContain("违反规则 3");
+  });
+
+  it("rejects the provider root export from core sources but not from core tests (rule 3)", () => {
+    const root = makeRoot();
+    write(
+      root,
+      "packages/core/src/adapter.ts",
+      'import { OpenAIAdapter } from "@sage/provider";\nvoid OpenAIAdapter;\n',
+    );
+    write(
+      root,
+      "packages/core/src/contract.ts",
+      'export type { Message } from "@sage/provider/contract";\n',
+    );
+    write(
+      root,
+      "packages/core/test/adapter.test.ts",
+      'import { OpenAIAdapter } from "@sage/provider";\nvoid OpenAIAdapter;\n',
+    );
+
+    expect(run(root).violations).toEqual([
+      {
+        file: "packages/core/src/adapter.ts",
+        line: 1,
+        rule: 3,
+        source: "@sage/provider",
+      },
+    ]);
   });
 
   it("rejects plugins/tools cross-imports and apps imports (rule 4)", () => {

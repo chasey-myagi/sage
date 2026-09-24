@@ -26,7 +26,7 @@ export const RULES = [
   {
     n: 3,
     include: "packages/core/**",
-    deny: ["@sage/plugins", "@sage/tools", "apps/**"],
+    deny: ["@sage/plugins", "@sage/tools", "apps/**", "core-src-provider-root"],
   },
   {
     n: 4,
@@ -139,6 +139,12 @@ function isAllowed(rule, spec, fileRel) {
  */
 function matchesDeny(token, spec, fileRel) {
   if (token === "apps/**") return isUnder(spec, fileRel, "apps/");
+  // Core sources see provider only through its contract; core tests may
+  // drive a real adapter through the root export.
+  if (token === "core-src-provider-root")
+    return (
+      spec === "@sage/provider" && fileRel.startsWith("packages/core/src/")
+    );
   if (token === "plugins-tools-cross")
     return isPluginsToolsCross(spec, fileRel);
   return spec === token || spec.startsWith(`${token}/`);
