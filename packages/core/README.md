@@ -22,7 +22,7 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 
 ## model_change
 
-阶段边界如果视图带了 `epochStart.model`，并且和当前型号不同，内核在 `view_epoch` 之前追加 `model_change`。payload 是 `{ from, to, reason }`。reason 是 `route:` 加上清单 `epochDecision.reason` 里 `;route:` 之后的那段。然后切到 `adapters[provider]`，用新型号再 `prepare` 一次。随后的 `request_header` 用这次 prepare 的 provider、model 和 adapterDefaults。
+阶段边界如果视图带了 `epochStart.model`，并且和当前型号不同，内核在 `view_epoch` 之前追加 `model_change`。payload 是 `{ from, to, reason }`。reason 逐字取自 `epochStart.routeReason`，内核不解析也不拼接；`model` 与 `routeReason` 要么同时给出，要么都不给。然后切到 `adapters[provider]`，用新型号再 `prepare` 一次。随后的 `request_header` 用这次 prepare 的 provider、model 和 adapterDefaults。
 
 找不到该 provider 的适配器时，追加 `terminal`，outcome 为 `error`，不发请求。型号相同，或者没有 `epochStart.model`，不写 `model_change`。
 

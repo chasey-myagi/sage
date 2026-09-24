@@ -235,6 +235,17 @@ export type Manifest = {
 };
 
 /**
+ * How a view opens an epoch. The kernel appends `view_epoch {reason}` and
+ * does not store this object itself. `model`, when set and different from
+ * the session's current model, becomes a `model_change` entry first, with
+ * `routeReason` copied verbatim into its `reason`; the kernel does not parse
+ * or rebuild it. `model` and `routeReason` come together or not at all.
+ */
+export type EpochStart =
+  | { reason: string; model?: undefined; routeReason?: undefined }
+  | { reason: string; model: ModelRef; routeReason: string };
+
+/**
  * The model-facing projection for one call.
  *
  * `epoch` numbers the current epoch: a stretch of turns whose prefix (head
@@ -248,12 +259,8 @@ export type CompiledView = {
   messages: Message[];
   cacheBreakpoints: CacheBreakpoint[];
   manifest: Manifest;
-  /**
-   * Set when this view opens an epoch. The kernel appends `view_epoch` and
-   * does not store this field itself. `model`, when set and different from
-   * the session's current model, becomes a `model_change` entry first.
-   */
-  epochStart?: { reason: string; model?: ModelRef };
+  /** Set when this view opens an epoch; see `EpochStart`. */
+  epochStart?: EpochStart;
   /**
    * Opaque bag copied onto this turn's manifest entry. Claim text lives
    * here under `claimContent`, and only for hashes that are new this turn.

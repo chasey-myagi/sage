@@ -133,7 +133,11 @@ describe("model_change", () => {
           return {
             ...base,
             epoch: base.epoch + 1,
-            epochStart: { reason: "cost:1", model: MINI },
+            epochStart: {
+              reason: "cost:1",
+              model: MINI,
+              routeReason: "route:cheaper",
+            },
             manifest: {
               ...base.manifest,
               epoch: base.epoch + 1,
@@ -216,7 +220,11 @@ describe("model_change", () => {
             return {
               ...base,
               epoch: base.epoch + 1,
-              epochStart: { reason: "cost:1", model: START },
+              epochStart: {
+                reason: "cost:1",
+                model: START,
+                routeReason: "route:stay",
+              },
               manifest: {
                 ...base.manifest,
                 epoch: base.epoch + 1,
@@ -282,7 +290,11 @@ describe("model_change", () => {
           return {
             ...base,
             epoch: base.epoch + 1,
-            epochStart: { reason: "cost:1", model },
+            epochStart: {
+              reason: "cost:1",
+              model,
+              routeReason: turn === 1 ? "route:first" : "route:second",
+            },
             manifest: {
               ...base.manifest,
               epoch: base.epoch + 1,
@@ -338,7 +350,11 @@ describe("model_change", () => {
           return {
             ...base,
             epoch: base.epoch + 1,
-            epochStart: { reason: "cost:1", model: MINI },
+            epochStart: {
+              reason: "cost:1",
+              model: MINI,
+              routeReason: "route:away",
+            },
             manifest: {
               ...base.manifest,
               epoch: base.epoch + 1,
