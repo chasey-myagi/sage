@@ -18,7 +18,7 @@ core 只读类型化字段。`turnTransportReason` 直接看 `finish.error.trans
 
 保留 `TRANSPORT_MARKS` 作兜底。不选。传输失败路径（fetch 抛出、读 SSE body 抛出、读非 2xx 响应的错误体抛出）现在都在 provider 打标，文案表覆盖的每条消息都来自这些路径。第三条是评审时补上的：`readFailure` 的 `response.text()` 原先不在 try 里，5xx 错误体读到一半断开会穿出 `postJson`，finish 不带标记，删掉文案表后就不再整轮重试；现在它按 fetch 抛错同样处理，不带状态码。留着就是同一事实两个来源，而且文案表只认识几条英文串，换一个运行时或 undici 改个措辞就漏。分类属于 provider：只有它知道失败发生在哪一层。
 
-把 body 正常关闭但没收到 stop（`stream ended before completion`）也算传输失败。不在这次做。#86 之前它就不在文案表里，不重试；改它是行为变化，不是修标记丢失。它和截断的代理超时确实很像，值得另开一件事评估。
+把 body 正常关闭但没收到 stop（`stream ended before completion`）也算传输失败。不在这次做：改它是行为变化，不是修标记丢失。后续已单独改为传输失败，见 [未完成的流按传输失败重试](./2026-09-24-incomplete-stream.md)。
 
 在 session 里按 `status === undefined` 推断传输失败。不选。流内 error 事件和 adapter 解析异常同样没有状态码，会被误判。
 

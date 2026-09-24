@@ -14,6 +14,7 @@
 
 - 响应体开始之前的失败（fetch 抛错、429、5xx）由 provider 重试：1 秒、4 秒，次数记在 usage 上。见 [传输层重试](./notes/implemented/2026-09-23-provider-retry.md)。
 - 流开始之后的传输断开由 core 整轮重发，前提是这一轮的 assistant 还没落 Log、工具还没执行：2 秒、8 秒，每次写 `turn_retry`。见 [整轮重试](./notes/implemented/2026-09-23-turn-retry.md)。
+- 「传输失败」按连接是否在响应完成前结束来判，不按有没有抛错：读 body 抛错和 body 没收到结束信号就正常关闭是同一类，都打 `transport: true`。代理超时截断连接时两种表现都会出现。见 [未完成的流按传输失败重试](./notes/implemented/2026-09-24-incomplete-stream.md)。
 - provider 不重开已经开始的流：半截 delta 已经交给调用方，再 POST 一次，两份输出对不上。
 - 已经执行过的工具永远不重放。
 - 4xx 不重试。
