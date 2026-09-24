@@ -8,8 +8,15 @@ import { pathToFileURL } from "node:url";
 /** Source roots scanned, relative to the repository root. */
 export const SOURCE_GLOBS = ["packages/*/src", "apps/*/src"];
 
-const DECLARATION =
-  /^export\s+(?:declare\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?(function\*?|const|let|class|interface|type)\s+([A-Za-z_$][\w$]*)/;
+// Any `export` statement except a re-export (`export {`, `export *`,
+// `export type {`), which is documented at its declaration.
+const EXPORT_STATEMENT = /^export\s+(?!\{|\*|type\s*\{)/;
+
+const DECLARED_NAME =
+  /^export\s+(?:declare\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?(?:function\*?|const\s+enum|const|let|var|class|interface|type|enum|namespace)\s+([A-Za-z_$][\w$]*)/;
+
+const FUNCTION_KEYWORD =
+  /^export\s+(?:declare\s+)?(?:default\s+)?(?:async\s+)?function\b/;
 
 /**
  * Scans every `.ts` file under the source roots of `rootDir`.
@@ -40,9 +47,11 @@ export function run(rootDir) {
 /**
  * Finds exported declarations in one file's text that lack a JSDoc block.
  *
- * A declaration is documented when the nearest preceding non-blank line
- * closes a block comment that opened with `/**`. Decorator-free TypeScript
- * as formatted by biome is assumed.
+ * Every `export` statement other than a re-export counts, including
+ * `enum`, `namespace`, `var`, and anonymous `export default`. A statement is
+ * documented when the nearest preceding non-blank line closes a comment
+ * block that opened with `/**`. Decorator-free TypeScript as formatted by
+ * biome is assumed.
  *
  * @returns One entry per undocumented declaration, with its 1-based line.
  */
@@ -52,27 +61,32 @@ export function scanText(text) {
   const missing = [];
   let previousName = "";
   for (let index = 0; index < lines.length; index += 1) {
-    const match = DECLARATION.exec(lines[index] ?? "");
-    if (!match) continue;
-    const name = match[2] ?? "";
-    const isOverload =
-      match[1]?.startsWith("function") && name === previousName;
-    previousName = match[1]?.startsWith("function") ? name : "";
+    const line = lines[index] ?? "";
+    if (!EXPORT_STATEMENT.test(line)) continue;
+    const name = DECLARED_NAME.exec(line)?.[1] ?? "default";
+    const isFunction = FUNCTION_KEYWORD.test(line);
+    const isOverload = isFunction && name === previousName;
+    previousName = isFunction ? name : "";
     if (isOverload) continue;
     if (!hasDocAbove(lines, index)) missing.push({ line: index + 1, name });
   }
   return missing;
 }
 
+/**
+ * True when the nearest non-blank line above `index` ends a comment block
+ * that opened with `/**`. Every line between the closing and opening
+ * delimiters must be a comment line, so a trailing `/* note *\/` after code
+ * cannot borrow an earlier declaration's block.
+ */
 function hasDocAbove(lines, index) {
   let cursor = index - 1;
   while (cursor >= 0 && (lines[cursor] ?? "").trim() === "") cursor -= 1;
   if (cursor < 0 || !(lines[cursor] ?? "").trim().endsWith("*/")) return false;
-  while (cursor >= 0) {
+  for (; cursor >= 0; cursor -= 1) {
     const trimmed = (lines[cursor] ?? "").trim();
     if (trimmed.startsWith("/**")) return true;
-    if (trimmed.startsWith("/*")) return false;
-    cursor -= 1;
+    if (trimmed.startsWith("/*") || !trimmed.startsWith("*")) return false;
   }
   return false;
 }

@@ -18,7 +18,7 @@
 
 ## Consequences
 
-新增导出必须同时写 JSDoc，否则 `pnpm check` 失败。按行匹配的限制：多行 `export` 修饰或把 `export` 写在装饰器之后的声明不会被识别；本仓目前没有这样的写法，出现时再扩展正则。
+新增导出必须同时写 JSDoc，否则 `pnpm check` 失败。按行匹配的限制：把 `export` 写在装饰器之后的声明不会被识别；本仓目前没有这样的写法。除 re-export 外的所有 `export` 语句都会检查，包括 `enum`、`namespace`、`var` 和匿名 `export default`；代码行末尾的 `/* */` 注释不会被当作上方声明的 JSDoc。
 
 ## Testing
 
