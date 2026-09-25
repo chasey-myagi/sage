@@ -6,9 +6,9 @@
 
 ## 准备环境
 
-- Node.js 22。系统自带的 Node 25 没有 corepack。`ts-mini.json` 里 vuejs/core 的四条，`setupCommand` 和 `testCommand` 都调用 `corepack pnpm`，跑之前要把 Node 22 放到 `PATH` 前面，并确认 `corepack pnpm` 能用。这 10 条是在 Node 22.20.0、npm 10.9.3、corepack 0.34.0 上验证的
+- Node.js 22。系统自带的 Node 25 没有 corepack。`ts-mini.json` 里 vuejs/core 的四条，`setupCommand` 和 `testCommand` 都调用 `corepack pnpm`，跑之前要把 Node 22 放到 `PATH` 前面，并确认 `corepack pnpm` 能用。`ts-mini-2.json` 还要 corepack 能取到 `yarn@1.22.22`（zod、react-router-11160）和 `pnpm@9.9.0`（react-hook-form-12505），命令里写死了这两个版本。两份任务集都是在 Node 22.20.0、npm 10.9.3、corepack 0.34.0 上验证的
 - `git`
-- 目标仓库能跑通的测试工具。Verified 任务的 `testCommand` 是 `python -m pytest …`，Python、依赖和被测仓库的构建由跑的人在执行测试的环境里准备好。`ts-mini.json` 的依赖由每条任务的 `setupCommand` 安装
+- 目标仓库能跑通的测试工具。Verified 任务的 `testCommand` 是 `python -m pytest …`，Python、依赖和被测仓库的构建由跑的人在执行测试的环境里准备好。`ts-mini.json` 和 `ts-mini-2.json` 的依赖由每条任务的 `setupCommand` 安装
 - 模型 key。没写 `--provider` 时，`DEEPSEEK_API_KEY`、`DASHSCOPE_API_KEY`、`MOONSHOT_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 里有一把即可。指定了 `--provider` 就只认那一把。没有对应的 key 时 `bench run` 直接退出 2，不会去取仓库
 
 任务文件是 JSON 数组，每项：
@@ -39,6 +39,7 @@
 | `bench/tasks/swe-verified-mini-50.json` | Hugging Face datasets-server 上 `princeton-nlp/SWE-bench_Verified` 的 `test` split 前 50 行 |
 | `bench/tasks/mini.json` | 上面这一份的第一条，用来冒烟 |
 | `bench/tasks/ts-mini.json` | Multi-SWE-bench（ByteDance-Seed）ts/js 切片里已在本机验证的 10 条。6 个仓库：vuejs/core ×4、darkreader ×2、dayjs、express、axios、github-readme-stats |
+| `bench/tasks/ts-mini-2.json` | Multi-SWE-RL（ByteDance-Seed）里已在本机验证的 10 条，与上一份零重叠。7 个仓库：zx、commander.js ×2、redux、zod、react-router ×2、async ×2、react-hook-form |
 
 重新拉取：
 
@@ -49,7 +50,20 @@ pnpm bench:fetch-ts
 
 两个脚本都零依赖。`bench:fetch` 把 `FAIL_TO_PASS` 收成 `python -m pytest <tests>`，`timeoutSec` 固定 1800。`--fixture <file>` 读本地 JSON，测试不打网络。
 
-`bench:fetch-ts` 不走 datasets-server（这个数据集的 `/rows` 会报 schema 错误），直接读 `huggingface.co/datasets/ByteDance-Seed/Multi-SWE-bench/resolve/main/<lang>/*.jsonl`。按写死的 10 个 id 筛出任务：`problem` 是已解决 issue 的标题加正文，`testPatch` 是数据集里的 `test_patch`，`testCommand` 只跑这些 spec。`--fixture <dir>` 改读 `<dir>/<org>__<repo>_dataset.jsonl`，测试不打网络。用仓库里的 fixture 跑，输出与 `bench/tasks/ts-mini.json` 逐字节相同。
+`bench:fetch-ts` 不走 datasets-server（这两个数据集的 `/rows` 会报 schema 错误），直接读 `https://huggingface.co/datasets/<dataset>/resolve/main/<path>/<org>__<repo>_dataset.jsonl`。每个仓库在脚本里声明自己的来源：
+
+| 任务集 | dataset | path |
+|---|---|---|
+| `ts-mini` | `ByteDance-Seed/Multi-SWE-bench` | `ts` 或 `js` |
+| `ts-mini-2` | `ByteDance-Seed/Multi-SWE-RL` | `data_20240601_20250331/ts` 或 `data_20240601_20250331/js`；react-hook-form 在 `data_20250401_20250631/ts` |
+
+`data_20250401_20250631` 这一期的行没有 `instance_id`，id 按 `<org>__<repo>-<number>` 拼出来。Multi-SWE-RL 是 RL 训练集，没有人工校验，只收本机逐条验证过的 id。
+
+`--set ts-mini|ts-mini-2` 选任务集，默认 `ts-mini`，默认输出到 `bench/tasks/<set>.json`。`--out <file>` 改输出路径，`--only id1,id2` 只取这几条。脚本按任务集里写死的 id 筛出任务：`problem` 是已解决 issue 的标题加正文，`testPatch` 是数据集里的 `test_patch`，`testCommand` 只跑这些 spec。个别实例的 base 用的包管理器或 lockfile 与同仓库其他条目不同，脚本按实例覆盖 setup / run。`--fixture <dir>` 改读 `<dir>/<org>__<repo>_dataset.jsonl`，测试不打网络。用仓库里的 fixture 跑，两个任务集的输出分别与 `ts-mini.json`、`ts-mini-2.json` 逐字节相同。
+
+```sh
+pnpm bench:fetch-ts --set ts-mini-2
+```
 
 ## 怎么跑
 
@@ -86,7 +100,7 @@ agent 能读到什么：darwin 上，默认沙箱允许读本次运行根 `<tmpd
 
 没有新的命令行旗标。`fsIsolate` 打开时，bench 把运行根的 realpath 放进传给 sage 的环境变量 `SAGE_SANDBOX_ALLOW_ROOT`。
 
-TS/JS 这 10 条：
+TS/JS 任务集（第二批把 `--tasks` 换成 `bench/tasks/ts-mini-2.json`）：
 
 ```sh
 node apps/sage/bin/sage.mjs bench run \
@@ -125,6 +139,21 @@ node apps/sage/bin/sage.mjs bench run \
 | expressjs__express-5555 | 33.5s | 0.7s | 0.4s |
 | axios__axios-5661 | 16.2s | 1.7s | 0.3s |
 | anuraghazra__github-readme-stats-2228 | 5.6s | 1.3s | 0.6s |
+
+`ts-mini-2.json` 的 install / test 秒数（2026-09-24，同一套 Node、npm、corepack，缓存是温的）。zx 和 redux-4139 的测试 import 的是构建产物而不是 `src`，所以 `testCommand` 先 build（zx 用 esbuild 约 3s，redux 用 rollup 约 5s），表里的 test 秒数含这一步。zx 的 `setupCommand` 也 build 一次，`build/` 在 gitignore 里，setup 之后 `git status` 仍然干净。多个 yarn1 安装并发会损坏共享缓存，zod 与 react-router-11160 要串行跑，或者每条任务用独立的 `YARN_CACHE_FOLDER`。
+
+| id | install | test@base | test@fix |
+|---|---|---|---|
+| google__zx-1107 | 12.7s | 8.7s | 8.3s |
+| tj__commander.js-1720 | 6.5s | 3.1s | 1.2s |
+| tj__commander.js-1502 | 10.5s | 5.2s | 1.9s |
+| reduxjs__redux-4139 | 8.2s | 10.1s | 5.7s |
+| colinhacks__zod-3427 | 6.6s | 2.5s | 1.4s |
+| remix-run__react-router-11786 | 22.4s | 3.8s | 2.2s |
+| remix-run__react-router-11160 | 5.5s | 2.5s | 0.8s |
+| caolan__async-1790 | 63.8s | 5.1s | 2.3s |
+| caolan__async-1628 | 36.8s | 3.0s | 0.9s |
+| react-hook-form__react-hook-form-12505 | 42.5s | 2.6s | 1.2s |
 
 结果目录：
 
