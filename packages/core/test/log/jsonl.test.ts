@@ -65,6 +65,44 @@ describe("JsonlLogStore", () => {
     expect(reopened.leaf(sessionId)).toBe(appended[99]?.id);
   });
 
+  it("writes each entry once and never forces a disk sync", () => {
+    const dir = tempDir();
+    let writes = 0;
+    let syncs = 0;
+    // Not annotated as LogFs: `fsyncSync` is an extra method the store must
+    // never reach for.
+    const fs = {
+      mkdirSync: (file: string, options?: { recursive?: boolean }) => {
+        mkdirSync(file, options);
+      },
+      existsSync,
+      readFileSync: (file: string, encoding: "utf8") =>
+        readFileSync(file, encoding),
+      openSync,
+      ftruncateSync,
+      closeSync,
+      writeSync: (fd: number, data: string) => {
+        writes += 1;
+        return writeSync(fd, data);
+      },
+      fsyncSync: (fd: number) => {
+        syncs += 1;
+        fsyncSync(fd);
+      },
+    };
+    const store = new JsonlLogStore({ dir, fs });
+    for (let i = 0; i < 100; i++) {
+      store.append("nosync", {
+        kind: "message",
+        payload: { role: "user", content: `m${i}` },
+      });
+    }
+
+    expect(writes).toBe(100);
+    expect(syncs).toBe(0);
+    expect(new JsonlLogStore({ dir }).all("nosync")).toHaveLength(100);
+  });
+
   it("drops a torn last line without a watermark and continues at seq 56", () => {
     const dir = tempDir();
     const sessionId = "torn";
@@ -141,7 +179,6 @@ describe("JsonlLogStore", () => {
       existsSync,
       readFileSync: (file, encoding) => readFileSync(file, encoding),
       openSync,
-      fsyncSync,
       ftruncateSync,
       closeSync,
       writeSync: (fd, data) => {
