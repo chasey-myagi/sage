@@ -13,6 +13,7 @@ import path from "node:path";
 import { errorText, type HarnessTool } from "@sage/core";
 import { pathAccess } from "./access.js";
 import { asRecord, fail, ok, requiredString } from "./input.js";
+import { TOOL_NAMES } from "./names.js";
 import { resolveInside } from "./path-safety.js";
 
 const inputSchema = {
@@ -34,7 +35,7 @@ const inputSchema = {
 export function createWrite(cwd: string): HarnessTool {
   return {
     def: {
-      name: "write",
+      name: TOOL_NAMES.write,
       description:
         "Create or overwrite a UTF-8 file in the workspace. Use it for new files or a full rewrite.",
       inputSchema,

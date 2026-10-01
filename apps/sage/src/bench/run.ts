@@ -150,6 +150,7 @@ function writeResults(out: string, results: BenchResults): void {
       status: task.status,
       ...(task.reason ? { reason: task.reason } : {}),
       health: task.health,
+      stoppedEarly: task.stoppedEarly,
     })),
   };
   writeFileSync(

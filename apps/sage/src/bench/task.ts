@@ -19,6 +19,7 @@ import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { JsonlLogStore, type RunHealth, runHealth } from "@sage/core";
 import { sageBin } from "./deps.js";
+import { endedAfterUnverifiedEdit } from "./early-stop.js";
 import { exec } from "./exec.js";
 import { applyTestPatch, CloneUncleanError } from "./git.js";
 import type {
@@ -42,7 +43,7 @@ export async function runTask(
   mkdirSync(work, { recursive: true });
   try {
     const prepareFailure = await prepareWorkspace(task, work, deps);
-    if (prepareFailure) return failed(task, prepareFailure, null);
+    if (prepareFailure) return failed(task, prepareFailure, NO_SESSION);
     let sage: SageRun;
     try {
       sage = await deps.runSage(task, work, {
@@ -51,13 +52,15 @@ export async function runTask(
       });
     } catch {
       // A spawn failure is the task's result; the run goes on.
-      return failed(task, "sage-failed", null);
+      return failed(task, "sage-failed", NO_SESSION);
     }
-    const health = sage.sessionFile
+    const session = sage.sessionFile
       ? copySession(sage.sessionFile, out, task.id)
-      : null;
-    if (sage.timedOut) return failed(task, "timeout", health);
-    return await grade(task, work, deps, health);
+      : NO_SESSION;
+    if (sage.timedOut) {
+      return failed(task, "timeout", { ...session, unverifiedEdit: null });
+    }
+    return await grade(task, work, deps, session);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
@@ -106,26 +109,44 @@ async function prepareWorkspace(
   }
 }
 
+/**
+ * What the copied session says about the run. `unverifiedEdit` is
+ * `endedAfterUnverifiedEdit`, before the diff is known.
+ */
+type SessionReadout = {
+  health: RunHealth | null;
+  unverifiedEdit: boolean | null;
+};
+
+const NO_SESSION: SessionReadout = { health: null, unverifiedEdit: null };
+
 async function grade(
   task: BenchTask,
   work: string,
   deps: BenchDeps,
-  health: RunHealth | null,
+  session: SessionReadout,
 ): Promise<BenchTaskResult> {
   let empty: boolean;
   try {
     empty = await deps.diffEmpty(task, work);
   } catch {
     // Without a status there is nothing to grade.
-    return failed(task, "diff-failed", health);
+    return failed(task, "diff-failed", { ...session, unverifiedEdit: null });
   }
-  if (empty) return { id: task.id, status: "empty-patch", health };
+  if (empty) {
+    return {
+      id: task.id,
+      status: "empty-patch",
+      health: session.health,
+      stoppedEarly: session.unverifiedEdit === null ? null : false,
+    };
+  }
   if (task.testPatch) {
     try {
       await applyTestPatch(task, work);
     } catch {
       // The reason code is the whole report; git output is not kept.
-      return failed(task, "test-patch-failed", health);
+      return failed(task, "test-patch-failed", session);
     }
   }
   let tests: { code: number; timedOut?: boolean };
@@ -133,35 +154,52 @@ async function grade(
     tests = await deps.runTests(task, work);
   } catch {
     // The test command could not be spawned: counted as failing tests.
-    return failed(task, "tests-failed", health);
+    return failed(task, "tests-failed", session);
   }
-  if (tests.timedOut) return failed(task, "timeout", health);
-  if (tests.code === 0) return { id: task.id, status: "resolved", health };
-  return failed(task, "tests-failed", health);
+  if (tests.timedOut) return failed(task, "timeout", session);
+  if (tests.code === 0) {
+    return {
+      id: task.id,
+      status: "resolved",
+      health: session.health,
+      stoppedEarly: session.unverifiedEdit,
+    };
+  }
+  return failed(task, "tests-failed", session);
 }
 
 function failed(
   task: BenchTask,
   reason: BenchErrorReason,
-  health: RunHealth | null,
+  session: SessionReadout,
 ): BenchTaskResult {
-  return { id: task.id, status: "error", reason, health };
+  return {
+    id: task.id,
+    status: "error",
+    reason,
+    health: session.health,
+    stoppedEarly: session.unverifiedEdit,
+  };
 }
 
 function copySession(
   file: string,
   out: string,
   taskId: string,
-): RunHealth | null {
+): SessionReadout {
   const sessions = path.join(out, "sessions");
   mkdirSync(sessions, { recursive: true });
   copyFileSync(file, path.join(sessions, `${sessionName(taskId)}.jsonl`));
   try {
     const store = new JsonlLogStore({ dir: sessions });
-    return runHealth(store.path(sessionName(taskId)));
+    const sessionPath = store.path(sessionName(taskId));
+    return {
+      health: runHealth(sessionPath),
+      unverifiedEdit: endedAfterUnverifiedEdit(sessionPath),
+    };
   } catch {
-    // A corrupt or partial session still counts; health is just unknown.
-    return null;
+    // A corrupt or partial session still counts; both readings are unknown.
+    return NO_SESSION;
   }
 }
 

@@ -169,6 +169,7 @@ it("bench report compares rates and the three numbers", async () => {
     delta: Metrics;
   };
   expect(json.a).toEqual({
+    stoppedEarlyRate: 0,
     resolvedRate: 0.5,
     emptyPatchRate: 0,
     errorRate: 0.5,
@@ -178,6 +179,7 @@ it("bench report compares rates and the three numbers", async () => {
     budget: null,
   });
   expect(json.b).toEqual({
+    stoppedEarlyRate: 0,
     resolvedRate: 1,
     emptyPatchRate: 0,
     errorRate: 0,
@@ -187,6 +189,7 @@ it("bench report compares rates and the three numbers", async () => {
     budget: null,
   });
   expect(json.delta).toEqual({
+    stoppedEarlyRate: 0,
     resolvedRate: 0.5,
     emptyPatchRate: 0,
     errorRate: -0.5,
@@ -469,6 +472,7 @@ it("setupCommand failure is setup-failed and does not start the agent", async ()
       status: "error",
       reason: "setup-failed",
       health: null,
+      stoppedEarly: null,
     },
   ]);
   expect(existsSync(path.join(out, "sessions", "setup-bad.jsonl"))).toBe(false);
@@ -717,6 +721,7 @@ it("bench run records clone-failed and does not start the agent when fetch fails
       status: "error",
       reason: "clone-failed",
       health: null,
+      stoppedEarly: null,
     },
   ]);
   expect(existsSync(path.join(out, "sessions", "missing.jsonl"))).toBe(false);

@@ -71,6 +71,7 @@ export function benchMetrics(results: BenchResults): BenchMetrics {
   const resolved = tasks.filter((task) => task.status === "resolved").length;
   const empty = tasks.filter((task) => task.status === "empty-patch").length;
   const error = tasks.filter((task) => task.status === "error").length;
+  const stopped = tasks.filter((task) => task.stoppedEarly === true).length;
   const tokens = tasks.reduce((sum, task) => sum + tokenTotal(task), 0);
   return {
     resolvedRate: total === 0 ? null : resolved / total,
@@ -79,6 +80,7 @@ export function benchMetrics(results: BenchResults): BenchMetrics {
     tokensPerResolved: resolved === 0 ? null : tokens / resolved,
     cacheHitRatio: mean(tasks.map((task) => task.health?.cacheHitRatio)),
     expandRate: mean(tasks.map((task) => task.health?.expandRate)),
+    stoppedEarlyRate: total === 0 ? null : stopped / total,
   };
 }
 
@@ -113,6 +115,7 @@ function readTaskResult(value: unknown): BenchTaskResult {
       status: "error",
       reason: "invalid-result",
       health: null,
+      stoppedEarly: null,
     };
   }
   const reason = typeof value.reason === "string" ? value.reason : undefined;
@@ -122,6 +125,8 @@ function readTaskResult(value: unknown): BenchTaskResult {
     ...(reason ? { reason } : {}),
     // Only the numeric fields read below are used, each re-checked there.
     health: isRecord(value.health) ? (value.health as RunHealth) : null,
+    stoppedEarly:
+      typeof value.stoppedEarly === "boolean" ? value.stoppedEarly : null,
   };
 }
 
@@ -140,6 +145,7 @@ function deltaOf(a: BenchMetrics, b: BenchMetrics): BenchMetrics {
     tokensPerResolved: subtract(a.tokensPerResolved, b.tokensPerResolved),
     cacheHitRatio: subtract(a.cacheHitRatio, b.cacheHitRatio),
     expandRate: subtract(a.expandRate, b.expandRate),
+    stoppedEarlyRate: subtract(a.stoppedEarlyRate, b.stoppedEarlyRate),
   };
 }
 

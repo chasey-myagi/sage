@@ -62,7 +62,11 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 `health` 是复制出来的会话的 `runHealth`，读不到时为 null。
 
-`<out>/results.json` 每跑完一个任务重写一次，只存 id、状态、原因和 health 数字，不复制题面。顶层字段：`budget` 是 compiler 策略下 `--budget` 的值，没写或 passthrough 时为 null；`toolNetwork` 默认 `none`，写 `--tool-network full` 才是 `full`；`maxTurns` 是 `--max-turns` 的值或 80，两种策略都记；`scorerApply` 是 `entry` 或 `rebuild`，没写记 `rebuild`。
+`stoppedEarly` 是工具顺序的启发式指标：会话以 `done` 结束、最后一次成功的 `edit` / `write` 之后没有 `bash` 结果，且工作区 diff 非空时为 true。失败的编辑忽略，失败的 bash 也算一次检查尝试。不解析命令或输出，因此不能证明是否执行了测试，也不识别 bash 内的文件修改。空 diff 且会话可读时为 false；会话不可读、diff 读取失败或子进程超时未检查 diff 时为 null。它只影响统计，不改变 agent 行为或任务状态。
+
+结果文件同时保存 `stoppedEarly`。报告的 `stoppedEarlyRate` 是 true 的任务数除以全部任务数（含未知项），空任务集为 null；差值仍为 B 减 A。
+
+`<out>/results.json` 每跑完一个任务重写一次，只存 id、状态、原因、health 数字和 stoppedEarly，不复制题面。顶层字段：`budget` 是 compiler 策略下 `--budget` 的值，没写或 passthrough 时为 null；`toolNetwork` 默认 `none`，写 `--tool-network full` 才是 `full`；`maxTurns` 是 `--max-turns` 的值或 80，两种策略都记；`scorerApply` 是 `entry` 或 `rebuild`，没写记 `rebuild`。
 
 bench 的网络默认 `none`，并总是写进子进程的 `--tool-network`。这时每个子进程的 bash 只能读本次运行根目录，任务可以 `cd` 到自己的绝对路径，其他 `sage-bench-*` 根目录仍被拒绝；运行根目录经 `SAGE_SANDBOX_ALLOW_ROOT` 传给子进程。开跑前，临时根下遗留的 `sage-bench-*` 目录会在 stderr 列出并提示手动清理，不会被删除。每个任务目录在任务结束时删除，运行根目录在整次运行结束时删除。全部任务跑完退出 0。
 
