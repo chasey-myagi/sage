@@ -16,7 +16,7 @@ view_epoch、request_header、manifest 三条的落盘抽成 core 导出的 `app
 
 fixture 迁移用一次性脚本（不入库），每条 request_header 在 `adapterDefaults` 之后插入两个字段，其余字节不动：
 
-- `packages/plugins/test/replay/fixtures/{issue-46,issue-50,issue-63}`：录制模型是 deepseek-flash，填 `catalog.ts` 的真实值：窗口 1,000,000，定价 input 0.3 / output 1.2 / cacheWrite 0 / cacheRead 0.006，source 为 DeepSeek 定价页。依据：三份录制时间是 2026-09-23 02:09–03:48（+08:00），这段时间 catalog 的 deepseek-flash 条目（#42 加入、#45 改过写价口径之后）与现在逐字段相同；录下的 manifest 里没有一条 reason 带 `;pricing:fallback`，也没有 `context-window-guard`，说明录制时走的就是目录定价和大窗口。
+- `packages/plugins/test/replay/fixtures/{issue-46,issue-50,issue-63}`：录制模型是 deepseek-flash，填 `catalog.ts` 的真实值：窗口 1,000,000，定价 input 0.3 / output 1.2 / cacheWrite 0 / cacheRead 0.006，source 为 DeepSeek 定价页。依据：三份录制时间是 2026-09-23 02:09–03:48（+08:00），catalog 的 deepseek-flash 条目自 #42 加入起数值未变（#45 只改了注释），与现在逐字段相同；录下的 manifest 里没有一条 reason 带 `;pricing:fallback`，也没有 `context-window-guard`，说明录制时走的就是目录定价和大窗口。
 - `packages/core/test/replay/{text-only,tool-roundtrip}`：模型 `claude-test` 不在 catalog 里，catalog 回退值是 128000 与 null。这两份不是真机录的，是 `fauxAdapter` 录的，当时的 prepared call 是 `FAUX_CONTEXT_WINDOW`（8000）和 null，所以填 8000 与 null，不用 catalog 回退值。
 
 ## Alternatives considered

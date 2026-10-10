@@ -7,7 +7,7 @@
  * and everything after), under the context window and pricing that turn's
  * recorded request_header carries, never the current catalog. Compiler
  * policies keep their own prior manifests on a shadow log, written by the
- * session's `appendRequestEntries`, so later turns freeze the policy under
+ * kernel's `appendRequestEntries`, so later turns freeze the policy under
  * test, not the recorded one. A scorer that would call out is swapped for
  * `ruleScorer`, and the report says so. The report holds numbers, ids, and
  * the scorer note only, never chunk text. Per-field meanings: `TurnDiff`.

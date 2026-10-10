@@ -130,7 +130,8 @@ function recordedHead(recorded: readonly StoredEntry[]): {
   if (typeof system !== "string" || !Array.isArray(tools)) {
     throw new Error("first request_header lacks system or tools text");
   }
-  // The request_header validator already accepted these tool schemas.
+  // `tools` is `unknown` on the header and its validator does not check the
+  // schema shape; the fixture was recorded from a real run, so trust it.
   return { system, tools: tools as ToolDef[] };
 }
 
