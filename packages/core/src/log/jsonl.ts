@@ -1,17 +1,18 @@
 /**
  * JSONL log. One file per session: `<dir>/<sessionId>.jsonl`.
  *
- * Guarantees: append writes the line with one `writeSync` on a cached append
- * fd and only then commits the entry to memory, so the file is a superset of
- * memory. A killed process loses nothing it appended; the store never calls
- * fsync, so an OS crash or power loss can drop the tail. On open, a JSON
- * parse failure on the last line is discarded, recorded as torn, and
- * truncated off the file before the next append so the new line is not glued
- * to the partial one. A parse failure on any earlier line throws
- * `LogCorruptedError`. An unregistered kind throws `UnknownEntryKindError`
- * and is not skipped. There is no high-water mark
- * (no persisted "written up to here" counter) anywhere in the Log: the next
- * seq is the number of entries loaded.
+ * Guarantees: append writes the whole line on a cached append fd, looping
+ * over short writes, and only then commits the entry to memory, so the file
+ * is a superset of memory. A killed process loses nothing it appended; the
+ * store never calls fsync, so an OS crash or power loss can drop or corrupt
+ * the tail; when the damage is not confined to the last line, reopen throws
+ * `LogCorruptedError`. On open, a JSON parse failure on the last line is
+ * discarded, recorded as torn, and truncated off the file before the next
+ * append so the new line is not glued to the partial one. A parse failure
+ * on any earlier line throws `LogCorruptedError`. An unregistered kind
+ * throws `UnknownEntryKindError` and is not skipped. There is no high-water
+ * mark (no persisted "written up to here" counter) anywhere in the Log: the
+ * next seq is the number of entries loaded.
  *
  * Intentionally not in the Log: the torn flag, the cached fd, and this index.
  * Torn does not participate in seq assignment.
@@ -46,7 +47,8 @@ export type LogFs = {
   existsSync(path: string): boolean;
   readFileSync(path: string, encoding: "utf8"): string;
   openSync(path: string, flags: string): number;
-  writeSync(fd: number, data: string): number;
+  /** Writes from the start of `data` and returns the bytes written. */
+  writeSync(fd: number, data: Uint8Array): number;
   ftruncateSync(fd: number, len: number): void;
   closeSync(fd: number): void;
 };
@@ -111,9 +113,20 @@ export class JsonlLogStore implements LogStore {
     return this.session(sessionId).all();
   }
 
+  /**
+   * Writes the whole line, looping over short writes. Throws when a write
+   * makes no progress; the partial line is then the torn tail on next open,
+   * unless this process appends again and glues the next line to it.
+   */
   private persist(sessionId: string, entry: StoredEntry): void {
     const fd = this.fd(sessionId);
-    this.fs.writeSync(fd, `${JSON.stringify(entry)}\n`);
+    const line = Buffer.from(`${JSON.stringify(entry)}\n`);
+    let written = 0;
+    while (written < line.length) {
+      const wrote = this.fs.writeSync(fd, line.subarray(written));
+      if (wrote <= 0) throw new Error("log write made no progress");
+      written += wrote;
+    }
   }
 
   private fd(sessionId: string): number {
