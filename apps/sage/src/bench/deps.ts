@@ -2,7 +2,9 @@
  * Production side effects of a bench task: git fetch, the child `sage -p`,
  * `git status`, and the test command.
  *
- * Contract: `runSage` spawns the sage bin with the argv the runner built,
+ * Contract: `diffEmpty` ignores the child's session log under
+ * `<cwd>/.sage/sessions`; any other change, tracked or untracked, counts.
+ * `runSage` spawns the sage bin with the argv the runner built,
  * under the task timeout, and reports the newest session jsonl in
  * `<cwd>/.sage/sessions`. When the sandbox has an `allowRoot`, the child
  * receives it as `SAGE_SANDBOX_ALLOW_ROOT`; there is no CLI flag for it.
@@ -15,6 +17,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SANDBOX_ALLOW_ROOT_ENV } from "@sage/tools";
+import { SESSION_LOG_SUBDIR } from "../coding-session.js";
 import { exec } from "./exec.js";
 import { defaultPrepare } from "./git.js";
 import type { BenchDeps } from "./types.js";
@@ -41,9 +44,20 @@ export function defaultDeps(): BenchDeps {
       };
     },
     async diffEmpty(_task, cwd) {
-      const result = await exec("git", ["-C", cwd, "status", "--porcelain"], {
-        cwd,
-      });
+      // The child's own session log is not part of the patch.
+      const result = await exec(
+        "git",
+        [
+          "-C",
+          cwd,
+          "status",
+          "--porcelain",
+          "--",
+          ".",
+          `:(exclude)${SESSION_LOG_SUBDIR}`,
+        ],
+        { cwd },
+      );
       if (result.code !== 0) throw new Error("git status failed");
       return result.stdout.trim().length === 0;
     },
@@ -63,7 +77,7 @@ export function sageBin(): string {
 }
 
 function findSession(cwd: string): string | undefined {
-  const dir = path.join(cwd, ".sage", "sessions");
+  const dir = path.join(cwd, SESSION_LOG_SUBDIR);
   if (!existsSync(dir)) return undefined;
   const files = readdirSync(dir).filter((name) => name.endsWith(".jsonl"));
   if (files.length === 0) return undefined;
