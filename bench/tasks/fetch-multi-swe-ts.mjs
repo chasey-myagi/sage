@@ -1,109 +1,231 @@
 /**
- * Build the TS/JS bench task file from Multi-SWE-bench (ByteDance-Seed).
+ * Build the TS/JS bench task files from ByteDance-Seed Multi-SWE-bench and
+ * Multi-SWE-RL.
  *
- * Zero dependencies. The datasets-server rows API fails on this dataset
- * (schema cast errors), so this script reads the per-repo JSONL files through
- * `huggingface.co/datasets/<ds>/resolve/main/<lang>/<org>__<repo>_dataset.jsonl`.
- * `--fixture <dir>` reads `<dir>/<org>__<repo>_dataset.jsonl` instead, so tests
- * never hit the network.
+ * Zero dependencies. Each repo in REPOS declares its dataset and path; rows are
+ * read from `huggingface.co/datasets/<dataset>/resolve/main/<path>/<org>__<repo>_dataset.jsonl`
+ * (the datasets-server rows API fails on these datasets with schema cast
+ * errors). `--fixture <dir>` reads `<dir>/<org>__<repo>_dataset.jsonl` instead,
+ * so tests never hit the network.
  *
- * Only the instances in SELECTION are emitted. Each one was verified on a real
- * clone: after setup, applying the test patch and running the test command
- * fails at baseCommit and passes after the gold fix patch. setup leaves
- * `git status` empty.
+ * `--set <name>` picks one of SETS (default `ts-mini`) and its default output
+ * file. Only the ids of that set are emitted, in set order. Each one was
+ * verified on a real clone: after setup `git status` is empty, the test patch
+ * fails at baseCommit and passes after the gold fix patch. Multi-SWE-RL is an
+ * unreviewed RL training set, so nothing enters a set without that check.
  *
+ * id           = `instance_id`, or `<org>__<repo>-<number>` when the row has none.
  * problem      = title + body of every resolved issue (no PR text, no diff).
  * setupCommand = install deps after checkout, before the agent starts.
  * testPatch    = the dataset test_patch, applied by the runner after the agent
  *               exits. The agent never sees it.
- * testCommand  = the test runner invocation for the spec files in that patch.
+ * testCommand  = the test runner invocation for the spec files in that patch;
+ *               it may build first when the tests import build output.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
 
 export const TIMEOUT_SEC = 1800;
 
-const DATASET = "ByteDance-Seed/Multi-SWE-bench";
-const RESOLVE_URL = `https://huggingface.co/datasets/${DATASET}/resolve/main`;
+const MULTI_SWE_BENCH = "ByteDance-Seed/Multi-SWE-bench";
+const MULTI_SWE_RL = "ByteDance-Seed/Multi-SWE-RL";
+const RL_2024 = "data_20240601_20250331";
+const RL_2025 = "data_20250401_20250631";
 
 const NPM_CI = "PUPPETEER_SKIP_DOWNLOAD=1 npm ci --no-audit --no-fund";
+// No lockfile, or one out of sync. --no-package-lock keeps `git status` clean.
+const NPM_NO_LOCK = "npm install --no-audit --no-fund --no-package-lock";
 const PNPM_FROZEN =
   "PUPPETEER_SKIP_DOWNLOAD=1 corepack pnpm install --frozen-lockfile";
+const PNPM_9_9 = "corepack pnpm@9.9.0";
+const YARN_1 = "corepack yarn@1.22.22";
+const YARN_1_FLAGS = "--ignore-engines --non-interactive";
 
-// Per-repo install and runner. `run(files)` gets the spec files of the test patch.
+// Per-repo source, install and runner. `run(files)` gets the spec files of
+// the test patch.
 const REPOS = {
   "vuejs/core": {
-    lang: "ts",
+    dataset: MULTI_SWE_BENCH,
+    path: "ts",
     setup: PNPM_FROZEN,
     run: (files) => `corepack pnpm exec vitest run ${files.join(" ")}`,
   },
   "darkreader/darkreader": {
-    lang: "ts",
+    dataset: MULTI_SWE_BENCH,
+    path: "ts",
     setup: NPM_CI,
     run: (files) =>
       `npx --no-install jest --config=tests/jest.config.js ${files.join(" ")}`,
   },
   "iamkun/dayjs": {
-    lang: "js",
+    dataset: MULTI_SWE_BENCH,
+    path: "js",
     setup: NPM_CI,
     // Some date tests depend on the host zone (year-1 LMT offsets). Pin UTC.
     run: (files) => `TZ=UTC npx --no-install jest ${files.join(" ")}`,
   },
   "expressjs/express": {
-    lang: "js",
-    // No lockfile in the repo. --no-package-lock keeps `git status` clean.
-    setup: "npm install --no-audit --no-fund --no-package-lock",
+    dataset: MULTI_SWE_BENCH,
+    path: "js",
+    setup: NPM_NO_LOCK,
     run: (files) =>
       `npx --no-install mocha --require test/support/env --check-leaks ${files.join(" ")}`,
   },
   "axios/axios": {
-    lang: "js",
+    dataset: MULTI_SWE_BENCH,
+    path: "js",
     setup: NPM_CI,
     run: (files) =>
       `npx --no-install mocha --timeout 30000 --exit ${files.join(" ")}`,
   },
   "anuraghazra/github-readme-stats": {
-    lang: "js",
+    dataset: MULTI_SWE_BENCH,
+    path: "js",
     setup: NPM_CI,
     run: (files) =>
       `node --experimental-vm-modules node_modules/jest/bin/jest.js --ci ${files.join(" ")}`,
   },
+  "google/zx": {
+    dataset: MULTI_SWE_RL,
+    path: `${RL_2024}/js`,
+    // Tests import build/, so both setup and the test run build first.
+    setup: `${NPM_CI} && npm run build:js`,
+    run: (files) =>
+      `npm run build:js >/dev/null && node --experimental-strip-types --test ${files.join(" ")}`,
+  },
+  "tj/commander.js": {
+    dataset: MULTI_SWE_RL,
+    path: `${RL_2024}/js`,
+    setup: NPM_CI,
+    run: (files) => `npx --no-install jest ${files.join(" ")}`,
+  },
+  "caolan/async": {
+    dataset: MULTI_SWE_RL,
+    path: `${RL_2024}/js`,
+    setup: NPM_CI,
+    run: (files) => `npx --no-install mocha ${files.join(" ")}`,
+  },
+  "reduxjs/redux": {
+    dataset: MULTI_SWE_RL,
+    path: `${RL_2024}/ts`,
+    // Tests import the package entry (lib/), so the build runs before jest.
+    setup: NPM_CI,
+    run: (files) =>
+      `npm run build >/dev/null 2>&1 && npx --no-install jest ${files.join(" ")}`,
+  },
+  "colinhacks/zod": {
+    dataset: MULTI_SWE_RL,
+    path: `${RL_2024}/ts`,
+    // yarn.lock is out of sync with package.json; --pure-lockfile keeps it unwritten.
+    setup: `PUPPETEER_SKIP_DOWNLOAD=1 ${YARN_1} install --pure-lockfile ${YARN_1_FLAGS}`,
+    run: (files) =>
+      `npx --no-install jest --config ./configs/ts-jest.config.json ${files.join(" ")}`,
+  },
+  "remix-run/react-router": {
+    dataset: MULTI_SWE_RL,
+    path: `${RL_2024}/ts`,
+    setup: PNPM_FROZEN,
+    run: (files) => `corepack pnpm exec jest ${files.join(" ")}`,
+  },
+  "react-hook-form/react-hook-form": {
+    dataset: MULTI_SWE_RL,
+    path: `${RL_2025}/ts`,
+    setup: PNPM_FROZEN,
+    run: (files) =>
+      `corepack pnpm exec jest --config ./scripts/jest/jest.config.js ${files.join(" ")}`,
+  },
 };
 
-export const SELECTION = [
-  "vuejs__core-11813",
-  "vuejs__core-10289",
-  "vuejs__core-10874",
-  "vuejs__core-11625",
-  "darkreader__darkreader-7241",
-  "darkreader__darkreader-6747",
-  "iamkun__dayjs-2377",
-  "expressjs__express-5555",
-  "axios__axios-5661",
-  "anuraghazra__github-readme-stats-2228",
-];
+// Per-instance setup/run that replace the repo defaults for one base commit.
+const OVERRIDES = {
+  // This base still uses yarn1 (yarn.lock), not pnpm.
+  "remix-run__react-router-11160": {
+    setup: `PUPPETEER_SKIP_DOWNLOAD=1 ${YARN_1} install --frozen-lockfile ${YARN_1_FLAGS}`,
+    run: (files) => `npx --no-install jest ${files.join(" ")}`,
+  },
+  // No packageManager field: bare `corepack pnpm` resolves a pnpm that
+  // corepack 0.34 cannot start. Pin the version matching lockfile 9.0.
+  "react-hook-form__react-hook-form-12505": {
+    setup: `PUPPETEER_SKIP_DOWNLOAD=1 ${PNPM_9_9} install --frozen-lockfile`,
+    run: (files) =>
+      `${PNPM_9_9} exec jest --config ./scripts/jest/jest.config.js ${files.join(" ")}`,
+  },
+  // package-lock.json misses watchify, so `npm ci` fails.
+  "caolan__async-1790": { setup: NPM_NO_LOCK },
+};
+
+/** Named task sets: the verified ids, in output order, and the default output file. */
+export const SETS = {
+  "ts-mini": {
+    out: "ts-mini.json",
+    ids: [
+      "vuejs__core-11813",
+      "vuejs__core-10289",
+      "vuejs__core-10874",
+      "vuejs__core-11625",
+      "darkreader__darkreader-7241",
+      "darkreader__darkreader-6747",
+      "iamkun__dayjs-2377",
+      "expressjs__express-5555",
+      "axios__axios-5661",
+      "anuraghazra__github-readme-stats-2228",
+    ],
+  },
+  "ts-mini-2": {
+    out: "ts-mini-2.json",
+    ids: [
+      "google__zx-1107",
+      "tj__commander.js-1720",
+      "tj__commander.js-1502",
+      "reduxjs__redux-4139",
+      "colinhacks__zod-3427",
+      "remix-run__react-router-11786",
+      "remix-run__react-router-11160",
+      "caolan__async-1790",
+      "caolan__async-1628",
+      "react-hook-form__react-hook-form-12505",
+    ],
+  },
+};
+
+const DEFAULT_SET = "ts-mini";
 
 const SPEC_FILE =
-  /\.(spec|test|tests)\.[cm]?[jt]sx?$|^test\/[^/]+\.js$|^test\/unit\/.+\.js$/;
+  /\.(spec|test|tests)\.[cm]?[jt]sx?$|(^|\/)[^/]+-(spec|test)\.[jt]sx?$|^tests?\/[^/]+\.js$|^test\/unit\/.+\.js$/;
 
-export function taskFromRow(row) {
-  const repo = `${row.org}/${row.repo}`;
-  const conf = REPOS[repo];
-  if (!conf) throw new Error(`no repo config for ${repo}`);
-  const touched = patchFiles(row.test_patch);
-  const specs = touched.filter(
-    (f) => SPEC_FILE.test(f) && !f.includes("/support/"),
+function isSpecFile(file) {
+  return (
+    SPEC_FILE.test(file) &&
+    !file.includes("/support/") &&
+    !file.includes("__snapshots__") &&
+    !file.startsWith("deno/")
   );
+}
+
+/** Task id of a dataset row; rows of the 2025 Multi-SWE-RL period carry no `instance_id`. */
+export function idOf(row) {
+  return row.instance_id ?? `${row.org}__${row.repo}-${row.number}`;
+}
+
+/** Convert one dataset row into a bench task. Throws when the repo has no config or the row has no spec file or resolved issue. */
+export function taskFromRow(row) {
+  const id = idOf(row);
+  const repo = `${row.org}/${row.repo}`;
+  const repoConf = REPOS[repo];
+  if (!repoConf) throw new Error(`no repo config for ${repo}`);
+  const conf = { ...repoConf, ...OVERRIDES[id] };
+  const specs = patchFiles(row.test_patch).filter(isSpecFile);
   if (specs.length === 0) {
-    throw new Error(`${row.instance_id}: test patch has no runnable spec file`);
+    throw new Error(`${id}: test patch has no runnable spec file`);
   }
   return {
-    id: row.instance_id,
+    id,
     repo,
     baseCommit: row.base.sha,
-    problem: problemText(row),
+    problem: problemText(id, row),
     setupCommand: conf.setup,
     testPatch: row.test_patch,
     testCommand: conf.run(specs),
@@ -111,10 +233,9 @@ export function taskFromRow(row) {
   };
 }
 
-function problemText(row) {
+function problemText(id, row) {
   const issues = row.resolved_issues ?? [];
-  if (issues.length === 0)
-    throw new Error(`${row.instance_id}: no resolved issue`);
+  if (issues.length === 0) throw new Error(`${id}: no resolved issue`);
   return issues
     .map((issue) => `${issue.title}\n\n${(issue.body ?? "").trim()}`.trim())
     .join("\n\n---\n\n");
@@ -134,7 +255,8 @@ async function loadRows(repo, fixtureDir) {
   if (fixtureDir) {
     text = readFileSync(path.join(fixtureDir, name), "utf8");
   } else {
-    const url = `${RESOLVE_URL}/${REPOS[repo].lang}/${name}`;
+    const { dataset, path: dataPath } = REPOS[repo];
+    const url = `https://huggingface.co/datasets/${dataset}/resolve/main/${dataPath}/${name}`;
     const response = await fetch(url);
     if (!response.ok)
       throw new Error(`fetch ${url} failed: ${response.status}`);
@@ -151,7 +273,11 @@ function repoOf(instanceId) {
   return `${owner}/${rest.replace(/-\d+$/, "")}`;
 }
 
-export async function buildTasks({ fixtureDir, selection = SELECTION } = {}) {
+/** Build the tasks for `selection` in that order. Throws when an id is missing from its repo's rows. */
+export async function buildTasks({
+  fixtureDir,
+  selection = SETS[DEFAULT_SET].ids,
+} = {}) {
   const byRepo = new Map();
   for (const id of selection) {
     const repo = repoOf(id);
@@ -162,8 +288,8 @@ export async function buildTasks({ fixtureDir, selection = SELECTION } = {}) {
   for (const [repo, ids] of byRepo) {
     const rows = await loadRows(repo, fixtureDir);
     for (const row of rows) {
-      if (ids.includes(row.instance_id))
-        found.set(row.instance_id, taskFromRow(row));
+      const id = idOf(row);
+      if (ids.includes(id)) found.set(id, taskFromRow(row));
     }
   }
   return selection.map((id) => {
@@ -173,32 +299,40 @@ export async function buildTasks({ fixtureDir, selection = SELECTION } = {}) {
   });
 }
 
-function parseArgs(argv) {
-  let fixtureDir;
-  let only;
-  let out = path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "ts-mini.json",
-  );
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === "--fixture") fixtureDir = argv[++i];
-    else if (arg === "--out") out = argv[++i];
-    else if (arg === "--only") only = argv[++i].split(",");
-    else {
-      throw new Error(
-        "usage: node bench/tasks/fetch-multi-swe-ts.mjs [--fixture <dir>] [--out <file>] [--only id1,id2]",
-      );
-    }
+const USAGE = `usage: node bench/tasks/fetch-multi-swe-ts.mjs [--set ${Object.keys(SETS).join("|")}] [--fixture <dir>] [--out <file>] [--only id1,id2]`;
+
+function readArgs(argv) {
+  let values;
+  try {
+    ({ values } = parseArgs({
+      args: argv,
+      options: {
+        set: { type: "string", default: DEFAULT_SET },
+        fixture: { type: "string" },
+        out: { type: "string" },
+        only: { type: "string" },
+      },
+    }));
+  } catch (error) {
+    throw new Error(USAGE, { cause: error });
   }
-  return { fixtureDir, out, only };
+  const set = SETS[values.set];
+  if (!set) throw new Error(USAGE);
+  return {
+    fixtureDir: values.fixture,
+    out:
+      values.out ??
+      path.join(path.dirname(fileURLToPath(import.meta.url)), set.out),
+    selection: values.only?.split(",") ?? set.ids,
+  };
 }
 
+/** CLI entry: writes the selected tasks as pretty JSON and returns how many. Throws the usage line on bad arguments. */
 export async function main(argv = process.argv.slice(2)) {
-  const args = parseArgs(argv);
+  const args = readArgs(argv);
   const tasks = await buildTasks({
     fixtureDir: args.fixtureDir,
-    selection: args.only ?? SELECTION,
+    selection: args.selection,
   });
   writeFileSync(args.out, `${JSON.stringify(tasks, null, 2)}\n`);
   return tasks.length;

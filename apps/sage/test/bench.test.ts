@@ -408,6 +408,76 @@ it("fetch-multi-swe-ts matches ts-mini.json byte for byte from a fixture", () =>
   expect(Buffer.compare(expected, readFileSync(out))).toBe(0);
 });
 
+it("fetch-multi-swe-ts --set ts-mini-2 matches ts-mini-2.json byte for byte from a fixture", () => {
+  dir = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
+  const out = path.join(dir, "tasks.json");
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(repoRoot, "bench/tasks/fetch-multi-swe-ts.mjs"),
+      "--set",
+      "ts-mini-2",
+      "--fixture",
+      path.join(repoRoot, "apps/sage/test/fixtures/multi-swe-ts"),
+      "--out",
+      out,
+    ],
+    { encoding: "utf8" },
+  );
+  expect(result.stderr).toBe("");
+  expect(result.status).toBe(0);
+  const expected = readFileSync(
+    path.join(repoRoot, "bench/tasks/ts-mini-2.json"),
+  );
+  expect(Buffer.compare(expected, readFileSync(out))).toBe(0);
+});
+
+it("fetch-multi-swe-ts names a row without instance_id <org>__<repo>-<number>", () => {
+  dir = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
+  const fixture = path.join(dir, "fixture");
+  mkdirSync(fixture);
+  writeFileSync(
+    path.join(fixture, "tj__commander.js_dataset.jsonl"),
+    `${JSON.stringify({
+      org: "tj",
+      repo: "commander.js",
+      number: 7,
+      base: { sha: "abc123" },
+      resolved_issues: [{ title: "the bug", body: "details" }],
+      test_patch:
+        "diff --git a/tests/x.test.js b/tests/x.test.js\n--- a/tests/x.test.js\n+++ b/tests/x.test.js\n",
+    })}\n`,
+  );
+  const out = path.join(dir, "tasks.json");
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(repoRoot, "bench/tasks/fetch-multi-swe-ts.mjs"),
+      "--set",
+      "ts-mini-2",
+      "--fixture",
+      fixture,
+      "--only",
+      "tj__commander.js-7",
+      "--out",
+      out,
+    ],
+    { encoding: "utf8" },
+  );
+  expect(result.stderr).toBe("");
+  expect(result.status).toBe(0);
+  const tasks = JSON.parse(readFileSync(out, "utf8")) as {
+    id: string;
+    repo: string;
+    baseCommit: string;
+  }[];
+  expect(
+    tasks.map(({ id, repo, baseCommit }) => ({ id, repo, baseCommit })),
+  ).toEqual([
+    { id: "tj__commander.js-7", repo: "tj/commander.js", baseCommit: "abc123" },
+  ]);
+});
+
 it("setupCommand failure is setup-failed and does not start the agent", async () => {
   dir = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
   const tasks = path.join(dir, "tasks.json");
