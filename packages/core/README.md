@@ -2,6 +2,10 @@
 
 内核：只追加的 Log，以及每次调用模型前的 View seam。
 
+## 落盘保证
+
+`JsonlLogStore.append` 每条 entry 调一次 `writeSync`，写完才进内存，文件永远是内存的超集。写进去的行在 OS 页缓存里，进程被杀（超时、Ctrl-C、崩溃）不丢。store 不调用 fsync，整机断电或 OS 崩溃可能丢掉文件尾部。重开时撕裂的最后一行照常丢弃并截掉。
+
 ## 轮数上限
 
 `AgentSession.run` 不传 `maxTurns` 时，上限是 80。适配器一直以 `tool_use` 结束时，第 80 轮结束后追加 `terminal`，`outcome` 为 `max_turns`，不抛。调用方传入的正整数覆盖这个默认值。

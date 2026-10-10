@@ -1,13 +1,15 @@
 /**
  * JSONL log. One file per session: `<dir>/<sessionId>.jsonl`.
  *
- * Guarantees: append writes the line with `writeSync` on a cached append fd, then
- * `fsyncSync`, and only then commits the entry to memory. Disk is a superset of
- * memory. On open, a JSON parse failure on the last line is discarded,
- * recorded as torn, and truncated off the file before the next append so the
- * new line is not glued to the partial one. A parse failure on any earlier
- * line throws `LogCorruptedError`. An unregistered kind throws
- * `UnknownEntryKindError` and is not skipped. There is no high-water mark
+ * Guarantees: append writes the line with one `writeSync` on a cached append
+ * fd and only then commits the entry to memory, so the file is a superset of
+ * memory. A killed process loses nothing it appended; the store never calls
+ * fsync, so an OS crash or power loss can drop the tail. On open, a JSON
+ * parse failure on the last line is discarded, recorded as torn, and
+ * truncated off the file before the next append so the new line is not glued
+ * to the partial one. A parse failure on any earlier line throws
+ * `LogCorruptedError`. An unregistered kind throws `UnknownEntryKindError`
+ * and is not skipped. There is no high-water mark
  * (no persisted "written up to here" counter) anywhere in the Log: the next
  * seq is the number of entries loaded.
  *
@@ -18,7 +20,6 @@
 import {
   closeSync,
   existsSync,
-  fsyncSync,
   ftruncateSync,
   mkdirSync,
   openSync,
@@ -46,7 +47,6 @@ export type LogFs = {
   readFileSync(path: string, encoding: "utf8"): string;
   openSync(path: string, flags: string): number;
   writeSync(fd: number, data: string): number;
-  fsyncSync(fd: number): void;
   ftruncateSync(fd: number, len: number): void;
   closeSync(fd: number): void;
 };
@@ -59,7 +59,6 @@ const nodeFs: LogFs = {
   readFileSync: (file, encoding) => readFileSync(file, encoding),
   openSync,
   writeSync: (fd, data) => writeSync(fd, data),
-  fsyncSync,
   ftruncateSync,
   closeSync,
 };
@@ -115,7 +114,6 @@ export class JsonlLogStore implements LogStore {
   private persist(sessionId: string, entry: StoredEntry): void {
     const fd = this.fd(sessionId);
     this.fs.writeSync(fd, `${JSON.stringify(entry)}\n`);
-    this.fs.fsyncSync(fd);
   }
 
   private fd(sessionId: string): number {
@@ -149,7 +147,6 @@ export class JsonlLogStore implements LogStore {
     const fd = this.fs.openSync(file, "r+");
     try {
       this.fs.ftruncateSync(fd, bytes);
-      this.fs.fsyncSync(fd);
     } finally {
       this.fs.closeSync(fd);
     }
