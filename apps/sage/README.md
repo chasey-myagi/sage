@@ -62,7 +62,7 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 `health` 是复制出来的会话的 `runHealth`，读不到时为 null。
 
-`stoppedEarly` 是工具顺序的启发式指标：会话以 `done` 结束、最后一次成功的 `edit` / `write` 之后没有 `bash` 结果，且工作区 diff 非空时为 true。失败的编辑忽略，失败的 bash 也算一次检查尝试。不解析命令或输出，因此不能证明是否执行了测试，也不识别 bash 内的文件修改。空 diff 且会话可读时为 false；会话不可读、diff 读取失败或子进程超时未检查 diff 时为 null。它只影响统计，不改变 agent 行为或任务状态。
+`stoppedEarly` 是工具顺序的启发式指标：会话以 `done` 结束、最后一次成功的 `edit` / `write` 之后没有 `bash` 结果，且工作区 diff 非空时为 true。失败的编辑忽略，失败的 bash 也算一次检查尝试。不解析命令或输出，因此不能证明是否执行了测试，也不识别 bash 内的文件修改。只读父会话：子任务会话里的 `bash` / `edit` 不计入，所以父会话 `edit` 之后交给子任务跑测试，也会被记为早停（误报）。空 diff 且会话可读时为 false；会话不可读、diff 读取失败或子进程超时未检查 diff 时为 null。它只影响统计，不改变 agent 行为或任务状态。
 
 结果文件同时保存 `stoppedEarly`。报告的 `stoppedEarlyRate` 是 true 的任务数除以全部任务数（含未知项），空任务集为 null；差值仍为 B 减 A。
 

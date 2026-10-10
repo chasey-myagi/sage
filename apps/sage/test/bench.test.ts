@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { JsonlLogStore } from "@sage/core";
+import { isRecord, JsonlLogStore } from "@sage/core";
 import { afterEach, expect, it } from "vitest";
 import { defaultPrepare } from "../src/bench/git.ts";
 import { runCli } from "../src/main.ts";
@@ -466,17 +466,95 @@ it("fetch-multi-swe-ts names a row without instance_id <org>__<repo>-<number>", 
   );
   expect(result.stderr).toBe("");
   expect(result.status).toBe(0);
-  const tasks = JSON.parse(readFileSync(out, "utf8")) as {
-    id: string;
-    repo: string;
-    baseCommit: string;
-  }[];
-  expect(
-    tasks.map(({ id, repo, baseCommit }) => ({ id, repo, baseCommit })),
-  ).toEqual([
+  const tasks: unknown = JSON.parse(readFileSync(out, "utf8"));
+  if (!Array.isArray(tasks)) throw new Error("tasks file is not an array");
+  expect(tasks.map(taskIdentity)).toEqual([
     { id: "tj__commander.js-7", repo: "tj/commander.js", baseCommit: "abc123" },
   ]);
 });
+
+it.each([
+  ["a base without sha", { base: {} }],
+  ["resolved_issues that is not an array", { resolved_issues: "the bug" }],
+])(
+  "fetch-multi-swe-ts rejects a dataset row with %s by its file and line",
+  (_label, broken) => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
+    const fixture = path.join(dir, "fixture");
+    mkdirSync(fixture);
+    const good = {
+      org: "tj",
+      repo: "commander.js",
+      number: 7,
+      base: { sha: "abc123" },
+      resolved_issues: [{ title: "the bug", body: "details" }],
+      test_patch:
+        "diff --git a/tests/x.test.js b/tests/x.test.js\n--- a/tests/x.test.js\n+++ b/tests/x.test.js\n",
+    };
+    writeFileSync(
+      path.join(fixture, "tj__commander.js_dataset.jsonl"),
+      `${JSON.stringify(good)}\n${JSON.stringify({ ...good, number: 8, ...broken })}\n`,
+    );
+    const result = runMultiSweTs([
+      "--fixture",
+      fixture,
+      "--only",
+      "tj__commander.js-7",
+      "--out",
+      path.join(dir, "tasks.json"),
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe(
+      "tj__commander.js_dataset.jsonl:2: malformed dataset row\n",
+    );
+  },
+);
+
+it("fetch-multi-swe-ts reports a repo without config before reading its rows", () => {
+  dir = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
+  const result = runMultiSweTs([
+    "--fixture",
+    dir,
+    "--only",
+    "nobody__nothing-1",
+    "--out",
+    path.join(dir, "tasks.json"),
+  ]);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toBe("no repo config for nobody/nothing\n");
+});
+
+it("fetch-multi-swe-ts prints the argument parser's reason under the usage line", () => {
+  const result = runMultiSweTs(["--bogus"]);
+  expect(result.status).toBe(1);
+  const lines = result.stderr.trimEnd().split("\n");
+  expect(lines).toHaveLength(2);
+  expect(lines[0]).toMatch(
+    /^usage: node bench\/tasks\/fetch-multi-swe-ts\.mjs /,
+  );
+  expect(lines[1]).toContain("Unknown option '--bogus'");
+});
+
+function runMultiSweTs(args: string[]): {
+  status: number | null;
+  stderr: string;
+} {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(repoRoot, "bench/tasks/fetch-multi-swe-ts.mjs"), ...args],
+    { encoding: "utf8" },
+  );
+  return { status: result.status, stderr: result.stderr };
+}
+
+function taskIdentity(value: unknown): {
+  id: unknown;
+  repo: unknown;
+  baseCommit: unknown;
+} {
+  if (!isRecord(value)) throw new Error("task is not an object");
+  return { id: value.id, repo: value.repo, baseCommit: value.baseCommit };
+}
 
 it("setupCommand failure is setup-failed and does not start the agent", async () => {
   dir = mkdtempSync(path.join(tmpdir(), "sage-bench-"));

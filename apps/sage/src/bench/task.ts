@@ -192,10 +192,10 @@ function copySession(
   copyFileSync(file, path.join(sessions, `${sessionName(taskId)}.jsonl`));
   try {
     const store = new JsonlLogStore({ dir: sessions });
-    const sessionPath = store.path(sessionName(taskId));
+    const entries = store.path(sessionName(taskId));
     return {
-      health: runHealth(sessionPath),
-      unverifiedEdit: endedAfterUnverifiedEdit(sessionPath),
+      health: runHealth(entries),
+      unverifiedEdit: endedAfterUnverifiedEdit(entries),
     };
   } catch {
     // A corrupt or partial session still counts; both readings are unknown.
