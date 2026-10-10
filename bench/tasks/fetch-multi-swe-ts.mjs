@@ -277,8 +277,8 @@ async function loadRows(repo, fixtureDir) {
   return rows;
 }
 
-// Only the fields `idOf` and `taskFromRow` read unconditionally;
-// `resolved_issues` is checked where the problem text is built.
+// The fields `idOf` and `taskFromRow` read; `resolved_issues` may be absent
+// but, when present, is an array.
 function isDatasetRow(row) {
   return (
     isObject(row) &&
@@ -287,7 +287,8 @@ function isDatasetRow(row) {
     isObject(row.base) &&
     typeof row.base.sha === "string" &&
     typeof row.test_patch === "string" &&
-    (typeof row.instance_id === "string" || typeof row.number === "number")
+    (typeof row.instance_id === "string" || typeof row.number === "number") &&
+    (row.resolved_issues === undefined || Array.isArray(row.resolved_issues))
   );
 }
 
@@ -379,7 +380,8 @@ if (entry && import.meta.url === pathToFileURL(path.resolve(entry)).href) {
   });
 }
 
-// The usage error carries the parseArgs failure as its cause; print both.
+// Errors with a cause (the parseArgs failure under the usage text, a
+// JSON.parse failure under a malformed row) print both lines.
 function errorLines(error) {
   if (!(error instanceof Error)) return String(error);
   return error.cause instanceof Error
