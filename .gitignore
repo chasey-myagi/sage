@@ -53,3 +53,6 @@ tmp/
 
 # agent workspace (sessions and spilled tool output)
 .sage/
+
+# Claude Code agent worktrees (isolation: "worktree")
+.claude/worktrees/
