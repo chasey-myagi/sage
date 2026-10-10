@@ -70,6 +70,7 @@ it("sums child usage from any tool's childRuns details and leaves parent rates a
     tools: [
       detailsTool("delegate", {
         childRuns: [
+          { sessionId: "no-usage" },
           {
             sessionId: "c1",
             usage: {

@@ -102,7 +102,9 @@ export function run(rootDir) {
 // A tool def's `def: { name: "x"` or an exported `*_TOOL_NAME = "x"` constant.
 const PLUGIN_TOOL_NAME =
   /\bdef:\s*\{\s*name:\s*(["'])([A-Za-z0-9_-]+)\1|_TOOL_NAME\s*=\s*(["'])([A-Za-z0-9_-]+)\3/g;
-const COMMENT = /\/\*[\s\S]*?\*\/|\/\/[^\n]*/g;
+// Strings come first so a `//` inside one is not taken for a comment.
+const STRING_OR_COMMENT =
+  /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g;
 
 /**
  * Tool names the plugins define, harvested from their sources. Names from
@@ -135,8 +137,8 @@ function pluginToolNames(root, files) {
  */
 function findToolNameLiterals(text, names) {
   if (names.size === 0) return [];
-  const code = text.replace(COMMENT, (comment) =>
-    comment.replace(/[^\n]/g, " "),
+  const code = text.replace(STRING_OR_COMMENT, (token) =>
+    token.startsWith("/") ? token.replace(/[^\n]/g, " ") : token,
   );
   const literal = new RegExp(`["'](${[...names].join("|")})["']`, "g");
   /** @type {{ source: string, line: number }[]} */

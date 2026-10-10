@@ -203,7 +203,7 @@ describe("check-layers", () => {
     write(
       root,
       "packages/core/src/health.ts",
-      'export const isFan = (n: string) => n === "fan_out";\n// "fan_out" in a comment is fine\nexport const note = \'take_note\';\n/** The "take_note" tool. */\nexport type Kind = "rule" | "model";\n',
+      'export const isFan = (n: string) => n === "fan_out";\n// "fan_out" in a comment is fine\nexport const note = \'take_note\';\n/** The "take_note" tool. */\nexport type Kind = "rule" | "model";\nconst u = "https://x"; const n = "fan_out";\n',
     );
     write(
       root,
@@ -224,6 +224,12 @@ describe("check-layers", () => {
         line: 3,
         rule: 3,
         source: '"take_note" (plugin tool name)',
+      },
+      {
+        file: "packages/core/src/health.ts",
+        line: 6,
+        rule: 3,
+        source: '"fan_out" (plugin tool name)',
       },
     ]);
   });
