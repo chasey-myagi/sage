@@ -24,6 +24,12 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 
 内核保证阶段内 head 逐字节不变、断点原样透传，`request_header` 是事后证据。换模型不改 head。
 
+## request_header
+
+每次调模型前，内核用 `appendRequestEntries` 依次追加 `view_epoch`（需要时）、`request_header`、`manifest`。离线回放写影子 Log 也调用它，两边只有这一份实现。
+
+`request_header` 的字段：`provider`、`model`、`sampling`（这次调用实际生效的采样参数）、`adapterDefaults`、`systemPromptHash`、`toolsHash`、`contextWindow`、`pricing`，以及按需出现的 `system` 与 `tools`。`contextWindow`（token，正的有限数）和 `pricing`（`Pricing`，目录里没有定价时为 null）是这次 `PreparedCall` 的快照，回放读它们，不查当前目录。`system` / `tools` 全文只在 hash 与路径上前一条 `request_header` 不同、或还没有前一条时写入；其余轮次只留 hash。缺 `contextWindow` 或 `pricing` 的 header 校验不通过。
+
 ## model_change
 
 阶段边界如果视图带了 `epochStart.model`，并且和当前型号不同，内核在 `view_epoch` 之前追加 `model_change`。payload 是 `{ from, to, reason }`。reason 逐字取自 `epochStart.routeReason`，内核不解析也不拼接；`model` 与 `routeReason` 要么同时给出，要么都不给。然后切到 `adapters[provider]`，用新型号再 `prepare` 一次。随后的 `request_header` 用这次 prepare 的 provider、model 和 adapterDefaults。

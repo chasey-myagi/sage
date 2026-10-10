@@ -7,6 +7,7 @@ import {
 } from "../../src/index.ts";
 import {
   createFaux,
+  fauxAdapter,
   FAUX_MODEL as MODEL,
   FAUX_SYSTEM as SYSTEM,
   stopScript,
@@ -144,6 +145,33 @@ describe("the request envelope is logged and the request rebuilds from the Log",
 });
 
 describe("request headers store system and tools text only when it changes", () => {
+  it("records the prepared call's context window and pricing on request_header", async () => {
+    const store = new MemoryLogStore();
+    const pricing = {
+      inputPerMTok: 2,
+      outputPerMTok: 10,
+      cacheWritePerMTok: 2.5,
+      cacheReadPerMTok: 0.2,
+      source: "https://platform.claude.com/docs/en/about-claude/pricing",
+    };
+    const adapter = fauxAdapter([stopScript("hi")], {
+      prepared: { contextWindow: 200_000, pricing },
+    });
+    const session = new AgentSession({
+      store,
+      sessionId: "priced",
+      adapter,
+      model: MODEL,
+      system: SYSTEM,
+      tools: [],
+    });
+    await session.run("hello");
+    const header = store
+      .path("priced")
+      .find((entry) => entry.kind === "request_header");
+    expect(header?.payload).toMatchObject({ contextWindow: 200_000, pricing });
+  });
+
   it("omits system and tools text when the next head matches", async () => {
     const store = new MemoryLogStore();
     const sessionId = "s4";

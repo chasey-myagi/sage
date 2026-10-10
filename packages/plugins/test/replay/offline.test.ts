@@ -4,6 +4,7 @@ import {
   JsonlLogStore,
   MemoryLogStore,
 } from "@sage/core";
+import { FAUX_CONTEXT_WINDOW } from "@sage/core/testing";
 import { expect, it } from "vitest";
 import { caseDir, REPLAY_CASES } from "../../../core/test/replay/cases.ts";
 import { compareOffline, replayOffline } from "../../src/replay/offline.ts";
@@ -307,6 +308,8 @@ function appendTurn(
       toolsHash: "def",
       sampling: { maxTokens: 64 },
       adapterDefaults: { maxTokens: 64 },
+      contextWindow: FAUX_CONTEXT_WINDOW,
+      pricing: null,
       system: "You are sage.",
       tools: [],
     },

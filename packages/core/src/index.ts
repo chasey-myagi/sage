@@ -23,6 +23,7 @@ export {
   UnknownEntryKindError,
 } from "./log/errors.js";
 export { JsonlLogStore, type LogFs } from "./log/jsonl.js";
+export type { RequestHeaderPayload } from "./log/kinds.js";
 export { MemoryLogStore } from "./log/memory.js";
 export {
   epochSpan,
@@ -59,6 +60,10 @@ export {
   systemHash,
   toolsHash,
 } from "./view/assert.js";
+export {
+  appendRequestEntries,
+  type RequestEntriesInput,
+} from "./view/commit.js";
 export {
   HeadChangedMidEpochError,
   UnpairedToolCallError,

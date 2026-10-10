@@ -16,6 +16,7 @@ import {
   registerEntryKind,
   UnknownEntryKindError,
 } from "../../src/index.ts";
+import { FAUX_CONTEXT_WINDOW } from "../../src/testing/index.ts";
 
 const dirs: string[] = [];
 
@@ -102,6 +103,45 @@ describe("entry kinds", () => {
     expect(existsSync(join(dir, "fresh.jsonl"))).toBe(false);
   });
 
+  it("rejects a request_header without a positive context window or with malformed pricing", () => {
+    const store = new MemoryLogStore();
+    const base = {
+      provider: "deepseek",
+      model: "deepseek-flash",
+      systemPromptHash: "s",
+      toolsHash: "t",
+      sampling: {},
+      adapterDefaults: {},
+    };
+    const pricing = {
+      inputPerMTok: 0.3,
+      outputPerMTok: 1.2,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.006,
+      source: "https://api-docs.deepseek.com/quick_start/pricing",
+    };
+    store.append("h", {
+      kind: "request_header",
+      payload: { ...base, contextWindow: 1_000_000, pricing },
+    });
+    const broken = [
+      { ...base, pricing },
+      { ...base, contextWindow: 0, pricing },
+      { ...base, contextWindow: 1_000_000 },
+      { ...base, contextWindow: 1_000_000, pricing: { ...pricing, source: 1 } },
+      {
+        ...base,
+        contextWindow: 1_000_000,
+        pricing: { ...pricing, currency: "EUR" },
+      },
+    ];
+    for (const payload of broken) {
+      expect(() =>
+        store.append("h", { kind: "request_header", payload }),
+      ).toThrow(InvalidEntryError);
+    }
+  });
+
   it("accepts each kernel kind shape and rejects a broken payload", () => {
     const store = new MemoryLogStore();
     const sessionId = "shapes";
@@ -122,6 +162,8 @@ describe("entry kinds", () => {
         toolsHash: "t",
         sampling: { temperature: 0 },
         adapterDefaults: {},
+        contextWindow: FAUX_CONTEXT_WINDOW,
+        pricing: null,
       },
     });
     expect(() =>
@@ -134,6 +176,8 @@ describe("entry kinds", () => {
           toolsHash: "t",
           sampling: {},
           adapterDefaults: {},
+          contextWindow: FAUX_CONTEXT_WINDOW,
+          pricing: null,
           system: 1,
         },
       }),

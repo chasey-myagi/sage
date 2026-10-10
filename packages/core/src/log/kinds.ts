@@ -13,15 +13,20 @@
  * Intentionally not in the Log: reducer functions and the registry.
  */
 
-import { isRecord, type Message } from "@sage/provider/contract";
+import {
+  isPricing,
+  isRecord,
+  type Message,
+  type Pricing,
+} from "@sage/provider/contract";
 import { registerEntryKind } from "./registry.js";
 import type { ModelRef } from "./types.js";
 
 /**
  * The request envelope for one model call. `system` and `tools` carry full
  * text only when their hash differs from the previous request_header on
- * the path, or when there is none; `AgentSession` decides, the validator
- * only checks the shape.
+ * the path, or when there is none; `appendRequestEntries` decides, the
+ * validator only checks the shape.
  */
 export type RequestHeaderPayload = {
   provider: string;
@@ -30,6 +35,16 @@ export type RequestHeaderPayload = {
   toolsHash: string;
   sampling: Record<string, unknown>;
   adapterDefaults: Record<string, unknown>;
+  /**
+   * `PreparedCall.contextWindow` of this call, in tokens: a positive
+   * finite number. Replay reads it instead of the current catalog.
+   */
+  contextWindow: number;
+  /**
+   * `PreparedCall.pricing` of this call, or null when the adapter had no
+   * catalog price. Replay reads it instead of the current catalog.
+   */
+  pricing: Pricing | null;
   system?: string;
   tools?: unknown;
 };
@@ -132,10 +147,16 @@ function isRequestHeader(payload: unknown): payload is RequestHeaderPayload {
   if (typeof payload.toolsHash !== "string") return false;
   if (!isRecord(payload.sampling)) return false;
   if (!isRecord(payload.adapterDefaults)) return false;
+  if (!isPositiveFinite(payload.contextWindow)) return false;
+  if (payload.pricing !== null && !isPricing(payload.pricing)) return false;
   if (payload.system !== undefined && typeof payload.system !== "string") {
     return false;
   }
   return true;
+}
+
+function isPositiveFinite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 function isViewEpoch(payload: unknown): payload is ViewEpochPayload {
@@ -352,7 +373,7 @@ registerEntryKind<Message>({
 registerEntryKind<RequestHeaderPayload>({
   kind: "request_header",
   persisted: true,
-  doc: "Request envelope. system and tools are stored in full only when their hash differs from the previous request_header, or there is none.",
+  doc: "Request envelope, including the call's contextWindow and pricing (null when uncatalogued). system and tools are stored in full only when their hash differs from the previous request_header, or there is none.",
   validate: isRequestHeader,
 });
 

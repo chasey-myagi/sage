@@ -10,11 +10,12 @@
  * Intentionally not in the Log: nothing here appends.
  */
 
-export type {
-  AssistantMessage,
-  PreparedCall,
-  Pricing,
-  ProviderAdapter,
+export {
+  type AssistantMessage,
+  isPricing,
+  type PreparedCall,
+  type Pricing,
+  type ProviderAdapter,
 } from "./adapter.js";
 export { backoffMs, type Sleeper, sleep } from "./backoff.js";
 export { collect } from "./collect.js";

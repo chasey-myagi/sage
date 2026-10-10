@@ -4,11 +4,13 @@
  *
  * Guarantees: each turn's view is compiled from the recorded prefix before
  * that turn's view commit (`model_change`, `view_epoch`, `request_header`,
- * and everything after). Compiler policies keep their own prior manifests
- * on a shadow log, so later turns freeze the policy under test, not the
- * recorded one. A scorer that would call out is swapped for `ruleScorer`,
- * and the report says so. The report holds numbers, ids, and the scorer
- * note only, never chunk text. Per-field meanings: `TurnDiff`.
+ * and everything after), under the context window and pricing that turn's
+ * recorded request_header carries, never the current catalog. Compiler
+ * policies keep their own prior manifests on a shadow log, written by the
+ * session's `appendRequestEntries`, so later turns freeze the policy under
+ * test, not the recorded one. A scorer that would call out is swapped for
+ * `ruleScorer`, and the report says so. The report holds numbers, ids, and
+ * the scorer note only, never chunk text. Per-field meanings: `TurnDiff`.
  *
  * Intentionally not in the Log: the shadow log, the diffs, and the report.
  * The recorded session is the fact. Replay does not append to it.
@@ -21,24 +23,26 @@ import type {
   ViewProvider,
 } from "@sage/core";
 import {
+  appendRequestEntries,
   type HarnessTool,
   isMessage,
   isRecord,
   type LogStore,
-  latestViewEpoch,
   MemoryLogStore,
   passthroughView,
   type StoredEntry,
-  systemHash,
-  toolsHash,
 } from "@sage/core";
-import type { PreparedCall } from "@sage/provider/contract";
+import {
+  isPricing,
+  type PreparedCall,
+  type Pricing,
+} from "@sage/provider/contract";
 import {
   contextCompiler,
   DEFAULT_COMPILER_BUDGET,
   DEFAULT_KEEP_RECENT,
 } from "../compiler/compiler.js";
-import { DEFAULT_EXPECTED_TURNS } from "../compiler/epoch.js";
+import { DEFAULT_ALPHA, DEFAULT_EXPECTED_TURNS } from "../compiler/epoch.js";
 import { finite } from "../guards.js";
 import { ruleScorer } from "../scorer/rule.js";
 import type { Scorer } from "../scorer/types.js";
@@ -53,6 +57,8 @@ export type Policy = {
   scorer?: Scorer;
   /** Defaults to `DEFAULT_EXPECTED_TURNS`. */
   expectedTurns?: number;
+  /** Defaults to `DEFAULT_ALPHA`. */
+  alpha?: number;
   /** Replay the passthrough view instead of the compiler. */
   passthrough?: boolean;
 };
@@ -101,11 +107,6 @@ export type TurnDiff = {
 const SCORER_NOTE = "scorer:offline-rule";
 /** Results of `replayOffline` runs whose scorer was swapped for `ruleScorer`. */
 const scorerSwappedRuns = new WeakSet<readonly TurnDiff[]>();
-/**
- * The Log stores neither the context window nor pricing; replay uses this
- * window and `pricing: null`, the same stand-in as keyless replay.
- */
-const REPLAY_WINDOW = 8000;
 
 type Slice = {
   turn: number;
@@ -119,17 +120,23 @@ type Slice = {
  * diff per turn that has an assistant reply. Reads `store` only. When the
  * scorer was swapped, `compareOffline` notes it for this returned array
  * (the array itself is remembered, not a copy). Throws when a recorded
- * `request_header` is not an object or lacks provider or model.
+ * `request_header` is not an object, lacks provider or model, or lacks a
+ * positive `contextWindow` or valid `pricing`.
  */
 export async function replayOffline(
   store: LogStore,
   sessionId: string,
   policy: Policy,
-  deps: { tools: HarnessTool[]; system: string },
+  deps: {
+    tools: HarnessTool[];
+    system: string;
+    /** Test seam. Production replays onto a fresh `MemoryLogStore`. */
+    shadow?: LogStore;
+  },
 ): Promise<TurnDiff[]> {
   const recorded = store.path(sessionId);
   const slices = sliceTurns(recorded);
-  const shadow = new MemoryLogStore();
+  const shadow = deps.shadow ?? new MemoryLogStore();
   const shadowId = "offline";
   let copiedThrough = 0;
   const views: CompiledView[] = [];
@@ -145,14 +152,22 @@ export async function replayOffline(
     const prefix = policy.passthrough
       ? recorded.slice(0, slice.prefixEnd)
       : shadow.path(shadowId);
-    const ctx = viewContext(slice, prefix, deps);
+    const header = headerOf(slice.header);
+    const ctx = viewContext(slice.turn, header, prefix, deps);
     const view = await provider.view(ctx);
     const previous = views.at(-1);
     views.push(view);
     diffs.push(
       turnDiff({ policy, recorded, slice, view, previous, tools: deps.tools }),
     );
-    if (!policy.passthrough) commitView(shadow, shadowId, view, ctx);
+    if (!policy.passthrough) {
+      appendRequestEntries(shadow, shadowId, {
+        view,
+        model: ctx.model,
+        sampling: header.sampling,
+        prepared: ctx.prepared,
+      });
+    }
   }
 
   if (swapped) scorerSwappedRuns.add(diffs);
@@ -170,6 +185,7 @@ function replayProvider(
     claims: [],
     keepRecent: policy.keepRecent ?? DEFAULT_KEEP_RECENT,
     expectedTurns: policy.expectedTurns ?? DEFAULT_EXPECTED_TURNS,
+    alpha: policy.alpha ?? DEFAULT_ALPHA,
     ...(scorer ? { scorer } : {}),
   });
 }
@@ -332,7 +348,7 @@ function copyMessages(
   recorded: readonly StoredEntry[],
   from: number,
   to: number,
-  shadow: MemoryLogStore,
+  shadow: LogStore,
   sessionId: string,
 ): void {
   for (let index = from; index < to; index += 1) {
@@ -346,60 +362,22 @@ function copyMessages(
   }
 }
 
-function commitView(
-  shadow: MemoryLogStore,
-  sessionId: string,
-  view: CompiledView,
-  ctx: ViewContext,
-): void {
-  const path = shadow.path(sessionId);
-  if (view.epochStart || view.epoch > latestViewEpoch(path)) {
-    const prefixMessage = view.messages[0];
-    shadow.append(sessionId, {
-      kind: "view_epoch",
-      payload: {
-        epoch: view.epoch,
-        reason: view.epochStart?.reason ?? "epoch-advanced",
-      },
-      ...(prefixMessage ? { details: { prefixMessage } } : {}),
-    });
-  }
-  shadow.append(sessionId, {
-    kind: "request_header",
-    payload: {
-      provider: ctx.model.provider,
-      model: ctx.model.model,
-      systemPromptHash: systemHash(ctx.head.system),
-      toolsHash: toolsHash(ctx.head.tools),
-      sampling: {},
-      adapterDefaults: { ...ctx.prepared.adapterDefaults },
-      system: ctx.head.system,
-      tools: ctx.head.tools,
-    },
-  });
-  shadow.append(sessionId, {
-    kind: "manifest",
-    payload: view.manifest,
-    ...(view.details ? { details: view.details } : {}),
-  });
-}
-
 function viewContext(
-  slice: Slice,
+  turn: number,
+  header: RecordedHeader,
   prefix: readonly StoredEntry[],
   deps: { tools: HarnessTool[]; system: string },
 ): ViewContext {
-  const header = headerOf(slice.header);
   const model = { provider: header.provider, model: header.model };
   const prepared: PreparedCall = {
     model,
-    contextWindow: REPLAY_WINDOW,
-    pricing: null,
+    contextWindow: header.contextWindow,
+    pricing: header.pricing,
     adapterDefaults: header.adapterDefaults,
   };
   return {
     sessionId: "offline",
-    turn: slice.turn,
+    turn,
     path: prefix,
     model,
     prepared,
@@ -412,24 +390,43 @@ function viewContext(
   };
 }
 
-function headerOf(entry: StoredEntry): {
+type RecordedHeader = {
   provider: string;
   model: string;
+  sampling: Record<string, unknown>;
   adapterDefaults: Record<string, unknown>;
-} {
+  contextWindow: number;
+  pricing: Pricing | null;
+};
+
+/**
+ * The recorded call's model, sampling, adapter defaults, context window,
+ * and pricing. Throws when the payload is not an object, lacks provider or
+ * model, or carries no positive context window or valid pricing.
+ */
+function headerOf(entry: StoredEntry): RecordedHeader {
   if (!isRecord(entry.payload)) {
     throw new Error("request_header payload is not an object");
   }
-  const provider = entry.payload.provider;
-  const model = entry.payload.model;
+  const { provider, model, sampling, adapterDefaults } = entry.payload;
   if (typeof provider !== "string" || typeof model !== "string") {
     throw new Error("request_header is missing provider or model");
   }
-  const defaults = entry.payload.adapterDefaults;
+  const contextWindow = finite(entry.payload.contextWindow);
+  if (contextWindow === undefined || contextWindow <= 0) {
+    throw new Error("request_header is missing a positive contextWindow");
+  }
+  const pricing = entry.payload.pricing;
+  if (pricing !== null && !isPricing(pricing)) {
+    throw new Error("request_header pricing is neither null nor a Pricing");
+  }
   return {
     provider,
     model,
-    adapterDefaults: isRecord(defaults) ? defaults : {},
+    sampling: isRecord(sampling) ? sampling : {},
+    adapterDefaults: isRecord(adapterDefaults) ? adapterDefaults : {},
+    contextWindow,
+    pricing,
   };
 }
 
