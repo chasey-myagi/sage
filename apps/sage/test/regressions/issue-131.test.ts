@@ -19,14 +19,20 @@ afterEach(() => {
   dir = "";
 });
 
-it("grades a work tree whose only change is the child's session log as an empty patch", async () => {
+it("grades a work tree whose only changes are sage's own runtime files as an empty patch", async () => {
   const statuses = await runBench({
     "only-session": () => {},
+    "spilled-output": (cwd) => {
+      const spill = path.join(cwd, ".sage", "tool-output");
+      mkdirSync(spill, { recursive: true });
+      writeFileSync(path.join(spill, "call-1.txt"), "long output\n");
+    },
     "edited-tracked": (cwd) => writeFileSync(path.join(cwd, "a.ts"), "2\n"),
     "added-untracked": (cwd) => writeFileSync(path.join(cwd, "b.ts"), "1\n"),
   });
   expect(statuses).toEqual([
     ["only-session", "empty-patch"],
+    ["spilled-output", "empty-patch"],
     ["edited-tracked", "resolved"],
     ["added-untracked", "resolved"],
   ]);

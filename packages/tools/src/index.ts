@@ -33,6 +33,7 @@ import { createFind } from "./find.js";
 import { createGrep } from "./grep.js";
 import { createLs } from "./ls.js";
 import { TOOL_NAMES } from "./names.js";
+import { SAGE_DIR_NAME } from "./path-safety.js";
 import { createRead } from "./read.js";
 import { createWrite } from "./write.js";
 
@@ -42,6 +43,7 @@ export const PACKAGE = "@sage/tools" as const;
 export type { BashExec, ToolNetwork, ToolSandbox };
 export {
   resolveToolSandbox,
+  SAGE_DIR_NAME,
   SANDBOX_ALLOW_ROOT_ENV,
   TOOL_NAMES,
   ToolNetworkError,

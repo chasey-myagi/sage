@@ -132,7 +132,7 @@ export type BenchDeps = {
     cwd: string,
     opts: SageRunOptions & { argv: string[] },
   ): Promise<SageRun>;
-  /** True when `git status --porcelain` is empty, ignoring the child's session log. */
+  /** True when `git status --porcelain` is empty, ignoring sage's `.sage` runtime directory. */
   diffEmpty(task: BenchTask, cwd: string): Promise<boolean>;
   runTests(
     task: BenchTask,

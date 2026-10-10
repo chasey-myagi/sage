@@ -50,17 +50,19 @@ import {
   type ProviderAdapter,
   type Sampling,
 } from "@sage/provider";
-import { type BashExec, createTools, type ToolSandbox } from "@sage/tools";
+import {
+  type BashExec,
+  createTools,
+  SAGE_DIR_NAME,
+  type ToolSandbox,
+} from "@sage/tools";
 import { BENCH_WORKSPACE_PREFIX } from "./bench/types.js";
 import type { LadderRung, ScorerApply } from "./options.js";
 
-/** Paths the route policy keeps on the home provider. */
-/**
- * Where a session's Log lives, relative to its cwd, with POSIX separators so
- * the same string works as a git pathspec.
- */
-export const SESSION_LOG_SUBDIR = ".sage/sessions";
+/** Where a session's Log lives, relative to its cwd. */
+export const SESSION_LOG_SUBDIR = path.join(SAGE_DIR_NAME, "sessions");
 
+/** Paths the route policy keeps on the home provider. */
 const SENSITIVE = /(^|\/)\.env$|\/secrets\//;
 
 /** A session plus the store it writes and its id. The caller owns all three. */
@@ -80,6 +82,7 @@ export type CodingSessionOptions = {
   /** Defaults to {@link systemPrompt} for `cwd`. */
   system?: string;
   sessionId?: string;
+  /** Absolute; defaults to {@link SESSION_LOG_SUBDIR} under `cwd`. */
   sessionsDir?: string;
   store?: LogStore;
   /** Test seam. Production bash spawns real processes. */

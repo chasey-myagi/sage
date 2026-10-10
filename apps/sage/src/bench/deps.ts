@@ -2,8 +2,9 @@
  * Production side effects of a bench task: git fetch, the child `sage -p`,
  * `git status`, and the test command.
  *
- * Contract: `diffEmpty` ignores the child's session log under
- * `<cwd>/.sage/sessions`; any other change, tracked or untracked, counts.
+ * Contract: `diffEmpty` ignores sage's runtime directory `<cwd>/.sage`
+ * (session logs, spilled tool output); any other change, tracked or
+ * untracked, counts.
  * `runSage` spawns the sage bin with the argv the runner built,
  * under the task timeout, and reports the newest session jsonl in
  * `<cwd>/.sage/sessions`. When the sandbox has an `allowRoot`, the child
@@ -16,7 +17,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { SANDBOX_ALLOW_ROOT_ENV } from "@sage/tools";
+import { SAGE_DIR_NAME, SANDBOX_ALLOW_ROOT_ENV } from "@sage/tools";
 import { SESSION_LOG_SUBDIR } from "../coding-session.js";
 import { exec } from "./exec.js";
 import { defaultPrepare } from "./git.js";
@@ -44,18 +45,9 @@ export function defaultDeps(): BenchDeps {
       };
     },
     async diffEmpty(_task, cwd) {
-      // The child's own session log is not part of the patch.
       const result = await exec(
         "git",
-        [
-          "-C",
-          cwd,
-          "status",
-          "--porcelain",
-          "--",
-          ".",
-          `:(exclude)${SESSION_LOG_SUBDIR}`,
-        ],
+        ["status", "--porcelain", "--", ".", `:(exclude)${SAGE_DIR_NAME}`],
         { cwd },
       );
       if (result.code !== 0) throw new Error("git status failed");

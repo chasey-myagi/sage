@@ -30,6 +30,7 @@ import path from "node:path";
 import { errorText, type HarnessTool } from "@sage/core";
 import { asRecord, fail, ok, optionalInt, requiredString } from "./input.js";
 import { TOOL_NAMES } from "./names.js";
+import { SAGE_DIR_NAME } from "./path-safety.js";
 import { spill } from "./spill.js";
 
 /** Default `timeout_ms` of a bash call, in milliseconds. */
@@ -468,7 +469,7 @@ function killChild(child: ChildProcess, group: boolean): void {
 
 function spillPath(cwd: string, toolUseId: string): string {
   const safe = toolUseId.replace(/[^A-Za-z0-9._-]/g, "_");
-  return path.join(cwd, ".sage", "tool-output", `${safe}.txt`);
+  return path.join(cwd, SAGE_DIR_NAME, "tool-output", `${safe}.txt`);
 }
 
 function combine(stdout: string, stderr: string): string {
