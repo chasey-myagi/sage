@@ -56,7 +56,7 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 1. 拉取到 `<realpath(tmpdir)>/sage-bench-<随机>/<taskId>/`：`git init`，加 origin，`git fetch --depth 1 --no-tags` 拉 `baseCommit`，`git checkout -q FETCH_HEAD`，再删掉 origin。`repo` 不带 scheme 时拉 `https://github.com/<repo>.git`。拉取失败是 `clone-failed`。拉完必须恰好一个提交、没有 tag、没有 remote，否则是 `clone-unclean`，setup 和 agent 都不跑。
 2. 有 `setupCommand` 时在该目录用 `sh -c` 跑，受 `timeoutSec` 限制。非零退出是 `setup-failed`：不启动 sage，也不跑测试。
 3. 在该目录跑 `sage -p <problem>`。argv 总带 `--max-turns`（写了旗标用那个数，没写就是 80）和 `--tool-network`；`--budget`、`--scorer`、`--shadow-scorer`、`--scorer-apply` 只在写了时转发，passthrough 下也转发。启动失败是 `sage-failed`，超时是 `timeout`。随后把会话 jsonl 复制到 `<out>/sessions/<taskId>.jsonl`。
-4. `git status` 为空是 `empty-patch`，不跑测试；读不到 status 是 `diff-failed`。
+4. `git status` 为空是 `empty-patch`（sage 自己的运行时目录 `.sage/` 不算改动，例如会话 Log 与溢出的工具输出），不跑测试；读不到 status 是 `diff-failed`。
 5. 有 `testPatch` 时，先把 diff 头里每个路径从 `baseCommit` 恢复（`git checkout`，基线里没有的文件就删掉），再 `git apply`。失败是 `test-patch-failed`，不跑测试。agent 看不到 `testPatch`。
 6. 跑 `testCommand`：退出 0 是 `resolved`，超时是 `timeout`，其他是 `tests-failed`。
 

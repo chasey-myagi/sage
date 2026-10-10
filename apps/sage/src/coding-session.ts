@@ -50,9 +50,17 @@ import {
   type ProviderAdapter,
   type Sampling,
 } from "@sage/provider";
-import { type BashExec, createTools, type ToolSandbox } from "@sage/tools";
+import {
+  type BashExec,
+  createTools,
+  SAGE_DIR_NAME,
+  type ToolSandbox,
+} from "@sage/tools";
 import { BENCH_WORKSPACE_PREFIX } from "./bench/types.js";
 import type { LadderRung, ScorerApply } from "./options.js";
+
+/** Where a session's Log lives, relative to its cwd. */
+export const SESSION_LOG_SUBDIR = path.join(SAGE_DIR_NAME, "sessions");
 
 /** Paths the route policy keeps on the home provider. */
 const SENSITIVE = /(^|\/)\.env$|\/secrets\//;
@@ -74,6 +82,7 @@ export type CodingSessionOptions = {
   /** Defaults to {@link systemPrompt} for `cwd`. */
   system?: string;
   sessionId?: string;
+  /** Absolute; defaults to {@link SESSION_LOG_SUBDIR} under `cwd`. */
   sessionsDir?: string;
   store?: LogStore;
   /** Test seam. Production bash spawns real processes. */
@@ -110,7 +119,7 @@ export function createCodingSession(opts: CodingSessionOptions): CodingSession {
   const store =
     opts.store ??
     new JsonlLogStore({
-      dir: opts.sessionsDir ?? path.join(opts.cwd, ".sage", "sessions"),
+      dir: opts.sessionsDir ?? path.join(opts.cwd, SESSION_LOG_SUBDIR),
     });
   const ledger = progressLedger();
   const system = opts.system ?? systemPrompt(opts.cwd);

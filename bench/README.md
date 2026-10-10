@@ -30,7 +30,7 @@
 
 `setupCommand`：取出 `baseCommit` 之后、起 agent 之前，在工作目录里用 `sh -c` 执行，时限是 `timeoutSec`。退出码非 0，包括这条命令自己超时，记 `error`，`reason` 为 `setup-failed`，不起 agent，不跑测试。`timeout` 这个 reason 只用于 agent 和 `testCommand`。`setup-failed` 记进 `errorRate`：环境没准备好，和上下文策略无关，但分母仍是整份任务列表。
 
-`testPatch`：unified diff。agent 结束、session 已复制、并且 `git status --porcelain` 非空之后才应用。从 `diff --git` 头取出路径，base 上有的文件执行 `git checkout <baseCommit> -- <file>`，base 上没有的文件执行 `rm -f`，然后 `git apply`。`git apply` 失败记 `error`，`reason` 为 `test-patch-failed`，不跑 `testCommand`。agent 运行期间工作区里没有这份隐藏测试。
+`testPatch`：unified diff。agent 结束、session 已复制、并且 `git status --porcelain`（排除 `.sage/`）非空之后才应用。从 `diff --git` 头取出路径，base 上有的文件执行 `git checkout <baseCommit> -- <file>`，base 上没有的文件执行 `rm -f`，然后 `git apply`。`git apply` 失败记 `error`，`reason` 为 `test-patch-failed`，不跑 `testCommand`。agent 运行期间工作区里没有这份隐藏测试。
 
 ## 任务集
 
@@ -120,7 +120,7 @@ node apps/sage/bin/sage.mjs bench run \
 3. 在该目录执行 `sage -p <problem>`。argv 里有 `--max-turns <n>`，没写旗标时 n 是 80。argv 里有 `--tool-network none`，除非这次 run 写了 `--tool-network full`。写了 `--budget` 时，argv 里同时有 `--budget <tokens>`。时限 `timeoutSec` 秒
 4. 复制 session。这一步在应用 `testPatch` 之前，session 里没有隐藏测试
 5. sage 超时记 `error`，`reason` 为 `timeout`
-6. `git status --porcelain` 为空则记 `empty-patch`，不应用 `testPatch`，不跑测试
+6. `git status --porcelain`（排除 sage 的运行时目录 `.sage/`）为空则记 `empty-patch`，不应用 `testPatch`，不跑测试
 7. 有 `testPatch` 时，把 diff 涉及的文件还原到 `baseCommit`（base 没有的文件删掉），再 `git apply`。失败记 `error`，`reason` 为 `test-patch-failed`，不跑测试
 8. 执行 `testCommand`，同样受 `timeoutSec` 限制。退出码 0 记 `resolved`，否则记 `error`，`reason` 为 `tests-failed`
 9. fetch 失败记 `clone-failed`。工作区不是恰好一个提交，或还留着 tag、remote，记 `clone-unclean`。sage 启动失败、diff 失败记 `sage-failed` 或 `diff-failed`
