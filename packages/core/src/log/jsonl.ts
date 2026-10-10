@@ -6,14 +6,13 @@
  * is a superset of memory. A killed process loses nothing it appended; the
  * store never calls fsync, so an OS crash or power loss can drop or corrupt
  * the tail; when the damage is not confined to the last line, reopen throws
- * `LogCorruptedError`. On open, a JSON
- * parse failure on the last line is discarded, recorded as torn, and
- * truncated off the file before the next append so the new line is not glued
- * to the partial one. A parse failure on any earlier line throws
- * `LogCorruptedError`. An unregistered kind throws `UnknownEntryKindError`
- * and is not skipped. There is no high-water mark
- * (no persisted "written up to here" counter) anywhere in the Log: the next
- * seq is the number of entries loaded.
+ * `LogCorruptedError`. On open, a JSON parse failure on the last line is
+ * discarded, recorded as torn, and truncated off the file before the next
+ * append so the new line is not glued to the partial one. A parse failure
+ * on any earlier line throws `LogCorruptedError`. An unregistered kind
+ * throws `UnknownEntryKindError` and is not skipped. There is no high-water
+ * mark (no persisted "written up to here" counter) anywhere in the Log: the
+ * next seq is the number of entries loaded.
  *
  * Intentionally not in the Log: the torn flag, the cached fd, and this index.
  * Torn does not participate in seq assignment.
@@ -116,7 +115,8 @@ export class JsonlLogStore implements LogStore {
 
   /**
    * Writes the whole line, looping over short writes. Throws when a write
-   * makes no progress; the partial line is then the torn tail on next open.
+   * makes no progress; the partial line is then the torn tail on next open,
+   * unless this process appends again and glues the next line to it.
    */
   private persist(sessionId: string, entry: StoredEntry): void {
     const fd = this.fd(sessionId);

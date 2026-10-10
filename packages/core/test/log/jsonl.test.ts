@@ -115,7 +115,8 @@ describe("JsonlLogStore", () => {
       openSync,
       ftruncateSync,
       closeSync,
-      // Every call is a short write of at most 7 bytes.
+      // Every call is a short write of at most 7 bytes. Accepts a string too
+      // so the same double runs against the old string-taking store.
       writeSync: (fd: number, data: Uint8Array | string) =>
         writeSync(
           fd,
@@ -199,6 +200,40 @@ describe("JsonlLogStore", () => {
       expect((error as LogCorruptedError).message).toContain("30");
       expect((error as LogCorruptedError).line).toBe(30);
     }
+  });
+
+  it("throws and keeps memory and the leaf unchanged when a write makes no progress", () => {
+    const dir = tempDir();
+    const sessionId = "stalled";
+    let writes = 0;
+    const fs: LogFs = {
+      mkdirSync: (file, options) => {
+        mkdirSync(file, options);
+      },
+      existsSync,
+      readFileSync: (file, encoding) => readFileSync(file, encoding),
+      openSync,
+      ftruncateSync,
+      closeSync,
+      writeSync: (fd, data) => {
+        writes += 1;
+        return writes >= 2 ? 0 : writeSync(fd, data);
+      },
+    };
+    const store = new JsonlLogStore({ dir, fs });
+    const first = store.append(sessionId, {
+      kind: "message",
+      payload: { role: "user", content: "kept" },
+    });
+
+    expect(() =>
+      store.append(sessionId, {
+        kind: "message",
+        payload: { role: "user", content: "stalled" },
+      }),
+    ).toThrow(/no progress/);
+    expect(store.all(sessionId)).toHaveLength(1);
+    expect(store.leaf(sessionId)).toBe(first.id);
   });
 
   it("leaves memory and the leaf unchanged when writeSync throws", () => {
