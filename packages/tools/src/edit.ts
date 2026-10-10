@@ -12,6 +12,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { errorText, type HarnessTool } from "@sage/core";
 import { pathAccess } from "./access.js";
 import { asRecord, fail, ok, requiredString } from "./input.js";
+import { TOOL_NAMES } from "./names.js";
 import { resolveInside } from "./path-safety.js";
 
 const inputSchema = {
@@ -40,7 +41,7 @@ const inputSchema = {
 export function createEdit(cwd: string): HarnessTool {
   return {
     def: {
-      name: "edit",
+      name: TOOL_NAMES.edit,
       description:
         "Replace one exact occurrence of old_string in a workspace file. Use it for a small in-place change.",
       inputSchema,

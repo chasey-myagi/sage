@@ -28,6 +28,7 @@ import {
   requiredString,
   type ToolResult,
 } from "./input.js";
+import { TOOL_NAMES } from "./names.js";
 import {
   resolveInside,
   SKIPPED_DIR_NAMES,
@@ -80,7 +81,7 @@ let rgReady: Promise<boolean> | undefined;
 export function createGrep(cwd: string): HarnessTool {
   return {
     def: {
-      name: "grep",
+      name: TOOL_NAMES.grep,
       description: `Search file contents with a regular expression. Use it to find where a string is used. Each hit line is capped at ${GREP_MAX_LINE_CHARS} characters around the match.`,
       inputSchema,
     },

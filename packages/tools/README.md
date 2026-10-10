@@ -33,3 +33,7 @@ agent 在 darwin、`fsIsolate` 打开时，bash 子进程能读 `allowRoot` 这�
 `cd <绝对路径>` 要读取路径上每一层目录。允许范围只有任务目录时，父目录 `sage-bench-<runId>` 落在拒绝规则里，`cd` 会报 `Not a directory`。把 `allowRoot` 设成这次运行的根目录，任务目录的绝对路径就能 `cd` 进去。隔壁另一次运行的 `sage-bench-*` 仍被拒绝。没有对应的 CLI 旗标。bench 把运行根的 realpath 放进环境变量 `SAGE_SANDBOX_ALLOW_ROOT`，sage 启动时读它并传给沙箱。
 
 linux 的 `unshare -n` 只切网络命名空间，不能限制文件。这时 `fsIsolate` 不会改 argv，也不会让 `network: "none"` 创建失败。`network: "full"` 再要求 `fsIsolate` 时，只有 darwin 做得到，其他平台创建工具即失败。`"full"` 且不隔离文件时，不包沙箱，文件系统不限制。
+
+## 工具名称
+
+`TOOL_NAMES` 与各工具的 `def.name` 共用定义，供应用从 Log 识别工具调用；工具名称和模型看到的 schema 不变。

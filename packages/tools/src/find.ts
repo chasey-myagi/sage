@@ -15,6 +15,7 @@ import { errorText, type HarnessTool } from "@sage/core";
 import { pathAccess } from "./access.js";
 import { globToRegExp } from "./glob.js";
 import { asRecord, fail, ok, optionalString, requiredString } from "./input.js";
+import { TOOL_NAMES } from "./names.js";
 import {
   resolveInside,
   SKIPPED_DIR_NAMES,
@@ -44,7 +45,7 @@ const inputSchema = {
 export function createFind(cwd: string): HarnessTool {
   return {
     def: {
-      name: "find",
+      name: TOOL_NAMES.find,
       description:
         "Find files by glob in the workspace. Use it to locate files before reading them.",
       inputSchema,

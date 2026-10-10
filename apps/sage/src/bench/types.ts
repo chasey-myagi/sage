@@ -55,13 +55,18 @@ export type BenchErrorReason =
  * Outcome of one task. `reason` is a {@link BenchErrorReason} when the
  * runner wrote it; a hand-edited results file may hold any string.
  * `health` is `runHealth` of the copied session, or null when none was
- * copied or it could not be read.
+ * copied or it could not be read. `stoppedEarly` is true when the agent
+ * ended its own run after an edit it never followed with bash and the diff
+ * is not empty. Null when the session or diff is unavailable, or the child
+ * timed out before the diff was checked. This is a tool-order heuristic,
+ * not evidence that bash actually verified the edit.
  */
 export type BenchTaskResult = {
   id: string;
   status: BenchStatus;
   reason?: string;
   health: RunHealth | null;
+  stoppedEarly: boolean | null;
 };
 
 /** Contents of `results.json`. */
@@ -84,6 +89,8 @@ export type BenchMetrics = {
   tokensPerResolved: number | null;
   cacheHitRatio: number | null;
   expandRate: number | null;
+  /** Tasks with `stoppedEarly === true` over all tasks. */
+  stoppedEarlyRate: number | null;
 };
 
 /**

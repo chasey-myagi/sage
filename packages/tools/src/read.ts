@@ -12,6 +12,7 @@ import { readFileSync, statSync } from "node:fs";
 import { errorText, type HarnessTool } from "@sage/core";
 import { pathAccess } from "./access.js";
 import { asRecord, fail, ok, optionalInt, requiredString } from "./input.js";
+import { TOOL_NAMES } from "./names.js";
 import { resolveInside } from "./path-safety.js";
 import { splitLines, truncate } from "./truncate.js";
 
@@ -50,7 +51,7 @@ const inputSchema = {
 export function createRead(cwd: string): HarnessTool {
   return {
     def: {
-      name: "read",
+      name: TOOL_NAMES.read,
       description:
         "Read a UTF-8 text file in the workspace. Use it before editing so the exact text is known.",
       inputSchema,

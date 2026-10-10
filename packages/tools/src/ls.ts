@@ -12,6 +12,7 @@ import { readdirSync, statSync } from "node:fs";
 import { errorText, type HarnessTool } from "@sage/core";
 import { pathAccess } from "./access.js";
 import { asRecord, fail, ok, optionalString } from "./input.js";
+import { TOOL_NAMES } from "./names.js";
 import { resolveInside } from "./path-safety.js";
 import { LIST_MAX_ENTRIES } from "./truncate.js";
 
@@ -33,7 +34,7 @@ const inputSchema = {
 export function createLs(cwd: string): HarnessTool {
   return {
     def: {
-      name: "ls",
+      name: TOOL_NAMES.ls,
       description:
         "List entries in a workspace directory. Use it to see what a folder contains.",
       inputSchema,

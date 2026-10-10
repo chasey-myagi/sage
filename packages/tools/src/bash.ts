@@ -29,6 +29,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { errorText, type HarnessTool } from "@sage/core";
 import { asRecord, fail, ok, optionalInt, requiredString } from "./input.js";
+import { TOOL_NAMES } from "./names.js";
 import { spill } from "./spill.js";
 
 /** Default `timeout_ms` of a bash call, in milliseconds. */
@@ -223,7 +224,7 @@ export function createBash(
   const benchPrefix = opts.benchPrefix ?? DEFAULT_BENCH_PREFIX;
   return {
     def: {
-      name: "bash",
+      name: TOOL_NAMES.bash,
       description:
         "Run a shell command in the workspace. Use it when no dedicated tool can do the step.",
       inputSchema,
