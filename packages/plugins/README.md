@@ -129,9 +129,9 @@ replayOffline(store, sessionId, policy, { tools, system })
 compareOffline(diffsA, diffsB) // { markdown, json }
 ```
 
-`policy` 是 `{ budget?, keepRecent?, scorer?, expectedTurns?, passthrough? }`。`budget` 缺省为导出常量 `DEFAULT_COMPILER_BUDGET`（40000），sage CLI 不带 `--budget` 时用的是同一个常量。每一轮只用该轮视图提交之前的 path 前缀。编译器策略会把上一轮自己写下的清单放进影子 Log，后面的轮次冻结的是这套策略，不是录制时的清单。
+`policy` 是 `{ budget?, keepRecent?, scorer?, expectedTurns?, alpha?, passthrough? }`。`alpha` 缺省为 `DEFAULT_ALPHA`；回放自适应视界之前录下的会话时传 `alpha: 0`，剩余轮数就退回 `max(1, expectedTurns − 已开始轮数)`。`budget` 缺省为导出常量 `DEFAULT_COMPILER_BUDGET`（40000），sage CLI 不带 `--budget` 时用的是同一个常量。每一轮只用该轮视图提交之前的 path 前缀。编译器策略会把上一轮自己写下的清单放进影子 Log，后面的轮次冻结的是这套策略，不是录制时的清单。影子 Log 用内核的 `appendRequestEntries` 写，和线上会话是同一份落盘逻辑：`request_header` 只在 system / tools 的 hash 首见或变化时带全文。
 
-`recordedTokens` 是该轮 assistant `details.usage` 的输入合计（`inputOther + inputCacheRead + inputCacheCreation`）。`passthrough: true` 时 `policyTokens` 等于这个数，`saved` 为 0，已有回放 case 的 `prefixStable` 全为 true。编译器策略的 `policyTokens` 是该轮 `budget.used × calibration.ratio`，路径上没有校准则倍率是 1。这个乘积跟的是块和申领单；固定开销在 `calibration.overheadTokens` 里，不进 `policyTokens`。阶段决策的 old/new 是 `overheadTokens + used × ratio`，ratio 大于 1 也照乘。Log 不存上下文窗口和定价，回放用 8000 和 `pricing: null`，与无 key 回放相同。
+`recordedTokens` 是该轮 assistant `details.usage` 的输入合计（`inputOther + inputCacheRead + inputCacheCreation`）。`passthrough: true` 时 `policyTokens` 等于这个数，`saved` 为 0，已有回放 case 的 `prefixStable` 全为 true。编译器策略的 `policyTokens` 是该轮 `budget.used × calibration.ratio`，路径上没有校准则倍率是 1。这个乘积跟的是块和申领单；固定开销在 `calibration.overheadTokens` 里，不进 `policyTokens`。阶段决策的 old/new 是 `overheadTokens + used × ratio`，ratio 大于 1 也照乘。每一轮的上下文窗口和定价取自该轮录下的 `request_header`，不查当前目录，所以目录改价或改窗口不会改变回放的阶段决策。录下的 header 缺这两个字段时，store 校验就不通过。
 
 `prefixStable` 在第一轮为 true。之后，上一轮重编译出的 head 与本轮相同，且上一轮的 messages 是本轮 messages 的 JSON 前缀，才为 true。
 

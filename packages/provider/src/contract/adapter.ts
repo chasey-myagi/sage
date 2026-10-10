@@ -11,6 +11,7 @@
  */
 
 import type { ContentBlock, ModelRef, Request } from "./message.js";
+import { isRecord } from "./record.js";
 import type { StreamChunk } from "./stream.js";
 import type { Usage } from "./usage.js";
 
@@ -27,6 +28,28 @@ export type Pricing = {
    */
   currency?: "USD" | "CNY";
 };
+
+/**
+ * Narrows untrusted JSON to `Pricing`: four finite prices, a string
+ * `source`, and `currency` absent or `USD` / `CNY`. Other fields are
+ * ignored.
+ */
+export function isPricing(value: unknown): value is Pricing {
+  if (!isRecord(value)) return false;
+  const prices = [
+    value.inputPerMTok,
+    value.outputPerMTok,
+    value.cacheReadPerMTok,
+    value.cacheWritePerMTok,
+  ];
+  if (!prices.every((price) => Number.isFinite(price))) return false;
+  if (typeof value.source !== "string") return false;
+  return (
+    value.currency === undefined ||
+    value.currency === "USD" ||
+    value.currency === "CNY"
+  );
+}
 
 /**
  * What an adapter knows about a model before calling it. `contextWindow` is

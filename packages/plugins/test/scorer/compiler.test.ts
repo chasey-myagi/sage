@@ -1,4 +1,5 @@
 import { MemoryLogStore, type ViewContext } from "@sage/core";
+import { FAUX_CONTEXT_WINDOW } from "@sage/core/testing";
 import type {
   ProviderAdapter,
   Request,
@@ -284,6 +285,8 @@ it("records model usage and renders the summary from the score JSON", async () =
       toolsHash: "t",
       sampling: { temperature: 0 },
       adapterDefaults: {},
+      contextWindow: FAUX_CONTEXT_WINDOW,
+      pricing: null,
       system: HEAD.system,
       tools: HEAD.tools,
     },
@@ -350,6 +353,8 @@ it("falls back to rule tiers when the model returns invalid JSON", async () => {
       toolsHash: "t",
       sampling: {},
       adapterDefaults: {},
+      contextWindow: FAUX_CONTEXT_WINDOW,
+      pricing: null,
       system: HEAD.system,
       tools: HEAD.tools,
     },
@@ -446,6 +451,8 @@ it("rebuilds a logged summary tier as the same note the model saw", () => {
       toolsHash: "t",
       sampling: {},
       adapterDefaults: {},
+      contextWindow: FAUX_CONTEXT_WINDOW,
+      pricing: null,
       system: HEAD.system,
       tools: HEAD.tools,
     },

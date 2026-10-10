@@ -7,6 +7,7 @@ import {
   type ViewContext,
 } from "@sage/core";
 import {
+  FAUX_CONTEXT_WINDOW,
   FAUX_USAGE,
   fauxAdapter,
   renderLlmInput,
@@ -485,6 +486,8 @@ function seed(store: MemoryLogStore, sessionId: string) {
       toolsHash: "t",
       sampling: {},
       adapterDefaults: {},
+      contextWindow: FAUX_CONTEXT_WINDOW,
+      pricing: null,
       system: SYSTEM,
     },
   });

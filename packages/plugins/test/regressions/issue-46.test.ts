@@ -6,7 +6,7 @@ import {
   JsonlLogStore,
   MemoryLogStore,
 } from "@sage/core";
-import { renderLlmInput } from "@sage/core/testing";
+import { FAUX_CONTEXT_WINDOW, renderLlmInput } from "@sage/core/testing";
 import type { Message, Request } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
@@ -173,8 +173,15 @@ it("extends the frozen prefix for 20 turns, including a covering edit", async ()
   expect(budget.frozenTokens).toBeGreaterThanOrEqual(budget.staleOmittable);
 });
 
-it("replays the long deepseek trace with a frozen prefix and a real rebuild", async () => {
-  const store = new JsonlLogStore({ dir: fixtureDir });
+it("replays the long deepseek trace under an 8000-token window with a frozen prefix and a real rebuild", async () => {
+  // The recording ran with deepseek-flash's 1M window, where the guard never
+  // fires. This case pins the guard rebuild, so it replays the same trace
+  // under the small stand-in window and no pricing.
+  const store = withRequestHeader(
+    new JsonlLogStore({ dir: fixtureDir }),
+    "long-deepseek-flash",
+    { contextWindow: FAUX_CONTEXT_WINDOW, pricing: null },
+  );
   const diffs = await replayOffline(
     store,
     "long-deepseek-flash",
@@ -230,6 +237,30 @@ it("replays the long deepseek trace with a frozen prefix and a real rebuild", as
     detail,
   ).toBe(true);
 });
+
+/**
+ * Copies `sessionId` into a memory store, overriding every request_header's
+ * context window and pricing.
+ */
+function withRequestHeader(
+  source: JsonlLogStore,
+  sessionId: string,
+  override: { contextWindow: number; pricing: null },
+): MemoryLogStore {
+  const copy = new MemoryLogStore();
+  for (const entry of source.path(sessionId)) {
+    const payload =
+      entry.kind === "request_header" && isRecord(entry.payload)
+        ? { ...entry.payload, ...override }
+        : entry.payload;
+    copy.append(sessionId, {
+      kind: entry.kind,
+      payload,
+      ...(entry.details ? { details: entry.details } : {}),
+    });
+  }
+  return copy;
+}
 
 function tierFlips(
   views: readonly {

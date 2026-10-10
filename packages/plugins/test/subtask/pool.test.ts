@@ -1,6 +1,10 @@
 import type { HarnessTool } from "@sage/core";
 import { MemoryLogStore } from "@sage/core";
-import { FAUX_UNIT_USAGE, stopScript } from "@sage/core/testing";
+import {
+  FAUX_CONTEXT_WINDOW,
+  FAUX_UNIT_USAGE,
+  stopScript,
+} from "@sage/core/testing";
 import type { Request } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
@@ -26,6 +30,8 @@ function seed(store: MemoryLogStore, sessionId: string) {
       toolsHash: "t",
       sampling: {},
       adapterDefaults: {},
+      contextWindow: FAUX_CONTEXT_WINDOW,
+      pricing: null,
     },
   });
   store.append(sessionId, {

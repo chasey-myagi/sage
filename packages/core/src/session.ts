@@ -41,19 +41,13 @@ import {
 import { type RunHealth, runHealth } from "./health.js";
 import { HookDispatcher } from "./hooks/dispatcher.js";
 import type { Hooks } from "./hooks/types.js";
-import type { RequestHeaderPayload } from "./log/kinds.js";
-import { lastRequestHeader, latestViewEpoch } from "./log/path.js";
 import type { LogStore } from "./log/store.js";
 import type { EntryId, StoredEntry } from "./log/types.js";
 import { runToolCalls, type ToolResultDetails, toolUses } from "./tool-run.js";
 import type { HarnessTool } from "./tools.js";
 import { collectWithTurnRetry } from "./turn-retry.js";
-import {
-  assertHeadFrozenOnPath,
-  assertPaired,
-  systemHash,
-  toolsHash,
-} from "./view/assert.js";
+import { assertHeadFrozenOnPath, assertPaired } from "./view/assert.js";
+import { appendRequestEntries } from "./view/commit.js";
 import { passthroughView } from "./view/passthrough.js";
 import type { CompiledView, ViewProvider } from "./view/types.js";
 
@@ -329,18 +323,16 @@ export class AgentSession {
   }
 
   /**
-   * Appends this turn's request entries in order (`view_epoch` when due,
-   * `request_header`, `manifest`) and returns the request they describe.
-   * The manifest payload is `view.manifest`; its details are `view.details`.
+   * Appends this turn's request entries through `appendRequestEntries` and
+   * returns the request they describe.
    */
   private recordRequest(view: CompiledView, active: PreparedCall): Request {
     const sampling = mergeSampling(active.adapterDefaults, this.sampling);
-    this.appendViewEpoch(view);
-    this.appendHeader(view, sampling, active);
-    this.store.append(this.sessionId, {
-      kind: "manifest",
-      payload: view.manifest,
-      ...(view.details ? { details: view.details } : {}),
+    appendRequestEntries(this.store, this.sessionId, {
+      view,
+      model: this.model,
+      sampling,
+      prepared: active,
     });
     return {
       model: this.model,
@@ -463,56 +455,6 @@ export class AgentSession {
       content: [{ type: "text", text }],
     };
     this.store.append(this.sessionId, { kind: "message", payload });
-  }
-
-  /**
-   * Appends `view_epoch {epoch, reason}` when `view.epochStart` is set, or
-   * when `view.epoch` is greater than the latest view_epoch on the path
-   * (0 when there is none). `reason` is `epochStart.reason`, else
-   * `epoch-advanced`. `details.prefixMessage` is the view's first message.
-   */
-  private appendViewEpoch(view: CompiledView): void {
-    const latest = latestViewEpoch(this.store.path(this.sessionId));
-    if (!view.epochStart && view.epoch <= latest) return;
-    const firstMessage = view.messages[0];
-    this.store.append(this.sessionId, {
-      kind: "view_epoch",
-      payload: {
-        epoch: view.epoch,
-        reason: view.epochStart?.reason ?? "epoch-advanced",
-      },
-      ...(firstMessage ? { details: { prefixMessage: firstMessage } } : {}),
-    });
-  }
-
-  /**
-   * Appends the request envelope. `system` and `tools` carry full text only
-   * when their hash differs from the previous request_header on the path,
-   * or when there is none; otherwise the hashes alone identify them.
-   */
-  private appendHeader(
-    view: CompiledView,
-    sampling: Sampling,
-    prepared: PreparedCall,
-  ): void {
-    const prev = lastRequestHeader(this.store.path(this.sessionId));
-    const systemPromptHash = systemHash(view.head.system);
-    const toolsDigest = toolsHash(view.head.tools);
-    const payload: RequestHeaderPayload = {
-      provider: this.model.provider,
-      model: this.model.model,
-      systemPromptHash,
-      toolsHash: toolsDigest,
-      sampling: { ...sampling },
-      adapterDefaults: { ...prepared.adapterDefaults },
-    };
-    if (!prev || prev.systemPromptHash !== systemPromptHash) {
-      payload.system = view.head.system;
-    }
-    if (!prev || prev.toolsHash !== toolsDigest) {
-      payload.tools = structuredClone(view.head.tools);
-    }
-    this.store.append(this.sessionId, { kind: "request_header", payload });
   }
 
   /**

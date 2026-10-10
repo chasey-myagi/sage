@@ -1,15 +1,14 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  appendRequestEntries,
   type HarnessTool,
   isRecord,
   JsonlLogStore,
   MemoryLogStore,
   type StoredEntry,
-  systemHash,
-  toolsHash,
 } from "@sage/core";
-import type { Head, Message, PreparedCall } from "@sage/provider/contract";
+import type { PreparedCall } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
 import { finite } from "../../src/guards.ts";
@@ -141,7 +140,12 @@ async function replayRows(): Promise<Row[]> {
       expected: view.manifest.cache?.expectedReadTokens ?? 0,
       measuredCache: view.manifest.cache?.measuredReadTokens ?? 0,
     });
-    commitView(shadow, shadowId, view, ctx);
+    appendRequestEntries(shadow, shadowId, {
+      view,
+      model: ctx.model,
+      sampling: {},
+      prepared: ctx.prepared,
+    });
   }
   return rows;
 }
@@ -200,64 +204,6 @@ function copyMessages(
       ...(entry.details ? { details: entry.details } : {}),
     });
   }
-}
-
-function commitView(
-  shadow: MemoryLogStore,
-  sessionId: string,
-  view: {
-    epoch: number;
-    epochStart?: { reason: string };
-    messages: Message[];
-    manifest: unknown;
-    details?: Record<string, unknown>;
-  },
-  ctx: {
-    model: { provider: string; model: string };
-    prepared: PreparedCall;
-    head: Head;
-  },
-): void {
-  const path = shadow.path(sessionId);
-  let latest = 0;
-  let seen = false;
-  for (const entry of path) {
-    if (entry.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
-    const epoch = finite(entry.payload.epoch);
-    if (epoch === undefined) continue;
-    latest = epoch;
-    seen = true;
-  }
-  const baseline = seen ? latest : 0;
-  if (view.epochStart || view.epoch > baseline) {
-    const prefixMessage = view.messages[0];
-    shadow.append(sessionId, {
-      kind: "view_epoch",
-      payload: {
-        epoch: view.epoch,
-        reason: view.epochStart?.reason ?? "epoch-advanced",
-      },
-      ...(prefixMessage ? { details: { prefixMessage } } : {}),
-    });
-  }
-  shadow.append(sessionId, {
-    kind: "request_header",
-    payload: {
-      provider: ctx.model.provider,
-      model: ctx.model.model,
-      systemPromptHash: systemHash(ctx.head.system),
-      toolsHash: toolsHash(ctx.head.tools),
-      sampling: {},
-      adapterDefaults: { ...ctx.prepared.adapterDefaults },
-      system: ctx.head.system,
-      tools: ctx.head.tools,
-    },
-  });
-  shadow.append(sessionId, {
-    kind: "manifest",
-    payload: view.manifest,
-    ...(view.details ? { details: view.details } : {}),
-  });
 }
 
 function viewContext(

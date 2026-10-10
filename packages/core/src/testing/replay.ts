@@ -3,10 +3,10 @@
  *
  * Guarantees: `session.jsonl` is a JsonlLogStore file for session id
  * `session`. `responses.json` is `StreamChunk[][]`, one script per model
- * turn. Replay reads the user text, model, and adapter defaults back out of
- * that log, plays the script through the faux adapter, and returns the new
- * requests, log, and per-turn manifests. The prepared call uses
- * `FAUX_CONTEXT_WINDOW` and `pricing` null; the log does not store those.
+ * turn. Replay reads the user text, model, adapter defaults, context window,
+ * and pricing back out of that log (the first request_header), plays the
+ * script through the faux adapter, and returns the new requests, log, and
+ * per-turn manifests.
  * `SAGE_RECORD=1` selects the record lane, which has no live network
  * recorder yet, so replay refuses it. This module never opens a network
  * connection.
@@ -20,18 +20,20 @@ import path from "node:path";
 import {
   isRecord,
   type Message,
+  type PreparedCall,
   type ProviderAdapter,
   type Request,
   type StreamChunk,
 } from "@sage/provider/contract";
 import { JsonlLogStore } from "../log/jsonl.js";
+import type { RequestHeaderPayload } from "../log/kinds.js";
 import { MemoryLogStore } from "../log/memory.js";
 import type { StoredEntry } from "../log/types.js";
 import { AgentSession } from "../session.js";
 import type { HarnessTool } from "../tools.js";
 import { passthroughView } from "../view/passthrough.js";
 import type { Manifest, ViewProvider } from "../view/types.js";
-import { FAUX_CONTEXT_WINDOW, fauxAdapter } from "./faux.js";
+import { fauxAdapter } from "./faux.js";
 
 const RECORD_SWITCH = "SAGE_RECORD";
 
@@ -64,7 +66,7 @@ export function loadCase(dir: string): {
 /**
  * Replays a recorded case keylessly through a fresh in-memory session.
  * Throws when `SAGE_RECORD=1`, and when the recording lacks a user message
- * or a request_header model and adapter defaults.
+ * or a request_header.
  */
 export async function replaySession(
   dir: string,
@@ -82,11 +84,7 @@ export async function replaySession(
   const { log, responses } = loadCase(dir);
   const adapter = fauxAdapter(responses, {
     api: recordedApi(log),
-    prepared: {
-      contextWindow: FAUX_CONTEXT_WINDOW,
-      pricing: null,
-      adapterDefaults: recordedDefaults(log),
-    },
+    prepared: recordedPrepared(log),
   });
   const store = new MemoryLogStore();
   const manifests: Manifest[] = [];
@@ -118,29 +116,32 @@ function isChunkScript(value: unknown): value is StreamChunk[][] {
   return Array.isArray(value) && value.every((turn) => Array.isArray(turn));
 }
 
+function firstHeader(log: readonly StoredEntry[]): RequestHeaderPayload {
+  for (const entry of log) {
+    if (entry.kind !== "request_header" || !isRecord(entry.payload)) continue;
+    // JsonlLogStore validated this payload as a request_header on load.
+    return entry.payload as RequestHeaderPayload;
+  }
+  throw new Error("recording has no request_header");
+}
+
 function recordedModel(log: readonly StoredEntry[]): {
   provider: string;
   model: string;
 } {
-  for (const entry of log) {
-    if (entry.kind !== "request_header" || !isRecord(entry.payload)) continue;
-    const { provider, model } = entry.payload;
-    if (typeof provider === "string" && typeof model === "string") {
-      return { provider, model };
-    }
-  }
-  throw new Error("recording has no request_header model");
+  const { provider, model } = firstHeader(log);
+  return { provider, model };
 }
 
-function recordedDefaults(
+function recordedPrepared(
   log: readonly StoredEntry[],
-): Record<string, unknown> {
-  for (const entry of log) {
-    if (entry.kind !== "request_header" || !isRecord(entry.payload)) continue;
-    const defaults = entry.payload.adapterDefaults;
-    if (isRecord(defaults)) return structuredClone(defaults);
-  }
-  throw new Error("recording has no adapter defaults");
+): Omit<PreparedCall, "model"> {
+  const header = structuredClone(firstHeader(log));
+  return {
+    contextWindow: header.contextWindow,
+    pricing: header.pricing,
+    adapterDefaults: header.adapterDefaults,
+  };
 }
 
 function recordedApi(log: readonly StoredEntry[]): ProviderAdapter["api"] {
