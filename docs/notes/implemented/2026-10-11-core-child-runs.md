@@ -6,16 +6,16 @@
 
 ## Decision
 
-core 在 `tools.ts` 定义 `ChildRun = { usage: Usage } & Record<string, unknown>`，约定工具用 `details.childRuns: ChildRun[]` 报告它跑过的子会话。`runHealth` 只读这个字段，不看工具名。两个 spawn 工具都写成 `{ childRuns: [...] }`，单个与批量形状对称，并用 `satisfies ChildRun[]` 绑定到 core 的类型。`check-layers` 规则 3 新增一项：从 plugins 的工具定义（`name: "x"` 和 `*_TOOL_NAME = "x"`）收集工具名，core 源码出现这些字符串字面量即失败；core 测试不受限。
+core 在 `tools.ts` 定义 `ChildRun = { usage: Usage } & Record<string, unknown>`，约定工具用 `details.childRuns: ChildRun[]` 报告它跑过的子会话。`runHealth` 只读这个字段，不看工具名。两个 spawn 工具都写成 `{ childRuns: [...] }`，单个与批量形状对称，并用 `satisfies ChildRun[]` 绑定到 core 的类型。`check-layers` 规则 3 的 deny 表新增 token `plugin-tool-names`：从 plugins 的工具定义（`def: { name: "x"` 和 `*_TOOL_NAME = "x"`）收集工具名，core 源码在注释之外出现这些字符串字面量即失败；core 测试不受限。只收工具定义，不收任意对象的 `name:`，否则 scorer 名 `"rule"`、`"model"` 也会进黑名单。
 
 ## Alternatives considered
 
-在 details 上同时保留旧的 `usage` / `results` 和新的 `childRuns`：同一份 usage 存两次，违反「一个事实一个定义」，G4 也不要求兼容。把 `runHealth` 整体移出 core，或把 manifest 里的插件报表类型（tier、shadow、scorer、entryScored）迁到 plugins：更彻底，但改动面约 1000 行，而且 #132 的对照结论可能让编译器 manifest 大改，现在搬多半返工。本次只做工具名这一处，其余留到 #132 之后再定。
+在 details 上同时保留旧的 `usage` / `results` 和新的 `childRuns`：同一份 usage 存两次，违反「一个事实一个定义」，G4 也不要求兼容。把 `runHealth` 整体移出 core，或把 manifest 里的插件报表类型（tier、shadow、scorer、entryScored）迁到 plugins：更彻底，但改动面约 1000 行，而且 #132 的对照结论可能让编译器 manifest 大改，现在搬多半返工。本次只做工具名这一处，其余留到 #132 之后再定。把 `@sage/tools` 的工具名也纳入字面量检查：core 自己的 `Access.mode` 就有 `"read"`、`"write"`，必然误报，所以只检查 plugins 定义的名字；tools 的名字目前也不在 core 里出现。
 
 ## Consequences
 
-spawn 工具的 details 形状变了：`details.sessionId` 等字段移到 `details.childRuns[0]`，批量的 `details.results` 改名为 `details.childRuns`。旧会话 Log 里的子会话不再计入 `health.subtasks`（预发布，不做迁移）。core 里 `RunHealth.subtasks` 字段名不变。manifest 结构仍由 core 定义，分层上的这部分欠账照旧。
+spawn 工具的 details 形状变了，深度或数量超限被拒绝时不再带 details（没有子会话跑过）：`details.sessionId` 等字段移到 `details.childRuns[0]`，批量的 `details.results` 改名为 `details.childRuns`。旧会话 Log 里的子会话不再计入 `health.subtasks`（预发布，不做迁移）。`health.subtasks.count` 计的是带 `usage` 对象的 `childRuns` 项，启动失败的子会话也算一项（usage 为 0）。core 里 `RunHealth.subtasks` 字段名不变。manifest 结构仍由 core 定义，分层上的这部分欠账照旧。
 
 ## Testing
 
-`packages/core/test/health.test.ts` 改用不叫 spawn 的工具名（`delegate`、`fan_out`）加 `childRuns` 驱动；修复前 `subtasks.count` 为 0，修复后为 3。另一个工具只带顶层 `details.usage`、没有 `childRuns`，不计入。`scripts/__tests__/check-layers.test.ts` 新增用例：core 源码里出现插件工具名字面量时报规则 3，注释和 core 测试不报。用 main 的源码跑新版 `check-layers`，报出 `health.ts` 的三处。plugins 的 subtask 测试改从 `soleChildRun`（`@sage/core/testing`）读子会话字段。
+`packages/core/test/health.test.ts` 改用不叫 spawn 的工具名（`delegate`、`fan_out`）加 `childRuns` 驱动；修复前 `subtasks.count` 为 0，修复后为 3。另一个工具只带顶层 `details.usage`、没有 `childRuns`，不计入。`scripts/__tests__/check-layers.test.ts` 新增用例：core 源码里出现插件工具名字面量时报规则 3；注释里带引号的名字、plugins 里非工具对象的 `name: "rule"`、core 测试都不报。用 main 的源码跑新版 `check-layers`，报出 `health.ts` 的三处。plugins 的 subtask 测试改从 `soleChildRun`（`@sage/core/testing`）读子会话字段。

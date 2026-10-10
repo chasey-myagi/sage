@@ -84,7 +84,8 @@ export type RunHealth = {
   };
   /**
    * Child sessions reported by any tool through `details.childRuns` (one per
-   * item, see {@link ChildRun}), and their summed usage, read from
+   * item with a `usage` object, failed starts included; see
+   * {@link ChildRun}), and their summed usage, read from
    * `details.toolResults` on user messages. Not part of `cacheHitRatio` or
    * `expandRate`.
    */
@@ -226,7 +227,7 @@ function subtaskHealth(path: readonly StoredEntry[]): RunHealth["subtasks"] {
       const runs = item.details.childRuns;
       if (!Array.isArray(runs)) continue;
       for (const run of runs) {
-        if (!isRecord(run)) continue;
+        if (!isRecord(run) || !isRecord(run.usage)) continue;
         tokens = addLogged(tokens, run.usage);
         count += 1;
       }

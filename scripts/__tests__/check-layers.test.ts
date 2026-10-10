@@ -193,17 +193,17 @@ describe("check-layers", () => {
     expect(result.stdout).toContain("违反规则 3");
   });
 
-  it("rejects plugin tool names spelled as string literals in core sources but not in core tests (rule 3)", () => {
+  it("rejects plugin tool names spelled as string literals in core sources but not in comments or core tests (rule 3)", () => {
     const root = makeRoot();
     write(
       root,
       "packages/plugins/src/spawn.ts",
-      'export const tool = { def: { name: "fan_out", description: "x" } };\nexport const NOTE_TOOL_NAME = "take_note";\n',
+      'export const tool = { def: { name: "fan_out", description: "x" } };\nexport const NOTE_TOOL_NAME = "take_note";\nexport const scorer = { name: "rule", score() {} };\n',
     );
     write(
       root,
       "packages/core/src/health.ts",
-      "export const isFan = (n: string) => n === \"fan_out\";\n// fan_out in a comment is fine\nexport const note = 'take_note';\n",
+      'export const isFan = (n: string) => n === "fan_out";\n// "fan_out" in a comment is fine\nexport const note = \'take_note\';\n/** The "take_note" tool. */\nexport type Kind = "rule" | "model";\n',
     );
     write(
       root,

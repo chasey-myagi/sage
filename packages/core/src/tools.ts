@@ -18,10 +18,11 @@ export type Access = {
 };
 
 /**
- * One nested session a tool call ran. A tool that runs child sessions lists
- * them as `details.childRuns: ChildRun[]`; `runHealth` counts each item and
- * sums its `usage` under `subtasks`, and nothing else reads them. Extra
- * fields are the tool's own and stay opaque to the kernel.
+ * One nested session a tool call attempted, including one that failed to
+ * start (its `usage` is then zero). A tool that runs child sessions lists
+ * them as `details.childRuns: ChildRun[]`; `runHealth` counts each item that
+ * has a `usage` object and sums those usages under `subtasks`; nothing else
+ * reads them. Extra fields are the tool's own and stay opaque to the kernel.
  */
 export type ChildRun = { usage: Usage } & Record<string, unknown>;
 

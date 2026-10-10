@@ -26,7 +26,13 @@ export const RULES = [
   {
     n: 3,
     include: "packages/core/**",
-    deny: ["@sage/plugins", "@sage/tools", "apps/**", "core-src-provider-root"],
+    deny: [
+      "@sage/plugins",
+      "@sage/tools",
+      "apps/**",
+      "core-src-provider-root",
+      "plugin-tool-names",
+    ],
   },
   {
     n: 4,
@@ -57,12 +63,22 @@ export function run(rootDir) {
   const violations = [];
 
   const files = walk(root);
-  violations.push(...findPluginToolNamesInCore(root, files));
+  const toolNames = pluginToolNames(root, files);
   for (const file of files) {
     const rel = toPosix(path.relative(root, file));
     const rule = ruleFor(rel);
     if (!rule) continue;
     const text = readFileSync(file, "utf8");
+    // Core sources must not recognise a plugin tool by spelling its name;
+    // core tests may.
+    if (
+      rule.deny?.includes("plugin-tool-names") &&
+      rel.startsWith("packages/core/src/")
+    ) {
+      for (const found of findToolNameLiterals(text, toolNames)) {
+        violations.push({ file: rel, rule: rule.n, ...found });
+      }
+    }
     for (const found of findImports(text)) {
       if (isAllowed(rule, found.source, rel)) continue;
       violations.push({
@@ -83,53 +99,54 @@ export function run(rootDir) {
   return { violations };
 }
 
-const CORE_SRC = "packages/core/src/";
-const PLUGINS_SRC = "packages/plugins/src/";
-// A tool def's `name: "x"` or an exported `*_TOOL_NAME = "x"` constant.
+// A tool def's `def: { name: "x"` or an exported `*_TOOL_NAME = "x"` constant.
 const PLUGIN_TOOL_NAME =
-  /\bname:\s*["']([A-Za-z0-9_-]+)["']|_TOOL_NAME\s*=\s*["']([A-Za-z0-9_-]+)["']/g;
+  /\bdef:\s*\{\s*name:\s*(["'])([A-Za-z0-9_-]+)\1|_TOOL_NAME\s*=\s*(["'])([A-Za-z0-9_-]+)\3/g;
+const COMMENT = /\/\*[\s\S]*?\*\/|\/\/[^\n]*/g;
 
 /**
- * Rule 3 beyond imports: core sources must not recognise a plugin tool by
- * spelling its name. Names are harvested from plugin tool defs; core tests
- * may still use them.
+ * Tool names the plugins define, harvested from their sources. Names from
+ * `@sage/tools` are left out: they collide with core's own literals such as
+ * `Access.mode` "read" and "write".
  * @param {string} root
  * @param {readonly string[]} files
- * @returns {{ file: string, line: number, rule: number, source: string }[]}
+ * @returns {Set<string>}
  */
-function findPluginToolNamesInCore(root, files) {
-  const rels = files.map((file) => ({
-    file,
-    rel: toPosix(path.relative(root, file)),
-  }));
+function pluginToolNames(root, files) {
   /** @type {Set<string>} */
   const names = new Set();
-  for (const { file, rel } of rels) {
-    if (!rel.startsWith(PLUGINS_SRC)) continue;
+  for (const file of files) {
+    const rel = toPosix(path.relative(root, file));
+    if (!rel.startsWith("packages/plugins/src/")) continue;
     for (const match of readFileSync(file, "utf8").matchAll(PLUGIN_TOOL_NAME)) {
-      const name = match[1] ?? match[2];
+      const name = match[2] ?? match[4];
       if (name) names.add(name);
     }
   }
+  return names;
+}
+
+/**
+ * Quoted occurrences of `names` outside comments. Comments are blanked to
+ * spaces first so line numbers stay true.
+ * @param {string} text
+ * @param {Set<string>} names
+ * @returns {{ source: string, line: number }[]}
+ */
+function findToolNameLiterals(text, names) {
   if (names.size === 0) return [];
-  const literal = new RegExp(
-    `["'](${[...names].map((name) => name.replace(/[-]/g, "\\-")).join("|")})["']`,
-    "g",
+  const code = text.replace(COMMENT, (comment) =>
+    comment.replace(/[^\n]/g, " "),
   );
-  /** @type {{ file: string, line: number, rule: number, source: string }[]} */
+  const literal = new RegExp(`["'](${[...names].join("|")})["']`, "g");
+  /** @type {{ source: string, line: number }[]} */
   const found = [];
-  for (const { file, rel } of rels) {
-    if (!rel.startsWith(CORE_SRC)) continue;
-    const text = readFileSync(file, "utf8");
-    for (const match of text.matchAll(literal)) {
-      if (match.index === undefined) continue;
-      found.push({
-        file: rel,
-        line: lineAt(text, match.index),
-        rule: 3,
-        source: `"${match[1]}" (plugin tool name)`,
-      });
-    }
+  for (const match of code.matchAll(literal)) {
+    if (match.index === undefined) continue;
+    found.push({
+      source: `"${match[1]}" (plugin tool name)`,
+      line: lineAt(code, match.index),
+    });
   }
   return found;
 }
@@ -198,6 +215,8 @@ function matchesDeny(token, spec, fileRel) {
     return (
       spec === "@sage/provider" && fileRel.startsWith("packages/core/src/")
     );
+  // Checked against string literals in `run`, not against imports.
+  if (token === "plugin-tool-names") return false;
   if (token === "plugins-tools-cross")
     return isPluginsToolsCross(spec, fileRel);
   return spec === token || spec.startsWith(`${token}/`);

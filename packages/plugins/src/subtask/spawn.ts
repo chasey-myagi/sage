@@ -106,18 +106,16 @@ export function subtaskTools(opts: SubtaskToolsOptions): {
     maxConcurrent: Math.max(1, opts.maxConcurrent ?? DEFAULT_MAX_CONCURRENT),
     admit(sessionId, count) {
       if (depthOf(opts.store, sessionId) >= maxDepth) {
-        return failed(
-          "",
-          "error",
-          `Subtask depth limit reached (maxDepth=${maxDepth})`,
-        );
+        return {
+          content: `Subtask depth limit reached (maxDepth=${maxDepth})`,
+          isError: true,
+        };
       }
       if (!reserve(spawned, sessionId, count, maxSubtasks)) {
-        return failed(
-          "",
-          "error",
-          `Subtask limit reached (maxSubtasks=${maxSubtasks})`,
-        );
+        return {
+          content: `Subtask limit reached (maxSubtasks=${maxSubtasks})`,
+          isError: true,
+        };
       }
       return undefined;
     },
@@ -130,9 +128,13 @@ type SpawnDeps = {
   maxConcurrent: number;
   /**
    * Checks depth, then reserves `count` spawns for the session. Returns
-   * the refusal as a tool result, or undefined when admitted.
+   * the refusal as a tool result without details (no child ran), or
+   * undefined when admitted.
    */
-  admit(sessionId: string, count: number): TaskResult | undefined;
+  admit(
+    sessionId: string,
+    count: number,
+  ): { content: string; isError: true } | undefined;
 };
 
 function spawnTool(deps: SpawnDeps): HarnessTool {

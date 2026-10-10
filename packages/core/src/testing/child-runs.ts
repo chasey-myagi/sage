@@ -1,3 +1,12 @@
+/**
+ * Reads a tool result's `details.childRuns` (see `ChildRun`) for tests.
+ *
+ * Guarantees: throws instead of returning `undefined`, so a test that
+ * expects one child fails at the read.
+ *
+ * Intentionally not in the Log: nothing; this only reads a result object.
+ */
+
 import { isRecord } from "@sage/provider/contract";
 
 /**

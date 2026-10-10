@@ -68,7 +68,7 @@ it("sums child usage from any tool's childRuns details and leaves parent rates a
     model: MODEL,
     system: SYSTEM,
     tools: [
-      spawnTool("delegate", {
+      detailsTool("delegate", {
         childRuns: [
           {
             sessionId: "c1",
@@ -81,7 +81,7 @@ it("sums child usage from any tool's childRuns details and leaves parent rates a
           },
         ],
       }),
-      spawnTool("fan_out", {
+      detailsTool("fan_out", {
         childRuns: [
           {
             sessionId: "c2",
@@ -103,7 +103,7 @@ it("sums child usage from any tool's childRuns details and leaves parent rates a
           },
         ],
       }),
-      spawnTool("report", {
+      detailsTool("report", {
         usage: {
           inputOther: 1000,
           inputCacheRead: 0,
@@ -406,7 +406,7 @@ it("sums entryScored calls, tiers, and usage across manifests", () => {
   expect(JSON.stringify(health)).not.toContain(LEAK);
 });
 
-function spawnTool(name: string, details: Record<string, unknown>) {
+function detailsTool(name: string, details: Record<string, unknown>) {
   return {
     def: { name, description: name, inputSchema: { type: "object" } },
     isReadOnly: false,
