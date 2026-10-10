@@ -21,6 +21,7 @@ import {
   runHealth,
   type StoredEntry,
 } from "@sage/core";
+import { TOOL_NAMES } from "@sage/tools";
 import { usage } from "./args.js";
 import type { CommandIo } from "./command-io.js";
 import { isFiniteNumber } from "./guards.js";
@@ -170,12 +171,12 @@ function rereadLater(
   const toolUseId = toolUseIdOf(chunkId);
   if (!toolUseId) return false;
   const origin = calls.find((call) => call.toolUseId === toolUseId);
-  if (origin?.name !== "read") return false;
+  if (origin?.name !== TOOL_NAMES.read) return false;
   const file = nonEmptyString(origin.input, "path");
   if (!file) return false;
   return calls.some(
     (call) =>
-      call.name === "read" &&
+      call.name === TOOL_NAMES.read &&
       call.turn > judgedTurn &&
       call.toolUseId !== toolUseId &&
       nonEmptyString(call.input, "path") === file,

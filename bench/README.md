@@ -41,6 +41,28 @@
 | `bench/tasks/ts-mini.json` | Multi-SWE-bench（ByteDance-Seed）ts/js 切片里已在本机验证的 10 条。6 个仓库：vuejs/core ×4、darkreader ×2、dayjs、express、axios、github-readme-stats |
 | `bench/tasks/ts-mini-2.json` | Multi-SWE-RL（ByteDance-Seed）里已在本机验证的 10 条，与上一份零重叠。7 个仓库：zx、commander.js ×2、redux、zod、react-router ×2、async ×2、react-hook-form |
 
+数据许可：Multi-SWE-bench 与 Multi-SWE-RL 的数据集卡片声明 CC0，ByteDance 对数据集保留其拥有的知识产权。任务文件里嵌入的 issue 文本（`problem`）与 test patch（`testPatch`）取自上游仓库，使用时还受各仓库自己的许可约束。下表是入库任务文件涉及的仓库，许可证取自 GitHub API 的 `license.spdx_id`（2026-10-11）：
+
+| 仓库 | 许可证 | 任务集 |
+|---|---|---|
+| vuejs/core | MIT | `ts-mini` |
+| darkreader/darkreader | MIT | `ts-mini` |
+| iamkun/dayjs | MIT | `ts-mini` |
+| expressjs/express | MIT | `ts-mini` |
+| axios/axios | MIT | `ts-mini` |
+| anuraghazra/github-readme-stats | MIT | `ts-mini` |
+| google/zx | Apache-2.0 | `ts-mini-2` |
+| tj/commander.js | MIT | `ts-mini-2` |
+| reduxjs/redux | MIT | `ts-mini-2` |
+| colinhacks/zod | MIT | `ts-mini-2` |
+| remix-run/react-router | MIT | `ts-mini-2` |
+| caolan/async | MIT | `ts-mini-2` |
+| react-hook-form/react-hook-form | MIT | `ts-mini-2` |
+| astropy/astropy | BSD-3-Clause | `swe-verified-mini-50`、`mini` |
+| django/django | BSD-3-Clause | `swe-verified-mini-50` |
+
+入库的 JSON 是事实来源。上游数据集的 URL 没有钉修订，重新拉取只用于更新任务集，不用来复现已有结果。
+
 重新拉取：
 
 ```sh

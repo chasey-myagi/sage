@@ -89,7 +89,7 @@ export async function applyTestPatch(
   );
   try {
     writeFileSync(patchPath, patch);
-    const applied = await exec("git", ["-C", cwd, "apply", patchPath]);
+    const applied = await exec("git", ["apply", patchPath], { cwd });
     if (applied.code !== 0) throw new Error("git apply failed");
   } finally {
     rmSync(patchPath, { force: true });
@@ -102,25 +102,16 @@ async function restoreFromBase(
   file: string,
 ): Promise<void> {
   const target = workPath(cwd, file);
-  const probe = await exec("git", [
-    "-C",
+  const probe = await exec("git", ["cat-file", "-e", `${baseCommit}:${file}`], {
     cwd,
-    "cat-file",
-    "-e",
-    `${baseCommit}:${file}`,
-  ]);
+  });
   if (probe.code !== 0) {
     rmSync(target, { force: true });
     return;
   }
-  const checkout = await exec("git", [
-    "-C",
+  const checkout = await exec("git", ["checkout", baseCommit, "--", file], {
     cwd,
-    "checkout",
-    baseCommit,
-    "--",
-    file,
-  ]);
+  });
   if (checkout.code !== 0) throw new Error(`checkout ${file} failed`);
 }
 

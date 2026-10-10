@@ -28,6 +28,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
+/** `timeoutSec` written into every task, in seconds: the runner applies it to setup, the agent, and the test command, each. */
 export const TIMEOUT_SEC = 1800;
 
 const MULTI_SWE_BENCH = "ByteDance-Seed/Multi-SWE-bench";
@@ -210,13 +211,11 @@ export function idOf(row) {
   return row.instance_id ?? `${row.org}__${row.repo}-${row.number}`;
 }
 
-/** Convert one dataset row into a bench task. Throws when the repo has no config or the row has no spec file or resolved issue. */
+/** Convert one dataset row into a bench task. The row's repo must be in REPOS (`buildTasks` checks this first). Throws when the row has no spec file or resolved issue. */
 export function taskFromRow(row) {
   const id = idOf(row);
   const repo = `${row.org}/${row.repo}`;
-  const repoConf = REPOS[repo];
-  if (!repoConf) throw new Error(`no repo config for ${repo}`);
-  const conf = { ...repoConf, ...OVERRIDES[id] };
+  const conf = { ...REPOS[repo], ...OVERRIDES[id] };
   const specs = patchFiles(row.test_patch).filter(isSpecFile);
   if (specs.length === 0) {
     throw new Error(`${id}: test patch has no runnable spec file`);
@@ -262,10 +261,38 @@ async function loadRows(repo, fixtureDir) {
       throw new Error(`fetch ${url} failed: ${response.status}`);
     text = await response.text();
   }
-  return text
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line));
+  const rows = [];
+  for (const [index, line] of text.split("\n").entries()) {
+    if (line.trim().length === 0) continue;
+    const where = `${name}:${index + 1}`;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch (error) {
+      throw new Error(`${where}: malformed dataset row`, { cause: error });
+    }
+    if (!isDatasetRow(row)) throw new Error(`${where}: malformed dataset row`);
+    rows.push(row);
+  }
+  return rows;
+}
+
+// Only the fields `idOf` and `taskFromRow` read unconditionally;
+// `resolved_issues` is checked where the problem text is built.
+function isDatasetRow(row) {
+  return (
+    isObject(row) &&
+    typeof row.org === "string" &&
+    typeof row.repo === "string" &&
+    isObject(row.base) &&
+    typeof row.base.sha === "string" &&
+    typeof row.test_patch === "string" &&
+    (typeof row.instance_id === "string" || typeof row.number === "number")
+  );
+}
+
+function isObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function repoOf(instanceId) {
@@ -273,7 +300,12 @@ function repoOf(instanceId) {
   return `${owner}/${rest.replace(/-\d+$/, "")}`;
 }
 
-/** Build the tasks for `selection` in that order. Throws when an id is missing from its repo's rows. */
+/**
+ * Build the tasks for `selection` in that order. Throws `no repo config for
+ * <repo>` before reading any rows when an id's repo is not in REPOS,
+ * `<file>:<line>: malformed dataset row` for a row that fails the field
+ * checks, and when an id is missing from its repo's rows.
+ */
 export async function buildTasks({
   fixtureDir,
   selection = SETS[DEFAULT_SET].ids,
@@ -281,6 +313,7 @@ export async function buildTasks({
   const byRepo = new Map();
   for (const id of selection) {
     const repo = repoOf(id);
+    if (!REPOS[repo]) throw new Error(`no repo config for ${repo}`);
     if (!byRepo.has(repo)) byRepo.set(repo, []);
     byRepo.get(repo).push(id);
   }
@@ -341,9 +374,15 @@ export async function main(argv = process.argv.slice(2)) {
 const entry = process.argv[1];
 if (entry && import.meta.url === pathToFileURL(path.resolve(entry)).href) {
   main().catch((error) => {
-    process.stderr.write(
-      `${error instanceof Error ? error.message : String(error)}\n`,
-    );
+    process.stderr.write(`${errorLines(error)}\n`);
     process.exit(1);
   });
+}
+
+// The usage error carries the parseArgs failure as its cause; print both.
+function errorLines(error) {
+  if (!(error instanceof Error)) return String(error);
+  return error.cause instanceof Error
+    ? `${error.message}\n${error.cause.message}`
+    : error.message;
 }
