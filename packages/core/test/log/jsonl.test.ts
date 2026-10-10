@@ -81,7 +81,7 @@ describe("JsonlLogStore", () => {
       openSync,
       ftruncateSync,
       closeSync,
-      writeSync: (fd: number, data: string) => {
+      writeSync: (fd: number, data: Uint8Array) => {
         writes += 1;
         return writeSync(fd, data);
       },
@@ -101,6 +101,39 @@ describe("JsonlLogStore", () => {
     expect(writes).toBe(100);
     expect(syncs).toBe(0);
     expect(new JsonlLogStore({ dir }).all("nosync")).toHaveLength(100);
+  });
+
+  it("finishes a line the kernel wrote only part of before appending the next", () => {
+    const dir = tempDir();
+    const fs = {
+      mkdirSync: (file: string, options?: { recursive?: boolean }) => {
+        mkdirSync(file, options);
+      },
+      existsSync,
+      readFileSync: (file: string, encoding: "utf8") =>
+        readFileSync(file, encoding),
+      openSync,
+      ftruncateSync,
+      closeSync,
+      // Every call is a short write of at most 7 bytes.
+      writeSync: (fd: number, data: Uint8Array | string) =>
+        writeSync(
+          fd,
+          (typeof data === "string" ? Buffer.from(data) : data).subarray(0, 7),
+        ),
+    };
+    const store = new JsonlLogStore({ dir, fs });
+    for (let i = 0; i < 3; i++) {
+      store.append("short", {
+        kind: "message",
+        payload: { role: "user", content: `message ${i} ünïcode` },
+      });
+    }
+
+    const reopened = new JsonlLogStore({ dir });
+    expect(reopened.all("short").map((entry) => entry.payload)).toEqual(
+      [0, 1, 2].map((i) => ({ role: "user", content: `message ${i} ünïcode` })),
+    );
   });
 
   it("drops a torn last line without a watermark and continues at seq 56", () => {
