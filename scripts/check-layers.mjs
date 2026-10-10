@@ -26,7 +26,13 @@ export const RULES = [
   {
     n: 3,
     include: "packages/core/**",
-    deny: ["@sage/plugins", "@sage/tools", "apps/**", "core-src-provider-root"],
+    deny: [
+      "@sage/plugins",
+      "@sage/tools",
+      "apps/**",
+      "core-src-provider-root",
+      "plugin-tool-names",
+    ],
   },
   {
     n: 4,
@@ -56,11 +62,23 @@ export function run(rootDir) {
   /** @type {{ file: string, line: number, rule: number, source: string }[]} */
   const violations = [];
 
-  for (const file of walk(root)) {
+  const files = walk(root);
+  const toolNames = pluginToolNames(root, files);
+  for (const file of files) {
     const rel = toPosix(path.relative(root, file));
     const rule = ruleFor(rel);
     if (!rule) continue;
     const text = readFileSync(file, "utf8");
+    // Core sources must not recognise a plugin tool by spelling its name;
+    // core tests may.
+    if (
+      rule.deny?.includes("plugin-tool-names") &&
+      rel.startsWith("packages/core/src/")
+    ) {
+      for (const found of findToolNameLiterals(text, toolNames)) {
+        violations.push({ file: rel, rule: rule.n, ...found });
+      }
+    }
     for (const found of findImports(text)) {
       if (isAllowed(rule, found.source, rel)) continue;
       violations.push({
@@ -79,6 +97,60 @@ export function run(rootDir) {
       a.source.localeCompare(b.source),
   );
   return { violations };
+}
+
+// A tool def's `def: { name: "x"` or an exported `*_TOOL_NAME = "x"` constant.
+const PLUGIN_TOOL_NAME =
+  /\bdef:\s*\{\s*name:\s*(["'])([A-Za-z0-9_-]+)\1|_TOOL_NAME\s*=\s*(["'])([A-Za-z0-9_-]+)\3/g;
+// Strings come first so a `//` inside one is not taken for a comment.
+const STRING_OR_COMMENT =
+  /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g;
+
+/**
+ * Tool names the plugins define, harvested from their sources. Names from
+ * `@sage/tools` are left out: they collide with core's own literals such as
+ * `Access.mode` "read" and "write".
+ * @param {string} root
+ * @param {readonly string[]} files
+ * @returns {Set<string>}
+ */
+function pluginToolNames(root, files) {
+  /** @type {Set<string>} */
+  const names = new Set();
+  for (const file of files) {
+    const rel = toPosix(path.relative(root, file));
+    if (!rel.startsWith("packages/plugins/src/")) continue;
+    for (const match of readFileSync(file, "utf8").matchAll(PLUGIN_TOOL_NAME)) {
+      const name = match[2] ?? match[4];
+      if (name) names.add(name);
+    }
+  }
+  return names;
+}
+
+/**
+ * Quoted occurrences of `names` outside comments. Comments are blanked to
+ * spaces first so line numbers stay true.
+ * @param {string} text
+ * @param {Set<string>} names
+ * @returns {{ source: string, line: number }[]}
+ */
+function findToolNameLiterals(text, names) {
+  if (names.size === 0) return [];
+  const code = text.replace(STRING_OR_COMMENT, (token) =>
+    token.startsWith("/") ? token.replace(/[^\n]/g, " ") : token,
+  );
+  const literal = new RegExp(`["'](${[...names].join("|")})["']`, "g");
+  /** @type {{ source: string, line: number }[]} */
+  const found = [];
+  for (const match of code.matchAll(literal)) {
+    if (match.index === undefined) continue;
+    found.push({
+      source: `"${match[1]}" (plugin tool name)`,
+      line: lineAt(code, match.index),
+    });
+  }
+  return found;
 }
 
 /**
@@ -145,6 +217,8 @@ function matchesDeny(token, spec, fileRel) {
     return (
       spec === "@sage/provider" && fileRel.startsWith("packages/core/src/")
     );
+  // Checked against string literals in `run`, not against imports.
+  if (token === "plugin-tool-names") return false;
   if (token === "plugins-tools-cross")
     return isPluginsToolsCross(spec, fileRel);
   return spec === token || spec.startsWith(`${token}/`);

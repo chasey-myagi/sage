@@ -11,6 +11,7 @@
  * expected-file diffs. A recorded `session.jsonl` is itself a Log.
  */
 
+export { soleChildRun } from "./child-runs.js";
 export {
   createFaux,
   FAUX_CONTEXT_WINDOW,

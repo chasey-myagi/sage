@@ -193,6 +193,47 @@ describe("check-layers", () => {
     expect(result.stdout).toContain("违反规则 3");
   });
 
+  it("rejects plugin tool names spelled as string literals in core sources but not in comments or core tests (rule 3)", () => {
+    const root = makeRoot();
+    write(
+      root,
+      "packages/plugins/src/spawn.ts",
+      'export const tool = { def: { name: "fan_out", description: "x" } };\nexport const NOTE_TOOL_NAME = "take_note";\nexport const scorer = { name: "rule", score() {} };\n',
+    );
+    write(
+      root,
+      "packages/core/src/health.ts",
+      'export const isFan = (n: string) => n === "fan_out";\n// "fan_out" in a comment is fine\nexport const note = \'take_note\';\n/** The "take_note" tool. */\nexport type Kind = "rule" | "model";\nconst u = "https://x"; const n = "fan_out";\n',
+    );
+    write(
+      root,
+      "packages/core/test/health.test.ts",
+      'export const name = "fan_out";\n',
+    );
+
+    const { violations } = run(root);
+    expect(violations).toEqual([
+      {
+        file: "packages/core/src/health.ts",
+        line: 1,
+        rule: 3,
+        source: '"fan_out" (plugin tool name)',
+      },
+      {
+        file: "packages/core/src/health.ts",
+        line: 3,
+        rule: 3,
+        source: '"take_note" (plugin tool name)',
+      },
+      {
+        file: "packages/core/src/health.ts",
+        line: 6,
+        rule: 3,
+        source: '"fan_out" (plugin tool name)',
+      },
+    ]);
+  });
+
   it("rejects the provider root export from core sources but not from core tests (rule 3)", () => {
     const root = makeRoot();
     write(

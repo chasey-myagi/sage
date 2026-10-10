@@ -11,14 +11,14 @@
  *
  * Intentionally not in the Log: the pool, the per-session counters, and
  * the compiler closure. The child's `subtask` entry, its messages, and the
- * parent's tool_use / tool_result are the records. Child usage stays on
- * the tool result details; the kernel copies them onto the parent user
- * message, does not add them to the parent run's usage, and `runHealth`
- * sums them under `subtasks`.
+ * parent's tool_use / tool_result are the records. Both tools report their
+ * children as `details.childRuns` (one item per child); the kernel copies
+ * them onto the parent user message, does not add them to the parent run's
+ * usage, and `runHealth` sums them under `subtasks`.
  */
 
 import { randomUUID } from "node:crypto";
-import type { HarnessTool, LogStore, ViewProvider } from "@sage/core";
+import type { ChildRun, HarnessTool, LogStore, ViewProvider } from "@sage/core";
 import { AgentSession, errorText, isRecord } from "@sage/core";
 import {
   emptyUsage,
@@ -106,18 +106,16 @@ export function subtaskTools(opts: SubtaskToolsOptions): {
     maxConcurrent: Math.max(1, opts.maxConcurrent ?? DEFAULT_MAX_CONCURRENT),
     admit(sessionId, count) {
       if (depthOf(opts.store, sessionId) >= maxDepth) {
-        return failed(
-          "",
-          "error",
-          `Subtask depth limit reached (maxDepth=${maxDepth})`,
-        );
+        return {
+          content: `Subtask depth limit reached (maxDepth=${maxDepth})`,
+          isError: true,
+        };
       }
       if (!reserve(spawned, sessionId, count, maxSubtasks)) {
-        return failed(
-          "",
-          "error",
-          `Subtask limit reached (maxSubtasks=${maxSubtasks})`,
-        );
+        return {
+          content: `Subtask limit reached (maxSubtasks=${maxSubtasks})`,
+          isError: true,
+        };
       }
       return undefined;
     },
@@ -130,9 +128,13 @@ type SpawnDeps = {
   maxConcurrent: number;
   /**
    * Checks depth, then reserves `count` spawns for the session. Returns
-   * the refusal as a tool result, or undefined when admitted.
+   * the refusal as a tool result without details (no child ran), or
+   * undefined when admitted.
    */
-  admit(sessionId: string, count: number): TaskResult | undefined;
+  admit(
+    sessionId: string,
+    count: number,
+  ): { content: string; isError: true } | undefined;
 };
 
 function spawnTool(deps: SpawnDeps): HarnessTool {
@@ -163,7 +165,12 @@ function spawnTool(deps: SpawnDeps): HarnessTool {
       }
       const refused = deps.admit(ctx.sessionId, 1);
       if (refused) return refused;
-      return runTask(deps.opts, ctx.sessionId, task, ctx.signal);
+      const result = await runTask(deps.opts, ctx.sessionId, task, ctx.signal);
+      return {
+        content: result.content,
+        isError: result.isError,
+        details: { childRuns: [result.details] satisfies ChildRun[] },
+      };
     },
   };
 }
@@ -208,7 +215,9 @@ function spawnManyTool(deps: SpawnDeps): HarnessTool {
         content: results.map((result) => result.content).join("\n\n"),
         isError: results.some((result) => result.isError),
         details: {
-          results: results.map((result) => result.details),
+          childRuns: results.map(
+            (result) => result.details,
+          ) satisfies ChildRun[],
         },
       };
     },
