@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { HarnessTool } from "@sage/core";
 import { MemoryLogStore } from "@sage/core";
-import { FAUX_UNIT_USAGE, stopScript } from "@sage/core/testing";
+import { FAUX_UNIT_USAGE, soleChildRun, stopScript } from "@sage/core/testing";
 import type { Request } from "@sage/provider/contract";
 import { afterEach, expect, it } from "vitest";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
@@ -180,7 +180,7 @@ it("renders a project preset over the user preset and lets explicit fields win",
   );
   expect(result.isError).toBe(false);
   expect(queries).toEqual(["Project src/a.ts"]);
-  const childId = result.details?.sessionId;
+  const childId = soleChildRun(result).sessionId;
   expect(typeof childId).toBe("string");
   const subtask = store
     .path(String(childId))
@@ -208,7 +208,7 @@ it("renders a project preset over the user preset and lets explicit fields win",
     { sessionId: "parent", toolUseId: "override" },
   );
   expect(overridden.isError).toBe(false);
-  const overrideId = overridden.details?.sessionId;
+  const overrideId = soleChildRun(overridden).sessionId;
   const overrideEntry = store
     .path(String(overrideId))
     .find((entry) => entry.kind === "subtask");

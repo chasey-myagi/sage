@@ -51,7 +51,7 @@ export {
   type RunSummary,
   type TurnOutcome,
 } from "./session.js";
-export type { Access, HarnessTool } from "./tools.js";
+export type { Access, ChildRun, HarnessTool } from "./tools.js";
 export {
   assertHeadFrozen,
   assertPaired,

@@ -41,7 +41,7 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 | token 总量 | `tokens.total` = input + cacheRead + cacheCreation + output。`input` 是各条 assistant `usage.inputOther` 之和，另外三项分别是 `inputCacheRead`、`inputCacheCreation`、`output`。每个 resolved 的 token 由基准层拿这个总量去除，本包只给这一次 run 的总量。 |
 | 缓存命中率 | `cacheHitRatio` = Σ cacheRead / Σ (cacheRead + inputOther + cacheCreation)。分子分母都按 token 加总，不是把每一轮的比率再平均。没有 assistant usage，或分母为 0 时，值为 null。 |
 | expand 率 | 最后一条 manifest 的 `budget.expands / budget.omitted`。这两个字段已经是累计值，只读最后一条。`omitted` 为 0 时值为 null。 |
-| 子任务 | `subtasks.count` 与 `subtasks.tokens` 汇总父 Log 里 `spawn_subtask` / `spawn_subtasks` 的 tool result details。`cacheHitRatio` 和 `expandRate` 不含这些 token。 |
+| 子任务 | `subtasks.count` 与 `subtasks.tokens` 汇总父 Log 里任何工具在 tool result details 上报告的 `childRuns`（`ChildRun[]`，一项一个子会话，每项带 `usage`）。内核不按工具名识别子会话。`cacheHitRatio` 和 `expandRate` 不含这些 token。 |
 | 工具错误 | `toolErrors` 是路径上 `isError: true` 的 `tool_result` 条数。这个数不结束 run。 |
 | 整轮重试 | `turnRetries` 是路径上 `turn_retry` 的条数。 |
 

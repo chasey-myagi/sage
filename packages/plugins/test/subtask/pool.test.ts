@@ -154,7 +154,7 @@ it("runs read-only subtasks concurrently up to the default cap", async () => {
   expect(stats.starts).toHaveLength(3);
   expect(stats.maxInflight).toBe(3);
   expect(Math.max(...stats.starts)).toBeLessThan(Math.min(...stats.ends));
-  const results = result.details?.results;
+  const results = result.details?.childRuns;
   expect(Array.isArray(results)).toBe(true);
   if (!Array.isArray(results)) return;
   expect(results).toHaveLength(3);
@@ -322,7 +322,7 @@ it("keeps going when one child throws", async () => {
     },
     { sessionId: "parent", toolUseId: "pool" },
   );
-  const results = result.details?.results;
+  const results = result.details?.childRuns;
   if (!Array.isArray(results)) throw new Error("missing results");
   expect(results.map((item) => item.outcome)).toEqual([
     "done",

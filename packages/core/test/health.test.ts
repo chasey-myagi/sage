@@ -53,11 +53,12 @@ function manifest(seq: number, payload: Record<string, unknown>): StoredEntry {
   });
 }
 
-it("sums child usage from spawn tool results and leaves parent rates alone", async () => {
+it("sums child usage from any tool's childRuns details and leaves parent rates alone", async () => {
   const store = new MemoryLogStore();
   const { adapter } = createFaux([
-    toolScript("s1", "spawn_subtask", "{}"),
-    toolScript("s2", "spawn_subtasks", "{}"),
+    toolScript("s1", "delegate", "{}"),
+    toolScript("s2", "fan_out", "{}"),
+    toolScript("s3", "report", "{}"),
     stopScript("done"),
   ]);
   const session = new AgentSession({
@@ -67,42 +68,48 @@ it("sums child usage from spawn tool results and leaves parent rates alone", asy
     model: MODEL,
     system: SYSTEM,
     tools: [
-      spawnTool("spawn_subtask", {
-        sessionId: "c1",
-        outcome: "done",
-        usage: {
-          inputOther: 40,
-          inputCacheRead: 50,
-          inputCacheCreation: 6,
-          output: 7,
-        },
-        chunks: [],
+      spawnTool("delegate", {
+        childRuns: [
+          {
+            sessionId: "c1",
+            usage: {
+              inputOther: 40,
+              inputCacheRead: 50,
+              inputCacheCreation: 6,
+              output: 7,
+            },
+          },
+        ],
       }),
-      spawnTool("spawn_subtasks", {
-        results: [
+      spawnTool("fan_out", {
+        childRuns: [
           {
             sessionId: "c2",
-            outcome: "done",
             usage: {
               inputOther: 1,
               inputCacheRead: 2,
               inputCacheCreation: 0,
               output: 3,
             },
-            chunks: [],
           },
           {
             sessionId: "c3",
-            outcome: "done",
             usage: {
               inputOther: 4,
               inputCacheRead: 0,
               inputCacheCreation: 1,
               output: 1,
             },
-            chunks: [],
           },
         ],
+      }),
+      spawnTool("report", {
+        usage: {
+          inputOther: 1000,
+          inputCacheRead: 0,
+          inputCacheCreation: 0,
+          output: 1000,
+        },
       }),
     ],
   });
@@ -119,13 +126,13 @@ it("sums child usage from spawn tool results and leaves parent rates alone", asy
     },
   });
   expect(health.tokens).toEqual({
-    input: 9,
-    cacheRead: 3,
+    input: 12,
+    cacheRead: 4,
     cacheCreation: 0,
-    output: 6,
-    total: 18,
+    output: 8,
+    total: 24,
   });
-  expect(health.cacheHitRatio).toBe(3 / 12);
+  expect(health.cacheHitRatio).toBe(4 / 16);
   expect(health.expandRate).toBeNull();
   expect(JSON.stringify(health)).not.toContain("c1");
   for (const entry of store.path("parent")) {

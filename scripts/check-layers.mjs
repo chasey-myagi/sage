@@ -56,7 +56,9 @@ export function run(rootDir) {
   /** @type {{ file: string, line: number, rule: number, source: string }[]} */
   const violations = [];
 
-  for (const file of walk(root)) {
+  const files = walk(root);
+  violations.push(...findPluginToolNamesInCore(root, files));
+  for (const file of files) {
     const rel = toPosix(path.relative(root, file));
     const rule = ruleFor(rel);
     if (!rule) continue;
@@ -79,6 +81,57 @@ export function run(rootDir) {
       a.source.localeCompare(b.source),
   );
   return { violations };
+}
+
+const CORE_SRC = "packages/core/src/";
+const PLUGINS_SRC = "packages/plugins/src/";
+// A tool def's `name: "x"` or an exported `*_TOOL_NAME = "x"` constant.
+const PLUGIN_TOOL_NAME =
+  /\bname:\s*["']([A-Za-z0-9_-]+)["']|_TOOL_NAME\s*=\s*["']([A-Za-z0-9_-]+)["']/g;
+
+/**
+ * Rule 3 beyond imports: core sources must not recognise a plugin tool by
+ * spelling its name. Names are harvested from plugin tool defs; core tests
+ * may still use them.
+ * @param {string} root
+ * @param {readonly string[]} files
+ * @returns {{ file: string, line: number, rule: number, source: string }[]}
+ */
+function findPluginToolNamesInCore(root, files) {
+  const rels = files.map((file) => ({
+    file,
+    rel: toPosix(path.relative(root, file)),
+  }));
+  /** @type {Set<string>} */
+  const names = new Set();
+  for (const { file, rel } of rels) {
+    if (!rel.startsWith(PLUGINS_SRC)) continue;
+    for (const match of readFileSync(file, "utf8").matchAll(PLUGIN_TOOL_NAME)) {
+      const name = match[1] ?? match[2];
+      if (name) names.add(name);
+    }
+  }
+  if (names.size === 0) return [];
+  const literal = new RegExp(
+    `["'](${[...names].map((name) => name.replace(/[-]/g, "\\-")).join("|")})["']`,
+    "g",
+  );
+  /** @type {{ file: string, line: number, rule: number, source: string }[]} */
+  const found = [];
+  for (const { file, rel } of rels) {
+    if (!rel.startsWith(CORE_SRC)) continue;
+    const text = readFileSync(file, "utf8");
+    for (const match of text.matchAll(literal)) {
+      if (match.index === undefined) continue;
+      found.push({
+        file: rel,
+        line: lineAt(text, match.index),
+        rule: 3,
+        source: `"${match[1]}" (plugin tool name)`,
+      });
+    }
+  }
+  return found;
 }
 
 /**

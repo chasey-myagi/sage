@@ -4,7 +4,8 @@
  * Guarantees: `runHealth` is a pure function of the path. It reads only
  * assistant `details.usage`, manifest `budget`, `scorer`, `shadow`, and
  * `entryScored`, `view_epoch`, `model_change`, `turn_retry`, tool_result
- * error flags, and `details.toolResults`; anything malformed counts as 0.
+ * error flags, and `details.toolResults[].details.childRuns`; anything
+ * malformed counts as 0.
  * The same object is stored on the terminal entry.
  *
  * Intentionally not in the Log: this function. It does not copy claim
@@ -21,6 +22,7 @@ import {
 } from "@sage/provider/contract";
 import { viewEpochs } from "./log/path.js";
 import type { StoredEntry } from "./log/types.js";
+import type { ChildRun } from "./tools.js";
 
 /**
  * Token sums in run-health naming. `input` is uncached input only
@@ -81,10 +83,10 @@ export type RunHealth = {
     usage: HealthTokens;
   };
   /**
-   * Child sessions spawned by `spawn_subtask` (one each) and
-   * `spawn_subtasks` (one per item in `details.results`), and their summed
-   * usage, read from `details.toolResults` on user messages. Not part of
-   * `cacheHitRatio` or `expandRate`.
+   * Child sessions reported by any tool through `details.childRuns` (one per
+   * item, see {@link ChildRun}), and their summed usage, read from
+   * `details.toolResults` on user messages. Not part of `cacheHitRatio` or
+   * `expandRate`.
    */
   subtasks: {
     count: number;
@@ -215,59 +217,22 @@ function entryHealth(path: readonly StoredEntry[]): RunHealth["entryScored"] {
 function subtaskHealth(path: readonly StoredEntry[]): RunHealth["subtasks"] {
   let tokens: TokenCounts = emptyUsage();
   let count = 0;
-  const names = new Map<string, string>();
   for (const entry of path) {
-    if (entry.kind !== "message" || !isRecord(entry.payload)) continue;
-    recordToolNames(entry.payload.content, names);
+    if (entry.kind !== "message") continue;
     const listed = entry.details?.toolResults;
     if (!Array.isArray(listed)) continue;
     for (const item of listed) {
-      if (!isRecord(item)) continue;
-      const named =
-        typeof item.name === "string"
-          ? item.name
-          : typeof item.toolUseId === "string"
-            ? names.get(item.toolUseId)
-            : undefined;
-      if (named !== "spawn_subtask" && named !== "spawn_subtasks") continue;
-      const details = isRecord(item.details) ? item.details : undefined;
-      if (!details) continue;
-      const spawned = absorbSpawn(named, details);
-      count += spawned.count;
-      tokens = addUsage(tokens, spawned.tokens);
+      if (!isRecord(item) || !isRecord(item.details)) continue;
+      const runs = item.details.childRuns;
+      if (!Array.isArray(runs)) continue;
+      for (const run of runs) {
+        if (!isRecord(run)) continue;
+        tokens = addLogged(tokens, run.usage);
+        count += 1;
+      }
     }
   }
   return { count, tokens: toHealthTokens(tokens) };
-}
-
-/** Adds each well-formed tool_use block's id → name to `names`. */
-function recordToolNames(content: unknown, names: Map<string, string>): void {
-  if (!Array.isArray(content)) return;
-  for (const block of content) {
-    if (!isRecord(block) || block.type !== "tool_use") continue;
-    if (typeof block.id !== "string" || typeof block.name !== "string") {
-      continue;
-    }
-    names.set(block.id, block.name);
-  }
-}
-
-function absorbSpawn(
-  name: string,
-  details: Record<string, unknown>,
-): { count: number; tokens: TokenCounts } {
-  let tokens: TokenCounts = emptyUsage();
-  if (name === "spawn_subtasks" && Array.isArray(details.results)) {
-    let count = 0;
-    for (const result of details.results) {
-      if (!isRecord(result)) continue;
-      tokens = addLogged(tokens, result.usage);
-      count += 1;
-    }
-    return { count, tokens };
-  }
-  if (!isRecord(details.usage)) return { count: 0, tokens };
-  return { count: 1, tokens: addLogged(tokens, details.usage) };
 }
 
 /**

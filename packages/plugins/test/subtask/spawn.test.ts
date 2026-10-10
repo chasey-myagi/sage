@@ -10,6 +10,7 @@ import {
   FAUX_USAGE,
   fauxAdapter,
   renderLlmInput,
+  soleChildRun,
   stopScript,
   toolScript,
 } from "@sage/core/testing";
@@ -179,7 +180,7 @@ messages:
 it("stores the child on its own session and does not copy parent entries", async () => {
   const { store, parentId, result } = await spawnFrozen();
   const parentIds = new Set(store.all(parentId).map((entry) => entry.id));
-  const childId = result.details?.sessionId;
+  const childId = soleChildRun(result).sessionId;
   if (typeof childId !== "string") throw new Error("missing child session");
   const child = store.all(childId);
   expect(child[0]?.kind).toBe("subtask");
@@ -275,14 +276,14 @@ it("returns chunk pointers and expand reads the same original", async () => {
   const { store, parentId, summary, result } = await spawnFrozen();
   expect(summary.usage.output).toBe(4);
   expect(result.isError).toBe(false);
-  const sessionId = result.details?.sessionId;
+  const sessionId = soleChildRun(result).sessionId;
   expect(typeof sessionId).toBe("string");
-  expect(result.details?.outcome).toBe("done");
-  expect(result.details?.usage).toMatchObject({ output: 50 });
+  expect(soleChildRun(result).outcome).toBe("done");
+  expect(soleChildRun(result).usage).toMatchObject({ output: 50 });
   expect(result.content).toBe(
-    `Subtask ${sessionId} done. needle-found\nChunks: ${((result.details?.chunks as string[]) ?? []).join(", ")}`,
+    `Subtask ${sessionId} done. needle-found\nChunks: ${((soleChildRun(result).chunks as string[]) ?? []).join(", ")}`,
   );
-  const chunks = result.details?.chunks;
+  const chunks = soleChildRun(result).chunks;
   if (!Array.isArray(chunks)) throw new Error("missing chunks");
   expect(chunks.some((id) => id === `child:${sessionId}#seq:0`)).toBe(true);
   expect(
@@ -307,7 +308,7 @@ it("returns chunk pointers and expand reads the same original", async () => {
 
 it("reuses parent chunk ids and does not rebuild the epoch", async () => {
   const { store, parentId, result } = await spawnFrozen();
-  const sessionId = result.details?.sessionId;
+  const sessionId = soleChildRun(result).sessionId;
   if (typeof sessionId !== "string") throw new Error("missing child");
   const parentChunks = chunkIds(firstManifest(store, parentId));
   const childChunks = chunkIds(lastManifest(store, sessionId));
@@ -429,14 +430,14 @@ it("allows a grandchild and rejects the next depth, and caps fan-out", async () 
     { ...ctx, sessionId: "parent" },
   );
   expect(child.isError).toBe(false);
-  const childId = child.details?.sessionId;
+  const childId = soleChildRun(child).sessionId;
   if (typeof childId !== "string") throw new Error("missing child");
   const grand = await spawn.execute(
     { query: "grand", readOnly: false },
     { ...ctx, sessionId: childId },
   );
   expect(grand.isError).toBe(false);
-  const grandId = grand.details?.sessionId;
+  const grandId = soleChildRun(grand).sessionId;
   if (typeof grandId !== "string") throw new Error("missing grandchild");
   const denied = await spawn.execute(
     { query: "too deep", readOnly: false },
