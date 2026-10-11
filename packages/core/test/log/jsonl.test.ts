@@ -1,12 +1,6 @@
 import {
-  closeSync,
-  existsSync,
-  fstatSync,
   fsyncSync,
-  ftruncateSync,
-  mkdirSync,
   mkdtempSync,
-  openSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -15,11 +9,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  JsonlLogStore,
-  LogCorruptedError,
-  type LogFs,
-} from "../../src/index.ts";
+import { JsonlLogStore, LogCorruptedError } from "../../src/index.ts";
+import { nodeLogFs } from "../../src/testing/index.ts";
 
 const dirs: string[] = [];
 
@@ -73,20 +64,12 @@ describe("JsonlLogStore", () => {
     // Not annotated as LogFs: `fsyncSync` is an extra method the store must
     // never reach for.
     const fs = {
-      mkdirSync: (file: string, options?: { recursive?: boolean }) => {
-        mkdirSync(file, options);
-      },
-      existsSync,
-      readFileSync: (file: string, encoding: "utf8") =>
-        readFileSync(file, encoding),
-      openSync,
-      ftruncateSync,
-      fstatSync,
-      closeSync,
-      writeSync: (fd: number, data: Uint8Array) => {
-        writes += 1;
-        return writeSync(fd, data);
-      },
+      ...nodeLogFs({
+        writeSync: (fd, data) => {
+          writes += 1;
+          return writeSync(fd, data);
+        },
+      }),
       fsyncSync: (fd: number) => {
         syncs += 1;
         fsyncSync(fd);
@@ -107,25 +90,10 @@ describe("JsonlLogStore", () => {
 
   it("finishes a line the kernel wrote only part of before appending the next", () => {
     const dir = tempDir();
-    const fs = {
-      mkdirSync: (file: string, options?: { recursive?: boolean }) => {
-        mkdirSync(file, options);
-      },
-      existsSync,
-      readFileSync: (file: string, encoding: "utf8") =>
-        readFileSync(file, encoding),
-      openSync,
-      ftruncateSync,
-      fstatSync,
-      closeSync,
-      // Every call is a short write of at most 7 bytes. Accepts a string too
-      // so the same double runs against the old string-taking store.
-      writeSync: (fd: number, data: Uint8Array | string) =>
-        writeSync(
-          fd,
-          (typeof data === "string" ? Buffer.from(data) : data).subarray(0, 7),
-        ),
-    };
+    const fs = nodeLogFs({
+      // Every call is a short write of at most 7 bytes.
+      writeSync: (fd, data) => writeSync(fd, data.subarray(0, 7)),
+    });
     const store = new JsonlLogStore({ dir, fs });
     for (let i = 0; i < 3; i++) {
       store.append("short", {
@@ -209,21 +177,12 @@ describe("JsonlLogStore", () => {
     const dir = tempDir();
     const sessionId = "stalled";
     let writes = 0;
-    const fs: LogFs = {
-      mkdirSync: (file, options) => {
-        mkdirSync(file, options);
-      },
-      existsSync,
-      readFileSync: (file, encoding) => readFileSync(file, encoding),
-      openSync,
-      ftruncateSync,
-      fstatSync,
-      closeSync,
+    const fs = nodeLogFs({
       writeSync: (fd, data) => {
         writes += 1;
         return writes >= 2 ? 0 : writeSync(fd, data);
       },
-    };
+    });
     const store = new JsonlLogStore({ dir, fs });
     const first = store.append(sessionId, {
       kind: "message",
@@ -244,22 +203,13 @@ describe("JsonlLogStore", () => {
     const dir = tempDir();
     const sessionId = "disk";
     let writes = 0;
-    const fs: LogFs = {
-      mkdirSync: (file, options) => {
-        mkdirSync(file, options);
-      },
-      existsSync,
-      readFileSync: (file, encoding) => readFileSync(file, encoding),
-      openSync,
-      ftruncateSync,
-      fstatSync,
-      closeSync,
+    const fs = nodeLogFs({
       writeSync: (fd, data) => {
         writes += 1;
         if (writes >= 2) throw new Error("disk full");
         return writeSync(fd, data);
       },
-    };
+    });
     const store = new JsonlLogStore({ dir, fs });
     const first = store.append(sessionId, {
       kind: "message",
@@ -295,16 +245,7 @@ describe("JsonlLogStore", () => {
       const sessionId = "partial";
       let failing = false;
       let callsWhileFailing = 0;
-      const fs: LogFs = {
-        mkdirSync: (file, options) => {
-          mkdirSync(file, options);
-        },
-        existsSync,
-        readFileSync: (file, encoding) => readFileSync(file, encoding),
-        openSync,
-        ftruncateSync,
-        fstatSync,
-        closeSync,
+      const fs = nodeLogFs({
         writeSync: (fd, data) => {
           if (!failing) return writeSync(fd, data);
           callsWhileFailing += 1;
@@ -312,7 +253,7 @@ describe("JsonlLogStore", () => {
             ? writeSync(fd, data.subarray(0, 5))
             : fail();
         },
-      };
+      });
       const store = new JsonlLogStore({ dir, fs });
       store.append(sessionId, {
         kind: "message",
@@ -348,25 +289,17 @@ describe("JsonlLogStore", () => {
     const sessionId = "stuck";
     let failing = false;
     let callsWhileFailing = 0;
-    const fs: LogFs = {
-      mkdirSync: (file, options) => {
-        mkdirSync(file, options);
-      },
-      existsSync,
-      readFileSync: (file, encoding) => readFileSync(file, encoding),
-      openSync,
+    const fs = nodeLogFs({
       ftruncateSync: () => {
         throw new Error("truncate failed");
       },
-      fstatSync,
-      closeSync,
       writeSync: (fd, data) => {
         if (!failing) return writeSync(fd, data);
         callsWhileFailing += 1;
         if (callsWhileFailing === 1) return writeSync(fd, data.subarray(0, 5));
         throw new Error("disk full");
       },
-    };
+    });
     const store = new JsonlLogStore({ dir, fs });
     const first = store.append(sessionId, {
       kind: "message",
@@ -406,23 +339,14 @@ describe("JsonlLogStore", () => {
     const sessionId = "shared";
     let failing = false;
     let callsWhileFailing = 0;
-    const fs: LogFs = {
-      mkdirSync: (file, options) => {
-        mkdirSync(file, options);
-      },
-      existsSync,
-      readFileSync: (file, encoding) => readFileSync(file, encoding),
-      openSync,
-      ftruncateSync,
-      fstatSync,
-      closeSync,
+    const fs = nodeLogFs({
       writeSync: (fd, data) => {
         if (!failing) return writeSync(fd, data);
         callsWhileFailing += 1;
         if (callsWhileFailing === 1) return writeSync(fd, data.subarray(0, 5));
         throw new Error("disk full");
       },
-    };
+    });
     const store = new JsonlLogStore({ dir, fs });
     store.append(sessionId, {
       kind: "message",

@@ -60,7 +60,8 @@ export type LogFs = {
   closeSync(fd: number): void;
 };
 
-const nodeFs: LogFs = {
+/** The production `LogFs`: each method goes straight to `node:fs`. Not re-exported from the package; `@sage/core/testing` builds doubles on it. */
+export const nodeFs: LogFs = {
   mkdirSync: (dir, options) => {
     mkdirSync(dir, options);
   },
