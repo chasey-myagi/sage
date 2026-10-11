@@ -30,13 +30,11 @@ import {
   type LogStore,
   MemoryLogStore,
   passthroughView,
+  type RequestHeaderPayload,
+  requestHeaderOf,
   type StoredEntry,
 } from "@sage/core";
-import {
-  isPricing,
-  type PreparedCall,
-  type Pricing,
-} from "@sage/provider/contract";
+import type { PreparedCall } from "@sage/provider/contract";
 import {
   contextCompiler,
   DEFAULT_COMPILER_BUDGET,
@@ -112,16 +110,14 @@ type Slice = {
   turn: number;
   prefixEnd: number;
   assistant: StoredEntry;
-  header: StoredEntry;
+  header: RequestHeaderPayload;
 };
 
 /**
  * Replays every recorded turn of `sessionId` under `policy` and returns one
  * diff per turn that has an assistant reply. Reads `store` only. When the
  * scorer was swapped, `compareOffline` notes it for this returned array
- * (the array itself is remembered, not a copy). Throws when a recorded
- * `request_header` is not an object, lacks provider or model, or lacks a
- * positive `contextWindow` or valid `pricing`.
+ * (the array itself is remembered, not a copy).
  */
 export async function replayOffline(
   store: LogStore,
@@ -152,7 +148,7 @@ export async function replayOffline(
     const prefix = policy.passthrough
       ? recorded.slice(0, slice.prefixEnd)
       : shadow.path(shadowId);
-    const header = headerOf(slice.header);
+    const { header } = slice;
     const ctx = viewContext(slice.turn, header, prefix, deps);
     const view = await provider.view(ctx);
     const previous = views.at(-1);
@@ -317,7 +313,8 @@ function sliceTurns(path: readonly StoredEntry[]): Slice[] {
   const slices: Slice[] = [];
   for (let index = 0; index < path.length; index += 1) {
     const entry = path[index];
-    if (entry?.kind !== "request_header") continue;
+    const header = entry && requestHeaderOf(entry);
+    if (!header) continue;
     let prefixEnd = index;
     while (prefixEnd > 0) {
       const prev = path[prefixEnd - 1];
@@ -339,7 +336,7 @@ function sliceTurns(path: readonly StoredEntry[]): Slice[] {
       }
     }
     if (!assistant) continue;
-    slices.push({ turn, prefixEnd, assistant, header: entry });
+    slices.push({ turn, prefixEnd, assistant, header });
   }
   return slices;
 }
@@ -364,7 +361,7 @@ function copyMessages(
 
 function viewContext(
   turn: number,
-  header: RecordedHeader,
+  header: RequestHeaderPayload,
   prefix: readonly StoredEntry[],
   deps: { tools: HarnessTool[]; system: string },
 ): ViewContext {
@@ -387,46 +384,6 @@ function viewContext(
     },
     tools: deps.tools,
     depth: 0,
-  };
-}
-
-type RecordedHeader = {
-  provider: string;
-  model: string;
-  sampling: Record<string, unknown>;
-  adapterDefaults: Record<string, unknown>;
-  contextWindow: number;
-  pricing: Pricing | null;
-};
-
-/**
- * The recorded call's model, sampling, adapter defaults, context window,
- * and pricing. Throws when the payload is not an object, lacks provider or
- * model, or carries no positive context window or valid pricing.
- */
-function headerOf(entry: StoredEntry): RecordedHeader {
-  if (!isRecord(entry.payload)) {
-    throw new Error("request_header payload is not an object");
-  }
-  const { provider, model, sampling, adapterDefaults } = entry.payload;
-  if (typeof provider !== "string" || typeof model !== "string") {
-    throw new Error("request_header is missing provider or model");
-  }
-  const contextWindow = finite(entry.payload.contextWindow);
-  if (contextWindow === undefined || contextWindow <= 0) {
-    throw new Error("request_header is missing a positive contextWindow");
-  }
-  const pricing = entry.payload.pricing;
-  if (pricing !== null && !isPricing(pricing)) {
-    throw new Error("request_header pricing is neither null nor a Pricing");
-  }
-  return {
-    provider,
-    model,
-    sampling: isRecord(sampling) ? sampling : {},
-    adapterDefaults: isRecord(adapterDefaults) ? adapterDefaults : {},
-    contextWindow,
-    pricing,
   };
 }
 

@@ -28,9 +28,11 @@ export { MemoryLogStore } from "./log/memory.js";
 export {
   epochSpan,
   isMessage,
+  lastRequestHeader,
   latestViewEpoch,
   manifestsInEpoch,
   prefixMessageFor,
+  requestHeaderOf,
 } from "./log/path.js";
 export {
   type EntryKindDef,
