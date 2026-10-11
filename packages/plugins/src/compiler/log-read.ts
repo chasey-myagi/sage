@@ -14,6 +14,7 @@
 import {
   isMessage,
   isRecord,
+  lastRequestHeader,
   manifestsInEpoch,
   type ViewContext,
 } from "@sage/core";
@@ -241,22 +242,14 @@ export function latestQuery(path: SessionPath): string {
   return "";
 }
 
-/**
- * Returns provider, model, and sampling from the latest `request_header`
- * that names both a provider and a model.
- */
+/** Returns provider, model, and sampling from the latest `request_header`. */
 export function latestHeader(
   path: SessionPath,
 ): { provider: string; model: string; sampling: Sampling } | undefined {
-  for (let index = path.length - 1; index >= 0; index -= 1) {
-    const entry = path[index];
-    if (entry?.kind !== "request_header" || !isRecord(entry.payload)) continue;
-    const provider = entry.payload.provider;
-    const model = entry.payload.model;
-    if (typeof provider !== "string" || typeof model !== "string") continue;
-    return { provider, model, sampling: samplingOf(entry.payload.sampling) };
-  }
-  return undefined;
+  const header = lastRequestHeader(path);
+  if (!header) return undefined;
+  const { provider, model } = header;
+  return { provider, model, sampling: samplingOf(header.sampling) };
 }
 
 function samplingOf(value: unknown): Sampling {

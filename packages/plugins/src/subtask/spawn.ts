@@ -19,7 +19,12 @@
 
 import { randomUUID } from "node:crypto";
 import type { ChildRun, HarnessTool, LogStore, ViewProvider } from "@sage/core";
-import { AgentSession, errorText, isRecord } from "@sage/core";
+import {
+  AgentSession,
+  errorText,
+  isRecord,
+  lastRequestHeader,
+} from "@sage/core";
 import {
   emptyUsage,
   type ModelRef,
@@ -379,16 +384,10 @@ function modelFromLog(
   store: LogStore,
   sessionId: string,
 ): ModelRef | undefined {
-  const path = store.path(sessionId);
-  for (let index = path.length - 1; index >= 0; index -= 1) {
-    const entry = path[index];
-    if (entry?.kind !== "request_header" || !isRecord(entry.payload)) continue;
-    const { provider, model } = entry.payload;
-    if (typeof provider === "string" && typeof model === "string") {
-      return { provider, model };
-    }
-  }
-  return undefined;
+  const header = lastRequestHeader(store.path(sessionId));
+  return header
+    ? { provider: header.provider, model: header.model }
+    : undefined;
 }
 
 function depthOf(

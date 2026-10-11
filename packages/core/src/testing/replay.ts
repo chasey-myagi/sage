@@ -28,6 +28,7 @@ import {
 import { JsonlLogStore } from "../log/jsonl.js";
 import type { RequestHeaderPayload } from "../log/kinds.js";
 import { MemoryLogStore } from "../log/memory.js";
+import { requestHeaderOf } from "../log/path.js";
 import type { StoredEntry } from "../log/types.js";
 import { AgentSession } from "../session.js";
 import type { HarnessTool } from "../tools.js";
@@ -118,9 +119,8 @@ function isChunkScript(value: unknown): value is StreamChunk[][] {
 
 function firstHeader(log: readonly StoredEntry[]): RequestHeaderPayload {
   for (const entry of log) {
-    if (entry.kind !== "request_header" || !isRecord(entry.payload)) continue;
-    // JsonlLogStore validated this payload as a request_header on load.
-    return entry.payload as RequestHeaderPayload;
+    const header = requestHeaderOf(entry);
+    if (header) return header;
   }
   throw new Error("recording has no request_header");
 }

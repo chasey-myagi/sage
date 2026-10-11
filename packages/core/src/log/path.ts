@@ -1,6 +1,6 @@
 /**
  * Reads facts back off a Log path: view_epoch numbers, the span, manifests,
- * and prefix message of an epoch, and the last request_header.
+ * and prefix message of an epoch, and request_header payloads.
  *
  * Guarantees: pure reads in path order. Entries are returned as stored; a
  * message read out of `details` is cloned. A `view_epoch` payload without
@@ -116,11 +116,24 @@ export function lastHeaderIndex(path: readonly StoredEntry[]): number {
   return -1;
 }
 
+/**
+ * The payload of `entry` when it is a request_header, else undefined.
+ * Narrows by `kind` only: kernel stores ran the request_header validator on
+ * append and on load, so the shape is not checked again. A hand-built entry
+ * that skipped a store gets no such guarantee.
+ */
+export function requestHeaderOf(
+  entry: StoredEntry,
+): RequestHeaderPayload | undefined {
+  if (entry.kind !== "request_header") return undefined;
+  // The store validator proved this shape before the entry reached a path.
+  return entry.payload as RequestHeaderPayload;
+}
+
 /** Payload of the last request_header on `path`, or undefined. */
 export function lastRequestHeader(
   path: readonly StoredEntry[],
 ): RequestHeaderPayload | undefined {
-  const payload = path[lastHeaderIndex(path)]?.payload;
-  // The request_header validator already ran on append and on load.
-  return isRecord(payload) ? (payload as RequestHeaderPayload) : undefined;
+  const entry = path[lastHeaderIndex(path)];
+  return entry ? requestHeaderOf(entry) : undefined;
 }

@@ -7,6 +7,8 @@ import {
   isRecord,
   JsonlLogStore,
   MemoryLogStore,
+  type RequestHeaderPayload,
+  requestHeaderOf,
   type StoredEntry,
 } from "@sage/core";
 import type { PreparedCall } from "@sage/provider/contract";
@@ -135,14 +137,15 @@ type Slice = {
   turn: number;
   prefixEnd: number;
   assistant: StoredEntry;
-  header: StoredEntry;
+  header: RequestHeaderPayload;
 };
 
 function sliceTurns(path: readonly StoredEntry[]): Slice[] {
   const slices: Slice[] = [];
   for (let index = 0; index < path.length; index += 1) {
     const entry = path[index];
-    if (entry?.kind !== "request_header") continue;
+    const header = entry && requestHeaderOf(entry);
+    if (!header) continue;
     let prefixEnd = index;
     while (prefixEnd > 0) {
       const prev = path[prefixEnd - 1];
@@ -164,7 +167,7 @@ function sliceTurns(path: readonly StoredEntry[]): Slice[] {
       }
     }
     if (!assistant) continue;
-    slices.push({ turn, prefixEnd, assistant, header: entry });
+    slices.push({ turn, prefixEnd, assistant, header });
   }
   return slices;
 }
@@ -192,7 +195,7 @@ function viewContext(
   prefix: readonly StoredEntry[],
   tools: HarnessTool[],
 ) {
-  const header = headerOf(slice.header);
+  const { header } = slice;
   const model = { provider: header.provider, model: header.model };
   const prepared: PreparedCall = {
     model,
@@ -213,27 +216,6 @@ function viewContext(
     head,
     tools,
     depth: 0 as const,
-  };
-}
-
-function headerOf(entry: StoredEntry): {
-  provider: string;
-  model: string;
-  adapterDefaults: Record<string, unknown>;
-} {
-  if (!isRecord(entry.payload)) {
-    throw new Error("request_header payload is not an object");
-  }
-  const provider = entry.payload.provider;
-  const model = entry.payload.model;
-  if (typeof provider !== "string" || typeof model !== "string") {
-    throw new Error("request_header is missing provider or model");
-  }
-  const defaults = entry.payload.adapterDefaults;
-  return {
-    provider,
-    model,
-    adapterDefaults: isRecord(defaults) ? defaults : {},
   };
 }
 
