@@ -1,6 +1,7 @@
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   ftruncateSync,
   mkdirSync,
@@ -80,6 +81,7 @@ describe("JsonlLogStore", () => {
         readFileSync(file, encoding),
       openSync,
       ftruncateSync,
+      fstatSync,
       closeSync,
       writeSync: (fd: number, data: Uint8Array) => {
         writes += 1;
@@ -114,6 +116,7 @@ describe("JsonlLogStore", () => {
         readFileSync(file, encoding),
       openSync,
       ftruncateSync,
+      fstatSync,
       closeSync,
       // Every call is a short write of at most 7 bytes. Accepts a string too
       // so the same double runs against the old string-taking store.
@@ -214,6 +217,7 @@ describe("JsonlLogStore", () => {
       readFileSync: (file, encoding) => readFileSync(file, encoding),
       openSync,
       ftruncateSync,
+      fstatSync,
       closeSync,
       writeSync: (fd, data) => {
         writes += 1;
@@ -248,6 +252,7 @@ describe("JsonlLogStore", () => {
       readFileSync: (file, encoding) => readFileSync(file, encoding),
       openSync,
       ftruncateSync,
+      fstatSync,
       closeSync,
       writeSync: (fd, data) => {
         writes += 1;
@@ -273,6 +278,174 @@ describe("JsonlLogStore", () => {
     const text = readFileSync(join(dir, `${sessionId}.jsonl`), "utf8");
     expect(text).not.toContain("lost");
     expect(text).toContain("kept");
+  });
+
+  it.each([
+    [
+      "throws",
+      (): number => {
+        throw new Error("disk full");
+      },
+    ],
+    ["makes no progress", (): number => 0],
+  ])(
+    "removes the partial line when a write %s mid-line so the next append starts a clean line",
+    (_mode, fail) => {
+      const dir = tempDir();
+      const sessionId = "partial";
+      let failing = false;
+      let callsWhileFailing = 0;
+      const fs: LogFs = {
+        mkdirSync: (file, options) => {
+          mkdirSync(file, options);
+        },
+        existsSync,
+        readFileSync: (file, encoding) => readFileSync(file, encoding),
+        openSync,
+        ftruncateSync,
+        fstatSync,
+        closeSync,
+        writeSync: (fd, data) => {
+          if (!failing) return writeSync(fd, data);
+          callsWhileFailing += 1;
+          return callsWhileFailing === 1
+            ? writeSync(fd, data.subarray(0, 5))
+            : fail();
+        },
+      };
+      const store = new JsonlLogStore({ dir, fs });
+      store.append(sessionId, {
+        kind: "message",
+        payload: { role: "user", content: "kept" },
+      });
+      failing = true;
+      expect(() =>
+        store.append(sessionId, {
+          kind: "message",
+          payload: { role: "user", content: "lost" },
+        }),
+      ).toThrow();
+      failing = false;
+      store.append(sessionId, {
+        kind: "message",
+        payload: { role: "user", content: "after" },
+      });
+
+      const reopened = new JsonlLogStore({ dir });
+      expect(reopened.torn(sessionId)).toBe(false);
+      expect(
+        reopened.all(sessionId).map((entry) => [entry.seq, entry.payload]),
+      ).toEqual([
+        [0, { role: "user", content: "kept" }],
+        [1, { role: "user", content: "after" }],
+      ]);
+      expect(store.all(sessionId)).toEqual(reopened.all(sessionId));
+    },
+  );
+
+  it("refuses later appends when the partial line of a failed write cannot be removed", () => {
+    const dir = tempDir();
+    const sessionId = "stuck";
+    let failing = false;
+    let callsWhileFailing = 0;
+    const fs: LogFs = {
+      mkdirSync: (file, options) => {
+        mkdirSync(file, options);
+      },
+      existsSync,
+      readFileSync: (file, encoding) => readFileSync(file, encoding),
+      openSync,
+      ftruncateSync: () => {
+        throw new Error("truncate failed");
+      },
+      fstatSync,
+      closeSync,
+      writeSync: (fd, data) => {
+        if (!failing) return writeSync(fd, data);
+        callsWhileFailing += 1;
+        if (callsWhileFailing === 1) return writeSync(fd, data.subarray(0, 5));
+        throw new Error("disk full");
+      },
+    };
+    const store = new JsonlLogStore({ dir, fs });
+    const first = store.append(sessionId, {
+      kind: "message",
+      payload: { role: "user", content: "kept" },
+    });
+    failing = true;
+    expect(() =>
+      store.append(sessionId, {
+        kind: "message",
+        payload: { role: "user", content: "lost" },
+      }),
+    ).toThrow(/disk full/);
+    failing = false;
+    expect(() =>
+      store.append(sessionId, {
+        kind: "message",
+        payload: { role: "user", content: "after" },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        message: expect.stringMatching(/partial line/),
+        cause: expect.objectContaining({ message: "truncate failed" }),
+      }),
+    );
+    expect(store.all(sessionId)).toHaveLength(1);
+    expect(store.leaf(sessionId)).toBe(first.id);
+
+    const reopened = new JsonlLogStore({ dir });
+    expect(reopened.torn(sessionId)).toBe(true);
+    expect(reopened.all(sessionId).map((entry) => entry.payload)).toEqual([
+      { role: "user", content: "kept" },
+    ]);
+  });
+
+  it("truncates only its own partial line when another writer appended after its last line", () => {
+    const dir = tempDir();
+    const sessionId = "shared";
+    let failing = false;
+    let callsWhileFailing = 0;
+    const fs: LogFs = {
+      mkdirSync: (file, options) => {
+        mkdirSync(file, options);
+      },
+      existsSync,
+      readFileSync: (file, encoding) => readFileSync(file, encoding),
+      openSync,
+      ftruncateSync,
+      fstatSync,
+      closeSync,
+      writeSync: (fd, data) => {
+        if (!failing) return writeSync(fd, data);
+        callsWhileFailing += 1;
+        if (callsWhileFailing === 1) return writeSync(fd, data.subarray(0, 5));
+        throw new Error("disk full");
+      },
+    };
+    const store = new JsonlLogStore({ dir, fs });
+    store.append(sessionId, {
+      kind: "message",
+      payload: { role: "user", content: "kept" },
+    });
+    new JsonlLogStore({ dir }).append(sessionId, {
+      kind: "message",
+      payload: { role: "user", content: "other writer" },
+    });
+    failing = true;
+    expect(() =>
+      store.append(sessionId, {
+        kind: "message",
+        payload: { role: "user", content: "lost" },
+      }),
+    ).toThrow(/disk full/);
+
+    const reopened = new JsonlLogStore({ dir });
+    expect(reopened.torn(sessionId)).toBe(false);
+    expect(reopened.all(sessionId).map((entry) => entry.payload)).toEqual([
+      { role: "user", content: "kept" },
+      { role: "user", content: "other writer" },
+    ]);
   });
 
   it("round-trips opaque details without interpreting them", () => {
