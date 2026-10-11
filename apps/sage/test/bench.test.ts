@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isRecord, JsonlLogStore } from "@sage/core";
 import { afterEach, expect, it } from "vitest";
+import { sageBin } from "../src/bench/deps.ts";
 import { defaultPrepare } from "../src/bench/git.ts";
 import { runCli } from "../src/main.ts";
 
@@ -21,6 +22,12 @@ const repoRoot = path.resolve(
 );
 
 let dir = "";
+
+it("spawns task children from the package bin found above the module", () => {
+  expect(sageBin()).toBe(
+    path.join(repoRoot, "apps", "sage", "bin", "sage.mjs"),
+  );
+});
 
 afterEach(() => {
   if (dir) rmSync(dir, { recursive: true, force: true });

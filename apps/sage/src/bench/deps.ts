@@ -64,9 +64,24 @@ export function defaultDeps(): BenchDeps {
   };
 }
 
-/** Absolute path of the sage bin; the first element of every child argv. */
+/**
+ * Absolute path of the sage bin; the first element of every child argv.
+ * Found from the nearest `package.json` above this module, so it holds both
+ * for the source tree and for the bundled `dist/cli.js`. Throws when no
+ * `package.json` is found, which only a broken install produces.
+ */
 export function sageBin(): string {
-  return fileURLToPath(new URL("../../bin/sage.mjs", import.meta.url));
+  return path.join(findPackageRoot(), "bin", "sage.mjs");
+}
+
+function findPackageRoot(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  while (!existsSync(path.join(dir, "package.json"))) {
+    const parent = path.dirname(dir);
+    if (parent === dir) throw new Error("sage package root not found");
+    dir = parent;
+  }
+  return dir;
 }
 
 function findSession(cwd: string): string | undefined {

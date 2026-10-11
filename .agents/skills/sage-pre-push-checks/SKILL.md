@@ -25,6 +25,7 @@ git diff origin/main...HEAD --stat
 - 包 README：`pnpm check:readme`。
 - 分层：`pnpm check:layers`。
 - CLI 行为：走 `runCli` 的测试（`apps/sage/test/`），不只测内部函数。
+- 包形态（`package.json` 的 `exports` / `files` / `bin`、打包配置）：`pnpm build && pnpm check:smoke`。从 bin 起进程的用例读打包产物，改了源码要先 `pnpm build`。
 
 ## 3. 推送前跑全量
 

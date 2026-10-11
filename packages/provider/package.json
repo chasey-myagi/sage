@@ -1,9 +1,16 @@
 {
   "name": "@sage/provider",
   "version": "0.0.0",
+  "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./contract": "./src/contract/index.ts"
+    ".": {
+      "source": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./contract": {
+      "source": "./src/contract/index.ts",
+      "default": "./dist/contract/index.js"
+    }
   }
 }

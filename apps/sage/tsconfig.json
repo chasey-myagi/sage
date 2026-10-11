@@ -4,5 +4,11 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [
+    { "path": "../../packages/provider" },
+    { "path": "../../packages/core" },
+    { "path": "../../packages/plugins" },
+    { "path": "../../packages/tools" }
+  ]
 }

@@ -16,4 +16,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm i --frozen-lockfile
+      # Builds dist/, runs the tests, then packs the CLI, installs the tarball
+      # into an empty directory, and runs `sage --help` (check:smoke).
       - run: pnpm check

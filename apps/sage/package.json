@@ -1,18 +1,33 @@
 {
-  "name": "sage",
+  "name": "@chasey-myagi/sage",
   "version": "0.0.0",
-  "private": true,
+  "description": "A coding agent runtime whose context is compiled, auditable, and portable across providers.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chasey-myagi/sage.git",
+    "directory": "apps/sage"
+  },
   "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
   "bin": {
     "sage": "./bin/sage.mjs"
   },
-  "exports": {
-    ".": "./src/index.ts"
+  "files": [
+    "bin",
+    "dist/cli.js"
+  ],
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22.18 --conditions=source --outfile=dist/cli.js --log-level=warning",
+    "prepack": "pnpm run build"
   },
-  "dependencies": {
+  "devDependencies": {
     "@sage/core": "workspace:*",
     "@sage/plugins": "workspace:*",
     "@sage/provider": "workspace:*",
-    "@sage/tools": "workspace:*"
+    "@sage/tools": "workspace:*",
+    "esbuild": "^0.28.2"
   }
 }

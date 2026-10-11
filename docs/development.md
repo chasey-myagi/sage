@@ -15,23 +15,30 @@
 
 运行时依赖为零：HTTP 用全局 `fetch`，文件、子进程、路径用 `node:*`。新增运行时依赖要过 [`AGENTS.md`](../AGENTS.md) 「优先用 Node 内置和维护良好的依赖」那一条。
 
-## 源码不编译，直接跑
+## 源码与产物
 
-各包的 `package.json` 把 `exports` 指向 `src/*.ts`，不产出 `dist` 给运行时用。CLI 入口 `apps/sage/bin/sage.mjs` 带 `--experimental-transform-types` 重启自己，让 Node 在加载时擦掉类型；再注册 `apps/sage/src/resolve-ts.mjs`，把相对导入里的 `./x.js` 回落到 `./x.ts`。
+开发和测试直接吃 TypeScript 源码，运行时和发布吃 `dist/` 里的构建产物。两条路靠 `exports` 里的条件分开：
+
+```json
+".": { "source": "./src/index.ts", "default": "./dist/index.js" }
+```
+
+- **测试**：`vitest.config.ts` 把 `ssr.resolve.conditions` 设成 `["source", "node"]`，workspace 包解析到 `src/`，不需要先构建。
+- **类型检查**：`tsc -b` 按 project references 逐包输出 `dist/*.js` 与 `.d.ts`，下游包读上游的 `.d.ts`。tsc 不认 `source` 条件，走 `default`。
+- **CLI**：`apps/sage` 的 `build` 用 esbuild 从 `src/main.ts` 带 `--conditions=source` 打成一个文件 `apps/sage/dist/cli.js`，内部包全部打进去；`bin/sage.mjs` 只 import 这个文件。改了代码要跑 CLI，先 `pnpm build`。
+- **发布**：只发 `apps/sage`，包名 `@chasey-myagi/sage`，命令名 `sage`，tarball 里只有 `bin/` 与 `dist/cli.js`，没有运行时依赖。四个内部包标 `private`，只在仓内用。理由见 [`notes/implemented/2026-10-11-publish-dist.md`](./notes/implemented/2026-10-11-publish-dist.md)。
 
 由此带来三条硬约束：
 
 - 相对导入写 `.js` 后缀（`"module": "NodeNext"` 的要求，TS 检查时自己映射回 `.ts`）。
-- 只作类型用的导入写 `import type`（`isolatedModules` 要求，否则擦类型后留下一个找不到的运行时导入）。
+- 只作类型用的导入写 `import type`（`isolatedModules` 要求：esbuild 逐文件擦类型，否则留下一个找不到的运行时导入）。
 - 不用 `enum` 和 `namespace`：它们会生成运行时代码，也让 JSON 化的 Log 值多一层映射。用字符串字面量联合和 `as const` 对象代替。
-
-`tsc -b` 仍会往各包 `dist/` 写声明与 JS，只有 `scripts/gen-log-manifest.mjs` 读它。
 
 ## 包的布局
 
 ```
 packages/<name>/
-  package.json     name、exports（公开出口）、workspace 依赖
+  package.json     name、private、exports（`source` 指 src，`default` 指 dist）、workspace 依赖
   tsconfig.json    extends base；references 列出它依赖的兄弟包
   README.md        必须有 ## Model Experience 三小节（check:readme 检查）
   src/index.ts     桶文件：只 re-export，不写逻辑；没在这里导出的东西，别的包用不到
@@ -75,12 +82,13 @@ packages/<name>/
 `pnpm check` 依次运行，全部通过 PR 才能合：
 
 1. `check:lint`：biome 格式与 lint，warning 也算失败。
-2. `check:types`：`tsc -b`。
+2. `build`：`tsc -b`，再打 CLI 包（见「源码与产物」）。`check:types` 单独只跑 `tsc -b`。
 3. `check:layers`：分层规则表。
 4. `check:export-docs`：`packages/*/src` 与 `apps/*/src` 里每个导出声明上方有 `/** */`；re-export 不查。
 5. `check:readme`：每个包 README 的 Model Experience 三小节；豁免写在 `scripts/readme-exemptions.json`，必须给理由。
 6. `check:log-manifest`：`docs/log-manifest.md` 与注册表一致。
 7. `test`：vitest。
+8. `check:smoke`：`pnpm pack` 出 CLI 包，先断言 tarball 里的 `package.json` 没有 `dependencies` 字段，再用一个空的 npm cache 执行 `npm install --offline`，把包装进空目录（有运行时依赖就装不上），最后跑 `sage --help`，检查 stderr 是 usage。
 
 整套约 20 秒，推送前直接跑全量。迭代时先跑相关的单个测试文件：`pnpm vitest run packages/core/test/session/loop.test.ts`。
 
