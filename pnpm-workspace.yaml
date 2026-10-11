@@ -1,3 +1,8 @@
 packages:
   - "packages/*"
   - "apps/*"
+
+# esbuild ships its binary as an optional platform package; its postinstall
+# only re-verifies that binary, so it stays disabled.
+allowBuilds:
+  esbuild: false

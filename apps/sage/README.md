@@ -1,6 +1,6 @@
 # sage
 
-one-shot CLI。`node apps/sage/bin/sage.mjs -p "任务"`（或 `sage "任务"`）在当前目录跑完一轮，把 `RunSummary`（含 `health`）打成一行 JSON 写到 stdout。结果为 `done` 时退出 0，否则退出 1。
+one-shot CLI，发布为 npm 包 `@chasey-myagi/sage`，命令名 `sage`。`sage -p "任务"`（或 `sage "任务"`；在仓库里先 `pnpm build`，再 `node apps/sage/bin/sage.mjs -p "任务"`）在当前目录跑完一轮，把 `RunSummary`（含 `health`）打成一行 JSON 写到 stdout。结果为 `done` 时退出 0，否则退出 1。
 
 ```
 usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--passthrough] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild]

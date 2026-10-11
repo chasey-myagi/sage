@@ -89,7 +89,7 @@ pnpm bench:fetch-ts --set ts-mini-2
 
 ## 怎么跑
 
-从仓库根目录：
+从仓库根目录，先 `pnpm build`（bin 跑的是打包产物 `apps/sage/dist/cli.js`，每个任务的子进程 `sage -p` 也是）：
 
 ```sh
 node apps/sage/bin/sage.mjs bench run \

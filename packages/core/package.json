@@ -1,10 +1,17 @@
 {
   "name": "@sage/core",
   "version": "0.0.0",
+  "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./testing": "./src/testing/index.ts"
+    ".": {
+      "source": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "source": "./src/testing/index.ts",
+      "default": "./dist/testing/index.js"
+    }
   },
   "dependencies": {
     "@sage/provider": "workspace:*"

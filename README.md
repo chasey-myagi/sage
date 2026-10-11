@@ -28,17 +28,25 @@ M1 内核、M2 申领单与预算、M3 阶段与路由、M4 打分器与回放�
 
 ## 快速开始
 
-Node 22.18 以上，pnpm。
+Node 22.18 以上。发布形态是一个 npm 包 `@chasey-myagi/sage`，命令名 `sage`，没有运行时依赖：
+
+```sh
+npm i -g @chasey-myagi/sage
+export DEEPSEEK_API_KEY=...   # 或 DASHSCOPE / MOONSHOT / OPENAI / ANTHROPIC 任一
+sage -p "修掉 test/foo.test.ts 里的失败用例"
+```
+
+从源码跑要 pnpm，先构建再用仓库里的 bin：
 
 ```sh
 pnpm install
-export DEEPSEEK_API_KEY=...   # 或 DASHSCOPE / MOONSHOT / OPENAI / ANTHROPIC 任一
+pnpm build
 node apps/sage/bin/sage.mjs -p "修掉 test/foo.test.ts 里的失败用例"
 ```
 
 在当前目录跑完一轮，stdout 是一行 `RunSummary` JSON，stderr 是逐轮进度，会话 Log 写在 `.sage/sessions/`。全部旗标见 [`apps/sage/README.md`](./apps/sage/README.md)。
 
-`pnpm check` 是唯一的本地闸门：lint、类型、分层自检、README 自检、Log 清单自检、测试。
+`pnpm check` 是唯一的本地闸门：lint、构建、分层自检、README 自检、Log 清单自检、测试、打包后装进空目录跑 `sage --help`。源码、`dist/` 与发布包的关系见 [`docs/development.md`](./docs/development.md)。
 
 ## 仓库结构
 

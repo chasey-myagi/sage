@@ -7,7 +7,8 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "check": "pnpm check:lint && pnpm check:types && pnpm check:layers && pnpm check:export-docs && pnpm check:readme && pnpm check:log-manifest && pnpm test",
+    "check": "pnpm check:lint && pnpm build && pnpm check:layers && pnpm check:export-docs && pnpm check:readme && pnpm check:log-manifest && pnpm test && pnpm check:smoke",
+    "build": "tsc -b && pnpm --filter @chasey-myagi/sage run build",
     "gen:log-manifest": "node scripts/gen-log-manifest.mjs",
     "check:log-manifest": "node scripts/gen-log-manifest.mjs --check",
     "check:lint": "biome check --error-on-warnings .",
@@ -15,6 +16,7 @@
     "check:layers": "node scripts/check-layers.mjs",
     "check:export-docs": "node scripts/check-export-docs.mjs",
     "check:readme": "node scripts/check-readme-model-experience.mjs",
+    "check:smoke": "node scripts/smoke-pack.mjs",
     "test": "vitest run",
     "test:update": "UPDATE_EXPECTED=1 vitest run",
     "test:coverage": "vitest run --coverage",

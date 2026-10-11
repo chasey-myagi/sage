@@ -1,28 +1,11 @@
 // Generates docs/log-manifest.md from the entry kind registry.
 // Not model-visible and not a Log entry: this only reads built output and
 // writes a markdown table. Run `tsc -b` before this script; it imports
-// packages/core/dist. core value-imports `@sage/provider/contract`, whose
-// package export is TypeScript source: Node strips the types, and the hook
-// below maps that source's `./x.js` imports to `./x.ts`.
+// packages/core/dist, whose workspace imports resolve to the other
+// packages' dist through their default export condition.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { registerHooks } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-
-registerHooks({
-  resolve(specifier, context, nextResolve) {
-    const relative = specifier.startsWith("./") || specifier.startsWith("../");
-    if (!relative || !specifier.endsWith(".js")) {
-      return nextResolve(specifier, context);
-    }
-    try {
-      return nextResolve(specifier, context);
-    } catch (error) {
-      if (error?.code !== "ERR_MODULE_NOT_FOUND") throw error;
-      return nextResolve(`${specifier.slice(0, -3)}.ts`, context);
-    }
-  },
-});
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

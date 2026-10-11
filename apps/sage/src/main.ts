@@ -4,16 +4,13 @@
  *
  * Contract: `runCli` never throws for bad input; it writes to the given
  * streams and returns the process exit code. Each subcommand owns its
- * parsing, output, and exit codes (see `apps/sage/README.md`). Run
- * directly, this module exits with that code.
+ * parsing, output, and exit codes (see `apps/sage/README.md`). This module
+ * is the bundle entry; `bin/sage.mjs` calls `runCli` and exits.
  *
  * Intentionally not in the Log: argv and the environment. Only the
  * one-shot run writes a session; see `print.ts`.
  */
 
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { errorText } from "@sage/core";
 import { runBenchCli } from "./bench/cli.js";
 import type { CliIo } from "./io.js";
 import { runPrint } from "./print.js";
@@ -43,21 +40,4 @@ export async function runCli(
     });
   }
   return runPrint(argv, resolved);
-}
-
-function isDirectRun(): boolean {
-  const entry = process.argv[1];
-  if (!entry) return false;
-  return import.meta.url === pathToFileURL(path.resolve(entry)).href;
-}
-
-if (isDirectRun()) {
-  runCli(process.argv.slice(2))
-    .then((code) => {
-      process.exit(code);
-    })
-    .catch((error: unknown) => {
-      process.stderr.write(`${errorText(error)}\n`);
-      process.exit(1);
-    });
 }
