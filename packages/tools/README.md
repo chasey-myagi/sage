@@ -38,4 +38,4 @@ linux 的 `unshare -n` 只切网络命名空间，不能限制文件。这时 `f
 
 `TOOL_NAMES` 与各工具的 `def.name` 共用定义，供应用从 Log 识别工具调用；工具名称和模型看到的 schema 不变。
 
-`SAGE_DIR_NAME`（`.sage`）是 sage 在工作区下的运行时目录：会话 Log、溢出的 bash 输出（`.sage/tool-output`）、子任务预设都在这里。find / grep 不进入它，bench 判断改动时也排除它。
+sage 在工作区下的运行时目录名 `SAGE_DIR_NAME`（`.sage`）由 `@sage/core` 导出。会话 Log、溢出的 bash 输出（`.sage/tool-output`）、子任务预设都在这里。find / grep 不进入它，bench 判断改动时也排除它。

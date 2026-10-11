@@ -13,13 +13,8 @@
 
 import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { SAGE_DIR_NAME } from "@sage/core";
 import { fail, type ToolResult } from "./input.js";
-
-/**
- * Sage's runtime directory under a workspace: session logs, spilled tool
- * output, subtask presets. Its contents are never part of the user's work.
- */
-export const SAGE_DIR_NAME = ".sage";
 
 /** Directory names find and grep never descend into. */
 export const SKIPPED_DIR_NAMES: ReadonlySet<string> = new Set([

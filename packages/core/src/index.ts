@@ -82,3 +82,4 @@ export type {
   ViewContext,
   ViewProvider,
 } from "./view/types.js";
+export { SAGE_DIR_NAME } from "./workspace.js";

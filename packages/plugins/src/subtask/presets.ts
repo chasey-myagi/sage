@@ -15,6 +15,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { SAGE_DIR_NAME } from "@sage/core";
 import type { ModelRef } from "@sage/provider/contract";
 
 /** A subtask template loaded from `.sage/subtasks/<name>.md`. */
@@ -44,9 +45,9 @@ export function loadPresets(opts: {
   const fs = opts.fs ?? { readdirSync, readFileSync };
   const presets = new Map<string, SubtaskPreset>();
   if (opts.home) {
-    readDir(fs, path.join(opts.home, ".sage", "subtasks"), presets);
+    readDir(fs, path.join(opts.home, SAGE_DIR_NAME, "subtasks"), presets);
   }
-  readDir(fs, path.join(opts.cwd, ".sage", "subtasks"), presets);
+  readDir(fs, path.join(opts.cwd, SAGE_DIR_NAME, "subtasks"), presets);
   return presets;
 }
 
