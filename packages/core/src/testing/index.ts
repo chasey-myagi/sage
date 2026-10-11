@@ -28,3 +28,4 @@ export { expectFile } from "./files.js";
 export { renderLlmInput } from "./render.js";
 export { loadCase, replaySession } from "./replay.js";
 export { stripSecrets } from "./secrets.js";
+export { recordViews } from "./views.js";

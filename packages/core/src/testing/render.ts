@@ -1,5 +1,6 @@
 /**
- * Prefix-aware rendering of one model request.
+ * Prefix-aware rendering of one model request, or of the compiled view it
+ * is sent from (both carry the same head and messages).
  *
  * Guarantees: the text is `system:`, `tools:`, then `messages:`. Tools are
  * JSON with sorted object keys. Each message starts with `[role]` and then
@@ -17,6 +18,9 @@ import {
   type Message,
   type Request,
 } from "@sage/provider/contract";
+
+/** The parts of a request (or a `CompiledView`) the render reads. */
+type Rendered = Pick<Request, "head" | "messages">;
 
 function sortedReplacer(_key: string, value: unknown): unknown {
   if (!isRecord(value)) return value;
@@ -50,7 +54,7 @@ function renderMessage(message: Message): string {
     .join("\n");
 }
 
-function sameHead(left: Request, right: Request): boolean {
+function sameHead(left: Rendered, right: Rendered): boolean {
   return (
     left.head.system === right.head.system &&
     JSON.stringify(left.head.tools) === JSON.stringify(right.head.tools)
@@ -68,15 +72,18 @@ function isMessagePrefix(
   );
 }
 
-function fullRender(request: Request): string {
+function fullRender(request: Rendered): string {
   const tools = JSON.stringify(request.head.tools, sortedReplacer, 2);
   const messages = request.messages.map(renderMessage).join("\n");
   const head = `system: ${request.head.system}\ntools: ${tools}\nmessages:`;
   return messages.length === 0 ? head : `${head}\n${messages}`;
 }
 
-/** Renders `request`, collapsed against `previous` when it is a prefix. */
-export function renderLlmInput(request: Request, previous?: Request): string {
+/**
+ * Renders `request`, collapsed against `previous` when it is a prefix. Takes
+ * a `Request` or a `CompiledView`; only `head` and `messages` are read.
+ */
+export function renderLlmInput(request: Rendered, previous?: Rendered): string {
   if (
     previous === undefined ||
     !sameHead(previous, request) ||

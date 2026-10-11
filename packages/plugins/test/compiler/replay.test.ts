@@ -32,6 +32,12 @@ function stabilize(manifest: Manifest, log: readonly StoredEntry[]): Manifest {
   };
 }
 
+function requestHeaders(log: readonly StoredEntry[]): unknown[] {
+  return log
+    .filter((entry) => entry.kind === "request_header")
+    .map((entry) => entry.payload);
+}
+
 for (const spec of REPLAY_CASES) {
   it(`compiles replay case ${spec.name} to the passthrough request and the new chunk index`, async () => {
     const dir = caseDir(spec.name);
@@ -45,18 +51,20 @@ for (const spec of REPLAY_CASES) {
       viewProvider: contextCompiler({ budget: 8000, claims: [] }),
     });
 
-    compiled.requests.forEach((request, index) => {
-      const plainRequest = plain.requests[index];
-      if (!plainRequest) throw new Error(`missing request ${index}`);
-      expect(request.messages).toEqual(plainRequest.messages);
-      expect(request.head).toEqual(plainRequest.head);
-      expect(request.model).toEqual(plainRequest.model);
-      expect(request.sampling).toEqual(plainRequest.sampling);
-      const last = request.messages.length - 1;
-      expect(request.cacheBreakpoints[0]).toBe("head");
-      expect(request.cacheBreakpoints.at(-1)).toEqual({ afterMessage: last });
-      expect(request.cacheBreakpoints).toHaveLength(3);
+    expect(compiled.views).toHaveLength(plain.views.length);
+    compiled.views.forEach((view, index) => {
+      const plainView = plain.views[index];
+      if (!plainView) throw new Error(`missing view ${index}`);
+      expect(view.messages).toEqual(plainView.messages);
+      expect(view.head).toEqual(plainView.head);
+      const last = view.messages.length - 1;
+      expect(view.cacheBreakpoints[0]).toBe("head");
+      expect(view.cacheBreakpoints.at(-1)).toEqual({ afterMessage: last });
+      expect(view.cacheBreakpoints).toHaveLength(3);
     });
+    const compiledHeaders = requestHeaders(compiled.log);
+    expect(compiledHeaders).toHaveLength(compiled.views.length);
+    expect(compiledHeaders).toEqual(requestHeaders(plain.log));
     expect(compiled.log.some((entry) => entry.kind === "view_epoch")).toBe(
       false,
     );

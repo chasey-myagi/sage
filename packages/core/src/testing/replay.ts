@@ -5,14 +5,14 @@
  * `session`. `responses.json` is `StreamChunk[][]`, one script per model
  * turn. Replay reads the user text, model, adapter defaults, context window,
  * and pricing back out of that log (the first request_header), plays the
- * script through the faux adapter, and returns the new requests, log, and
- * per-turn manifests.
+ * script through the faux adapter, and returns the new requests, log,
+ * per-turn compiled views, and their manifests.
  * `SAGE_RECORD=1` selects the record lane, which has no live network
  * recorder yet, so replay refuses it. This module never opens a network
  * connection.
  *
- * Intentionally not in the Log: the script, the switch, and the manifest
- * list collected at runtime. The session log is the recorded fact.
+ * Intentionally not in the Log: the script, the switch, and the view and
+ * manifest lists collected at runtime. The session log is the recorded fact.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -33,8 +33,9 @@ import type { StoredEntry } from "../log/types.js";
 import { AgentSession } from "../session.js";
 import type { HarnessTool } from "../tools.js";
 import { passthroughView } from "../view/passthrough.js";
-import type { Manifest, ViewProvider } from "../view/types.js";
+import type { CompiledView, Manifest, ViewProvider } from "../view/types.js";
 import { fauxAdapter } from "./faux.js";
+import { recordViews } from "./views.js";
 
 const RECORD_SWITCH = "SAGE_RECORD";
 
@@ -66,7 +67,8 @@ export function loadCase(dir: string): {
 
 /**
  * Replays a recorded case keylessly through a fresh in-memory session.
- * Throws when `SAGE_RECORD=1`, and when the recording lacks a user message
+ * Returns the requests sent, the resulting log, every compiled view in turn
+ * order, and the manifests derived from those views. Throws when `SAGE_RECORD=1`, and when the recording lacks a user message
  * or a request_header.
  */
 export async function replaySession(
@@ -76,7 +78,12 @@ export async function replaySession(
     system: string;
     tools: HarnessTool[];
   },
-): Promise<{ requests: Request[]; log: StoredEntry[]; manifests: Manifest[] }> {
+): Promise<{
+  requests: Request[];
+  log: StoredEntry[];
+  views: CompiledView[];
+  manifests: Manifest[];
+}> {
   if (process.env[RECORD_SWITCH] === "1") {
     throw new Error(
       "SAGE_RECORD=1 selects the record lane, which replaySession does not implement: it only replays session.jsonl plus responses.json from disk and never calls the network. Unset SAGE_RECORD to replay.",
@@ -88,8 +95,7 @@ export async function replaySession(
     prepared: recordedPrepared(log),
   });
   const store = new MemoryLogStore();
-  const manifests: Manifest[] = [];
-  const inner = opts.viewProvider ?? passthroughView;
+  const recorder = recordViews(opts.viewProvider ?? passthroughView);
   const session = new AgentSession({
     store,
     sessionId: "replay",
@@ -97,19 +103,14 @@ export async function replaySession(
     model: recordedModel(log),
     system: opts.system,
     tools: opts.tools,
-    viewProvider: {
-      async view(ctx) {
-        const compiled = await inner.view(ctx);
-        manifests.push(structuredClone(compiled.manifest));
-        return compiled;
-      },
-    },
+    viewProvider: recorder,
   });
   await session.run(recordedUserText(log));
   return {
     requests: adapter.requests,
     log: [...store.all("replay")],
-    manifests,
+    views: recorder.views,
+    manifests: recorder.views.map((view) => view.manifest),
   };
 }
 

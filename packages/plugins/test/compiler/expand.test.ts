@@ -2,6 +2,7 @@ import { AgentSession, MemoryLogStore, type ViewContext } from "@sage/core";
 import {
   FAUX_UNIT_USAGE,
   fauxAdapter,
+  recordViews,
   stopScript,
   toolScript,
 } from "@sage/core/testing";
@@ -121,6 +122,9 @@ it("keeps the expanded chunk omitted and shows the expand result in full next tu
     ),
     stopScript("done", FAUX_UNIT_USAGE),
   ]);
+  const recorder = recordViews(
+    contextCompiler({ budget: 0, claims: [], keepRecent: 1 }),
+  );
   const session = new AgentSession({
     store,
     sessionId,
@@ -128,11 +132,7 @@ it("keeps the expanded chunk omitted and shows the expand result in full next tu
     model: MODEL,
     system: "You are sage.",
     tools: [fixed("read", "SECRET"), expandTool({ store, sessionId })],
-    viewProvider: contextCompiler({
-      budget: 0,
-      claims: [],
-      keepRecent: 1,
-    }),
+    viewProvider: recorder,
   });
 
   const summary = await session.run("look");
@@ -141,9 +141,9 @@ it("keeps the expanded chunk omitted and shows the expand result in full next tu
 
   const stub =
     '[#seq:3#a · read · {} · 0.0k tokens · omitted · expand("seq:3#a") to retrieve]';
-  const third = adapter.requests[3];
-  if (!third) throw new Error("missing fourth request");
-  expect(resultsOf(third.messages, "a")).toEqual([
+  const fourth = recorder.views[3];
+  if (!fourth) throw new Error("missing fourth view");
+  expect(resultsOf(fourth.messages, "a")).toEqual([
     {
       type: "tool_result",
       toolUseId: "a",
@@ -151,7 +151,7 @@ it("keeps the expanded chunk omitted and shows the expand result in full next tu
       isError: false,
     },
   ]);
-  expect(resultsOf(third.messages, "ex")).toEqual([
+  expect(resultsOf(fourth.messages, "ex")).toEqual([
     {
       type: "tool_result",
       toolUseId: "ex",

@@ -10,6 +10,7 @@ import {
   FAUX_CONTEXT_WINDOW,
   FAUX_USAGE,
   fauxAdapter,
+  recordViews,
   renderLlmInput,
   soleChildRun,
   stopScript,
@@ -128,12 +129,15 @@ async function spawnFrozen(query = "find the needle") {
     details?: Record<string, unknown>;
   }[] = [];
   const tools: HarnessTool[] = [];
+  const parent = recordViews({ view: parentView });
+  const childViews: CompiledView[] = [];
   const { spawn } = subtaskTools({
     store,
     adapters: { anthropic: adapter },
     tools,
     system: SYSTEM,
-    makeCompiler: ({ budget, query: task }) => compilerFor(budget, task),
+    makeCompiler: ({ budget, query: task }) =>
+      recordViews(compilerFor(budget, task), childViews),
   });
   tools.push({
     ...spawn,
@@ -150,25 +154,32 @@ async function spawnFrozen(query = "find the needle") {
     model: MODEL,
     system: SYSTEM,
     tools,
-    viewProvider: { view: parentView },
+    viewProvider: parent,
   });
   const summary = await session.run("frozen-11");
   const result = captured[0];
   if (!result) throw new Error("spawn_subtask did not run");
-  return { store, parentId, requests: adapter.requests, summary, result };
+  return {
+    store,
+    parentId,
+    parentViews: parent.views,
+    childViews,
+    summary,
+    result,
+  };
 }
 
-it("extends the parent request with the subtask query after the frozen prefix", async () => {
-  const { requests } = await spawnFrozen();
-  const parentReq = requests[0];
-  const childReq = requests[1];
-  if (!parentReq || !childReq) throw new Error("missing requests");
-  expect(parentReq.messages).toHaveLength(13);
-  expect(parentReq.messages[0]).toEqual(user("EPOCH-HEAD"));
-  expect(parentReq.messages.slice(1)).toHaveLength(12);
-  expect(childReq.head).toEqual(parentReq.head);
-  expect(childReq.messages.slice(0, 13)).toEqual(parentReq.messages);
-  expect(renderLlmInput(childReq, parentReq)).toBe(`system: <same>
+it("extends the parent view with the subtask query after the frozen prefix", async () => {
+  const { parentViews, childViews } = await spawnFrozen();
+  const parent = parentViews[0];
+  const child = childViews[0];
+  if (!parent || !child) throw new Error("missing views");
+  expect(parent.messages).toHaveLength(13);
+  expect(parent.messages[0]).toEqual(user("EPOCH-HEAD"));
+  expect(parent.messages.slice(1)).toHaveLength(12);
+  expect(child.head).toEqual(parent.head);
+  expect(child.messages.slice(0, 13)).toEqual(parent.messages);
+  expect(renderLlmInput(child, parent)).toBe(`system: <same>
 tools: <same>
 messages:
 <last>
@@ -217,14 +228,17 @@ it("keeps the parent tool list and denies writes in a read-only subtask", async 
     }),
     harness("read", true),
   ];
+  const childViews: CompiledView[] = [];
   const { spawn } = subtaskTools({
     store,
     adapters: { anthropic: adapter },
     tools,
     system: SYSTEM,
-    makeCompiler: ({ budget, query }) => compilerFor(budget, query),
+    makeCompiler: ({ budget, query }) =>
+      recordViews(compilerFor(budget, query), childViews),
   });
   tools.push(spawn);
+  const parentViews = recordViews();
   const session = new AgentSession({
     store,
     sessionId: "parent",
@@ -232,13 +246,14 @@ it("keeps the parent tool list and denies writes in a read-only subtask", async 
     model: MODEL,
     system: SYSTEM,
     tools,
+    viewProvider: parentViews,
   });
   await session.run("go");
-  const parentReq = adapter.requests[0];
-  const childReq = adapter.requests[1];
-  if (!parentReq || !childReq) throw new Error("missing requests");
-  expect(childReq.head).toEqual(parentReq.head);
-  expect(childReq.head.tools.map((tool) => tool.name)).toEqual([
+  const parent = parentViews.views[0];
+  const child = childViews[0];
+  if (!parent || !child) throw new Error("missing views");
+  expect(child.head).toEqual(parent.head);
+  expect(child.head.tools.map((tool) => tool.name)).toEqual([
     "write",
     "read",
     "spawn_subtask",
@@ -362,16 +377,8 @@ it("puts the child prefix breakpoint on the last parent message on every child t
     adapters: { anthropic: adapter },
     tools,
     system: SYSTEM,
-    makeCompiler: ({ budget, query }) => {
-      const compiler = compilerFor(budget, query);
-      return {
-        async view(ctx: ViewContext) {
-          const view = await compiler.view(ctx);
-          childViews.push(view);
-          return view;
-        },
-      };
-    },
+    makeCompiler: ({ budget, query }) =>
+      recordViews(compilerFor(budget, query), childViews),
   });
   tools.push(spawn);
   const session = new AgentSession({
@@ -381,13 +388,7 @@ it("puts the child prefix breakpoint on the last parent message on every child t
     model: MODEL,
     system: SYSTEM,
     tools,
-    viewProvider: {
-      view(ctx: ViewContext) {
-        const view = parentView(ctx);
-        parentViews.push(view);
-        return view;
-      },
-    },
+    viewProvider: recordViews({ view: parentView }, parentViews),
   });
   await session.run("frozen-3");
   const parent = parentViews[0];

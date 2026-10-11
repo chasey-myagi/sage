@@ -3,6 +3,7 @@ import {
   createFaux,
   FAUX_MODEL,
   FAUX_SYSTEM,
+  recordViews,
   stopScript,
   toolScript,
 } from "@sage/core/testing";
@@ -36,14 +37,8 @@ it("rebuilds each turn's head and messages from the log, including content addre
     toolScript("c1", "echo"),
     stopScript("done"),
   ]);
-  const session = new AgentSession({
-    store,
-    sessionId,
-    adapter,
-    model: FAUX_MODEL,
-    system: FAUX_SYSTEM,
-    tools: [echoTool()],
-    viewProvider: contextCompiler({
+  const recorder = recordViews(
+    contextCompiler({
       budget: 10000,
       claims: [
         (ctx) => [
@@ -68,13 +63,23 @@ it("rebuilds each turn's head and messages from the log, including content addre
         ],
       ],
     }),
+  );
+  const session = new AgentSession({
+    store,
+    sessionId,
+    adapter,
+    model: FAUX_MODEL,
+    system: FAUX_SYSTEM,
+    tools: [echoTool()],
+    viewProvider: recorder,
   });
 
   await session.run("hello");
   const path = store.path(sessionId);
-  expect(requests).toHaveLength(2);
-  expect(requests[0]?.messages[0]).toEqual(requests[1]?.messages[0]);
-  expect(JSON.stringify(requests[1]?.messages[0])).not.toContain("CHANGED");
+  const views = recorder.views;
+  expect(views).toHaveLength(2);
+  expect(views[0]?.messages[0]).toEqual(views[1]?.messages[0]);
+  expect(JSON.stringify(views[1]?.messages[0])).not.toContain("CHANGED");
 
   const headers = path.filter((entry) => entry.kind === "request_header");
   expect(headers[1]?.payload).not.toHaveProperty("system");

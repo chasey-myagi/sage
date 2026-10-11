@@ -1,15 +1,16 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { HarnessTool } from "@sage/core";
+import type { CompiledView, HarnessTool } from "@sage/core";
 import { MemoryLogStore } from "@sage/core";
 import {
   FAUX_CONTEXT_WINDOW,
   FAUX_UNIT_USAGE,
+  fauxAdapter,
+  recordViews,
   soleChildRun,
   stopScript,
 } from "@sage/core/testing";
-import type { Request } from "@sage/provider/contract";
 import { afterEach, expect, it } from "vitest";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
 import { subtaskTools } from "../../src/index.ts";
@@ -76,9 +77,9 @@ function queryOf(text: string): string {
   return match?.[1] ?? "";
 }
 
-function messageText(request: Request): string {
+function messageText(view: CompiledView): string {
   let text = "";
-  for (const message of request.messages) {
+  for (const message of view.messages) {
     for (const block of message.content) {
       if (block.type === "text") text += block.text;
     }
@@ -145,26 +146,11 @@ it("renders a project preset over the user preset and lets explicit fields win",
 
   const store = new MemoryLogStore();
   seed(store, "parent");
-  const queries: string[] = [];
-  const adapter = {
-    api: "anthropic-messages" as const,
-    prepare(model: { provider: string; model: string }) {
-      return {
-        model,
-        contextWindow: 8000,
-        pricing: null,
-        adapterDefaults: {},
-      };
-    },
-    stream(request: Request) {
-      const text = messageText(request);
-      if (text.includes("Begin the subtask")) queries.push(queryOf(text));
-      return (async function* () {
-        for (const chunk of stopScript("reviewed", FAUX_UNIT_USAGE))
-          yield chunk;
-      })();
-    },
-  };
+  const childViews: CompiledView[] = [];
+  const adapter = fauxAdapter([
+    stopScript("reviewed", FAUX_UNIT_USAGE),
+    stopScript("reviewed", FAUX_UNIT_USAGE),
+  ]);
   const tools: HarnessTool[] = [];
   const { spawn } = subtaskTools({
     store,
@@ -174,19 +160,24 @@ it("renders a project preset over the user preset and lets explicit fields win",
     cwd,
     home,
     makeCompiler: ({ budget, query }) =>
-      contextCompiler({
-        budget,
-        claims: [],
-        subtask: { query },
-        expectedTurns: 1,
-      }),
+      recordViews(
+        contextCompiler({
+          budget,
+          claims: [],
+          subtask: { query },
+          expectedTurns: 1,
+        }),
+        childViews,
+      ),
   });
   const result = await spawn.execute(
     { preset: "review", args: { path: "src/a.ts" }, budget: 50 },
     { sessionId: "parent", toolUseId: "preset" },
   );
   expect(result.isError).toBe(false);
-  expect(queries).toEqual(["Project src/a.ts"]);
+  expect(childViews.map((view) => queryOf(messageText(view)))).toEqual([
+    "Project src/a.ts",
+  ]);
   const childId = soleChildRun(result).sessionId;
   expect(typeof childId).toBe("string");
   const subtask = store
