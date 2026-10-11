@@ -4,18 +4,18 @@ import {
   appendRequestEntries,
   type HarnessTool,
   InvalidEntryError,
-  isRecord,
   JsonlLogStore,
   MemoryLogStore,
-  type RequestHeaderPayload,
-  requestHeaderOf,
-  type StoredEntry,
 } from "@sage/core";
-import type { PreparedCall } from "@sage/provider/contract";
+import { pathlessTool, pathTool } from "@sage/core/testing";
 import { expect, it } from "vitest";
 import { systemReminder } from "../../src/claims/system-reminder.ts";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
-import { finite } from "../../src/guards.ts";
+import {
+  buildViewContext,
+  copyMessages,
+  sliceTurns,
+} from "../../src/replay/offline.ts";
 
 const SESSION = "budget8000-vue10874-36turns";
 const SYSTEM = "You are sage.";
@@ -113,7 +113,12 @@ async function replayRows(): Promise<Row[]> {
   for (const slice of sliceTurns(recorded)) {
     copyMessages(recorded, copiedThrough, slice.prefixEnd, shadow, shadowId);
     copiedThrough = slice.prefixEnd;
-    const ctx = viewContext(slice, shadow.path(shadowId), tools);
+    const ctx = buildViewContext(
+      slice.turn,
+      { ...slice.header, contextWindow: 1_000_000, pricing: DEEPSEEK },
+      shadow.path(shadowId),
+      { tools, system: SYSTEM },
+    );
     const view = await provider.view(ctx);
     const decision = view.manifest.epochDecision;
     rows.push({
@@ -133,145 +138,18 @@ async function replayRows(): Promise<Row[]> {
   return rows;
 }
 
-type Slice = {
-  turn: number;
-  prefixEnd: number;
-  assistant: StoredEntry;
-  header: RequestHeaderPayload;
-};
-
-function sliceTurns(path: readonly StoredEntry[]): Slice[] {
-  const slices: Slice[] = [];
-  for (let index = 0; index < path.length; index += 1) {
-    const entry = path[index];
-    const header = entry && requestHeaderOf(entry);
-    if (!header) continue;
-    let prefixEnd = index;
-    while (prefixEnd > 0) {
-      const prev = path[prefixEnd - 1];
-      if (prev?.kind !== "view_epoch" && prev?.kind !== "model_change") break;
-      prefixEnd -= 1;
-    }
-    let turn = slices.length + 1;
-    let assistant: StoredEntry | undefined;
-    for (let cursor = index + 1; cursor < path.length; cursor += 1) {
-      const next = path[cursor];
-      if (!next || next.kind === "request_header") break;
-      if (next.kind === "manifest" && isRecord(next.payload)) {
-        const value = finite(next.payload.turn);
-        if (value !== undefined) turn = value;
-      }
-      if (isAssistantEntry(next)) {
-        assistant = next;
-        break;
-      }
-    }
-    if (!assistant) continue;
-    slices.push({ turn, prefixEnd, assistant, header });
-  }
-  return slices;
-}
-
-function copyMessages(
-  recorded: readonly StoredEntry[],
-  from: number,
-  to: number,
-  shadow: MemoryLogStore,
-  sessionId: string,
-): void {
-  for (let index = from; index < to; index += 1) {
-    const entry = recorded[index];
-    if (entry?.kind !== "message") continue;
-    shadow.append(sessionId, {
-      kind: "message",
-      payload: entry.payload,
-      ...(entry.details ? { details: entry.details } : {}),
-    });
-  }
-}
-
-function viewContext(
-  slice: Slice,
-  prefix: readonly StoredEntry[],
-  tools: HarnessTool[],
-) {
-  const { header } = slice;
-  const model = { provider: header.provider, model: header.model };
-  const prepared: PreparedCall = {
-    model,
-    contextWindow: 1_000_000,
-    pricing: DEEPSEEK,
-    adapterDefaults: header.adapterDefaults,
-  };
-  const head = {
-    system: SYSTEM,
-    tools: tools.map((tool) => tool.def),
-  };
-  return {
-    sessionId: "offline",
-    turn: slice.turn,
-    path: prefix,
-    model,
-    prepared,
-    head,
-    tools,
-    depth: 0 as const,
-  };
-}
-
-function isAssistantEntry(entry: StoredEntry): boolean {
-  return (
-    entry.kind === "message" &&
-    isRecord(entry.payload) &&
-    entry.payload.role === "assistant"
-  );
-}
-
 function traceTools(): HarnessTool[] {
   return [
     pathTool("read", "read"),
     pathTool("edit", "write"),
     pathTool("write", "write"),
     pathTool("ls", "read"),
-    pathTool("bash", "read"),
+    pathlessTool("bash"),
     pathTool("grep", "search"),
     pathTool("find", "search"),
-    pathTool("update_ledger", "read"),
-    pathTool("expand", "read"),
-    pathTool("spawn_subtask", "read"),
-    pathTool("spawn_subtasks", "read"),
+    pathlessTool("update_ledger"),
+    pathlessTool("expand"),
+    pathlessTool("spawn_subtask"),
+    pathlessTool("spawn_subtasks"),
   ];
-}
-
-function pathTool(
-  name: string,
-  mode: "read" | "write" | "search",
-): HarnessTool {
-  return {
-    def: {
-      name,
-      description: name,
-      inputSchema: { type: "object" },
-    },
-    isReadOnly: mode !== "write",
-    isDestructive: mode === "write",
-    isOpenWorld: false,
-    accesses(input: unknown) {
-      if (
-        name === "bash" ||
-        name === "update_ledger" ||
-        name === "expand" ||
-        name === "spawn_subtask" ||
-        name === "spawn_subtasks"
-      ) {
-        return [];
-      }
-      if (!isRecord(input) || typeof input.path !== "string") return [];
-      if (input.path.length === 0) return [];
-      return [{ key: input.path, mode }];
-    },
-    execute() {
-      return Promise.resolve({ content: "", isError: false });
-    },
-  };
 }

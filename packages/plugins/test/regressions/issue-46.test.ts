@@ -6,7 +6,12 @@ import {
   JsonlLogStore,
   MemoryLogStore,
 } from "@sage/core";
-import { FAUX_CONTEXT_WINDOW, renderLlmInput } from "@sage/core/testing";
+import {
+  FAUX_CONTEXT_WINDOW,
+  pathlessTool,
+  pathTool,
+  renderLlmInput,
+} from "@sage/core/testing";
 import type { Message, Request } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
@@ -192,7 +197,7 @@ it("replays the long deepseek trace under an 8000-token window with a frozen pre
         pathTool("edit", "write"),
         pathTool("write", "write"),
         pathTool("ls", "read"),
-        pathTool("bash", "read"),
+        pathlessTool("bash"),
       ],
       system: "You are sage.",
     },
@@ -372,30 +377,5 @@ function requestOf(
     messages,
     cacheBreakpoints,
     sampling: {},
-  };
-}
-
-function pathTool(
-  name: string,
-  mode: "read" | "write" | "search",
-): HarnessTool {
-  return {
-    def: {
-      name,
-      description: name,
-      inputSchema: { type: "object" },
-    },
-    isReadOnly: mode !== "write",
-    isDestructive: mode === "write",
-    isOpenWorld: false,
-    accesses(input: unknown) {
-      if (name === "bash") return [];
-      if (!isRecord(input) || typeof input.path !== "string") return [];
-      if (input.path.length === 0) return [];
-      return [{ key: input.path, mode }];
-    },
-    execute() {
-      return Promise.resolve({ content: "", isError: false });
-    },
   };
 }
