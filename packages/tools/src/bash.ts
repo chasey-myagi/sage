@@ -27,10 +27,9 @@ import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { errorText, type HarnessTool } from "@sage/core";
+import { errorText, type HarnessTool, SAGE_DIR_NAME } from "@sage/core";
 import { asRecord, fail, ok, optionalInt, requiredString } from "./input.js";
 import { TOOL_NAMES } from "./names.js";
-import { SAGE_DIR_NAME } from "./path-safety.js";
 import { spill } from "./spill.js";
 
 /** Default `timeout_ms` of a bash call, in milliseconds. */

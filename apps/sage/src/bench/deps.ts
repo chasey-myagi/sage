@@ -17,7 +17,8 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { SAGE_DIR_NAME, SANDBOX_ALLOW_ROOT_ENV } from "@sage/tools";
+import { SAGE_DIR_NAME } from "@sage/core";
+import { SANDBOX_ALLOW_ROOT_ENV } from "@sage/tools";
 import { SESSION_LOG_SUBDIR } from "../coding-session.js";
 import { exec } from "./exec.js";
 import { defaultPrepare } from "./git.js";

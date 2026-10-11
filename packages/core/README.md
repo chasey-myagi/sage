@@ -73,6 +73,10 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 
 每次重发之前追加 `turn_retry`，payload 是 `{ turn, attempt, reason }`。这条持久化，不进模型请求。被重发丢掉的半截文本不进 Log。
 
+## 运行时目录
+
+`SAGE_DIR_NAME`（`.sage`）是 sage 在工作区和用户 home 下放自己文件的目录名：会话 Log、溢出的 bash 输出、子任务预设。定义在 core，是为了让 tools、plugins、apps 不互相 import 也能用同一个名字；各层怎么跳过它，写在各自的 README。
+
 ## 测试
 
 无 key 是默认：测试进程会剥掉 `*_API_KEY`，并用录制的响应回放，不打真网。
