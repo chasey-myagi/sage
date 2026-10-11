@@ -8,6 +8,7 @@ import {
 import {
   FAUX_UNIT_USAGE,
   fauxAdapter,
+  recordViews,
   stopScript,
   toolScript,
 } from "@sage/core/testing";
@@ -122,6 +123,9 @@ it("omits a superseded tool result in the compiled view and keeps anomalies empt
     stopScript("done", FAUX_UNIT_USAGE),
   ]);
   const store = new MemoryLogStore();
+  const recorder = recordViews(
+    contextCompiler({ budget: 100_000, claims: [], keepRecent: 0 }),
+  );
   const session = new AgentSession({
     store,
     sessionId: "omit",
@@ -129,17 +133,13 @@ it("omits a superseded tool result in the compiled view and keeps anomalies empt
     model: MODEL,
     system: "You are sage.",
     tools: [read],
-    viewProvider: contextCompiler({
-      budget: 100_000,
-      claims: [],
-      keepRecent: 0,
-    }),
+    viewProvider: recorder,
   });
 
   await session.run("look");
 
-  const third = adapter.requests[2];
-  if (!third) throw new Error("missing third request");
+  const third = recorder.views[2];
+  if (!third) throw new Error("missing third view");
   assertPaired(third.messages);
   expect(usesOf(third.messages, "r1")).toHaveLength(1);
   expect(usesOf(third.messages, "r2")).toHaveLength(1);
@@ -177,9 +177,11 @@ it("omits a superseded tool result in the compiled view and keeps anomalies empt
     payload.chunks?.every((chunk) => typeof chunk.tokens === "number"),
   ).toBe(true);
 
+  const sent = adapter.requests[2];
+  if (!sent) throw new Error("missing third request");
   const rebuilt = rebuildFromLog(store.path("omit"), 3);
-  expect(rebuilt.messages).toEqual(third.messages);
-  expect(rebuilt.head).toEqual(third.head);
+  expect(rebuilt.messages).toEqual(sent.messages);
+  expect(rebuilt.head).toEqual(sent.head);
 });
 
 it("protects the six most recent tool chunks when keepRecent is omitted", async () => {
