@@ -29,4 +29,5 @@ export { nodeLogFs } from "./log-fs.js";
 export { renderLlmInput } from "./render.js";
 export { loadCase, replaySession } from "./replay.js";
 export { stripSecrets } from "./secrets.js";
+export { pathlessTool, pathTool } from "./tools.js";
 export { recordViews } from "./views.js";

@@ -106,10 +106,18 @@ const SCORER_NOTE = "scorer:offline-rule";
 /** Results of `replayOffline` runs whose scorer was swapped for `ruleScorer`. */
 const scorerSwappedRuns = new WeakSet<readonly TurnDiff[]>();
 
-type Slice = {
+/** One recorded turn: a request_header followed by its assistant reply. */
+export type TurnSlice = {
+  /** The turn's recorded manifest `turn`, else its 1-based slice position. */
   turn: number;
+  /**
+   * Exclusive end of the turn's prefix: the index of its request_header,
+   * moved back over the `view_epoch` / `model_change` entries just before it.
+   */
   prefixEnd: number;
+  /** The first assistant message after the header. */
   assistant: StoredEntry;
+  /** The turn's request_header payload. */
   header: RequestHeaderPayload;
 };
 
@@ -149,7 +157,7 @@ export async function replayOffline(
       ? recorded.slice(0, slice.prefixEnd)
       : shadow.path(shadowId);
     const { header } = slice;
-    const ctx = viewContext(slice.turn, header, prefix, deps);
+    const ctx = buildViewContext(slice.turn, header, prefix, deps);
     const view = await provider.view(ctx);
     const previous = views.at(-1);
     views.push(view);
@@ -194,7 +202,7 @@ function replayProvider(
 function turnDiff(input: {
   policy: Policy;
   recorded: readonly StoredEntry[];
-  slice: Slice;
+  slice: TurnSlice;
   view: CompiledView;
   previous: CompiledView | undefined;
   tools: readonly HarnessTool[];
@@ -309,8 +317,13 @@ function formatCell(value: number | null): string {
   return value === null ? "" : String(value);
 }
 
-function sliceTurns(path: readonly StoredEntry[]): Slice[] {
-  const slices: Slice[] = [];
+/**
+ * Cuts a recorded Log path into turns, one per request_header that has an
+ * assistant reply before the next request_header. Headers without a reply
+ * (an aborted or failed call) yield no slice. Pure: reads `path` only.
+ */
+export function sliceTurns(path: readonly StoredEntry[]): TurnSlice[] {
+  const slices: TurnSlice[] = [];
   for (let index = 0; index < path.length; index += 1) {
     const entry = path[index];
     const header = entry && requestHeaderOf(entry);
@@ -341,7 +354,12 @@ function sliceTurns(path: readonly StoredEntry[]): Slice[] {
   return slices;
 }
 
-function copyMessages(
+/**
+ * Appends the `message` entries of `recorded[from, to)` to `sessionId` on
+ * `shadow`, keeping payload and details and dropping every other kind, so
+ * the shadow holds the conversation without the recorded policy's entries.
+ */
+export function copyMessages(
   recorded: readonly StoredEntry[],
   from: number,
   to: number,
@@ -359,7 +377,12 @@ function copyMessages(
   }
 }
 
-function viewContext(
+/**
+ * The view context for one replayed turn: model, context window, pricing,
+ * and adapter defaults come from `header`, the head from `deps`. The
+ * session id is `"offline"` and the depth 0.
+ */
+export function buildViewContext(
   turn: number,
   header: RequestHeaderPayload,
   prefix: readonly StoredEntry[],
@@ -412,7 +435,7 @@ function omittedChunkIds(manifest: Manifest): string[] {
 function likelyNeeded(
   omittedIds: readonly string[],
   recorded: readonly StoredEntry[],
-  slice: Slice,
+  slice: TurnSlice,
   tools: readonly HarnessTool[],
 ): string[] {
   if (omittedIds.length === 0) return [];
