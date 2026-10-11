@@ -13,13 +13,15 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const TIMEOUT_SEC = 1800;
-export const LIMIT = 50;
+/** `timeoutSec` written into every task, in seconds: the runner applies it to setup, the agent, and the test command, each. */
+const TIMEOUT_SEC = 1800;
+/** Default number of tasks taken from the dataset when `--limit` is not given. */
+const LIMIT = 50;
 
 const DATASET = "princeton-nlp/SWE-bench_Verified";
 const ROWS_URL = "https://datasets-server.huggingface.co/rows";
 
-export function tasksFromDataset(payload, limit = LIMIT) {
+function tasksFromDataset(payload, limit = LIMIT) {
   return extractRows(payload)
     .slice(0, limit)
     .map((row) => toTask(row));

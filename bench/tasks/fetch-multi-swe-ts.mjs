@@ -29,7 +29,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 /** `timeoutSec` written into every task, in seconds: the runner applies it to setup, the agent, and the test command, each. */
-export const TIMEOUT_SEC = 1800;
+const TIMEOUT_SEC = 1800;
 
 const MULTI_SWE_BENCH = "ByteDance-Seed/Multi-SWE-bench";
 const MULTI_SWE_RL = "ByteDance-Seed/Multi-SWE-RL";
@@ -159,7 +159,7 @@ const OVERRIDES = {
 };
 
 /** Named task sets: the verified ids, in output order, and the default output file. */
-export const SETS = {
+const SETS = {
   "ts-mini": {
     out: "ts-mini.json",
     ids: [
@@ -207,12 +207,12 @@ function isSpecFile(file) {
 }
 
 /** Task id of a dataset row; rows of the 2025 Multi-SWE-RL period carry no `instance_id`. */
-export function idOf(row) {
+function idOf(row) {
   return row.instance_id ?? `${row.org}__${row.repo}-${row.number}`;
 }
 
 /** Convert one dataset row into a bench task. The row's repo must be in REPOS (`buildTasks` checks this first). Throws when the row has no spec file or resolved issue. */
-export function taskFromRow(row) {
+function taskFromRow(row) {
   const id = idOf(row);
   const repo = `${row.org}/${row.repo}`;
   const conf = { ...REPOS[repo], ...OVERRIDES[id] };
@@ -307,7 +307,7 @@ function repoOf(instanceId) {
  * `<file>:<line>: malformed dataset row` for a row that fails the field
  * checks, and when an id is missing from its repo's rows.
  */
-export async function buildTasks({
+async function buildTasks({
   fixtureDir,
   selection = SETS[DEFAULT_SET].ids,
 } = {}) {
