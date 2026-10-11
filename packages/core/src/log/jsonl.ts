@@ -3,24 +3,30 @@
  *
  * Guarantees: append writes the whole line on a cached append fd, looping
  * over short writes, and only then commits the entry to memory, so the file
- * is a superset of memory. A killed process loses nothing it appended; the
- * store never calls fsync, so an OS crash or power loss can drop or corrupt
- * the tail; when the damage is not confined to the last line, reopen throws
- * `LogCorruptedError`. On open, a JSON parse failure on the last line is
- * discarded, recorded as torn, and truncated off the file before the next
- * append so the new line is not glued to the partial one. A parse failure
+ * is a superset of memory. A failed append truncates the bytes of its own
+ * partial line off the file before rethrowing, so later appends start on a
+ * clean line; if that truncation fails, the session refuses further appends
+ * until a new store reopens the file and drops the partial line as torn. A
+ * killed process loses nothing it appended; the store never calls fsync, so
+ * an OS crash or power loss can drop or corrupt the tail; when the damage is
+ * not confined to the last line, reopen throws `LogCorruptedError`. On open,
+ * a JSON parse failure on the last line is discarded, recorded as torn, and
+ * truncated off the file before the next append so the new line is not glued
+ * to the partial one. A parse failure
  * on any earlier line throws `LogCorruptedError`. An unregistered kind
  * throws `UnknownEntryKindError` and is not skipped. There is no high-water
  * mark (no persisted "written up to here" counter) anywhere in the Log: the
  * next seq is the number of entries loaded.
  *
- * Intentionally not in the Log: the torn flag, the cached fd, and this index.
+ * Intentionally not in the Log: the torn flag, the unwritable flag, the cached
+ * fd, and this index.
  * Torn does not participate in seq assignment.
  */
 
 import {
   closeSync,
   existsSync,
+  fstatSync,
   ftruncateSync,
   mkdirSync,
   openSync,
@@ -50,6 +56,7 @@ export type LogFs = {
   /** Writes from the start of `data` and returns the bytes written. */
   writeSync(fd: number, data: Uint8Array): number;
   ftruncateSync(fd: number, len: number): void;
+  fstatSync(fd: number): { size: number };
   closeSync(fd: number): void;
 };
 
@@ -62,6 +69,7 @@ const nodeFs: LogFs = {
   openSync,
   writeSync: (fd, data) => writeSync(fd, data),
   ftruncateSync,
+  fstatSync,
   closeSync,
 };
 
@@ -76,6 +84,11 @@ export class JsonlLogStore implements LogStore {
   private readonly sessions = new Map<string, LogSession>();
   private readonly fds = new Map<string, number>();
   private readonly tornSessions = new Set<string>();
+  /**
+   * Sessions whose partial line from a failed append could not be removed,
+   * mapped to the error that stopped the removal.
+   */
+  private readonly unwritableSessions = new Map<string, unknown>();
 
   constructor(options: { dir: string; fs?: LogFs }) {
     this.dir = options.dir;
@@ -89,6 +102,12 @@ export class JsonlLogStore implements LogStore {
     return this.tornSessions.has(sessionId);
   }
 
+  /**
+   * Persists the entry, then commits it to memory. Throws the write error
+   * when the line cannot be written, leaving memory, the leaf, and the file
+   * as they were. Throws without writing when an earlier failed append left a
+   * partial line it could not remove.
+   */
   append(sessionId: string, input: EntryInput): StoredEntry {
     const session = this.session(sessionId);
     const entry = prepareEntry(session, input);
@@ -114,18 +133,51 @@ export class JsonlLogStore implements LogStore {
   }
 
   /**
-   * Writes the whole line, looping over short writes. Throws when a write
-   * makes no progress; the partial line is then the torn tail on next open,
-   * unless this process appends again and glues the next line to it.
+   * Writes the whole line, looping over short writes; a write that makes no
+   * progress throws. On any failure the bytes of this line already written
+   * are truncated off the end of the file. A failed truncation marks the
+   * session unwritable.
    */
   private persist(sessionId: string, entry: StoredEntry): void {
+    if (this.unwritableSessions.has(sessionId)) {
+      throw new Error(
+        `Log session ${sessionId} has a partial line that could not be removed; reopen the store to append`,
+        { cause: this.unwritableSessions.get(sessionId) },
+      );
+    }
     const fd = this.fd(sessionId);
     const line = Buffer.from(`${JSON.stringify(entry)}\n`);
     let written = 0;
-    while (written < line.length) {
-      const wrote = this.fs.writeSync(fd, line.subarray(written));
-      if (wrote <= 0) throw new Error("log write made no progress");
-      written += wrote;
+    try {
+      while (written < line.length) {
+        const wrote = this.fs.writeSync(fd, line.subarray(written));
+        if (wrote <= 0) throw new Error("log write made no progress");
+        written += wrote;
+      }
+    } catch (err) {
+      this.removePartialLine(sessionId, fd, written);
+      throw err;
+    }
+  }
+
+  /**
+   * Cuts `written` bytes off the end of the file. The fd appends, so those
+   * are this line's bytes even when another writer appended before them.
+   */
+  private removePartialLine(
+    sessionId: string,
+    fd: number,
+    written: number,
+  ): void {
+    if (written === 0) return;
+    try {
+      this.fs.ftruncateSync(fd, this.fs.fstatSync(fd).size - written);
+    } catch (err) {
+      // Swallows the truncate error so the caller sees the write error that
+      // caused it; it resurfaces as the cause of every later append's error.
+      // The partial line stays the last line, which the next open discards
+      // as torn.
+      this.unwritableSessions.set(sessionId, err);
     }
   }
 
