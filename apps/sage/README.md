@@ -112,6 +112,8 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 - 系统提示不进全文，系统提示里写过的路径会记给第一次输出它的块。
 - bash 读取类的文件按写法匹配，前面 `cd` 到子目录时得到的是相对子目录的路径。
 - 同一条命令跑了几次，除最后一次外每次都记为用到。
+- `old_string` 只看调用之前最近的一份副本：最近一份落在 thinking 或上一次 edit 的输入里时谁都不记，哪怕更早有一份在工具结果里。
+- 经 stdin 重定向读文件（`wc -l < src/a.ts`、`sort < f`）不算打开；`grep -n x a.ts`、`git diff a.ts` 这类非读取类命令里的文件也不算。
 
 
 ### `--turns`
