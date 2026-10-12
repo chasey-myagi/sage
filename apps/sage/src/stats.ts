@@ -1,12 +1,13 @@
 /**
- * `sage stats <session.jsonl>`: prints a finished session's health and the
- * shadow scorer audit as one JSON line, without starting a run.
+ * `sage stats [--turns] <session.jsonl>`: prints a finished session's
+ * health and the shadow scorer audit as one JSON line, without starting a
+ * run. `--turns` prints the per-turn audit of `stats-turns.ts` instead.
  *
- * Contract: the output is `runHealth` of the file plus `shadowNone`,
- * `laterNeeded`, and `precision` from {@link shadowAudit}. It holds counts
- * only, never paths or message text. Exit 0 after printing; exit 1 with the
- * usage for a bad argument, or with one stderr line for a missing or
- * unreadable file.
+ * Contract: the default output is `runHealth` of the file plus
+ * `shadowNone`, `laterNeeded`, and `precision` from {@link shadowAudit}.
+ * Either output holds counts and ids only, never paths or message text.
+ * Exit 0 after printing; exit 1 with the usage for a bad argument, or with
+ * one stderr line for a missing or unreadable file.
  *
  * Intentionally not in the Log: the audit. It is an after-the-fact label
  * computed from the Log; the compiler never reads it.
@@ -22,9 +23,15 @@ import {
   type StoredEntry,
 } from "@sage/core";
 import { TOOL_NAMES } from "@sage/tools";
-import { usage } from "./args.js";
 import type { CommandIo } from "./command-io.js";
 import { isFiniteNumber } from "./guards.js";
+import {
+  type CommandFlags,
+  type OptionName,
+  readFlags,
+  renderUsage,
+} from "./options.js";
+import { turnReport } from "./stats-turns.js";
 
 /** How often shadow `none` decisions were later contradicted. */
 export type ShadowAudit = {
@@ -45,17 +52,27 @@ type ToolCall = {
   input: unknown;
 };
 
+/** Flags `sage stats` accepts; the session file is its one positional. */
+const STATS_FLAGS = [
+  { name: "turns", usage: "optional" },
+] as const satisfies CommandFlags<OptionName>;
+
+/** The `sage stats` usage line, without the leading `usage:`. */
+export function statsUsage(): string {
+  return `${renderUsage("sage stats", STATS_FLAGS)} <session.jsonl>`;
+}
+
 /** Runs `sage stats <argv>` and returns the process exit code. */
 export function runStats(argv: string[], io: CommandIo): number {
-  const file = argv[0];
-  if (argv.length !== 1 || !file || file.startsWith("-")) {
-    io.stderr.write(`${usage()}\n`);
+  const parsed = parseStatsArgs(argv);
+  if (!parsed) {
+    io.stderr.write(`usage: ${statsUsage()}\n`);
     return 1;
   }
-  const resolved = path.resolve(io.cwd, file);
+  const resolved = path.resolve(io.cwd, parsed.file);
   const sessionId = path.basename(resolved, ".jsonl");
   if (!resolved.endsWith(".jsonl") || sessionId.length === 0) {
-    io.stderr.write(`${usage()}\n`);
+    io.stderr.write(`usage: ${statsUsage()}\n`);
     return 1;
   }
   if (!existsSync(resolved)) {
@@ -65,14 +82,32 @@ export function runStats(argv: string[], io: CommandIo): number {
   try {
     const store = new JsonlLogStore({ dir: path.dirname(resolved) });
     const logged = store.path(sessionId);
-    const health = runHealth(logged);
-    const audit = shadowAudit(logged);
-    io.stdout.write(`${JSON.stringify({ ...health, ...audit })}\n`);
+    const report = parsed.turns
+      ? turnReport(logged)
+      : { ...runHealth(logged), ...shadowAudit(logged) };
+    io.stdout.write(`${JSON.stringify(report)}\n`);
     return 0;
   } catch (error) {
     io.stderr.write(`${errorText(error)}\n`);
     return 1;
   }
+}
+
+/** One session file and an optional `--turns`; undefined for anything else. */
+function parseStatsArgs(
+  argv: readonly string[],
+): { file: string; turns: boolean } | undefined {
+  let file: string | undefined;
+  let turns = false;
+  for (const token of readFlags(argv, STATS_FLAGS)) {
+    if (token.kind === "switch") {
+      turns = true;
+      continue;
+    }
+    if (token.kind !== "positional" || file !== undefined) return undefined;
+    file = token.value;
+  }
+  return file ? { file, turns } : undefined;
 }
 
 /**

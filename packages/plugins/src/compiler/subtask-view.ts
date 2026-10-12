@@ -14,10 +14,9 @@
  */
 
 import type { CompiledView, ViewContext } from "@sage/core";
-import { isRecord, latestViewEpoch, passthroughView } from "@sage/core";
+import { isRecord, isTier, latestViewEpoch, passthroughView } from "@sage/core";
 import type { Message } from "@sage/provider/contract";
 import { escapeClaimText } from "../claims/escape.js";
-import { isTier } from "../guards.js";
 import { applyDecisions } from "./apply.js";
 import type { TokenCounter } from "./budget.js";
 import { measuredCacheRead } from "./calibrate.js";

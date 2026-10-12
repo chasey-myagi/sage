@@ -19,8 +19,12 @@
  * record the next turn reads back.
  */
 
-import { isRecord, manifestsInEpoch, type StoredEntry } from "@sage/core";
-import { isTier } from "../guards.js";
+import {
+  isRecord,
+  isTier,
+  manifestsInEpoch,
+  type StoredEntry,
+} from "@sage/core";
 import type { ChunkDecision } from "./eliminate.js";
 
 /**

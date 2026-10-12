@@ -110,7 +110,7 @@ node apps/sage/bin/sage.mjs bench run \
 
 可选 `--max-turns <n>`，必须是正整数，否则退出 2，还没读任务文件。每个任务的 argv 里都有 `--max-turns`：写了旗标用那个数，没写则是 80。passthrough 也透传，不会忽略。`results.json` 顶层 `maxTurns` 是这个整数。
 
-可选 `--shadow-scorer rule|model|jev`。写了就原样放进每个任务的 `sage -p` argv，没写就不传。别的名字在开跑之前退出，并打印用法。影子只记不生效：档次、冻结和预算仍由原来的编译器决定。跑完对账用 `sage stats <session.jsonl>`，不在 `results.json` 里另记这个旗标。真机 `bench run --shadow-scorer model` 不进 CI。
+可选 `--shadow-scorer rule|model|jev`。写了就原样放进每个任务的 `sage -p` argv，没写就不传。别的名字在开跑之前退出，并打印用法。影子只记不生效：档次、冻结和预算仍由原来的编译器决定。跑完对账用 `sage stats <session.jsonl>`，不在 `results.json` 里另记这个旗标。要逐轮看 token、缓存命中、档位分布、阶段内翻档和阶段决策，用 `sage stats --turns <out>/sessions/<taskId>.jsonl`。真机 `bench run --shadow-scorer model` 不进 CI。
 
 可选 `--scorer rule|model|jev` 和 `--scorer-apply entry|rebuild`。写了就原样透传，没写就不传。别的值在开跑之前退出，并打印用法。`results.json` 顶层 `scorerApply` 记下 `entry` 或 `rebuild`；没写旗标时是 `rebuild`。`entry` 要配 `--scorer model` 或 `--scorer jev`，否则每个任务里的 sage 以退出码 2 结束。对照是 `bench run --policy compiler --scorer model --scorer-apply entry`。真机对照不进 CI。
 

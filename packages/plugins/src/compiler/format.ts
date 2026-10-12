@@ -11,8 +11,8 @@
  */
 
 import { createHash } from "node:crypto";
+import { isTier } from "@sage/core";
 import type { Message } from "@sage/provider/contract";
-import { isTier } from "../guards.js";
 import type { Tier } from "./claim.js";
 
 /** Renders one claim as `<claim id="…" tier="…">`, the body, `</claim>`. */

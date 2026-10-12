@@ -4,7 +4,7 @@ one-shot CLI，发布为 npm 包 `@chasey-myagi/sage`，命令名 `sage`。`sage
 
 ```
 usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--passthrough] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild]
-       sage stats <session.jsonl>
+       sage stats [--turns] <session.jsonl>
        sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>
        sage bench report <runA> <runB>
 ```
@@ -39,9 +39,32 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 ## `sage stats`
 
-`sage stats <session.jsonl>` 读一个会话文件，不启动运行，打印一行 JSON：`runHealth` 加上三个对账数，退出 0。`runHealth` 里的 `scorerCalls`、`entryScored.calls`、`shadow.calls` 都只数真正发出的打分请求，例如 `--shadow-scorer jev` 缺 key 的轮次不计。参数不是单个 `.jsonl` 路径时打印 usage 并退出 1；文件不存在或读不了时 stderr 一行说明并退出 1。
+`sage stats <session.jsonl>` 读一个会话文件，不启动运行，打印一行 JSON：`runHealth` 加上三个对账数，退出 0。`runHealth` 里的 `scorerCalls`、`entryScored.calls`、`shadow.calls` 都只数真正发出的打分请求，例如 `--shadow-scorer jev` 缺 key 的轮次不计。参数不是单个 `.jsonl` 路径（可另加一个 `--turns`）时打印 usage 并退出 1；文件不存在或读不了时 stderr 一行说明并退出 1。缺 `request_header.contextWindow` 等字段的旧格式会话读不了，同样退出 1。
 
 `shadowNone` 是影子判过 `none` 的块 id 个数，同一个 id 只算一次。`laterNeeded` 是其中后来仍需要的个数：该块 id 出现在更后面的 `expand` 参数 `id` 里，或者该块是 `read` 的结果，且同一 `path` 在更后的轮次又被 `read` 了一次。判 `none` 的那一轮里再次 read 不算后续轮次。`precision = 1 − laterNeeded / shadowNone`。`shadowNone` 为 0 时 `precision` 是 null。这三个数是事后标签，编译器不读它们。
+
+### `--turns`
+
+`sage stats --turns <session.jsonl>`（`--turns` 写在文件前后都行）改为逐轮审计，同样打印一行 JSON、同样的退出码：`{ turns, invariants }`。用 `jq -c '.turns[]'` 可以拆成每轮一行。
+
+一轮是一条 `request_header` 加上它之后的第一条 assistant 回复。没有回复的请求（中止或失败的调用）不出行。`turns` 里每项：
+
+| 字段 | 口径 |
+|---|---|
+| `turn` | 该轮清单的 `turn`；没有清单时是行序号（从 1 起） |
+| `epoch` | 该轮清单的 `epoch`，没有清单时为 null |
+| `model` | 该轮 `request_header` 的 `{ provider, model }` |
+| `tokens` | 该轮 assistant usage，字段同 `runHealth.tokens`（`input` 只算未命中缓存的输入） |
+| `cacheHitRatio` | 只按这一轮算的 `runHealth.cacheHitRatio`，分母为 0 或没有 usage 时为 null |
+| `budget` | 清单 `budget` 的 `{ used, omitted, expands }`；`budget` 不是对象时为 null。`expands` 是截至本轮的累计数 |
+| `tiers` | 清单块数按档位计的 `{ full, summary, line, none }` |
+| `flips` | 与上一条带清单的轮次同属一个 epoch 时，同一块 id 档位变了的 `{ id, from, to }`；跨 epoch 不算翻档，为空数组 |
+| `epochDecision` | 清单 `epochDecision` 的 `{ rebuild, oldTokens, newTokens, remainingTurns, paybackTurns }`，没有时为 null。`paybackTurns` 缺失或没有节省时为 null。不输出 `reason`：路由策略会把命中的敏感文件路径拼进去 |
+| `tools` | 该轮回复里 tool_use 的工具名，按出现顺序 |
+
+`invariants` 汇总整条路径：`toolUses`、`toolResults` 是两种块的个数；`unpairedToolUses` 是路径上找不到 tool_result 的 tool_use id，`orphanToolResults` 是找不到 tool_use 的 tool_result id；`toolErrors` 是 `isError: true` 的结果数；`requestHeaders`、`manifests` 是两种条目的条数；`models` 是出现过的 `{ provider, model }`，按首次出现排序；`outcome` 是最后一条 `terminal` 的 `outcome`，没有时为 null；`health` 是这条路径的 `runHealth`。
+
+输出只有计数、块 id、tool_use id、工具名和档位，不含消息文本、任何 `reason` 字符串、工具输入和路径。
 
 ## `sage bench`
 

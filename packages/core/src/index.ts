@@ -71,17 +71,18 @@ export {
   UnpairedToolCallError,
 } from "./view/errors.js";
 export { passthroughView } from "./view/passthrough.js";
-export type {
-  Anomaly,
-  ChunkRecord,
-  ClaimRecord,
-  CompiledView,
-  EntryScoredReport,
-  EpochStart,
-  Manifest,
-  Tier,
-  TierRecord,
-  ViewContext,
-  ViewProvider,
+export {
+  type Anomaly,
+  type ChunkRecord,
+  type ClaimRecord,
+  type CompiledView,
+  type EntryScoredReport,
+  type EpochStart,
+  isTier,
+  type Manifest,
+  type Tier,
+  type TierRecord,
+  type ViewContext,
+  type ViewProvider,
 } from "./view/types.js";
 export { SAGE_DIR_NAME } from "./workspace.js";
