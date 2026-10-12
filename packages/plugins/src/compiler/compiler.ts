@@ -39,12 +39,13 @@ import { type FrozenMap, freezeAccounting } from "./chunk-decisions.js";
 import type { Chunk } from "./chunks.js";
 import { indexChunks } from "./chunks.js";
 import type { ClaimProvider } from "./claim.js";
-import { ratesFor } from "./decide.js";
+import { expandEstimateFor, ratesFor } from "./decide.js";
 import {
   appendReason,
   chooseEpoch,
   DEFAULT_ALPHA,
   DEFAULT_EXPECTED_TURNS,
+  DEFAULT_MIN_REBUILD_INTERVAL,
   DEFAULT_MIN_SAVINGS_RATIO,
   type EpochChoice,
   openEpoch,
@@ -57,9 +58,11 @@ import {
   epochOpenReason,
   frozenDecisions,
   frozenSeqCeiling,
+  turnsSinceEpochOpen,
 } from "./freeze.js";
 import {
   countExpands,
+  expandResultTokens,
   latestQuery,
   previousRequest,
   projectedSeqs,
@@ -104,6 +107,12 @@ type ContextCompilerOptions = {
   /** Defaults to `DEFAULT_MIN_SAVINGS_RATIO` (0.2). */
   minSavingsRatio?: number;
   /**
+   * Fewest turns an epoch lasts before a cost rebuild may end it; the
+   * context-window guard ignores it. Defaults to
+   * `DEFAULT_MIN_REBUILD_INTERVAL` (8).
+   */
+  minRebuildInterval?: number;
+  /**
    * Picks a model when an epoch opens; runs only on a rebuild. Candidates
    * are `listModels` of the current provider.
    */
@@ -136,6 +145,7 @@ type Settings = {
   expectedTurns: number;
   alpha: number;
   minSavingsRatio: number;
+  minRebuildInterval: number;
   route: RoutePolicy | undefined;
   scorer: Scorer;
   shadowScorer: Scorer | undefined;
@@ -161,6 +171,7 @@ export function contextCompiler(opts: ContextCompilerOptions): {
     expectedTurns: opts.expectedTurns ?? DEFAULT_EXPECTED_TURNS,
     alpha: opts.alpha ?? DEFAULT_ALPHA,
     minSavingsRatio: opts.minSavingsRatio ?? DEFAULT_MIN_SAVINGS_RATIO,
+    minRebuildInterval: opts.minRebuildInterval ?? DEFAULT_MIN_REBUILD_INTERVAL,
     route: opts.route,
     scorer: opts.scorer ?? ruleScorer,
     shadowScorer: opts.shadowScorer,
@@ -499,7 +510,11 @@ function withScored(chosen: Assembly, scored: ScoredView): Assembly {
   };
 }
 
-/** Runs the epoch cost check for this turn's two candidate views. */
+/**
+ * Runs the epoch cost check for this turn's two candidate views. Rates come
+ * from this call's pricing; the expand estimate and the epoch's age are
+ * read from the path.
+ */
 function chooseTurnEpoch(
   ctx: ViewContext,
   settings: Settings,
@@ -520,6 +535,16 @@ function chooseTurnEpoch(
     minSavingsRatio: settings.minSavingsRatio,
     contextWindow: ctx.prepared.contextWindow,
     epochOpenReason: epochOpenReason(ctx.path, candidates.epoch),
+    expands: expandEstimateFor(
+      expandResultTokens(ctx.path, settings.count),
+      candidates.epoch + 1,
+    ),
+    turnsSinceEpochOpen: turnsSinceEpochOpen(
+      ctx.path,
+      candidates.epoch,
+      ctx.turn,
+    ),
+    minRebuildInterval: settings.minRebuildInterval,
   });
 }
 

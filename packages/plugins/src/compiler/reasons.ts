@@ -90,10 +90,11 @@ export function modelReason(reason: string, decision: ScoreDecision): string {
 }
 
 /**
- * Appends `;pricing:fallback` to an epoch decision reason when the rates
- * came from the fallback table rather than the model catalog.
+ * Appends `;pricing:fallback` to an epoch decision reason when the call had
+ * no pricing, so the read rate is a default. A default write rate alone is
+ * recorded only in `writeRateSource`.
  */
 export function tagPricing(reason: string, rates: Rates): string {
-  if (rates.source !== "fallback") return reason;
+  if (rates.readSource !== "default") return reason;
   return `${reason};pricing:fallback`;
 }

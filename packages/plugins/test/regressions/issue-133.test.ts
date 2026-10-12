@@ -19,7 +19,7 @@ const fixtureDir = path.join(
 );
 const SESSION = "budget8000-vue10874-36turns";
 
-it("replays a recorded deepseek session to the same epoch decision on every turn", async () => {
+it("replays a recorded deepseek session to the same rebuild flag and deciding rule on every turn", async () => {
   const recorded = new JsonlLogStore({ dir: fixtureDir }).path(SESSION);
   const head = recordedHead(recorded);
   // The recording predates the adaptive horizon: its remainingTurns is
@@ -30,10 +30,12 @@ it("replays a recorded deepseek session to the same epoch decision on every turn
     { budget: 8000, keepRecent: 6, expectedTurns: 20, alpha: 0 },
     { tools: head.tools.map(pathTool), system: head.system },
   );
+  // Payback numbers in the reason come from the cost model in force when
+  // the session was recorded, so only the rule name before ":" is compared.
   const replayed = diffs.map((diff) => ({
     turn: diff.turn,
     rebuild: diff.rebuild,
-    reason: diff.decisionReason,
+    rule: ruleOf(diff.decisionReason),
   }));
   expect(replayed).toEqual(recordedDecisions(recorded));
 });
@@ -101,10 +103,14 @@ function windowAndPricing(payload: unknown): {
   return { contextWindow: payload.contextWindow, pricing: payload.pricing };
 }
 
-function recordedDecisions(
-  recorded: readonly StoredEntry[],
-): { turn: unknown; rebuild: unknown; reason: unknown }[] {
-  const rows: { turn: unknown; rebuild: unknown; reason: unknown }[] = [];
+type DecisionRow = { turn: unknown; rebuild: unknown; rule: unknown };
+
+function ruleOf(reason: unknown): unknown {
+  return typeof reason === "string" ? reason.split(/[:;]/)[0] : reason;
+}
+
+function recordedDecisions(recorded: readonly StoredEntry[]): DecisionRow[] {
+  const rows: DecisionRow[] = [];
   for (const entry of recorded) {
     if (entry.kind !== "manifest" || !isRecord(entry.payload)) continue;
     const decision = entry.payload.epochDecision;
@@ -112,7 +118,7 @@ function recordedDecisions(
     rows.push({
       turn: entry.payload.turn,
       rebuild: decision.rebuild,
-      reason: decision.reason,
+      rule: ruleOf(decision.reason),
     });
   }
   return rows;

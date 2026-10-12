@@ -103,11 +103,14 @@ type BudgetReport = {
  * Opening an epoch rewrites the frozen prefix: the new view is paid at the
  * cache-write rate once, then every later turn reads fewer tokens.
  * `readRate` and `writeRate` are cache read and write prices relative to
- * the input price. `savingsPerTurn` is `(oldTokens - newTokens) * readRate`;
- * `extraCost` is `newTokens * writeRate - oldTokens * readRate`.
+ * the input price; `readRateSource` and `writeRateSource` say whether each
+ * came from the call's pricing or a default. `savingsPerTurn` is
+ * `(oldTokens - newTokens) * readRate`; `extraCost` is
+ * `newTokens * writeRate - oldTokens * readRate + postRebuildCost`.
  * `paybackTurns` (payback) is `ceil(extraCost / savingsPerTurn)`: 0 when
  * `extraCost` is not positive, null when there are no savings. `rebuild`
- * is true when payback fits within `remainingTurns`, or for a guard reason.
+ * is true for a guard reason, or when payback fits within `remainingTurns`
+ * and the epoch is at least `minRebuildInterval` turns old.
  */
 type EpochDecisionReport = {
   rebuild: boolean;
@@ -123,8 +126,27 @@ type EpochDecisionReport = {
   remainingTurns: number;
   readRate: number;
   writeRate: number;
+  readRateSource: "pricing" | "default";
+  writeRateSource: "pricing" | "default";
   savingsPerTurn: number;
   extraCost: number;
+  /**
+   * Expected cost, in input-price-equivalent tokens, of the omitted tokens
+   * a rebuild will fetch back with expand.
+   */
+  postRebuildCost: number;
+  /**
+   * Where that expectation came from: this session's expands
+   * (`expandsPerEpoch`, mean `tokensPerExpand`), or a prior `share` of the
+   * dropped tokens.
+   */
+  expandEstimate:
+    | { source: "observed"; expandsPerEpoch: number; tokensPerExpand: number }
+    | { source: "prior"; share: number };
+  /** Turns since the current epoch's first manifest. */
+  turnsSinceEpochOpen: number;
+  /** Fewest turns an epoch lasts before a cost rebuild may end it. */
+  minRebuildInterval: number;
   paybackTurns: number | null;
   reason: string;
 };

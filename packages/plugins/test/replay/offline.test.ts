@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   type HarnessTool,
   isRecord,
@@ -7,6 +9,11 @@ import {
 import { FAUX_CONTEXT_WINDOW } from "@sage/core/testing";
 import { expect, it } from "vitest";
 import { caseDir, REPLAY_CASES } from "../../../core/test/replay/cases.ts";
+import {
+  DEFAULT_WRITE_RATE,
+  PRIOR_EXPAND_SHARE,
+} from "../../src/compiler/decide.ts";
+import { DEFAULT_MIN_REBUILD_INTERVAL } from "../../src/compiler/epoch.ts";
 import { compareOffline, replayOffline } from "../../src/replay/offline.ts";
 import type { Scorer } from "../../src/scorer/types.ts";
 
@@ -150,6 +157,51 @@ it("replays a model scorer as the rule scorer and labels the report", async () =
   expect(json.notes).toEqual(["scorer:offline-rule"]);
   expect(report.markdown).not.toContain("ping");
   expect(JSON.stringify(report.json)).not.toContain("ping");
+});
+
+it("records every epoch decision field on each manifest of a replayed session", async () => {
+  // A recorded deepseek-flash session: its pricing lists a read price and
+  // no cache-write price, so the two rate sources differ.
+  const dir = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "fixtures/issue-63",
+  );
+  const shadow = new MemoryLogStore();
+  await replayOffline(
+    new JsonlLogStore({ dir }),
+    "budget8000-vue10874-36turns",
+    { budget: 8000 },
+    { tools: [], system: "You are sage.", shadow },
+  );
+  const decisions = shadow
+    .path("offline")
+    .filter((entry) => entry.kind === "manifest")
+    .map((entry) =>
+      isRecord(entry.payload) ? entry.payload.epochDecision : undefined,
+    );
+  expect(decisions).toHaveLength(36);
+  for (const decision of decisions) {
+    expect(decision).toEqual({
+      rebuild: expect.any(Boolean),
+      oldTokens: expect.any(Number),
+      newTokens: expect.any(Number),
+      remainingTurns: expect.any(Number),
+      readRate: 0.02,
+      writeRate: DEFAULT_WRITE_RATE,
+      readRateSource: "pricing",
+      writeRateSource: "default",
+      savingsPerTurn: expect.any(Number),
+      extraCost: expect.any(Number),
+      postRebuildCost: expect.any(Number),
+      expandEstimate: { source: "prior", share: PRIOR_EXPAND_SHARE },
+      turnsSinceEpochOpen: expect.any(Number),
+      minRebuildInterval: DEFAULT_MIN_REBUILD_INTERVAL,
+      paybackTurns: expect.toSatisfy(
+        (value: unknown) => value === null || typeof value === "number",
+      ),
+      reason: expect.any(String),
+    });
+  }
 });
 
 it("scales compiler policy tokens by that turn's calibration ratio", async () => {

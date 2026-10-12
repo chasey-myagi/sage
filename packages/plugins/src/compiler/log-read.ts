@@ -161,6 +161,34 @@ export function countExpands(path: SessionPath): number {
   return total;
 }
 
+/**
+ * Estimated tokens of each non-error tool_result that answers an assistant
+ * `expand` tool_use, in path order. An expand without a result, or whose
+ * result is an error, is left out.
+ */
+export function expandResultTokens(
+  path: SessionPath,
+  count: (text: string) => number,
+): number[] {
+  const pending = new Set<string>();
+  const tokens: number[] = [];
+  for (const entry of path) {
+    if (entry.kind !== "message" || !isMessage(entry.payload)) continue;
+    for (const block of entry.payload.content) {
+      if (block.type === "tool_use" && block.name === EXPAND_TOOL_NAME) {
+        pending.add(block.id);
+        continue;
+      }
+      if (block.type !== "tool_result" || !pending.has(block.toolUseId)) {
+        continue;
+      }
+      pending.delete(block.toolUseId);
+      if (!block.isError) tokens.push(count(block.content));
+    }
+  }
+  return tokens;
+}
+
 function expandTarget(input: unknown): string | undefined {
   if (!isRecord(input)) return undefined;
   if (typeof input.id !== "string" || input.id.length === 0) return undefined;

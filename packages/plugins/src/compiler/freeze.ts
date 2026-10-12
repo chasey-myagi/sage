@@ -20,6 +20,7 @@
  */
 
 import {
+  isFiniteNumber,
   isRecord,
   isTier,
   manifestsInEpoch,
@@ -74,6 +75,23 @@ export function epochOpenReason(
       : undefined;
   }
   return undefined;
+}
+
+/**
+ * Turns between `turn` and the `turn` of `epoch`'s first manifest, floored
+ * at 0. 0 when the epoch has no manifest yet (this is its first turn) or
+ * that manifest has no numeric turn.
+ */
+export function turnsSinceEpochOpen(
+  path: readonly StoredEntry[],
+  epoch: number,
+  turn: number,
+): number {
+  const first = manifestsInEpoch(path, epoch)[0];
+  if (!first || !isRecord(first.payload)) return 0;
+  const opened = first.payload.turn;
+  if (!isFiniteNumber(opened)) return 0;
+  return Math.max(0, turn - opened);
 }
 
 function firstManifest(

@@ -43,20 +43,22 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 开不开新阶段由这道不等式批准：
 
 ```text
-(旧视图 − 新视图) × 读价 × 预计剩余轮数  ＞  新视图 × 写价 − 旧视图 × 读价
+(旧视图 − 新视图) × 读价 × 预计剩余轮数  ＞  新视图 × 写价 − 旧视图 × 读价 + 预计取回 × 写价
 ```
 
 口径：
 
 - 每轮节省 = (旧 − 新) × 读价
-- 重建额外成本 = 新 × 写价 − 旧 × 读价。减掉的那一项是因为重建的那一轮本来也要付旧视图的读价，不能重复计
+- 重建额外成本 = 新 × 写价 − 旧 × 读价 + 重建后代价。减掉的那一项是因为重建的那一轮本来也要付旧视图的读价，不能重复计
+- 重建后代价 = 预计取回 × 写价，清单记作 `epochDecision.postRebuildCost`。预计取回是这次重建甩掉的 token 里预计会被 `expand` 拿回来的部分，不超过 旧 − 新。本会话已经有成功的 `expand` 时，按「成功次数 ÷ 已有阶段数 × 平均每次结果 token」估；还没有时按先验 `PRIOR_EXPAND_SHARE`（0.1）乘以 旧 − 新。来源记在 `epochDecision.expandEstimate`：`{source: "observed", expandsPerEpoch, tokensPerExpand}` 或 `{source: "prior", share}`。先验让回本轮数多出 `0.1 × 写价 ÷ 读价` 轮，和视图大小无关
 - 回本轮数 = 额外成本 ÷ 每轮节省，向上取整
 - 额外成本不大于 0 就是立即回本
+- 阶段至少要过 `minRebuildInterval` 轮（默认 `DEFAULT_MIN_REBUILD_INTERVAL` = 8，`contextCompiler` 的选项）才允许按成本重开，不等式批准了也要等，原因记作 `min-interval:<已过轮数><<间隔>`。已过轮数从本阶段第一份清单的 turn 算起，记在 `epochDecision.turnsSinceEpochOpen`。一次重开要好几轮更便宜的读才能把它自己那次写回本，提前结束阶段等于把这笔还没回本的写扔掉。上下文窗口安全阀不受这条限制
 - 剩余轮数 = max(1, `expectedTurns` − 已开始轮数, ceil(`alpha` × 已开始轮数))。已开始轮数是这一轮的 turn 减 1。`expectedTurns` 默认 20，`alpha` 默认 0.5，都是 `contextCompiler` 的选项。清单 `epochDecision.remainingTurns` 记下这一轮实际用的数
 
 前十几轮里，`expectedTurns` 减去已开始轮数仍然更大，视界和固定 20 相同。再往后，`ceil(alpha × 已开始轮数)` 抬过那条直线：跑得越久，假定后面还有大约一半那么多轮。固定 20 会从 turn 20 起把剩余夹成 1，回本要几十轮的长任务就永远开不了新阶段。不设上限会让任何正节省都立刻重开，冻结前缀每轮作废。这个下界只改「还打算走多少轮」，不改上面的不等式。
 
-读价是 `cacheRead / input`。写价是 `max(cacheWrite, input) / input`。缓存写价为 0 不是免费：新前缀第一次仍按未命中的输入价付一遍（无附加费 ≠ 免费，首次仍付未命中价）。Anthropic 的写价倍率是 1.25，DeepSeek 和 OpenAI 是 1.0。目录没有定价时退回 0.1 与 1.25。清单 `budget.used` 只含申领单和块，不含系统提示、工具 schema 和任务消息这截固定开销。校准记在 `calibration`：`measured` 是上一轮 assistant usage 的输入合计，`estimated` 是那一轮的 `budget.used`。`overheadTokens` 取本阶段第一轮（没有 usage 时取路径上最近一次算得出的轮）的 `measured − budget.used`，小于 0 记 0：负的固定开销会把新视图 token 打成负数，成本式会把它当成立即回本，再开一阶段。之后各轮 `ratio = (measured − overheadTokens) / estimated`，记在清单上，给离线 `policyTokens` 用。缺实测或 `estimated` 为 0 时不写校准，调用方用 `overheadTokens = 0`、`ratio = 1`。旧视图 token 是 `overheadTokens + 冻结视图 used × ratio`。新视图 token 是 `overheadTokens + 全量重编译 used × ratio`。锚点那一轮的 ratio 正好是 1。ratio 大于 1 也照乘，否则估算系统性低于实测，安全阀会漏报。ratio 小于 1 时同样乘回去，把计数器偏高的部分收回来。两边都加同一份固定开销，差值仍只来自块的档位。省下的比例小于 `minSavingsRatio`（默认 0.2）就不开新阶段。`overheadTokens + used × ratio` 超过上下文窗口的 0.9 时强制重开一次；这是安全阀，不是策略。重开后仍然超限就记在 `budget.overrun`，不再为同一道安全阀重复重开。重开那一轮的视图是全量重编译，随后按新阶段重新冻结，固定开销也从新阶段的第一轮重算。
+两个倍率取自这次调用的定价，也就是本轮 `request_header.pricing` 记下的那一份。读价是 `cacheRead / input`。写价是 `max(cacheWrite, input) / input`：目录列出的写价低于输入价时按输入价算，新前缀第一次总要按未命中价付一遍。定价缺失（或输入价为 0）时读价、写价都用默认值 0.1 与 1.25。定价里 `cacheWritePerMTok` 为 0 时读价照用定价，写价用默认值 1.25：0 分不清「没有附加费」和「没公布」，这类端点的 usage 也不报缓存创建量，没有任何来源能证实更便宜的写价。1.25 是内置目录里最高的写价倍率；写价往高估只会让重开更少，不会让一次不划算的重开看起来划算。读价默认值同理不往高取：读价越低，重开越少。确知写价没有附加费的端点，可以在 `~/.sage/providers.json` 里把 `cacheWritePerMTok` 写成与 `inputPerMTok` 相同，写价就按定价算成 1.0。来源记在清单 `epochDecision.readRateSource` 与 `writeRateSource`，取值 `pricing` 或 `default`。定价缺失时原因还会追加 `;pricing:fallback`。清单 `budget.used` 只含申领单和块，不含系统提示、工具 schema 和任务消息这截固定开销。校准记在 `calibration`：`measured` 是上一轮 assistant usage 的输入合计，`estimated` 是那一轮的 `budget.used`。`overheadTokens` 取本阶段第一轮（没有 usage 时取路径上最近一次算得出的轮）的 `measured − budget.used`，小于 0 记 0：负的固定开销会把新视图 token 打成负数，成本式会把它当成立即回本，再开一阶段。之后各轮 `ratio = (measured − overheadTokens) / estimated`，记在清单上，给离线 `policyTokens` 用。缺实测或 `estimated` 为 0 时不写校准，调用方用 `overheadTokens = 0`、`ratio = 1`。旧视图 token 是 `overheadTokens + 冻结视图 used × ratio`。新视图 token 是 `overheadTokens + 全量重编译 used × ratio`。锚点那一轮的 ratio 正好是 1。ratio 大于 1 也照乘，否则估算系统性低于实测，安全阀会漏报。ratio 小于 1 时同样乘回去，把计数器偏高的部分收回来。两边都加同一份固定开销，差值仍只来自块的档位。省下的比例小于 `minSavingsRatio`（默认 0.2）就不开新阶段。`overheadTokens + used × ratio` 超过上下文窗口的 0.9 时强制重开一次；这是安全阀，不是策略。重开后仍然超限就记在 `budget.overrun`，不再为同一道安全阀重复重开。重开那一轮的视图是全量重编译，随后按新阶段重新冻结，固定开销也从新阶段的第一轮重算。
 
 `cache.expectedReadTokens` 是上一轮实际发出去的冻结前缀估算：用上一轮清单自己的 `calibration.overheadTokens` 与 `calibration.ratio` 去乘那一轮的 `budget.frozenTokens`，即 `overheadTokens + ratio × frozenTokens`。上一轮没有校准时固定开销为 0、ratio 为 1。重开后本轮重新锚上的固定开销不进这个数。`cache.measuredReadTokens` 是那一轮 usage 的 `inputCacheRead`。两者同口径，expected 与 measured 差距大就是前缀被砸了。`cacheHitRatio` 仍是实测读 token 除以 `cache.expectedReadTokens`，口径不改，代码也不把差值抹平。DeepSeek 的前缀缓存以 64 token 为一块，而且只认完全相同的前缀。人工比对估算和实测时，相差不到一块是块对齐，不是没命中。
 

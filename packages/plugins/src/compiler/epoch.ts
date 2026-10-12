@@ -4,7 +4,8 @@
  *
  * Contract: an epoch keeps the view prefix byte-identical so the provider's
  * prefix cache keeps hitting. The only rebuild allowed on an epoch's first
- * turn is the context-window guard. The guard fires when the projected
+ * turn, or before the epoch is `minRebuildInterval` turns old, is the
+ * context-window guard. The guard fires when the projected
  * frozen view exceeds `CONTEXT_WINDOW_GUARD_RATIO` of the context window,
  * and does not fire again inside an epoch the guard itself opened.
  *
@@ -25,6 +26,7 @@ import {
   classifyEpoch,
   type EpochDecision,
   type EpochTrigger,
+  type ExpandEstimate,
   type Rates,
 } from "./decide.js";
 import { tagPricing } from "./reasons.js";
@@ -47,6 +49,13 @@ export const DEFAULT_ALPHA = 0.5;
  * frozen view, worth a rebuild.
  */
 export const DEFAULT_MIN_SAVINGS_RATIO = 0.2;
+/**
+ * Default `minRebuildInterval`: fewest turns between the first turn of an
+ * epoch and a cost rebuild that ends it. A rebuild usually needs several
+ * turns of cheaper reads to pay back its own write; ending the epoch sooner
+ * throws that payment away before it is recovered.
+ */
+export const DEFAULT_MIN_REBUILD_INTERVAL = 8;
 
 /**
  * Maps estimated tokens to measured input tokens:
@@ -95,8 +104,8 @@ export type EpochChoice = {
 
 /**
  * Runs the cost check on the frozen view (`oldTokens`) against a
- * from-scratch recompile (`newTokens`), both projected. Fallback pricing
- * appends `;pricing:fallback` to the reason. Without a freeze
+ * from-scratch recompile (`newTokens`), both projected. Without pricing
+ * the reason gets `;pricing:fallback`. Without a freeze
  * (`hasFrozen` false) any rebuild other than the guard becomes
  * `savings-too-small`.
  */
@@ -110,6 +119,9 @@ export function chooseEpoch(input: {
   minSavingsRatio: number;
   contextWindow: number;
   epochOpenReason: string | undefined;
+  expands: ExpandEstimate;
+  turnsSinceEpochOpen: number;
+  minRebuildInterval: number;
 }): EpochChoice {
   const isGuardOpenedEpoch =
     input.epochOpenReason === CONTEXT_WINDOW_GUARD_REASON;
@@ -125,6 +137,9 @@ export function chooseEpoch(input: {
     minSavingsRatio: input.minSavingsRatio,
     contextWindow: input.contextWindow,
     overContext: isFrozenOverWindow && !isGuardOpenedEpoch,
+    expands: input.expands,
+    turnsSinceEpochOpen: input.turnsSinceEpochOpen,
+    minRebuildInterval: input.minRebuildInterval,
   });
   const decision: EpochDecision = {
     ...classified.decision,

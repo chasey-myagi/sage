@@ -9,7 +9,13 @@ import type { Message, Pricing } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import { indexChunks } from "../../src/compiler/chunks.ts";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
-import { decideEpoch, ratesFor } from "../../src/compiler/decide.ts";
+import {
+  DEFAULT_WRITE_RATE,
+  decideEpoch,
+  type ExpandEstimate,
+  type Rates,
+  ratesFor,
+} from "../../src/compiler/decide.ts";
 
 const SONNET: Pricing = {
   inputPerMTok: 2,
@@ -27,7 +33,23 @@ const DEEPSEEK: Pricing = {
   source: "https://api-docs.deepseek.com/quick_start/pricing",
 };
 
-const RATES = { read: 0.1, write: 1.25, source: "catalog" as const };
+const RATES: Rates = {
+  read: 0.1,
+  write: 1.25,
+  readSource: "pricing",
+  writeSource: "pricing",
+};
+
+// Observed zero expands and an old epoch: the bare cost inequality.
+const COST_ONLY = {
+  expands: {
+    source: "observed",
+    expandsPerEpoch: 0,
+    tokensPerExpand: 0,
+  } satisfies ExpandEstimate,
+  turnsSinceEpochOpen: 100,
+  minRebuildInterval: 8,
+};
 
 function baseDecision(over: Partial<Parameters<typeof decideEpoch>[0]> = {}) {
   return decideEpoch({
@@ -38,6 +60,7 @@ function baseDecision(over: Partial<Parameters<typeof decideEpoch>[0]> = {}) {
     minSavingsRatio: 0.2,
     contextWindow: 1_000_000,
     overContext: false,
+    ...COST_ONLY,
     ...over,
   });
 }
@@ -46,12 +69,14 @@ it("derives read and write rates from catalog pricing", () => {
   expect(ratesFor(SONNET)).toEqual({
     read: 0.1,
     write: 1.25,
-    source: "catalog",
+    readSource: "pricing",
+    writeSource: "pricing",
   });
   expect(ratesFor(null)).toEqual({
     read: 0.1,
     write: 1.25,
-    source: "fallback",
+    readSource: "default",
+    writeSource: "default",
   });
   expect(
     ratesFor({
@@ -61,52 +86,46 @@ it("derives read and write rates from catalog pricing", () => {
       cacheWritePerMTok: 0,
       source: "https://developers.openai.com/api/docs/pricing",
     }),
-  ).toEqual({ read: 0.1, write: 1, source: "catalog" });
+  ).toEqual({
+    read: 0.1,
+    write: DEFAULT_WRITE_RATE,
+    readSource: "pricing",
+    writeSource: "default",
+  });
 });
 
-it("uses max(cacheWrite, input) so a zero write surcharge still pays the miss price", () => {
+it("a zero cache-write price keeps the catalog read rate and takes the default write rate", () => {
   expect(ratesFor(DEEPSEEK)).toEqual({
     read: 0.02,
-    write: 1,
-    source: "catalog",
-  });
-  expect(ratesFor(SONNET)).toEqual({
-    read: 0.1,
-    write: 1.25,
-    source: "catalog",
+    write: DEFAULT_WRITE_RATE,
+    readSource: "pricing",
+    writeSource: "default",
   });
 });
 
-it("rebuilds a DeepSeek epoch when 20 turns remain and refuses when 10 remain", () => {
+it("rebuilds a DeepSeek epoch when 25 turns remain and refuses when 10 remain", () => {
   const rates = ratesFor(DEEPSEEK);
-  const open = decideEpoch({
+  const input = {
     oldTokens: 150000,
     newTokens: 40000,
-    remainingTurns: 20,
     rates,
     minSavingsRatio: 0.2,
     contextWindow: 1_000_000,
     overContext: false,
-  });
+    ...COST_ONLY,
+  };
+  const open = decideEpoch({ ...input, remainingTurns: 25 });
   expect(open.savingsPerTurn).toBe(2200);
-  expect(open.extraCost).toBe(37000);
-  expect(open.paybackTurns).toBe(17);
+  expect(open.extraCost).toBe(47000);
+  expect(open.paybackTurns).toBe(22);
   expect(open.rebuild).toBe(true);
-  expect(open.reason).toBe("payback:17<=20");
+  expect(open.reason).toBe("payback:22<=25");
 
-  const hold = decideEpoch({
-    oldTokens: 150000,
-    newTokens: 40000,
-    remainingTurns: 10,
-    rates,
-    minSavingsRatio: 0.2,
-    contextWindow: 1_000_000,
-    overContext: false,
-  });
-  expect(hold.extraCost).toBe(37000);
-  expect(hold.paybackTurns).toBe(17);
+  const hold = decideEpoch({ ...input, remainingTurns: 10 });
+  expect(hold.extraCost).toBe(47000);
+  expect(hold.paybackTurns).toBe(22);
   expect(hold.rebuild).toBe(false);
-  expect(hold.reason).toBe("payback:17>10");
+  expect(hold.reason).toBe("payback:22>10");
 });
 
 it("pays back in 4 turns when 20 remain and refuses when 3 remain", () => {
@@ -176,6 +195,8 @@ it("marks pricing fallback on the manifest when pricing is null", async () => {
   });
   expect(view.manifest.epochDecision?.readRate).toBe(0.1);
   expect(view.manifest.epochDecision?.writeRate).toBe(1.25);
+  expect(view.manifest.epochDecision?.readRateSource).toBe("default");
+  expect(view.manifest.epochDecision?.writeRateSource).toBe("default");
   expect(view.manifest.epochDecision?.reason).toContain("pricing:fallback");
 });
 
@@ -257,6 +278,8 @@ it("opens the next epoch when the inequality pays back", async () => {
     count,
     expectedTurns: 20,
     minSavingsRatio: 0.2,
+    // The seeded epoch is one turn old; this test pins the payback rule.
+    minRebuildInterval: 0,
   });
   const recording: ViewProvider = {
     async view(ctx) {
@@ -293,14 +316,16 @@ it("opens the next epoch when the inequality pays back", async () => {
   await session.run("task");
 
   expect(seen[0]?.epoch).toBe(1);
-  expect(seen[0]?.payback).toBe(4);
-  expect(seen[0]?.reason).toBe("cost:4");
+  // The prior expand share adds PRIOR_EXPAND_SHARE × write / read = 1.25
+  // turns to the cache payback.
+  expect(seen[0]?.payback).toBe(6);
+  expect(seen[0]?.reason).toBe("cost:6");
   expect(seen[1]?.epoch).toBe(1);
   expect(seen[1]?.reason).toBeUndefined();
   const epochs = store
     .path("seed")
     .filter((entry) => entry.kind === "view_epoch");
-  expect(epochs.at(-1)?.payload).toEqual({ epoch: 1, reason: "cost:4" });
+  expect(epochs.at(-1)?.payload).toEqual({ epoch: 1, reason: "cost:6" });
   const manifests = store
     .path("seed")
     .filter((entry) => entry.kind === "manifest");

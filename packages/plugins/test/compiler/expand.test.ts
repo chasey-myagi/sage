@@ -123,7 +123,13 @@ it("keeps the expanded chunk omitted and shows the expand result in full next tu
     stopScript("done", FAUX_UNIT_USAGE),
   ]);
   const recorder = recordViews(
-    contextCompiler({ budget: 0, claims: [], keepRecent: 1 }),
+    contextCompiler({
+      budget: 0,
+      claims: [],
+      keepRecent: 1,
+      // The test pins the expand view, not rebuild frequency.
+      minRebuildInterval: 0,
+    }),
   );
   const session = new AgentSession({
     store,
