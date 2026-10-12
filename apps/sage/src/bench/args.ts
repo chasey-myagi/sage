@@ -116,7 +116,7 @@ export function parseReport(
   const dirs: string[] = [];
   let excludeFaults = false;
   for (const token of readFlags(argv, BENCH_REPORT_FLAGS)) {
-    if (token.kind === "switch") {
+    if (token.kind === "switch" && token.name === "exclude-faults") {
       excludeFaults = true;
       continue;
     }

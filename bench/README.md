@@ -28,7 +28,7 @@
 
 `setupCommand` 和 `testPatch` 可以不写。Verified 的 Python 任务没有这两项。`repo` 不带协议时，url 是 `https://github.com/<repo>.git`。取下来的工作区只有 `baseCommit` 这一个提交。
 
-`setupCommand`：取出 `baseCommit` 之后、起 agent 之前，在工作目录里用 `sh -c` 执行，时限是 `timeoutSec`。退出码非 0，包括这条命令自己超时，记 `error`，`reason` 为 `setup-failed`，不起 agent，不跑测试。`timeout` 这个 reason 只用于 agent 和 `testCommand`。`setup-failed` 记进 `errorRate`：环境没准备好，和上下文策略无关，但分母仍是整份任务列表。
+`setupCommand`：取出 `baseCommit` 之后、起 agent 之前，在工作目录里用 `sh -c` 执行，时限是 `timeoutSec`。退出码非 0，包括这条命令自己超时，记 `error`，`reason` 为 `setup-failed`，不起 agent，不跑测试。`timeout` 这个 reason 只用于 agent 和 `testCommand`。`setup-failed` 记进 `errorRate`：环境没准备好，和上下文策略无关。不加 `--exclude-faults` 时分母仍是整份任务列表；加了之后它是故障格，两侧对称剔除。
 
 `testPatch`：unified diff。agent 结束、session 已复制、并且 `git status --porcelain`（排除 `.sage/`）非空之后才应用。从 `diff --git` 头取出路径，base 上有的文件执行 `git checkout <baseCommit> -- <file>`，base 上没有的文件执行 `rm -f`，然后 `git apply`。`git apply` 失败记 `error`，`reason` 为 `test-patch-failed`，不跑 `testCommand`。agent 运行期间工作区里没有这份隐藏测试。
 
@@ -214,7 +214,7 @@ stdout 是一份 JSON：`a`、`b`、`delta`、`excluded`。`a` 和 `b` 各带 `b
 | `resolvedRate` | `status === "resolved"` 的任务数 / 任务总数 |
 | `emptyPatchRate` | `empty-patch` 的任务数 / 任务总数 |
 | `errorRate` | `error` 的任务数 / 任务总数，含故障格。会话没有正常结束的任务不进 `emptyPatchRate`，也不进 `resolvedRate` |
-| `faultRate` | 故障格数 / 任务总数。故障格是 `reason` 为 `clone-failed`、`clone-unclean`、`setup-failed`、`sage-failed`、`session-error`、`session-aborted`、`diff-failed` 的 `error` 行；`timeout`、`test-patch-failed`、`tests-failed` 算 agent 的结果 |
+| `faultRate` | 故障格数 / 任务总数。哪些 `reason` 算故障格见 [`apps/sage/README.md`](../apps/sage/README.md) |
 | `tokensPerResolved` | 全部任务 `health.tokens.total` 之和 / resolved 数。失败任务的 token 算在分子里。resolved 为 0 时是 `null` |
 | `cacheHitRatio` | 各任务 `health.cacheHitRatio` 的算术平均，`null` 不进入平均。单个任务的这个数是 Σ cacheRead / Σ (cacheRead + inputOther + cacheCreation) |
 | `expandRate` | 各任务 `health.expandRate` 的算术平均，`null` 不进入平均。单个任务的这个数是最后一份清单的 `budget.expands / budget.omitted`，`omitted` 为 0 时该任务是 `null` |
