@@ -43,7 +43,9 @@ export type JevFetch = (
 /**
  * A finished call: the answers map keyed by question id, and the
  * response's `usage.input_tokens` and `usage.output_tokens` (0 when
- * absent).
+ * absent). A failure has `rateLimited: true` only when a 429 or 529
+ * outlasted every retry; the scorer reads that flag, never the
+ * `fallback` text.
  */
 export type Posted =
   | {
@@ -52,7 +54,7 @@ export type Posted =
       inputTokens: number;
       outputTokens: number;
     }
-  | { ok: false; fallback: string };
+  | { ok: false; fallback: string; rateLimited?: true };
 
 /** What one call needs besides the body. */
 export type PostTarget = {
@@ -85,7 +87,11 @@ export async function postSystemOne(
     }
     if (result.status === 429 || result.status === 529) {
       if (attempt === MAX_RETRIES) {
-        return { ok: false, fallback: `http:${result.status}` };
+        return {
+          ok: false,
+          fallback: `http:${result.status}`,
+          rateLimited: true,
+        };
       }
       const wait = result.retryAfterMs ?? RETRY_BASE_MS * 2 ** attempt;
       await target.sleepImpl(wait, target.signal);

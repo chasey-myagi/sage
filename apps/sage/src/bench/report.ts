@@ -11,8 +11,9 @@
  * order then B's; without it `excluded` is empty and every task counts.
  * `tokensPerResolved` is the sum of `health.tokens.total` over the resolved
  * count; `cacheHitRatio` and `expandRate` are means of the non-null
- * per-task values. Results files are read leniently: unknown fields fall
- * back to defaults and a malformed task row counts as an error.
+ * per-task values; `scorerFailedRequests` is a sum over tasks with
+ * health. Results files are read leniently: unknown fields fall back to
+ * defaults and a malformed task row counts as an error.
  *
  * Intentionally not in the Log: the report. It reads health back off
  * `results.json`, which was computed from the copied sessions.
@@ -23,6 +24,7 @@ import path from "node:path";
 import {
   DEFAULT_MAX_TURNS,
   errorText,
+  finiteOr,
   isFiniteNumber,
   isRecord,
   type RunHealth,
@@ -116,7 +118,23 @@ function benchMetrics(tasks: readonly BenchTaskResult[]): BenchMetrics {
     cacheHitRatio: mean(tasks.map((task) => task.health?.cacheHitRatio)),
     expandRate: mean(tasks.map((task) => task.health?.expandRate)),
     stoppedEarlyRate: total === 0 ? null : stopped / total,
+    scorerFailedRequests: failedRequestTotal(tasks),
   };
+}
+
+/** Sum of each task's failed scorer requests; null when no task has health. */
+function failedRequestTotal(tasks: readonly BenchTaskResult[]): number | null {
+  let sum: number | null = null;
+  for (const task of tasks) {
+    const health = task.health;
+    if (!health) continue;
+    sum =
+      (sum ?? 0) +
+      finiteOr(health.scorerFailedRequests, 0) +
+      finiteOr(health.entryScored?.failedRequests, 0) +
+      finiteOr(health.shadow?.failedRequests, 0);
+  }
+  return sum;
 }
 
 function loadResults(dir: string): BenchResults {
@@ -185,6 +203,10 @@ function deltaOf(a: BenchMetrics, b: BenchMetrics): BenchMetrics {
     cacheHitRatio: subtract(a.cacheHitRatio, b.cacheHitRatio),
     expandRate: subtract(a.expandRate, b.expandRate),
     stoppedEarlyRate: subtract(a.stoppedEarlyRate, b.stoppedEarlyRate),
+    scorerFailedRequests: subtract(
+      a.scorerFailedRequests,
+      b.scorerFailedRequests,
+    ),
   };
 }
 

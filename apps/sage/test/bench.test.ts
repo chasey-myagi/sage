@@ -136,7 +136,7 @@ it("bench run records resolved, empty-patch, and error without the problem text"
   expect(session).not.toContain("LEAKED_PROBLEM_TEXT");
 });
 
-it("bench report compares rates and the three numbers", async () => {
+it("bench report compares rates, the three numbers, and the summed failed scorer requests", async () => {
   dir = mkdtempSync(path.join(tmpdir(), "sage-bench-"));
   const runA = path.join(dir, "a");
   const runB = path.join(dir, "b");
@@ -157,8 +157,18 @@ it("bench report compares rates and the three numbers", async () => {
     policy: "compiler",
     model: "claude-test",
     tasks: [
-      row("t1", "resolved", { total: 4, cacheHitRatio: 0.25, expandRate: 0.5 }),
-      row("t2", "resolved", { total: 6, cacheHitRatio: 0.75, expandRate: 0.5 }),
+      row("t1", "resolved", {
+        total: 4,
+        cacheHitRatio: 0.25,
+        expandRate: 0.5,
+        failed: { rebuild: 2, entry: 1, shadow: 0 },
+      }),
+      row("t2", "resolved", {
+        total: 6,
+        cacheHitRatio: 0.75,
+        expandRate: 0.5,
+        failed: { rebuild: 0, entry: 0, shadow: 3 },
+      }),
     ],
   });
   const io = capture();
@@ -184,6 +194,7 @@ it("bench report compares rates and the three numbers", async () => {
     tokensPerResolved: 10,
     cacheHitRatio: 0.5,
     expandRate: 0.25,
+    scorerFailedRequests: 0,
     budget: null,
     baseUrl: null,
     provider: null,
@@ -197,6 +208,7 @@ it("bench report compares rates and the three numbers", async () => {
     tokensPerResolved: 5,
     cacheHitRatio: 0.5,
     expandRate: 0.5,
+    scorerFailedRequests: 6,
     budget: null,
     baseUrl: null,
     provider: null,
@@ -210,6 +222,7 @@ it("bench report compares rates and the three numbers", async () => {
     tokensPerResolved: -5,
     cacheHitRatio: 0,
     expandRate: 0.25,
+    scorerFailedRequests: 6,
   });
   expect(text).not.toContain("LEAKED_PROBLEM_TEXT");
 });
@@ -1029,6 +1042,7 @@ type Metrics = {
   tokensPerResolved: number | null;
   cacheHitRatio: number | null;
   expandRate: number | null;
+  scorerFailedRequests: number | null;
 };
 
 function git(cwd: string, args: string[]): string {
@@ -1143,7 +1157,13 @@ function writeSession(cwd: string, id: string): string {
 function row(
   id: string,
   status: "resolved" | "empty-patch" | "error",
-  health: { total: number; cacheHitRatio: number; expandRate: number } | null,
+  health: {
+    total: number;
+    cacheHitRatio: number;
+    expandRate: number;
+    /** Omitted to mimic a results file written before these counts existed. */
+    failed?: { rebuild: number; entry: number; shadow: number };
+  } | null,
 ) {
   return {
     id,
@@ -1166,6 +1186,13 @@ function row(
           modelChanges: 0,
           scorerCalls: 0,
           scorerFallbacks: 0,
+          ...(health.failed
+            ? {
+                scorerFailedRequests: health.failed.rebuild,
+                entryScored: { failedRequests: health.failed.entry },
+                shadow: { failedRequests: health.failed.shadow },
+              }
+            : {}),
         }
       : null,
   };

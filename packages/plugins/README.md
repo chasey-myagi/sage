@@ -115,7 +115,7 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 指令说明这是旁路判定，不是继续任务。每个候选是早先某次工具调用的结果。模型只返回 JSON 数组，每项 `{"id","tier":"none"|"summary"|"full","summary"?}`，summary 最长 200 字符。摘要必须让后面的轮次不用重读就能定位：文件读取写路径、关键符号或导出、以及行号范围；grep 或 ls 写命中路径与行号；命令输出写命令和结论性数字或状态，例如 `tests 23 passed 1 failed: name`。不要只写判断（已看过、不再需要、和之前一样），那种情况改判 `none` 或 `full`。示例里的 summary 是路径、符号和行号。正文可以包在一层 json 代码围栏里。围栏去掉之后，从第一个 `[` 或 `{` 起按括号配对取出一个 JSON 值，字符串内部的括号不计入配对，这个值前后的文字都忽略。取不到值，或取出的文本不是 JSON，整次解析失败。这样解析成功时，即使原文前后还有解释，也不算 fallback，不写 `raw`。顶层如果是带 `id` 的单个对象，会包成一项。`id` 不在这份候选清单里的项丢掉并计数，其余照用。空数组 `[]` 表示全部保留，不是失败。某一项缺 `id` 或 tier 非法，整次解析失败。`summary` 档在视图里是桩行，换行，然后 `summary (model notes, not evidence): ` 加上那段笔记。`none` 仍是原来的桩。`full` 保持原文。返回里没有的块保持 `kept`。打分器若把 `recent` 块判成 none，以 recent 为准。
 
-非法 JSON、超时、adapter 的 finish error，或者还没有上一轮请求，全部退回规则打分，本轮照常发出。清单 `epochDecision.reason` 追加 `;scorer:fallback:<原因>`。这次调用写在清单字段 `scorer: { calls, usage, fallback, raw? }` 里。`calls` 只数真正发出的打分请求：打分器在发请求前就放弃（没有上一轮请求、没有 adapter、jev 没有 key）时记 0，其余记 1。`raw` 只在 fallback 且已经拿到模型回复时出现：`text` 是原文前 300 字，`finish` 是结束种类。成功不写 `raw`。
+非法 JSON、超时、adapter 的 finish error，或者还没有上一轮请求，全部退回规则打分，本轮照常发出。清单 `epochDecision.reason` 追加 `;scorer:fallback:<原因>`。这次调用写在清单字段 `scorer: { calls, usage, fallback, raw?, failedRequests? }` 里。`failedRequests` 只在打分器部分请求失败时出现（见 jev 一节），这些块保留淘汰阶段的档位，不追加 fallback。`calls` 只数真正发出的打分请求：打分器在发请求前就放弃（没有上一轮请求、没有 adapter、jev 没有 key）时记 0，其余记 1。`raw` 只在 fallback 且已经拿到模型回复时出现：`text` 是原文前 300 字，`finish` 是结束种类。成功不写 `raw`。
 
 CLI `--scorer model` 给根编译器装上模型打分，沿用已装配的 adapter 和当前模型。不写这个参数就是规则打分。
 
@@ -131,7 +131,7 @@ CLI `--scorer model` 给根编译器装上模型打分，沿用已装配的 adap
 
 长度遵守 Jev 的两条限制：state 加最长的一个问题不超过 32k token，state 加全部问题不超过 64k token。估算按每 2.5 个 UTF-8 字节算一个 token，比真实分词偏多。超了先把 head 和 tail 一起减半，减到都为空仍超，再把候选减半，head 和 tail 从默认重新开始；什么都减完仍超，这块不发。
 
-没有 key、非 2xx、超时（默认 10000ms）、调用方中止或正文不是 answers 对象时，返回 `{ decisions: [], fallback }`，不抛。任何一个块的请求失败，整次结果都没有判定；第一次失败之后不再发新请求，已在途的照常结束，已完成请求的 usage 照记。没有 key 时不发请求，结果带 `requested: false`，清单上的 `calls` 记 0；发了请求时 `calls` 记 1，不论发了几个。429 和 529 最多再试 3 次。响应带 `retry-after`（秒数或 HTTP 日期）时按它等待，最长 30 秒；没有时间隔 `500ms × 2^n`。各请求的 `usage.input_tokens` 相加写入 `inputOther`，`usage.output_tokens` 相加写入 `output`；Jev 的输出不计费，记下来只为对账。
+一个块的请求非 2xx、超时（默认 10000ms）、被调用方中止或正文不是 answers 对象时，只有这个块拿不到判定，编译器保留它原来的档位；其余请求照发，判定照常生效，usage 照记，失败数写进结果的 `failedRequests`，编译器抄到对应报告上。只有全部请求都失败才返回 `{ decisions: [], fallback }`，原因取第一个失败的请求，不带 usage，也不带 `failedRequests`。有两种情况会停发新请求，还没开始的请求不打网络、按失败计：`signal` 中止后（原因 `aborted`；编译器目前不传 `signal`，只有直接调用 `score` 的调用方会传）；任一请求在 429 或 529 上重试用尽后（熔断，原因取该请求的 `http:429` 或 `http:529`），用来限住速率受限时一次打分的墙钟时间。第一次 429 不触发熔断，只有重试用尽才触发；已在途的请求照常结束，已答上的判定照常保留。不抛。没有 key 时返回 `fallback: "no-api-key"`，不发请求，结果带 `requested: false`，清单上的 `calls` 记 0；发了请求时 `calls` 记 1，不论发了几个。429 和 529 最多再试 3 次。响应带 `retry-after`（秒数或 HTTP 日期）时按它等待，最长 30 秒；没有时间隔 `500ms × 2^n`。各请求的 `usage.input_tokens` 相加写入 `inputOther`，`usage.output_tokens` 相加写入 `output`；Jev 的输出不计费，记下来只为对账。
 
 CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https://api.typesafe.ai`）、`JEV_API_KEY`（缺省回退 `TYPESAFE_API_KEY`）和 `JEV_MODEL`（缺省 `jev-latest`）。两个 key 都没有时进程以退出码 2 结束，stderr 点名这两个变量。接到本地 LLM2Jev 时，例如 `JEV_BASE_URL=http://127.0.0.1:30000 JEV_API_KEY=local JEV_MODEL=<served-model-name>`。目录里的 provider `typesafe` 只有 `jev-latest` 的定价（输入 $0.042/MTok，输出和缓存读写都是 0），`listModels("typesafe")` 可见。`--provider typesafe` 会报错：它不是聊天端点。
 
@@ -139,7 +139,7 @@ CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https:
 
 `contextCompiler({ shadowScorer })` 在这一轮的档位、冻结和预算都已经定下来之后，再对**本轮新进入视图的工具块**调用 `shadowScorer.score`。新块是上一份清单的 `chunks` 里没有的 chunk id。第一轮没有上一份清单，全部工具块都算新的。散文块不打。`prevRequest` 是这一轮已经编译好的视图（head、messages、缓存断点），不是上一轮发出去的请求。
 
-结果只写 `manifest.shadow`：`{ scorer, calls, decisions: [{ id, tier, reason? }], usage?, fallback?, raw? }`。`calls` 与重建打分、入场打分同一口径，只数真正发出的请求：打分器在发请求前就放弃（`requested: false`，例如 jev 缺 key）或请求没能构造出来时为 0，其余为 1，打分器抛错也算 1。`raw` 与上面的打分记录一样，只在 fallback 时有。影子只记不生效。它不改任何档次，不改冻结，不改预算，也不改模型看到的消息。打分器抛错时 `shadow.fallback` 记下错误文本，`decisions` 为空，这一轮照常返回。打分器自己返回的 `fallback` 同样只记在这个字段上。没有新的工具块就不调用，清单上也不写 `shadow`。
+结果只写 `manifest.shadow`：`{ scorer, calls, decisions: [{ id, tier, reason? }], usage?, fallback?, raw?, failedRequests? }`。`failedRequests` 与重建打分同一口径。`calls` 与重建打分、入场打分同一口径，只数真正发出的请求：打分器在发请求前就放弃（`requested: false`，例如 jev 缺 key）或请求没能构造出来时为 0，其余为 1，打分器抛错也算 1。`raw` 与上面的打分记录一样，只在 fallback 时有。影子只记不生效。它不改任何档次，不改冻结，不改预算，也不改模型看到的消息。打分器抛错时 `shadow.fallback` 记下错误文本，`decisions` 为空，这一轮照常返回。打分器自己返回的 `fallback` 同样只记在这个字段上。没有新的工具块就不调用，清单上也不写 `shadow`。
 
 子任务重编译不跑影子打分。任务结束后用 `sage stats` 对账：被影子判为 `none` 的块，后来有没有被 `expand` 取回，或者作为 `read` 结果在后续轮次被同一路径再次读取。口径见 [`apps/sage/README.md`](../../apps/sage/README.md)。
 
@@ -153,7 +153,7 @@ CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https:
 
 选入口而不是「滑出最近窗口时再改档」：DeepSeek 的缓存是前缀缓存。出窗口时改档，会让该位置之后的近期内容每轮重新全价编码。按写入价和缓存读价的差距，要很多轮才回本。入口定档则这块从第一次出现就是最终形态，前缀逐字节不动。代价是模型偶尔需要全文时多一次 `expand`。
 
-`manifest.entryScored` 是 `{ calls, none, summary, full, summaryRejected, usage? }`。`summaryRejected` 是退回的笔记数，这些块同时计入 `full`。`runHealth` 把各轮加总，没写 `summaryRejected` 的清单这一项加 0。usage 四项与 `shadow.usage` 同一口径。
+`manifest.entryScored` 是 `{ calls, none, summary, full, summaryRejected, usage?, failedRequests? }`。`failedRequests` 是部分失败时没拿到判定的块数，这些块保持 full；全部失败时不写，按 fallback 处理。`summaryRejected` 是退回的笔记数，这些块同时计入 `full`。`runHealth` 把各轮加总，没写 `summaryRejected` 的清单这一项加 0。usage 四项与 `shadow.usage` 同一口径。
 
 ## 离线回放
 

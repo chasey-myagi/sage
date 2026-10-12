@@ -52,6 +52,18 @@ export function requestCount(result: Pick<ScoreResult, "requested">): number {
   return result.requested === false ? 0 : 1;
 }
 
+/**
+ * The `failedRequests` field every scorer report copies from a result:
+ * the count when positive, else nothing, so reports without partial
+ * failures keep their shape.
+ */
+export function failedRequestsField(
+  result: Pick<ScoreResult, "failedRequests"> | undefined,
+): { failedRequests?: number } {
+  const failed = result?.failedRequests ?? 0;
+  return failed > 0 ? { failedRequests: failed } : {};
+}
+
 /** Cuts a summary note to `SUMMARY_LIMIT` characters. */
 export function clampSummary(summary: string): string {
   if (summary.length <= SUMMARY_LIMIT) return summary;

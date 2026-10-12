@@ -157,8 +157,10 @@ it("returns zeros and null rates for an empty path", () => {
     modelChanges: 0,
     scorerCalls: 0,
     scorerFallbacks: 0,
+    scorerFailedRequests: 0,
     shadow: {
       calls: 0,
+      failedRequests: 0,
       usage: {
         input: 0,
         cacheRead: 0,
@@ -173,6 +175,7 @@ it("returns zeros and null rates for an empty path", () => {
       summary: 0,
       full: 0,
       summaryRejected: 0,
+      failedRequests: 0,
       usage: {
         input: 0,
         cacheRead: 0,
@@ -310,6 +313,17 @@ it("counts epochs from the highest view_epoch and model_change entries", () => {
   expect(JSON.stringify(health)).not.toContain(LEAK);
 });
 
+it("sums scorer failed requests across manifests, counting a missing or non-finite one as 0", () => {
+  const health = runHealth([
+    manifest(0, { scorer: { calls: 1, fallback: false, failedRequests: 3 } }),
+    manifest(1, { scorer: { calls: 1, fallback: false } }),
+    manifest(2, { scorer: { calls: 1, fallback: false, failedRequests: "x" } }),
+    manifest(3, { scorer: { calls: 1, fallback: false, failedRequests: 1 } }),
+  ]);
+  expect(health.scorerFailedRequests).toBe(4);
+  expect(health.scorerFallbacks).toBe(0);
+});
+
 it("sums numeric scorer fallbacks and ignores non-finite usage", () => {
   const health = runHealth([
     assistant(0, {
@@ -352,10 +366,14 @@ it("counts each shadow manifest once and sums its usage quadruple", () => {
     manifest(1, {
       shadow: { scorer: "model", calls: 1, decisions: [], fallback: "boom" },
     }),
-    manifest(2, {}),
+    manifest(2, {
+      shadow: { scorer: "jev", calls: 1, decisions: [], failedRequests: 2 },
+    }),
+    manifest(3, {}),
   ]);
   expect(health.shadow).toEqual({
-    calls: 2,
+    calls: 3,
+    failedRequests: 2,
     usage: {
       input: 2,
       cacheRead: 4,
@@ -386,7 +404,13 @@ it("sums entryScored calls, tiers, and usage across manifests", () => {
       },
     }),
     manifest(1, {
-      entryScored: { calls: 1, none: 0, summary: 0, full: 1 },
+      entryScored: {
+        calls: 1,
+        none: 0,
+        summary: 0,
+        full: 1,
+        failedRequests: 1,
+      },
     }),
     manifest(2, {}),
   ]);
@@ -396,6 +420,7 @@ it("sums entryScored calls, tiers, and usage across manifests", () => {
     summary: 1,
     full: 1,
     summaryRejected: 2,
+    failedRequests: 1,
     usage: {
       input: 3,
       cacheRead: 4,

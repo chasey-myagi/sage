@@ -3,10 +3,12 @@
  * answers Noul questions about an excerpt of the chunk's original output;
  * code turns the answers into tiers.
  *
- * Guarantees: the scorer never throws; every failure resolves
- * `{ decisions: [], fallback }`, so the compiler keeps the deterministic
- * tiers. The original output comes only from `prevRequest`; no other
- * history is sent. Request fields, tiers, and retries: `jevScorer`.
+ * Guarantees: the scorer never throws. A failed request costs only its
+ * own chunk, which gets no decision; only when no request is answered
+ * does the call resolve `{ decisions: [], fallback }`, so the compiler
+ * keeps the deterministic tiers. The original output comes only from
+ * `prevRequest`; no other history is sent. Request fields, tiers, and
+ * retries: `jevScorer`.
  *
  * Intentionally not in the Log: these requests and their answers. The
  * compiler copies decisions (probabilities in the reason), usage, and
@@ -19,7 +21,12 @@ import {
   sleep,
   type Usage,
 } from "@sage/provider/contract";
-import { type JevFetch, type PostTarget, postSystemOne } from "./jev/http.js";
+import {
+  type JevFetch,
+  type Posted,
+  type PostTarget,
+  postSystemOne,
+} from "./jev/http.js";
 import { readJudgment } from "./jev/questions.js";
 import { readSources } from "./jev/sources.js";
 import { type ChunkRequest, chunkRequest } from "./jev/state.js";
@@ -82,11 +89,15 @@ const MAX_PARALLEL_REQUESTS = 4;
  * Usage sums `input_tokens` into `inputOther` and `output_tokens` into
  * `output`. Never throws. A missing `apiKey` resolves `no-api-key` and a
  * missing `prevRequest` `no-previous-request`, both with `requested:
- * false`. Any failed request (status, timeout `timeoutMs` default 10000,
- * abort, or a body without answers) resolves its fallback with no
- * decisions and the usage of requests that finished. 429 and 529 retry
- * at most 3 times, sleeping for the response's `retry-after` when it
- * has one, else `500 × 2^n` ms; a caller abort ends the wait with
+ * false`. A failed request (status, timeout `timeoutMs` default 10000,
+ * abort, or a body without answers) gives its chunk no decision and adds
+ * 1 to `failedRequests`; the other requests still go out and their
+ * decisions stand, except that once one request exhausts its 429/529
+ * retries, or `signal` aborts, requests not yet started are not sent and
+ * count as failed with that reason. Only when every request fails does the call resolve
+ * the first failure's fallback, with no decisions and no usage. 429 and
+ * 529 retry at most 3 times, sleeping for the response's `retry-after`
+ * when it has one, else `500 × 2^n` ms; a caller abort ends the wait with
  * `aborted`. A chunk whose answers lack a fixed judgment gets no
  * decision.
  */
@@ -181,9 +192,16 @@ function buildRequests(
 }
 
 /**
- * Sends every request, `MAX_PARALLEL_REQUESTS` at a time. After the first
- * failure no new request starts; those in flight finish and their usage
- * still counts.
+ * Sends every request, `MAX_PARALLEL_REQUESTS` at a time. A failed request
+ * costs only its own chunk: the others still go out and keep their
+ * decisions, and the failures are counted in `failedRequests`. The result
+ * falls back, with the first failure's reason, only when no request is
+ * answered. Two cases stop new requests, which then count as failed
+ * without being sent: `signal` aborted (reason `aborted`), and a circuit
+ * breaker that opens once any request has exhausted its 429/529 retries
+ * (reason that request's `http:429` or `http:529`), which bounds the wall
+ * clock a rate-limited call can spend. A first 429 does not open it;
+ * requests already in flight finish either way.
  */
 async function postRequests(
   requests: readonly ChunkRequest[],
@@ -191,26 +209,28 @@ async function postRequests(
 ): Promise<ScoreResult> {
   const answers: (Record<string, unknown> | undefined)[] = [];
   const usage: Usage = emptyUsage();
-  let finished = 0;
-  let fallback: string | undefined;
+  let failed = 0;
+  let firstFallback: string | undefined;
+  /** Set once a request outlasts its 429/529 retries: the breaker is open. */
+  let rateLimit: string | undefined;
   let next = 0;
   const worker = async () => {
-    while (fallback === undefined && next < requests.length) {
+    while (next < requests.length) {
       const index = next;
       next += 1;
       const request = requests[index];
       if (!request) return;
-      const body = JSON.stringify({
-        state: request.state,
-        model: opts.model,
-        questions: request.questions,
-      });
-      const posted = await postSystemOne(opts.target, body);
+      const skipped = opts.target.signal?.aborted ? "aborted" : rateLimit;
+      const posted =
+        skipped !== undefined
+          ? notSent(skipped)
+          : await postSystemOne(opts.target, requestBody(request, opts.model));
       if (!posted.ok) {
-        fallback ??= posted.fallback;
-        return;
+        failed += 1;
+        firstFallback ??= posted.fallback;
+        if (posted.rateLimited) rateLimit ??= posted.fallback;
+        continue;
       }
-      finished += 1;
       usage.inputOther += posted.inputTokens;
       usage.output += posted.outputTokens;
       answers[index] = posted.answers;
@@ -218,15 +238,29 @@ async function postRequests(
   };
   const workers = Math.min(MAX_PARALLEL_REQUESTS, requests.length);
   await Promise.all(Array.from({ length: workers }, worker));
-  if (fallback !== undefined) {
-    return { decisions: [], fallback, ...(finished > 0 ? { usage } : {}) };
+  if (failed === requests.length) {
+    return { decisions: [], fallback: firstFallback ?? "error" };
   }
   return {
     decisions: requests.flatMap((request, index) =>
       decisionFor(request, answers[index], opts.thresholds),
     ),
     usage,
+    ...(failed > 0 ? { failedRequests: failed } : {}),
   };
+}
+
+/** A request the scorer chose not to send, counted as failed with `fallback`. */
+function notSent(fallback: string): Posted {
+  return { ok: false, fallback };
+}
+
+function requestBody(request: ChunkRequest, model: string): string {
+  return JSON.stringify({
+    state: request.state,
+    model,
+    questions: request.questions,
+  });
 }
 
 function decisionFor(

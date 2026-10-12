@@ -125,7 +125,10 @@ export type BenchResults = {
   tasks: BenchTaskResult[];
 };
 
-/** Report rates. Each is null when its denominator is zero. */
+/**
+ * Report rates, plus one count. Each rate is null when its denominator is
+ * zero.
+ */
 export type BenchMetrics = {
   resolvedRate: number | null;
   emptyPatchRate: number | null;
@@ -141,6 +144,13 @@ export type BenchMetrics = {
   expandRate: number | null;
   /** Tasks with `stoppedEarly === true` over all tasks. */
   stoppedEarlyRate: number | null;
+  /**
+   * A count, not a rate: scorer requests that failed while others in the
+   * same call were answered, summed over every task's health (rebuild
+   * `scorerFailedRequests`, `entryScored.failedRequests`, and
+   * `shadow.failedRequests`). Null when no task has health.
+   */
+  scorerFailedRequests: number | null;
 };
 
 /**

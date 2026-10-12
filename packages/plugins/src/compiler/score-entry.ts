@@ -14,7 +14,7 @@
  */
 
 import { type EntryScoredReport, readTokenCounts } from "@sage/core";
-import type { Request, Usage } from "@sage/provider/contract";
+import type { Request } from "@sage/provider/contract";
 import type { ScoreDecision, ScoreResult, Scorer } from "../scorer/types.js";
 import { applyDecisions } from "./apply.js";
 import type { TokenCounter } from "./budget.js";
@@ -32,6 +32,7 @@ import {
 } from "./rows.js";
 import {
   clampSummary,
+  failedRequestsField,
   isLocatableSummary,
   requestCount,
   SCORE_TIERS,
@@ -67,8 +68,10 @@ export function resolveMinScoreTokens(value: number | undefined): number {
  * `summaryRejected`. `full` keeps the text. The reason is
  * `scorer:entry:<tier>`, followed by `;<decision reason>` when the scorer
  * gave one (jev's probabilities). A throw, a fallback, or an id the reply
- * omits leaves that chunk full. `report` is set whenever the scorer was invoked;
- * its `calls` is 0 when the scorer fell back with `requested: false`.
+ * omits leaves that chunk full; the scorer's `failedRequests` is copied
+ * onto the report when positive. `report` is set whenever the scorer was
+ * invoked; its `calls` is 0 when the scorer fell back with `requested:
+ * false`.
  * `prevRequest` is this turn's compiled view.
  */
 export async function runEntryScorer(input: {
@@ -94,12 +97,12 @@ export async function runEntryScorer(input: {
     });
   } catch {
     // A scorer defect leaves every candidate full; the call still counts.
-    return { ...unchanged, report: entryReport(1, 0, 0, 0) };
+    return { ...unchanged, report: entryReport(1, NO_TIERS) };
   }
   if (result.fallback !== undefined) {
     return {
       ...unchanged,
-      report: entryReport(requestCount(result), 0, 0, 0, result.usage),
+      report: entryReport(requestCount(result), NO_TIERS, result),
     };
   }
   const accepted = acceptedDecisions(candidates, result.decisions);
@@ -112,14 +115,7 @@ export async function runEntryScorer(input: {
       rowsToDecisions(applied.rows),
     ),
     used: input.view.used + applied.usedDelta,
-    report: entryReport(
-      1,
-      applied.none,
-      applied.summary,
-      applied.full,
-      result.usage,
-      applied.summaryRejected,
-    ),
+    report: entryReport(1, applied, result),
   };
 }
 
@@ -212,21 +208,31 @@ function applyEntryDecisions(
   };
 }
 
+type TierCounts = Pick<
+  EntryScoredReport,
+  "none" | "summary" | "full" | "summaryRejected"
+>;
+
+const NO_TIERS: TierCounts = {
+  none: 0,
+  summary: 0,
+  full: 0,
+  summaryRejected: 0,
+};
+
 function entryReport(
   calls: number,
-  none: number,
-  summary: number,
-  full: number,
-  usage?: Usage,
-  summaryRejected = 0,
+  tiers: TierCounts,
+  result?: Pick<ScoreResult, "usage" | "failedRequests">,
 ): EntryScoredReport {
-  const counts = readTokenCounts(usage);
+  const counts = readTokenCounts(result?.usage);
   return {
     calls,
-    none,
-    summary,
-    full,
-    summaryRejected,
+    none: tiers.none,
+    summary: tiers.summary,
+    full: tiers.full,
+    summaryRejected: tiers.summaryRejected,
     ...(counts ? { usage: counts } : {}),
+    ...failedRequestsField(result),
   };
 }
