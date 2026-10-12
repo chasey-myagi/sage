@@ -30,7 +30,12 @@ import {
   stubRow,
   summaryRow,
 } from "./rows.js";
-import { clampSummary, requestCount, SCORE_TIERS } from "./score-common.js";
+import {
+  clampSummary,
+  isLocatableSummary,
+  requestCount,
+  SCORE_TIERS,
+} from "./score-common.js";
 import type { ScoredView } from "./score-rebuild.js";
 
 /**
@@ -38,12 +43,6 @@ import type { ScoredView } from "./score-rebuild.js";
  * estimated tokens is not worth an entry-scorer call and stays full.
  */
 export const DEFAULT_MIN_SCORE_TOKENS = 300;
-
-/** A summary note shorter than this many characters is rejected. */
-const SUMMARY_MIN_CHARS = 20;
-/** Path, extension, digit, camelCase, or snake_case. */
-const SUMMARY_ANCHOR =
-  /(?:[/\\]|\.[A-Za-z0-9]{1,8}\b|\d|[A-Za-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*|[A-Za-z0-9]+_[A-Za-z0-9_]+)/;
 
 /**
  * Returns `value` when it is a finite number ≥ 0, else
@@ -66,8 +65,9 @@ export function resolveMinScoreTokens(value: number | undefined): number {
  * with no path, symbol, or number, stays full with reason
  * `scorer:entry:full;summary-rejected` and counts in both `full` and
  * `summaryRejected`. `full` keeps the text. The reason is
- * `scorer:entry:<tier>`. A throw, a fallback, or an id the reply omits
- * leaves that chunk full. `report` is set whenever the scorer was invoked;
+ * `scorer:entry:<tier>`, followed by `;<decision reason>` when the scorer
+ * gave one (jev's probabilities). A throw, a fallback, or an id the reply
+ * omits leaves that chunk full. `report` is set whenever the scorer was invoked;
  * its `calls` is 0 when the scorer fell back with `requested: false`.
  * `prevRequest` is this turn's compiled view.
  */
@@ -175,7 +175,7 @@ function applyEntryDecisions(
     const scored = accepted.get(row.id);
     const chunk = chunksById.get(row.id);
     if (!scored || chunk?.kind !== "tool") return row;
-    const reason = entryReason(row.reason, scored.tier);
+    const reason = entryReason(row.reason, scored.tier, scored.reason);
     if (scored.tier === "full") {
       tally.full += 1;
       return keptRow(row.id, "full", reason, chunk.tokens);
@@ -193,7 +193,7 @@ function applyEntryDecisions(
       return keptRow(
         row.id,
         "full",
-        summaryRejectedReason(row.reason),
+        summaryRejectedReason(row.reason, scored.reason),
         chunk.tokens,
       );
     }
@@ -210,15 +210,6 @@ function applyEntryDecisions(
     full: tally.full,
     summaryRejected: tally.rejected,
   };
-}
-
-/**
- * A note must let the model find the evidence again: at least
- * `SUMMARY_MIN_CHARS` characters and one path, extension, digit,
- * camelCase, or snake_case token.
- */
-function isLocatableSummary(summary: string): boolean {
-  return summary.length >= SUMMARY_MIN_CHARS && SUMMARY_ANCHOR.test(summary);
 }
 
 function entryReport(

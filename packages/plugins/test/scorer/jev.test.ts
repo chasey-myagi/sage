@@ -1,75 +1,65 @@
-import { MemoryLogStore, runHealth, type ViewContext } from "@sage/core";
+import { jsonFetch } from "@sage/core/testing";
 import { listModels } from "@sage/provider";
-import type { Request, Usage } from "@sage/provider/contract";
-import { expect, it } from "vitest";
-import type { Chunk } from "../../src/compiler/chunks.ts";
-import { contextCompiler } from "../../src/compiler/compiler.ts";
+import { describe, expect, it } from "vitest";
 import { jevScorer } from "../../src/scorer/jev.ts";
+import {
+  answerNouls,
+  chunkOf,
+  type FixtureCall,
+  requestWith,
+  sentBody,
+} from "./jev-fixtures.ts";
 
 const SOURCE = "https://typesafe.ai/blog/introducing-system-one-models-and-jev";
 
-type FetchInit = {
-  method?: string;
-  headers?: Record<string, string>;
-  body?: string;
-  signal?: AbortSignal;
+const CONFIG_READ: FixtureCall = {
+  id: "t1",
+  tool: "read",
+  input: { path: "src/config.ts" },
+  prose: "I will look for parseConfig in src/config.ts.",
+  output: [
+    "import { readFileSync } from 'node:fs';",
+    "",
+    "export function parseConfig(text: string): Config {",
+    "  return JSON.parse(text);",
+    "}",
+    "",
+    "export class ConfigError extends Error {}",
+  ].join("\n"),
 };
 
-function chunk(
-  id: string,
-  tokens = 40,
-  input: unknown = { path: "a.ts" },
-): Chunk {
-  return {
-    id,
-    kind: "tool",
-    messageIndex: 0,
-    toolName: "read",
-    input,
-    tokens,
-    accesses: [],
-  };
-}
+const TEST_RUN: FixtureCall = {
+  id: "t2",
+  tool: "bash",
+  input: { command: "pnpm test" },
+  output: [
+    "[bash exit code 1]",
+    " FAIL  test/config.test.ts > parses empty input",
+    "AssertionError: expected undefined to equal {}",
+    "    at test/config.test.ts:12:5",
+    " Tests  1 failed | 22 passed (23)",
+  ].join("\n"),
+};
 
-function choice(full: number) {
-  const none = Number((1 - full).toFixed(4));
-  return {
-    type: "choice",
-    choice: full >= 0.5 ? "full" : "none",
-    probabilities: { full, none },
-    confidence: Math.max(full, none),
-  };
-}
+const LISTING: FixtureCall = {
+  id: "t3",
+  tool: "ls",
+  input: { path: "src" },
+  output: ["config.ts", "index.ts", "util/"].join("\n"),
+};
 
-function systemOne(
-  answers: Record<string, ReturnType<typeof choice>>,
-  inputTokens: number,
+function scorerWith(
+  respond: Parameters<typeof jsonFetch>[0],
+  extra: Partial<Parameters<typeof jevScorer>[0]> = {},
 ) {
+  const fake = jsonFetch(respond);
   return {
-    answers,
-    usage: { input_tokens: inputTokens, output_tokens: 3 },
-  };
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-function prevRequest(): Request {
-  return {
-    model: { provider: "anthropic", model: "claude-sonnet-5" },
-    head: { system: "HISTORICAL-SECRET", tools: [] },
-    messages: [
-      {
-        role: "user",
-        content: [{ type: "text", text: "HISTORICAL-SECRET" }],
-      },
-    ],
-    cacheBreakpoints: ["head"],
-    sampling: {},
+    fake,
+    scorer: jevScorer({
+      apiKey: "secret",
+      fetchImpl: fake.fetchImpl,
+      ...extra,
+    }),
   };
 }
 
@@ -90,681 +80,353 @@ it("lists jev-latest on the typesafe provider for pricing only", () => {
   ]);
 });
 
-it("tiers each chunk from probabilities.full and records scorer:jev:<p>", async () => {
-  const bodies: {
-    model?: string;
-    state?: { query?: string; chunks?: { id: string; summary: string }[] };
-    questions?: Record<string, unknown>;
-  }[] = [];
-  const longInput = {
-    note: `${"KEEP-".repeat(20)}FULL-ORIGINAL-SECRET`,
-  };
-  const fetchImpl = async (url: string, init?: FetchInit) => {
-    expect(url).toBe("https://api.typesafe.ai/v1/systemone");
-    expect(init?.method).toBe("POST");
-    expect(init?.headers).toEqual({
-      Authorization: "Bearer secret",
-      "Content-Type": "application/json",
-    });
-    const raw = String(init?.body);
-    expect(raw).not.toContain("HISTORICAL-SECRET");
-    expect(raw).not.toContain("FULL-ORIGINAL-SECRET");
-    const body = JSON.parse(raw) as (typeof bodies)[number];
-    bodies.push(body);
-    return jsonResponse(
-      systemOne(
-        {
-          "seq:1#a": choice(0.5),
-          "seq:3#b": choice(0.49),
-          "seq:5#c": choice(0.875),
-        },
-        11,
-      ),
-    );
-  };
-  const scorer = jevScorer({ apiKey: "secret", fetchImpl });
-  const result = await scorer.score({
-    candidates: [
-      chunk("seq:1#a"),
-      chunk("seq:3#b"),
-      chunk("seq:5#c", 40, longInput),
-    ],
-    prevRequest: prevRequest(),
-    query: "find the bug",
-  });
-
-  expect(scorer.name).toBe("jev");
-  expect(result.fallback).toBeUndefined();
-  expect(result.decisions).toEqual([
-    { id: "seq:1#a", tier: "full", reason: "scorer:jev:0.50" },
-    { id: "seq:3#b", tier: "none", reason: "scorer:jev:0.49" },
-    { id: "seq:5#c", tier: "full", reason: "scorer:jev:0.88" },
-  ]);
-  expect(
-    result.decisions.every((decision) => decision.summary === undefined),
-  ).toBe(true);
-  expect(result.usage).toEqual({
-    inputOther: 11,
-    inputCacheRead: 0,
-    inputCacheCreation: 0,
-    output: 0,
-  });
-  const sent = bodies[0];
-  expect(sent?.model).toBe("jev-latest");
-  expect(sent?.state?.query).toBe("find the bug");
-  expect(sent?.state?.chunks?.[0]).toEqual({
-    id: "seq:1#a",
-    tool: "read",
-    summary: '{"path":"a.ts"}',
-    tokens: 40,
-  });
-  expect(sent?.state?.chunks?.[2]?.summary.length).toBeLessThanOrEqual(80);
-  expect(sent?.questions?.["seq:1#a"]).toEqual({
-    type: "choice",
-    instructions:
-      "To finish the task in state.query, will the next step need the full original text of chunk seq:1#a? Answer full if the original text is needed, none if the one-line summary is enough.",
-    criteria: {
-      full: "The original text is needed.",
-      none: "The one-line summary is enough.",
-    },
-  });
-
-  const strict = await jevScorer({
-    apiKey: "secret",
-    fetchImpl: async () =>
-      jsonResponse(systemOne({ "seq:1#a": choice(0.8) }, 1)),
-    minConfidence: 0.9,
-    baseUrl: "https://jev.example/",
-  }).score({
-    candidates: [chunk("seq:1#a")],
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(strict.decisions).toEqual([
-    { id: "seq:1#a", tier: "none", reason: "scorer:jev:0.80" },
-  ]);
-});
-
-it("posts to baseUrl without a trailing slash", async () => {
-  let url = "";
-  await jevScorer({
-    apiKey: "k",
-    baseUrl: "https://jev.example/",
-    fetchImpl: async (seen) => {
-      url = seen;
-      return jsonResponse(systemOne({ a: choice(0.1) }, 1));
-    },
-  }).score({
-    candidates: [chunk("a", 1)],
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(url).toBe("https://jev.example/v1/systemone");
-});
-
-it("posts opts.model instead of jev-latest", async () => {
-  let model = "";
-  await jevScorer({
-    apiKey: "k",
-    model: "served-model",
-    fetchImpl: async (_url, init) => {
-      const body = JSON.parse(String(init?.body)) as { model?: string };
-      model = body.model ?? "";
-      return jsonResponse(systemOne({ a: choice(0.9) }, 1));
-    },
-  }).score({
-    candidates: [chunk("a", 1)],
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(model).toBe("served-model");
-});
-
-it("splits 200 chunks into at least two batches of at most 40", async () => {
-  const sizes: number[] = [];
-  const fetchImpl = async (_url: string, init?: FetchInit) => {
-    const body = JSON.parse(String(init?.body)) as {
-      state: { chunks: { id: string }[] };
-    };
-    sizes.push(body.state.chunks.length);
-    const answers: Record<string, ReturnType<typeof choice>> = {};
-    for (const item of body.state.chunks) answers[item.id] = choice(0.1);
-    return jsonResponse(systemOne(answers, 1));
-  };
-  const candidates = Array.from({ length: 200 }, (_, index) =>
-    chunk(`seq:${index}#c`, 10),
-  );
-  const result = await jevScorer({ apiKey: "k", fetchImpl }).score({
-    candidates,
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(sizes.length).toBeGreaterThanOrEqual(2);
-  expect(sizes.every((size) => size <= 40)).toBe(true);
-  expect(sizes.reduce((sum, size) => sum + size, 0)).toBe(200);
-  expect(result.decisions).toHaveLength(200);
-  expect(result.usage?.inputOther).toBe(sizes.length);
-});
-
-it("starts a new batch when token-estimated state characters pass 24000", async () => {
-  const sizes: number[] = [];
-  const fetchImpl = async (_url: string, init?: FetchInit) => {
-    const body = JSON.parse(String(init?.body)) as {
-      state: { chunks: unknown[] };
-    };
-    sizes.push(body.state.chunks.length);
-    return jsonResponse(systemOne({ a: choice(0.1), b: choice(0.1) }, 1));
-  };
-  await jevScorer({ apiKey: "k", fetchImpl, batchSize: 40 }).score({
-    candidates: [chunk("a", 3000), chunk("b", 3000)],
-    prevRequest: undefined,
-    query: "qq",
-  });
-  expect(sizes).toEqual([1, 1]);
-
-  sizes.length = 0;
-  await jevScorer({ apiKey: "k", fetchImpl, batchSize: 40 }).score({
-    candidates: [chunk("a", 10_000)],
-    prevRequest: undefined,
-    query: "qq",
-  });
-  expect(sizes).toEqual([1]);
-});
-
-it("retries a 429 twice with exponential backoff and then succeeds", async () => {
-  const statuses = [429, 429, 200];
-  let attempts = 0;
-  const sleeps: number[] = [];
-  const fetchImpl = async () => {
-    const status = statuses[attempts] ?? 200;
-    attempts += 1;
-    if (status !== 200) return new Response("busy", { status });
-    return jsonResponse(systemOne({ "seq:1#a": choice(0.7) }, 8));
-  };
-  const result = await jevScorer({
-    apiKey: "k",
-    fetchImpl,
-    sleepImpl: async (ms) => {
-      sleeps.push(ms);
-    },
-  }).score({
-    candidates: [chunk("seq:1#a")],
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(attempts).toBe(3);
-  expect(sleeps).toEqual([500, 1000]);
-  expect(result.fallback).toBeUndefined();
-  expect(result.decisions).toEqual([
-    { id: "seq:1#a", tier: "full", reason: "scorer:jev:0.70" },
-  ]);
-});
-
-it("retries 529 and stops after three failed retries", async () => {
-  let attempts = 0;
-  const sleeps: number[] = [];
-  const once = await jevScorer({
-    apiKey: "k",
-    fetchImpl: async () => {
-      attempts += 1;
-      if (attempts === 1) return new Response("overloaded", { status: 529 });
-      return jsonResponse(systemOne({ a: choice(0.2) }, 2));
-    },
-    sleepImpl: async (ms) => {
-      sleeps.push(ms);
-    },
-  }).score({
-    candidates: [chunk("a", 1)],
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(attempts).toBe(2);
-  expect(sleeps).toEqual([500]);
-  expect(once.decisions).toEqual([
-    { id: "a", tier: "none", reason: "scorer:jev:0.20" },
-  ]);
-
-  attempts = 0;
-  sleeps.length = 0;
-  const exhausted = await jevScorer({
-    apiKey: "k",
-    fetchImpl: async () => {
-      attempts += 1;
-      return new Response("busy", { status: 429 });
-    },
-    sleepImpl: async (ms) => {
-      sleeps.push(ms);
-    },
-  }).score({
-    candidates: [chunk("a", 1)],
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(attempts).toBe(4);
-  expect(sleeps).toEqual([500, 1000, 2000]);
-  expect(exhausted).toEqual({ decisions: [], fallback: "http:429" });
-});
-
-it("hands the caller's signal to the retry wait and does not fetch again once it aborts", async () => {
-  const controller = new AbortController();
-  let attempts = 0;
-  const waits: (AbortSignal | undefined)[] = [];
-  const result = await jevScorer({
-    apiKey: "k",
-    fetchImpl: async () => {
-      attempts += 1;
-      return new Response("busy", { status: 429 });
-    },
-    sleepImpl: async (_ms, signal) => {
-      waits.push(signal);
-      controller.abort();
-    },
-  }).score({
-    candidates: [chunk("a", 1)],
-    prevRequest: undefined,
-    query: "q",
-    signal: controller.signal,
-  });
-  expect(waits).toHaveLength(1);
-  expect(waits[0]?.aborted).toBe(true);
-  expect(attempts).toBe(1);
-  expect(result).toEqual({ decisions: [], fallback: "aborted" });
-});
-
-it("falls back on timeout and does not retry", async () => {
-  let attempts = 0;
-  const fetchImpl = (_url: string, init?: FetchInit) => {
-    attempts += 1;
-    return new Promise<Response>((resolve, reject) => {
-      const timer = setTimeout(() => resolve(jsonResponse({})), 5_000);
-      const abort = () => {
-        clearTimeout(timer);
-        reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
-      };
-      if (init?.signal?.aborted) abort();
-      else init?.signal?.addEventListener("abort", abort, { once: true });
-    });
-  };
-  const result = await jevScorer({
-    apiKey: "k",
-    fetchImpl,
-    timeoutMs: 20,
-    sleepImpl: async () => {
-      throw new Error("timeout must not retry");
-    },
-  }).score({
-    candidates: [chunk("a", 1)],
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(result).toEqual({ decisions: [], fallback: "timeout" });
-  expect(attempts).toBe(1);
-});
-
-it("falls back when the api key is missing and does not fetch", async () => {
-  let attempts = 0;
-  const result = await jevScorer({
-    fetchImpl: async () => {
-      attempts += 1;
-      return jsonResponse({});
-    },
-  }).score({
-    candidates: [chunk("a", 1)],
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(result).toEqual({
-    decisions: [],
-    fallback: "no-api-key",
-    requested: false,
-  });
-  expect(attempts).toBe(0);
-});
-
-it("records zero rebuild scorer calls when the api key is missing", async () => {
-  const store = new MemoryLogStore();
-  seed(store);
-  let attempts = 0;
-  const view = await contextCompiler({
-    budget: 100_000,
-    claims: [],
-    keepRecent: 1,
-    scorer: jevScorer({
-      fetchImpl: async () => {
-        attempts += 1;
-        return jsonResponse({});
-      },
-    }),
-  }).view(context(store));
-
-  expect(view.manifest.epochDecision?.rebuild).toBe(true);
-  const manifest = view.manifest as typeof view.manifest & {
-    scorer?: { calls: number; usage: Usage; fallback: boolean };
-  };
-  expect(manifest.scorer).toEqual({
-    calls: 0,
-    usage: {
-      inputOther: 0,
-      inputCacheRead: 0,
-      inputCacheCreation: 0,
-      output: 0,
-    },
-    fallback: true,
-  });
-  expect(attempts).toBe(0);
-});
-
-it("records zero shadow calls when the api key is missing and one when it is sent", async () => {
-  async function shadowCalls(apiKey?: string) {
-    const store = new MemoryLogStore();
-    seed(store);
-    let attempts = 0;
-    const view = await contextCompiler({
-      budget: 100_000,
-      claims: [],
-      shadowScorer: jevScorer({
-        ...(apiKey ? { apiKey } : {}),
-        fetchImpl: async () => {
-          attempts += 1;
-          return jsonResponse(systemOne({}, 5));
-        },
+describe("request", () => {
+  it("posts one request per chunk with the task, ledger, assistant prose, and that chunk's output", async () => {
+    const { fake, scorer } = scorerWith(answerNouls({}));
+    await scorer.score({
+      candidates: [chunkOf(CONFIG_READ, 1), chunkOf(TEST_RUN, 3)],
+      prevRequest: requestWith([CONFIG_READ, TEST_RUN], {
+        task: "fix parseConfig on empty input",
+        ledger: "Goal: fix parseConfig\nPlan:\n- edit src/config.ts",
       }),
-    }).view(context(store));
-    store.append("s", { kind: "manifest", payload: view.manifest });
-    return {
-      attempts,
-      manifestCalls: view.manifest.shadow?.calls,
-      healthCalls: runHealth(store.path("s")).shadow.calls,
-    };
-  }
+      query: "fix parseConfig on empty input",
+    });
 
-  expect(await shadowCalls()).toEqual({
-    attempts: 0,
-    manifestCalls: 0,
-    healthCalls: 0,
-  });
-  expect(await shadowCalls("k")).toEqual({
-    attempts: 1,
-    manifestCalls: 1,
-    healthCalls: 1,
-  });
-});
-
-it("falls back on invalid JSON and on a non-retryable status", async () => {
-  const invalid = await jevScorer({
-    apiKey: "k",
-    fetchImpl: async () => new Response("not-json", { status: 200 }),
-  }).score({
-    candidates: [chunk("a", 1)],
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(invalid).toEqual({ decisions: [], fallback: "invalid-json" });
-
-  const missing = await jevScorer({
-    apiKey: "k",
-    fetchImpl: async () => new Response("no", { status: 500 }),
-    sleepImpl: async () => {
-      throw new Error("500 must not retry");
-    },
-  }).score({
-    candidates: [chunk("a", 1)],
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(missing).toEqual({ decisions: [], fallback: "http:500" });
-});
-
-it("omits a chunk with no answer so it stays kept", async () => {
-  const result = await jevScorer({
-    apiKey: "k",
-    fetchImpl: async () =>
-      jsonResponse(
-        systemOne(
-          {
-            "seq:1#a": choice(0.1),
-          },
-          4,
-        ),
-      ),
-  }).score({
-    candidates: [chunk("seq:1#a"), chunk("seq:3#b")],
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(result.fallback).toBeUndefined();
-  expect(result.decisions).toEqual([
-    { id: "seq:1#a", tier: "none", reason: "scorer:jev:0.10" },
-  ]);
-});
-
-it("sums each batch input_tokens into usage.inputOther", async () => {
-  const tokens = [10, 25];
-  let index = 0;
-  const result = await jevScorer({
-    apiKey: "k",
-    batchSize: 1,
-    fetchImpl: async (_url, init) => {
-      const body = JSON.parse(String(init?.body)) as {
-        state: { chunks: { id: string }[] };
-      };
-      const id = body.state.chunks[0]?.id ?? "";
-      const inputTokens = tokens[index] ?? 0;
-      index += 1;
-      return jsonResponse(systemOne({ [id]: choice(0.6) }, inputTokens));
-    },
-  }).score({
-    candidates: [chunk("a", 1), chunk("b", 1)],
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(result.usage).toEqual({
-    inputOther: 35,
-    inputCacheRead: 0,
-    inputCacheCreation: 0,
-    output: 0,
-  });
-  expect(result.decisions.map((decision) => decision.tier)).toEqual([
-    "full",
-    "full",
-  ]);
-});
-
-it("drops earlier decisions when a later batch fails", async () => {
-  let index = 0;
-  const result = await jevScorer({
-    apiKey: "k",
-    batchSize: 1,
-    fetchImpl: async () => {
-      index += 1;
-      if (index === 1) return jsonResponse(systemOne({ a: choice(0.9) }, 4));
-      return new Response("no", { status: 500 });
-    },
-  }).score({
-    candidates: [chunk("a", 1), chunk("b", 1)],
-    prevRequest: undefined,
-    query: "q",
-  });
-  expect(result).toEqual({ decisions: [], fallback: "http:500" });
-});
-
-const MODEL = { provider: "anthropic", model: "claude-test" };
-const HEAD = {
-  system: "You are sage.",
-  tools: [
-    {
-      name: "read",
-      description: "read a file",
-      inputSchema: { type: "object" },
-    },
-  ],
-};
-
-function toolMessage(id: string, file: string) {
-  return {
-    role: "assistant" as const,
-    content: [
-      {
-        type: "tool_use" as const,
-        id,
-        name: "read",
-        input: { path: file },
-        rawInput: JSON.stringify({ path: file }),
-      },
-    ],
-  };
-}
-
-function resultMessage(id: string, content: string) {
-  return {
-    role: "user" as const,
-    content: [
-      {
-        type: "tool_result" as const,
-        toolUseId: id,
-        content,
-        isError: false,
-      },
-    ],
-  };
-}
-
-function seed(store: MemoryLogStore): void {
-  store.append("s", {
-    kind: "message",
-    payload: {
-      role: "user",
-      content: [{ type: "text", text: "find the bug" }],
-    },
-  });
-  store.append("s", { kind: "message", payload: toolMessage("t1", "a.ts") });
-  store.append("s", { kind: "message", payload: resultMessage("t1", "AAA") });
-  store.append("s", { kind: "message", payload: toolMessage("t2", "b.ts") });
-  store.append("s", { kind: "message", payload: resultMessage("t2", "BBB") });
-  store.append("s", { kind: "message", payload: toolMessage("t3", "c.ts") });
-  store.append("s", { kind: "message", payload: resultMessage("t3", "CCC") });
-}
-
-function context(store: MemoryLogStore): ViewContext {
-  return {
-    sessionId: "s",
-    turn: 1,
-    path: store.path("s"),
-    model: MODEL,
-    prepared: {
-      model: MODEL,
-      contextWindow: 1,
-      pricing: null,
-      adapterDefaults: {},
-    },
-    head: {
-      system: HEAD.system,
-      tools: HEAD.tools.map((tool) => ({ ...tool })),
-    },
-    tools: [
-      {
-        def: HEAD.tools[0] ?? {
-          name: "read",
-          description: "read a file",
-          inputSchema: { type: "object" },
-        },
-        isReadOnly: true,
-        isDestructive: false,
-        isOpenWorld: false,
-        accesses(input: unknown) {
-          if (
-            typeof input !== "object" ||
-            input === null ||
-            !("path" in input)
-          ) {
-            return [];
-          }
-          const key = (input as { path?: unknown }).path;
-          return typeof key === "string"
-            ? [{ key, mode: "read" as const }]
-            : [];
-        },
-        async execute() {
-          return { content: "", isError: false };
-        },
-      },
-    ],
-  };
-}
-
-function resultContent(
-  messages: {
-    content: { type: string; toolUseId?: string; content?: string }[];
-  }[],
-  id: string,
-): string | undefined {
-  for (const message of messages) {
-    for (const block of message.content) {
-      if (block.type === "tool_result" && block.toolUseId === id) {
-        return block.content;
-      }
+    const requests = fake.requests();
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      expect(request.url).toBe("https://api.typesafe.ai/v1/systemone");
+      expect(request.method).toBe("POST");
+      expect(request.headers).toEqual({
+        Authorization: "Bearer secret",
+        "Content-Type": "application/json",
+      });
     }
-  }
-  return undefined;
-}
-
-it("counts manifest.scorer and leaves an unanswered chunk kept", async () => {
-  const store = new MemoryLogStore();
-  seed(store);
-  const view = await contextCompiler({
-    budget: 100_000,
-    claims: [],
-    keepRecent: 1,
-    scorer: jevScorer({
-      apiKey: "k",
-      fetchImpl: async () =>
-        jsonResponse(
-          systemOne(
-            {
-              "seq:1#t1": choice(0.2),
-            },
-            15,
-          ),
-        ),
-    }),
-  }).view(context(store));
-
-  expect(view.manifest.epochDecision?.rebuild).toBe(true);
-  const manifest = view.manifest as typeof view.manifest & {
-    scorer?: { calls: number; usage: Usage; fallback: boolean };
-  };
-  expect(manifest.scorer).toEqual({
-    calls: 1,
-    usage: {
-      inputOther: 15,
-      inputCacheRead: 0,
-      inputCacheCreation: 0,
-      output: 0,
-    },
-    fallback: false,
-  });
-  expect(view.manifest.chunks).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
+    const read = requests
+      .map(sentBody)
+      .find((body) => body.state.chunk.id === "seq:1#t1");
+    expect(read?.model).toBe("jev-latest");
+    expect(read?.state).toEqual({
+      task: "fix parseConfig on empty input",
+      ledger: "Goal: fix parseConfig\nPlan:\n- edit src/config.ts",
+      recent_assistant: "I will look for parseConfig in src/config.ts.",
+      chunk: {
         id: "seq:1#t1",
+        tool: "read",
+        input: '{"path":"src/config.ts"}',
+        tokens: 400,
+        head: CONFIG_READ.output.split("\n"),
+        tail: [],
+        omitted_lines: 0,
+        candidates: [
+          "L3: export function parseConfig(text: string): Config {",
+          "L7: export class ConfigError extends Error {}",
+        ],
+      },
+    });
+    expect(JSON.stringify(read)).not.toContain("pnpm test");
+    const bash = requests
+      .map(sentBody)
+      .find((body) => body.state.chunk.id === "seq:3#t2");
+    expect(bash?.state.recent_assistant).toBe("");
+    // Every line of this output is a candidate, so no head or tail is sent.
+    expect(bash?.state.chunk.head).toEqual([]);
+    expect(bash?.state.chunk.candidates).toHaveLength(5);
+  });
+
+  it("asks four fixed Nouls plus one keep Noul per candidate line, each with true and false criteria", async () => {
+    const { fake, scorer } = scorerWith(answerNouls({}));
+    await scorer.score({
+      candidates: [chunkOf(CONFIG_READ, 1)],
+      prevRequest: requestWith([CONFIG_READ]),
+      query: "q",
+    });
+    const questions = sentBody(fake.requests()[0]).questions;
+    expect(Object.keys(questions)).toEqual([
+      "reports_failure",
+      "is_edit_target",
+      "answers_lookup",
+      "is_broad_listing",
+      "keep_0",
+      "keep_1",
+    ]);
+    expect(Object.values(questions).every((q) => q.type === "noul")).toBe(true);
+    expect(questions.reports_failure).toEqual({
+      type: "noul",
+      instructions:
+        "Does the tool output in `chunk` report that something failed?",
+      criteria: {
+        true: "The output reports an error, an exception, a non-zero exit code, a failing test, or a failed build or check.",
+        false:
+          "The output reports success or only shows data; error words inside file contents being read do not count.",
+      },
+    });
+    expect(questions.is_edit_target).toEqual({
+      type: "noul",
+      instructions:
+        "Is the file at the path in `chunk.input` a file that `recent_assistant` or `ledger` says will be edited?",
+      criteria: {
+        true: "`recent_assistant` or `ledger` says the file at that path will be changed, fixed, or written.",
+        false:
+          "No edit to that file is mentioned, or `chunk.input` names no single file path.",
+      },
+    });
+    expect(questions.answers_lookup).toEqual({
+      type: "noul",
+      instructions:
+        "Does the tool output in `chunk` contain the specific symbol, line, or value that `recent_assistant` says it is looking for?",
+      criteria: {
+        true: "`recent_assistant` names a specific thing to find, such as a definition, a call site, a setting, or an error line, and the output in `chunk` shows it.",
+        false:
+          "`recent_assistant` does not name a specific thing to find, or the output in `chunk` does not show it.",
+      },
+    });
+    expect(questions.is_broad_listing).toEqual({
+      type: "noul",
+      instructions:
+        "Is the tool output in `chunk` a directory listing or a broad search result?",
+      criteria: {
+        true: "The output is a list of file or directory names, or search hits spread over many files.",
+        false:
+          "The output is file contents, command or test output, a diff, or a few search hits.",
+      },
+    });
+    const statement =
+      "`line` names a location or result `task` or `recent_assistant` needs.";
+    expect(questions.keep_1).toEqual({
+      type: "noul",
+      instructions: {
+        line: "L7: export class ConfigError extends Error {}",
+        statement,
+      },
+      criteria: {
+        true: statement,
+        false: "`line` is boilerplate or unrelated to `task`.",
+      },
+    });
+    const keepBytes = JSON.stringify({
+      ...questions.keep_1,
+      instructions: { line: "", statement },
+    }).length;
+    expect(keepBytes).toBeLessThanOrEqual(280);
+    expect(statement.length).toBeLessThanOrEqual(80);
+  });
+
+  it("posts to baseUrl without a trailing slash and sends opts.model", async () => {
+    const { fake, scorer } = scorerWith(answerNouls({}), {
+      baseUrl: "https://jev.example/",
+      model: "served-model",
+    });
+    await scorer.score({
+      candidates: [chunkOf(LISTING, 1)],
+      prevRequest: requestWith([LISTING]),
+      query: "q",
+    });
+    expect(fake.requests()[0]?.url).toBe("https://jev.example/v1/systemone");
+    expect(sentBody(fake.requests()[0]).model).toBe("served-model");
+  });
+});
+
+describe("tiers", () => {
+  async function decide(
+    call: FixtureCall,
+    nouls: Parameters<typeof answerNouls>[0][string],
+    thresholds?: Parameters<typeof jevScorer>[0]["thresholds"],
+  ) {
+    const chunk = chunkOf(call, 1);
+    const { scorer } = scorerWith(answerNouls({ [chunk.id]: nouls }), {
+      ...(thresholds ? { thresholds } : {}),
+    });
+    const result = await scorer.score({
+      candidates: [chunk],
+      prevRequest: requestWith([call]),
+      query: "fix parseConfig",
+    });
+    expect(result.fallback).toBeUndefined();
+    return result.decisions;
+  }
+
+  it("keeps a chunk full when reports_failure reaches the full threshold", async () => {
+    expect(
+      await decide(TEST_RUN, { reports_failure: 0.4, keep: [0.9, 0.9] }),
+    ).toEqual([
+      {
+        id: "seq:1#t2",
+        tier: "full",
+        reason:
+          "scorer:jev:full:failure=0.40,edit=0.00,lookup=0.00,broad=0.00,keep=0.90",
+      },
+    ]);
+  });
+
+  it("keeps a chunk full when is_edit_target reaches the full threshold", async () => {
+    const decisions = await decide(CONFIG_READ, {
+      is_edit_target: 0.75,
+      is_broad_listing: 0.95,
+    });
+    expect(decisions).toEqual([
+      {
+        id: "seq:1#t1",
+        tier: "full",
+        reason:
+          "scorer:jev:full:failure=0.00,edit=0.75,lookup=0.00,broad=0.95,keep=0.00",
+      },
+    ]);
+  });
+
+  it("drops a broad listing to none only when every other judgment is below the low threshold", async () => {
+    expect(
+      await decide(LISTING, { is_broad_listing: 0.8, answers_lookup: 0.19 }),
+    ).toEqual([
+      {
+        id: "seq:1#t3",
         tier: "none",
-        reason: "scorer:jev:0.20",
-      }),
-      expect.objectContaining({
-        id: "seq:3#t2",
+        reason:
+          "scorer:jev:none:failure=0.00,edit=0.00,lookup=0.19,broad=0.80,keep=0.00",
+      },
+    ]);
+    const looked = await decide(LISTING, {
+      is_broad_listing: 0.95,
+      answers_lookup: 0.2,
+    });
+    expect(looked.map((decision) => decision.tier)).toEqual(["full"]);
+  });
+
+  it("summarizes with the three highest keep lines above the keep threshold, in output order", async () => {
+    const decisions = await decide(TEST_RUN, {
+      reports_failure: 0.3,
+      keep: [0.6, 0.9, 0.2, 0.7, 0.8],
+    });
+    expect(decisions).toEqual([
+      {
+        id: "seq:1#t2",
+        tier: "summary",
+        summary:
+          "FAIL test/config.test.ts > parses empty input; at test/config.test.ts:12:5; Tests 1 failed | 22 passed (23)",
+        reason:
+          "scorer:jev:summary:failure=0.30,edit=0.00,lookup=0.00,broad=0.00,keep=0.90",
+      },
+    ]);
+  });
+
+  it("keeps a chunk full when no keep line reaches the keep threshold", async () => {
+    const decisions = await decide(TEST_RUN, { keep: [0.49, 0.1] });
+    expect(decisions.map((decision) => decision.tier)).toEqual(["full"]);
+  });
+
+  it("keeps a chunk full when the chosen lines do not form a locatable summary", async () => {
+    const short: FixtureCall = {
+      id: "t9",
+      tool: "bash",
+      input: { command: "make" },
+      output: "Error: boom",
+    };
+    const decisions = await decide(short, { keep: [0.99] });
+    expect(decisions).toEqual([
+      {
+        id: "seq:1#t9",
         tier: "full",
-        reason: "kept",
-      }),
-      expect.objectContaining({
-        id: "seq:5#t3",
+        reason:
+          "scorer:jev:full:failure=0.00,edit=0.00,lookup=0.00,broad=0.00,keep=0.99",
+      },
+    ]);
+  });
+
+  it("reads each threshold from opts.thresholds when given", async () => {
+    const strict = await decide(
+      TEST_RUN,
+      { reports_failure: 0.4, keep: [0.6, 0.9] },
+      { full: 0.5, keep: 0.95 },
+    );
+    expect(strict.map((decision) => decision.tier)).toEqual(["full"]);
+    const lenient = await decide(
+      LISTING,
+      { is_broad_listing: 0.6, answers_lookup: 0.3 },
+      { none: 0.5, low: 0.35 },
+    );
+    expect(lenient.map((decision) => decision.tier)).toEqual(["none"]);
+  });
+
+  it("keeps a chunk full when it holds what the assistant is looking for, instead of cutting it to a summary", async () => {
+    const decisions = await decide(CONFIG_READ, {
+      answers_lookup: 0.4,
+      keep: [0.9, 0.9],
+    });
+    expect(decisions).toEqual([
+      {
+        id: "seq:1#t1",
         tier: "full",
-        reason: "recent",
-      }),
-    ]),
-  );
-  expect(resultContent(view.messages, "t1")).not.toBe("AAA");
-  expect(resultContent(view.messages, "t1")).not.toContain(
-    "summary (model notes",
-  );
-  expect(resultContent(view.messages, "t2")).toBe("BBB");
+        reason:
+          "scorer:jev:full:failure=0.00,edit=0.00,lookup=0.40,broad=0.00,keep=0.90",
+      },
+    ]);
+  });
+
+  it("keeps an isError chunk full without asking Jev", async () => {
+    const failed: FixtureCall = { ...TEST_RUN, isError: true };
+    const { fake, scorer } = scorerWith(answerNouls({}));
+    const result = await scorer.score({
+      candidates: [chunkOf(failed, 1), chunkOf(LISTING, 3)],
+      prevRequest: requestWith([failed, LISTING]),
+      query: "q",
+    });
+    expect(fake.requests().map((r) => sentBody(r).state.chunk.id)).toEqual([
+      "seq:3#t3",
+    ]);
+    expect(result.decisions).toContainEqual({
+      id: "seq:1#t2",
+      tier: "full",
+      reason: "scorer:jev:full:is_error",
+    });
+    expect(result.decisions).toHaveLength(2);
+
+    const alone = scorerWith(answerNouls({}));
+    const only = await alone.scorer.score({
+      candidates: [chunkOf(failed, 1)],
+      prevRequest: requestWith([failed]),
+      query: "q",
+    });
+    expect(alone.fake.requests()).toHaveLength(0);
+    expect(only).toEqual({
+      decisions: [
+        { id: "seq:1#t2", tier: "full", reason: "scorer:jev:full:is_error" },
+      ],
+      requested: false,
+    });
+  });
+});
+
+describe("sources", () => {
+  it("falls back without fetching when there is no previous request", async () => {
+    const { fake, scorer } = scorerWith(answerNouls({}));
+    const result = await scorer.score({
+      candidates: [chunkOf(CONFIG_READ, 1)],
+      prevRequest: undefined,
+      query: "q",
+    });
+    expect(result).toEqual({
+      decisions: [],
+      fallback: "no-previous-request",
+      requested: false,
+    });
+    expect(fake.requests()).toHaveLength(0);
+  });
+
+  it("skips a chunk whose result is missing or already the stub, so it stays as the compiler left it", async () => {
+    const stubbed = chunkOf(TEST_RUN, 3);
+    const prev = requestWith([
+      {
+        ...TEST_RUN,
+        output: `[#${stubbed.id} · bash · {"command":"pnpm test"} · 0.4k tokens · omitted · expand("${stubbed.id}") to retrieve]`,
+      },
+    ]);
+    const { fake, scorer } = scorerWith(answerNouls({}));
+    const result = await scorer.score({
+      candidates: [chunkOf(CONFIG_READ, 1), stubbed],
+      prevRequest: prev,
+      query: "q",
+    });
+    expect(fake.requests()).toHaveLength(0);
+    expect(result).toEqual({ decisions: [], requested: false });
+  });
 });

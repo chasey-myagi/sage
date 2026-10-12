@@ -51,25 +51,36 @@ export function withStamps(reason: string, stamps: readonly string[]): string {
 }
 
 /**
- * Reason for an entry-scored chunk: `scorer:entry:<tier>` plus the
- * `expanded_at:` stamps of the previous reason; other suffixes are dropped.
+ * Reason for an entry-scored chunk: `scorer:entry:<tier>`, then the
+ * scorer's own non-empty `scorerReason`, then the `expanded_at:` stamps of
+ * the previous reason; other suffixes are dropped. A scorer reason must
+ * not contain `;`.
  */
-export function entryReason(reason: string, tier: Tier): string {
-  const extra = reason
+export function entryReason(
+  reason: string,
+  tier: Tier,
+  scorerReason?: string,
+): string {
+  const stamps = reason
     .split(";")
     .slice(1)
     .filter((part) => part.startsWith("expanded_at:"));
-  const root = `scorer:entry:${tier}`;
-  if (extra.length === 0) return root;
-  return `${root};${extra.join(";")}`;
+  const parts = [`scorer:entry:${tier}`];
+  if (scorerReason !== undefined && scorerReason.length > 0) {
+    parts.push(scorerReason);
+  }
+  return [...parts, ...stamps].join(";");
 }
 
 /**
  * Reason for an entry-scored summary whose note failed the locatability
  * check and fell back to full.
  */
-export function summaryRejectedReason(reason: string): string {
-  return `${entryReason(reason, "full")};summary-rejected`;
+export function summaryRejectedReason(
+  reason: string,
+  scorerReason?: string,
+): string {
+  return `${entryReason(reason, "full", scorerReason)};summary-rejected`;
 }
 
 /**

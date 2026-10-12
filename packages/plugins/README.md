@@ -20,7 +20,7 @@
 [#<chunkId> · <toolName> · <摘要> · <n>k tokens · omitted · expand("<chunkId>") to retrieve]
 ```
 
-摘要是这条 tool_use 输入的紧凑单行，最长 80 个字符，更长就截断并加上 `…`。`<n>k` 是该块原文 token 数除以 1000，保留一位小数。打分器把块判为 `summary` 时，模型看到的是这一行桩，换行，然后 `summary (model notes, not evidence): ` 和打分器写下的笔记。笔记不是工具当时的输出。模型要当时的原文时调用 `expand`，参数 `id` 就是桩里的 chunkId。这个工具按块 id 从 Log 取回当时的 tool_result 或文本消息，不重新执行原来的工具。
+摘要是这条 tool_use 输入的紧凑单行，最长 80 个字符，更长就截断并加上 `…`。`<n>k` 是该块原文 token 数除以 1000，保留一位小数。打分器把块判为 `summary` 时，模型看到的是这一行桩，换行，然后 `summary (model notes, not evidence): ` 和打分器写下的笔记。笔记不是工具当时的完整输出：模型打分器的笔记是它自己写的；jev 打分器的笔记是从原文里摘出的至多 3 行，用 `; ` 连接，每行可能已被截短。模型要当时的原文时调用 `expand`，参数 `id` 就是桩里的 chunkId。这个工具按块 id 从 Log 取回当时的 tool_result 或文本消息，不重新执行原来的工具。
 
 expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本轮、路径上名字为 `expand` 的 tool_use 次数；`omitted` 是本轮档位为 none 的块数。
 
@@ -119,9 +119,19 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 CLI `--scorer model` 给根编译器装上模型打分，沿用已装配的 adapter 和当前模型。不写这个参数就是规则打分。
 
-`jevScorer` 调用 TypeSafe System One。`model` 缺省 `jev-latest`；传入 `model` 就改用那个名字，用来对准 LLM2Jev 的 `--served-model-name`。它不读上一轮请求，请求里也不带历史。`POST <baseUrl>/v1/systemone`（默认 `https://api.typesafe.ai`），header 为 `Authorization: Bearer <key>` 和 `Content-Type: application/json`。`state` 是 `{ query, chunks: [{ id, tool, summary, tokens }] }`，`summary` 是那一行桩摘要，不是原文。`questions` 里每块一个 `choice`，标准是 `full`（需要原文）和 `none`（一行摘要够用）。`probabilities.full` 不低于 `minConfidence`（默认 0.5）判 full，否则 none。清单上的 reason 是 `scorer:jev:<p>`，p 为 full 的概率，保留两位。不写 summary。回答里没有的块保持 `kept`。
+`jevScorer` 调用 TypeSafe System One，每个候选块单独一个请求，同时最多 4 个在途（API 的上限是每个 key 每秒 10 万 token、80 个请求）。工具已标 `isError` 的块不发请求，直接判 full，reason 为 `scorer:jev:full:is_error`。`model` 缺省 `jev-latest`；传入 `model` 就改用那个名字，用来对准 LLM2Jev 的 `--served-model-name`。`POST <baseUrl>/v1/systemone`（默认 `https://api.typesafe.ai`），header 为 `Authorization: Bearer <key>` 和 `Content-Type: application/json`。
 
-每批最多 `batchSize` 块（默认 40）。state 字符数按 `query.length + Σ(tokens × 4)` 估算，不超过 24000；单块超了也单独发出。没有 key、非 2xx、超时（默认 10000ms）或正文不是 answers 对象时，返回 `{ decisions: [], fallback }`，不抛。没有 key 时不发请求，结果带 `requested: false`，清单上的 `calls` 记 0。429 和 529 最多再试 3 次，间隔 `500ms × 2^n`。各批 `usage.input_tokens` 相加，写入返回 usage 的 `inputOther`，其余三项为 0。
+`state` 是 `{ task, ledger, recent_assistant, chunk }`。`task` 是当前问题，最多 2000 字。`ledger` 是 `prevRequest` 里最新一张 `progress-ledger` 申领单的正文，最多 3000 字，没有就是空串。`recent_assistant` 是发出这次 tool_use 的那条 assistant 消息里的文字，保留末尾 1500 字。`chunk` 是 `{ id, tool, input, tokens, head, tail, omitted_lines, candidates }`：`input` 是工具参数的紧凑 JSON，最多 1000 字；`head` 与 `tail` 是原文前 40 行和后 20 行，每行最多 400 字，`omitted_lines` 是中间没发的行数；`candidates` 是代码按工具名挑出的候选行，最多 24 行，每行最多 200 字，超出时保留前 8 和后 16（失败和汇总多在末尾）。候选行已经原样覆盖全部非空输出行（没有截短、合并或被上限切掉）时，`head` 与 `tail` 为空，`omitted_lines` 为 0。`read` 挑声明与导出，写成 `L<行号>: <行>`，行号从参数 `offset` 起算；`grep` 取每条命中；`ls` 与 `find` 取每个条目；`bash` 取状态行和下面这些行；其他工具只取这些行：失败或异常字样、栈帧、`路径:行号`、声明与导出、测试汇总（`Tests` / `Test Files` 开头的行，或 `<n> passed` / `<n> failed`；vitest 每个文件一行的 `✓ a.test.ts (3 tests)` 不算）、diff hunk 头。典型的块（200 条 grep 命中、300 行 TS 文件、150 项 ls、vitest 失败输出）每个请求不超过 28 题、约 20KB。插件只按工具名分派，不 import 工具包。
+
+原文只从 `prevRequest.messages` 里该块的 tool_result 取。入口打分与影子打分传的是本轮编好的视图，候选块都有原文。重建打分传的是上一轮请求，上一阶段被判成 none 或 summary 的块在那里只剩桩行。拿不到原文（缺失，或内容就是该块自己的桩行）的块不发请求，也不给判定，编译器按原样保留。一个块都没发时返回 `{ decisions: [], requested: false }`。没有 `prevRequest` 时不发请求，返回 `fallback: "no-previous-request"`，带 `requested: false`。
+
+问题全是 Noul，`criteria` 写明 true 与 false 的边界，只问输出里有什么，不问意图，不让 Jev 计数或算术：`reports_failure`（输出是否报告失败；读到的源码里出现 error 字样不算）、`is_edit_target`（`chunk.input` 里那个路径的文件是否是 `recent_assistant` 或 `ledger` 说要改的文件）、`answers_lookup`（输出里是否有 `recent_assistant` 正在找的符号、行或值）、`is_broad_listing`（是不是目录列表或宽泛的搜索结果；是否点名了某个条目交给 `answers_lookup`），以及每个候选行一个 `keep_<i>`。`keep_<i>` 是陈述句，instructions 是 `{ line, statement }`，把那一行直接写进去，Jev 不必按下标去 state 里找；`statement` 与 `criteria.true` 是同一句「`line` 指出了 `task` 或 `recent_assistant` 需要的位置或结果」，criteria 每条不超过 80 字符。
+
+档位由代码合成，阈值取 `thresholds` 选项，缺省 `DEFAULT_JEV_THRESHOLDS`：`reports_failure`、`is_edit_target` 或 `answers_lookup` 不低于 `full`（0.4）判 full（新结果里正好有 assistant 要找的东西，就不摘成 3 行）；`is_broad_listing` 不低于 `none`（0.8），且另外三项都低于 `low`（0.2）判 none；其余判 summary，从 `keep_*` 不低于 `keep`（0.5）的行里取概率最高的至多 3 行，按原文顺序用 `; ` 连接，截到 200 字，仍须通过入口打分用的可定位检查，过不了就判 full。丢掉以后还要用的证据，代价是多一次读取或走错一步；多留原文只多花 token，所以留的门槛低、丢的门槛高。清单上的 reason 是 `scorer:jev:<tier>:failure=<p>,edit=<p>,lookup=<p>,broad=<p>`，有候选时再加 `,keep=<最高 p>`，保留两位，只供审计，代码不读。四个固定回答缺任何一个，这块不给判定。
+
+长度遵守 Jev 的两条限制：state 加最长的一个问题不超过 32k token，state 加全部问题不超过 64k token。估算按每 2.5 个 UTF-8 字节算一个 token，比真实分词偏多。超了先把 head 和 tail 一起减半，减到都为空仍超，再把候选减半，head 和 tail 从默认重新开始；什么都减完仍超，这块不发。
+
+没有 key、非 2xx、超时（默认 10000ms）、调用方中止或正文不是 answers 对象时，返回 `{ decisions: [], fallback }`，不抛。任何一个块的请求失败，整次结果都没有判定；第一次失败之后不再发新请求，已在途的照常结束，已完成请求的 usage 照记。没有 key 时不发请求，结果带 `requested: false`，清单上的 `calls` 记 0；发了请求时 `calls` 记 1，不论发了几个。429 和 529 最多再试 3 次。响应带 `retry-after`（秒数或 HTTP 日期）时按它等待，最长 30 秒；没有时间隔 `500ms × 2^n`。各请求的 `usage.input_tokens` 相加写入 `inputOther`，`usage.output_tokens` 相加写入 `output`；Jev 的输出不计费，记下来只为对账。
 
 CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https://api.typesafe.ai`）、`JEV_API_KEY`（缺省回退 `TYPESAFE_API_KEY`）和 `JEV_MODEL`（缺省 `jev-latest`）。两个 key 都没有时进程以退出码 2 结束，stderr 点名这两个变量。接到本地 LLM2Jev 时，例如 `JEV_BASE_URL=http://127.0.0.1:30000 JEV_API_KEY=local JEV_MODEL=<served-model-name>`。目录里的 provider `typesafe` 只有 `jev-latest` 的定价（输入 $0.042/MTok，输出和缓存读写都是 0），`listModels("typesafe")` 可见。`--provider typesafe` 会报错：它不是聊天端点。
 
@@ -137,7 +147,7 @@ CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https:
 
 `contextCompiler({ scorerApply: "rebuild" | "entry", minScoreTokens })`。默认 `"rebuild"`，也就是上面那条：只在阶段重开时给仍然 `kept` 的工具块打分。`minScoreTokens` 默认 300。
 
-`"entry"` 改在工具结果**进入视图的那一轮**定档。本轮新出现、当前仍是 full、token 不少于 `minScoreTokens` 的工具块，打分器调用一次。`expand` 的结果不进候选，否则刚取回的原文会在同一轮被桩掉。`none` 写成可 expand 的桩。`summary` 用打分器给的笔记，最长 200 字；没给笔记就保持 full。写了笔记但不足 20 字（含空串），或不含路径、符号或数字（斜杠、扩展名、数字、驼峰或下划线标识符）时，该块按 full 处理，reason 为 `scorer:entry:full;summary-rejected`。`full` 原文不动。清单上这块的 reason 是 `scorer:entry:<tier>`。打分抛错、返回 `fallback`、或回答里没有这个 id，这块保持 full，编译照常。`calls` 与重建打分同一口径，只数真正发出的请求：打分器在发请求前就放弃（`requested: false`，例如没有 adapter）记 0，其余情况包括抛错都记 1。没有候选就不调用，清单上也不写 `entryScored`。
+`"entry"` 改在工具结果**进入视图的那一轮**定档。本轮新出现、当前仍是 full、token 不少于 `minScoreTokens` 的工具块，打分器调用一次。`expand` 的结果不进候选，否则刚取回的原文会在同一轮被桩掉。`none` 写成可 expand 的桩。`summary` 用打分器给的笔记，最长 200 字；没给笔记就保持 full。写了笔记但不足 20 字（含空串），或不含路径、符号或数字（斜杠、扩展名、数字、驼峰或下划线标识符）时，该块按 full 处理，reason 为 `scorer:entry:full;summary-rejected`。`full` 原文不动。清单上这块的 reason 是 `scorer:entry:<tier>`；打分器给了自己的 reason 时（例如 jev 的各项概率），接在后面作为 `;<该 reason>`。打分抛错、返回 `fallback`、或回答里没有这个 id，这块保持 full，编译照常。`calls` 与重建打分同一口径，只数真正发出的请求：打分器在发请求前就放弃（`requested: false`，例如没有 adapter）记 0，其余情况包括抛错都记 1。没有候选就不调用，清单上也不写 `entryScored`。
 
 判定写进当轮清单，下一轮起由累积冻结保住，不再被 `keepRecent` 抬回 full。已打分的块也不再占最近窗口的名额。`entry` 不再跑重建路径上的那次打分，也不再跑影子：同一次调用的结果既写清单又改视图。`scorerApply` 仍是 `"rebuild"` 时，重建打分和影子都跟以前一样。
 
