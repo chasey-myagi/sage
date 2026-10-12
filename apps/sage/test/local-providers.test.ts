@@ -291,6 +291,31 @@ describe("sage -p with a user providers file", () => {
     });
   });
 
+  it("reads no providers file when the CLI env has no HOME, whatever the process HOME holds", async () => {
+    const { home, work } = setup("{ providers: [");
+    const processHome = process.env.HOME;
+    process.env.HOME = home;
+    const { adapter } = createFaux([stopScript("ok")]);
+    const io = capture();
+    try {
+      const code = await runCli(["-p", "hi"], {
+        cwd: work,
+        env: { DEEPSEEK_API_KEY: "sk-deepseek" },
+        stdout: io.stdout,
+        stderr: io.stderr,
+        adapters: { deepseek: adapter as ProviderAdapter },
+      });
+      expect(io.text().stderr).not.toContain("providers.json");
+      expect(code).toBe(0);
+    } finally {
+      process.env.HOME = processHome;
+    }
+    expect(requestHeaders(work)[0]).toMatchObject({
+      provider: "deepseek",
+      model: "deepseek-flash",
+    });
+  });
+
   const broken: { name: string; file: unknown; field: string }[] = [
     {
       name: "a provider that shadows a built-in preset",

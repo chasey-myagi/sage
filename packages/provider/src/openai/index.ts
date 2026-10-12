@@ -16,7 +16,12 @@
  * not a request_header field.
  */
 
-import { prepareModel, resolveMaxTokens } from "../catalog.js";
+import {
+  type AdapterOptions,
+  type CatalogEntry,
+  prepareModel,
+  resolveMaxTokens,
+} from "../catalog.js";
 import type { PreparedCall, ProviderAdapter } from "../contract/adapter.js";
 import type { Message, ModelRef, Request } from "../contract/message.js";
 import { finiteOr } from "../contract/record.js";
@@ -24,7 +29,7 @@ import type { StreamChunk } from "../contract/stream.js";
 import type { Usage } from "../contract/usage.js";
 import type { Driver, WireStop } from "../drive.js";
 import { blockStart, driveStream } from "../drive.js";
-import { type Client, type ClientOptions, resolveClient } from "../http.js";
+import { type Client, resolveClient } from "../http.js";
 import { normalizeForApi } from "../normalize.js";
 import { asRecord, indexOf, parseRecord } from "../record.js";
 import type { SseEvent } from "../sse.js";
@@ -51,13 +56,16 @@ type OpenState = {
 export class OpenAIAdapter implements ProviderAdapter {
   readonly api = "openai-chat" as const;
   private readonly client: Client;
+  private readonly models: readonly CatalogEntry[];
 
-  constructor(options: ClientOptions) {
-    this.client = resolveClient(options, DEFAULT_BASE);
+  constructor(options: AdapterOptions) {
+    const { models = [], ...transport } = options;
+    this.client = resolveClient(transport, DEFAULT_BASE);
+    this.models = models;
   }
 
   prepare(model: ModelRef): PreparedCall {
-    return prepareModel(model, this.client.models);
+    return prepareModel(model, this.models);
   }
 
   stream(

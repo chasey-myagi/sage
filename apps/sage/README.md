@@ -15,7 +15,7 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 ## 自定义 provider：`~/.sage/providers.json`
 
-经 OpenAI / Anthropic 兼容的中转站跑时，可以在用户主目录的 `.sage/providers.json` 声明 provider 和模型单价，不用改仓库。主目录取环境变量 `HOME`，没设时用 `os.homedir()`。只读这一个用户级文件，不读工作区里的同名文件：项目目录下的文件容易被提交，会把私有网关的地址和计价公开出去。
+经 OpenAI / Anthropic 兼容的中转站跑时，可以在用户主目录的 `.sage/providers.json` 声明 provider 和模型单价，不用改仓库。主目录取环境变量 `HOME`，没设时只有内置预设，也不读用户级子任务预设。只读这一个用户级文件，不读工作区里的同名文件：项目目录下的文件容易被提交，会把私有网关的地址和计价公开出去。
 
 ```json
 {
@@ -53,7 +53,7 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 ## 会话
 
-每次运行装一个 `AgentSession`：七个一方工具，加上 `update_ledger`、`expand`、`spawn_subtask`、`spawn_subtasks`。Log 写在 `<cwd>/.sage/sessions/<id>.jsonl`。子任务预设从 `<cwd>/.sage/subtasks` 和用户主目录读。视图是上下文编译器，带四个一方 claim 和「路由」一节的策略；`--passthrough` 改用 passthrough 视图。子任务总是编译。
+每次运行装一个 `AgentSession`：七个一方工具，加上 `update_ledger`、`expand`、`spawn_subtask`、`spawn_subtasks`。Log 写在 `<cwd>/.sage/sessions/<id>.jsonl`。子任务预设从 `<cwd>/.sage/subtasks` 和 `$HOME/.sage/subtasks` 读；没设 `HOME` 时只读前者。视图是上下文编译器，带四个一方 claim 和「路由」一节的策略；`--passthrough` 改用 passthrough 视图。子任务总是编译。
 
 `--budget <tokens>` 覆盖默认预算 40000，必须是正整数，否则退出 2，stderr 一行说明。和 `--passthrough` 一起用时忽略这个值，并在 stderr 提示一句。对照实验请显式压预算，默认 40000 在短任务上不会触发编译器。
 

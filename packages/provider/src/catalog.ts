@@ -17,6 +17,7 @@
 
 import type { PreparedCall, Pricing } from "./contract/adapter.js";
 import type { ModelRef, Request } from "./contract/message.js";
+import type { ClientOptions } from "./http.js";
 
 /** Context window, in tokens, assumed for a model missing from the table. */
 const FALLBACK_WINDOW = 128_000;
@@ -38,6 +39,16 @@ const DASHSCOPE_SOURCE =
   "https://help.aliyun.com/zh/model-studio/model-pricing";
 const TYPESAFE_SOURCE =
   "https://typesafe.ai/blog/introducing-system-one-models-and-jev";
+
+/**
+ * Adapter constructor options: the transport options plus `models`,
+ * catalog entries beyond the built-in table (usually the user's providers
+ * file after `parseLocalProviders`). `prepare` looks models up by
+ * (provider, model) in both. Omitted `models` means built-ins only.
+ */
+export type AdapterOptions = ClientOptions & {
+  models?: readonly CatalogEntry[];
+};
 
 /** One known model. `contextWindow` is in tokens; prices are per million tokens. */
 export type CatalogEntry = {

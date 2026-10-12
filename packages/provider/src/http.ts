@@ -10,13 +10,12 @@
  * response bytes never leave this module as a fact to append.
  */
 
-import type { CatalogEntry } from "./catalog.js";
 import type { Sleeper } from "./contract/backoff.js";
 import { INCOMPLETE_STREAM } from "./contract/stream.js";
 import { asRecord } from "./record.js";
 import type { RetryPolicy } from "./retry.js";
 
-/** Adapter constructor options. */
+/** Transport options of an adapter: auth, endpoint, fetch, and retries. */
 export type ClientOptions = {
   apiKey: string;
   baseUrl?: string;
@@ -28,12 +27,6 @@ export type ClientOptions = {
   retry?: RetryPolicy;
   /** Replaces the real timer. Tests pass this so they do not wait. */
   sleep?: Sleeper;
-  /**
-   * Catalog entries beyond the built-in table, usually the user's
-   * providers file after `parseLocalProviders`. `prepare` looks models up
-   * by (provider, model) in both. Omitted means built-ins only.
-   */
-  models?: readonly CatalogEntry[];
 };
 
 /** `ClientOptions` with the base URL resolved; what an adapter keeps. */

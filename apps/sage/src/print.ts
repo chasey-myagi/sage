@@ -76,7 +76,7 @@ export async function runPrint(argv: string[], io: CliIo): Promise<number> {
     adapters,
     model,
     passthrough: parsed.passthrough,
-    home,
+    ...(home !== undefined ? { home } : {}),
     localModels: local.models,
     sandbox: plan.sandbox,
     platform: plan.platform,
