@@ -27,6 +27,7 @@ import {
   SUMMARY_LIMIT,
 } from "../compiler/score-common.js";
 import { summarizeInput } from "../compiler/stub.js";
+import { type AbortCause, startDeadline } from "./deadline.js";
 import type { ScoreDecision, ScoreRaw, ScoreResult, Scorer } from "./types.js";
 
 const RAW_LIMIT = 300;
@@ -120,25 +121,24 @@ export function modelScorer(opts: {
         selected,
       );
       const deadline = startDeadline(timeoutMs, input.signal);
-      try {
-        const collected = collect(
-          adapter.stream(request, adapter.prepare(opts.model), deadline.signal),
-          { api: adapter.api },
-        ).then(
-          (value) => ({ ok: true as const, value }),
-          () => ({ ok: false as const }),
-        );
-        const raced = await Promise.race([collected, deadline.aborted]);
-        if (!raced.ok)
-          return { decisions: [], fallback: failureFallback(deadline.cause()) };
-        return readReply(
-          raced.value,
-          deadline.cause(),
-          new Set(selected.map((chunk) => chunk.id)),
-        );
-      } finally {
-        deadline.dispose();
-      }
+      const collected = collect(
+        adapter.stream(request, adapter.prepare(opts.model), deadline.signal),
+        { api: adapter.api },
+      ).then(
+        (value) => ({ ok: true as const, value }),
+        () => ({ ok: false as const }),
+      );
+      const raced = await Promise.race([
+        collected,
+        deadline.aborted.then(() => ({ ok: false as const })),
+      ]);
+      if (!raced.ok)
+        return { decisions: [], fallback: failureFallback(deadline.cause()) };
+      return readReply(
+        raced.value,
+        deadline.cause(),
+        new Set(selected.map((chunk) => chunk.id)),
+      );
     },
   };
 }
@@ -181,48 +181,6 @@ function scoreRequest(
     cacheBreakpoints: structuredClone(prevRequest.cacheBreakpoints),
     sampling: { ...prevRequest.sampling },
     toolChoice: "none",
-  };
-}
-
-type AbortCause = "timeout" | "aborted" | undefined;
-
-/**
- * One abort signal for the scorer call, fired by the timer or the caller's
- * signal. `cause` reports whichever fired first. `aborted` resolves once
- * the signal fires. `dispose` clears the timer and the caller listener.
- */
-function startDeadline(
-  timeoutMs: number,
-  callerSignal: AbortSignal | undefined,
-): {
-  signal: AbortSignal;
-  cause: () => AbortCause;
-  aborted: Promise<{ ok: false }>;
-  dispose: () => void;
-} {
-  const controller = new AbortController();
-  let cause: AbortCause;
-  const abortWith = (next: "timeout" | "aborted") => {
-    cause = cause ?? next;
-    controller.abort();
-  };
-  const timer = setTimeout(() => abortWith("timeout"), timeoutMs);
-  const onCallerAbort = () => abortWith("aborted");
-  if (callerSignal?.aborted) onCallerAbort();
-  else callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
-  const aborted = new Promise<{ ok: false }>((resolve) => {
-    const finish = () => resolve({ ok: false });
-    if (controller.signal.aborted) finish();
-    else controller.signal.addEventListener("abort", finish, { once: true });
-  });
-  return {
-    signal: controller.signal,
-    cause: () => cause,
-    aborted,
-    dispose() {
-      clearTimeout(timer);
-      callerSignal?.removeEventListener("abort", onCallerAbort);
-    },
   };
 }
 

@@ -15,8 +15,10 @@
 import {
   addUsage,
   emptyUsage,
+  finiteOr,
   inputTokens,
   isRecord,
+  readTokenCounts,
   type TokenCounts,
   totalTokens,
 } from "@sage/provider/contract";
@@ -181,7 +183,7 @@ function shadowHealth(path: readonly StoredEntry[]): RunHealth["shadow"] {
   for (const entry of path) {
     if (entry.kind !== "manifest" || !isRecord(entry.payload)) continue;
     if (!isRecord(entry.payload.shadow)) continue;
-    calls += finite(entry.payload.shadow.calls) ?? 0;
+    calls += finiteOr(entry.payload.shadow.calls, 0);
     tokens = addLogged(tokens, entry.payload.shadow.usage);
   }
   return { calls, usage: toHealthTokens(tokens) };
@@ -198,11 +200,11 @@ function entryHealth(path: readonly StoredEntry[]): RunHealth["entryScored"] {
     if (entry.kind !== "manifest" || !isRecord(entry.payload)) continue;
     const body = entry.payload.entryScored;
     if (!isRecord(body)) continue;
-    calls += finite(body.calls) ?? 0;
-    none += finite(body.none) ?? 0;
-    summary += finite(body.summary) ?? 0;
-    full += finite(body.full) ?? 0;
-    summaryRejected += finite(body.summaryRejected) ?? 0;
+    calls += finiteOr(body.calls, 0);
+    none += finiteOr(body.none, 0);
+    summary += finiteOr(body.summary, 0);
+    full += finiteOr(body.full, 0);
+    summaryRejected += finiteOr(body.summaryRejected, 0);
     tokens = addLogged(tokens, body.usage);
   }
   return {
@@ -236,20 +238,6 @@ function subtaskHealth(path: readonly StoredEntry[]): RunHealth["subtasks"] {
   return { count, tokens: toHealthTokens(tokens) };
 }
 
-/**
- * Reads a logged usage object. Returns undefined for a non-object; a missing
- * or non-finite count reads as 0.
- */
-function readTokenCounts(value: unknown): TokenCounts | undefined {
-  if (!isRecord(value)) return undefined;
-  return {
-    inputOther: finite(value.inputOther) ?? 0,
-    inputCacheRead: finite(value.inputCacheRead) ?? 0,
-    inputCacheCreation: finite(value.inputCacheCreation) ?? 0,
-    output: finite(value.output) ?? 0,
-  };
-}
-
 /** Adds a logged usage object to `tokens`; a non-object adds nothing. */
 function addLogged(tokens: TokenCounts, logged: unknown): TokenCounts {
   const usage = readTokenCounts(logged);
@@ -277,8 +265,8 @@ function budgetOf(
   const budget = entry.payload.budget;
   if (!isRecord(budget)) return undefined;
   return {
-    omitted: finite(budget.omitted) ?? 0,
-    expands: finite(budget.expands) ?? 0,
+    omitted: finiteOr(budget.omitted, 0),
+    expands: finiteOr(budget.expands, 0),
   };
 }
 
@@ -288,19 +276,12 @@ function scorerOf(entry: StoredEntry): { calls: number; fallbacks: number } {
   }
   const scorer = entry.payload.scorer;
   return {
-    calls: finite(scorer.calls) ?? 0,
+    calls: finiteOr(scorer.calls, 0),
     fallbacks: fallbackCount(scorer.fallback),
   };
 }
 
 function fallbackCount(value: unknown): number {
   if (value === true) return 1;
-  const numeric = finite(value);
-  return numeric ?? 0;
-}
-
-function finite(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
+  return finiteOr(value, 0);
 }

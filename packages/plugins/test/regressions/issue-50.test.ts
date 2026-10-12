@@ -3,15 +3,15 @@ import { fileURLToPath } from "node:url";
 import {
   appendRequestEntries,
   type HarnessTool,
-  isRecord,
   JsonlLogStore,
   MemoryLogStore,
+  readTokenCounts,
   type StoredEntry,
 } from "@sage/core";
 import { pathlessTool, pathTool } from "@sage/core/testing";
+import { inputTokens } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
-import { finite } from "../../src/guards.ts";
 import {
   buildViewContext,
   copyMessages,
@@ -173,11 +173,6 @@ function traceTools(): HarnessTool[] {
 }
 
 function inputTotal(entry: StoredEntry): number {
-  const usage = entry.details?.usage;
-  if (!isRecord(usage)) return 0;
-  return (
-    (finite(usage.inputOther) ?? 0) +
-    (finite(usage.inputCacheRead) ?? 0) +
-    (finite(usage.inputCacheCreation) ?? 0)
-  );
+  const usage = readTokenCounts(entry.details?.usage);
+  return usage ? inputTokens(usage) : 0;
 }

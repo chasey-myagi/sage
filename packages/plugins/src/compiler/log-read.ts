@@ -12,6 +12,7 @@
  */
 
 import {
+  isFiniteNumber,
   isMessage,
   isRecord,
   lastRequestHeader,
@@ -127,8 +128,7 @@ export function expandStamps(path: SessionPath): Map<string, string[]> {
     if (
       entry.kind === "manifest" &&
       isRecord(entry.payload) &&
-      typeof entry.payload.turn === "number" &&
-      Number.isFinite(entry.payload.turn)
+      isFiniteNumber(entry.payload.turn)
     ) {
       turn = entry.payload.turn;
     }

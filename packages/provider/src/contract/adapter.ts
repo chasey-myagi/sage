@@ -11,7 +11,7 @@
  */
 
 import type { ContentBlock, ModelRef, Request } from "./message.js";
-import { isRecord } from "./record.js";
+import { isFiniteNumber, isRecord } from "./record.js";
 import type { StreamChunk } from "./stream.js";
 import type { Usage } from "./usage.js";
 
@@ -42,7 +42,7 @@ export function isPricing(value: unknown): value is Pricing {
     value.cacheReadPerMTok,
     value.cacheWritePerMTok,
   ];
-  if (!prices.every((price) => Number.isFinite(price))) return false;
+  if (!prices.every(isFiniteNumber)) return false;
   if (typeof value.source !== "string") return false;
   return (
     value.currency === undefined ||

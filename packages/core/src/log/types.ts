@@ -35,15 +35,6 @@ export type EntryInput<K extends string = string, P = unknown> = {
   parentId?: EntryId;
 };
 
-/**
- * Structural stand-in for `ModelRef` from `@sage/provider/contract`.
- * `message` payloads use `Message` from that contract directly.
- */
-export type ModelRef = {
-  provider: string;
-  model: string;
-};
-
 /** Brands a string as an `EntryId`. Does not check that the entry exists. */
 export function asEntryId(id: string): EntryId {
   return id as EntryId;

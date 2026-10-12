@@ -1,6 +1,7 @@
 /**
- * Readers for untrusted wire JSON, used by the adapters. Each returns a
- * neutral value (undefined or 0) instead of throwing on bad input.
+ * Readers for untrusted wire JSON, used by the adapters. Each returns
+ * undefined instead of throwing on bad input. Finite-number reads use
+ * `finiteOr` from the contract.
  *
  * Intentionally not in the Log: these helpers only read.
  */
@@ -23,11 +24,6 @@ export function parseRecord(text: string): Record<string, unknown> | undefined {
     // Malformed JSON: the caller skips this event and the stream continues.
     return undefined;
   }
-}
-
-/** `value` when it is a finite number, else 0. */
-export function num(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 /** `value` when it is a non-negative integer, else undefined. */

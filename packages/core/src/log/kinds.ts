@@ -13,13 +13,15 @@
  */
 
 import {
+  isFiniteNumber,
+  isModelRef,
   isPricing,
   isRecord,
   type Message,
+  type ModelRef,
   type Pricing,
 } from "@sage/provider/contract";
 import { registerEntryKind } from "./registry.js";
-import type { ModelRef } from "./types.js";
 
 /**
  * The request envelope for one model call. `system` and `tools` carry full
@@ -155,23 +157,14 @@ function isRequestHeader(payload: unknown): payload is RequestHeaderPayload {
 }
 
 function isPositiveFinite(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0;
+  return isFiniteNumber(value) && value > 0;
 }
 
 function isViewEpoch(payload: unknown): payload is ViewEpochPayload {
   return (
     isRecord(payload) &&
-    typeof payload.epoch === "number" &&
-    Number.isFinite(payload.epoch) &&
+    isFiniteNumber(payload.epoch) &&
     typeof payload.reason === "string"
-  );
-}
-
-function isModelRef(value: unknown): value is ModelRef {
-  return (
-    isRecord(value) &&
-    typeof value.provider === "string" &&
-    typeof value.model === "string"
   );
 }
 
@@ -186,10 +179,10 @@ function isModelChange(payload: unknown): payload is ModelChangePayload {
 
 function isManifest(payload: unknown): payload is ManifestPayload {
   if (!isRecord(payload)) return false;
-  if (typeof payload.epoch !== "number" || !Number.isFinite(payload.epoch)) {
+  if (!isFiniteNumber(payload.epoch)) {
     return false;
   }
-  if (typeof payload.turn !== "number" || !Number.isFinite(payload.turn)) {
+  if (!isFiniteNumber(payload.turn)) {
     return false;
   }
   if (payload.budget !== undefined && !isBudget(payload.budget)) return false;
@@ -299,7 +292,7 @@ function isBudget(value: unknown): value is
       frozenTokens?: number;
       staleOmittable?: number;
     } {
-  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "number") return isFiniteNumber(value);
   if (!isRecord(value)) return false;
   if (!isFiniteNumber(value.total)) return false;
   if (!isFiniteNumber(value.used)) return false;
@@ -307,10 +300,6 @@ function isBudget(value: unknown): value is
   if (!isOptionalFinite(value.frozenTokens)) return false;
   if (!isOptionalFinite(value.staleOmittable)) return false;
   return true;
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
 }
 
 function isOptionalFinite(value: unknown): boolean {
@@ -324,10 +313,8 @@ function isTarget(payload: unknown): payload is TargetPayload {
 function isTurnRetry(payload: unknown): payload is TurnRetryPayload {
   return (
     isRecord(payload) &&
-    typeof payload.turn === "number" &&
-    Number.isFinite(payload.turn) &&
-    typeof payload.attempt === "number" &&
-    Number.isFinite(payload.attempt) &&
+    isFiniteNumber(payload.turn) &&
+    isFiniteNumber(payload.attempt) &&
     typeof payload.reason === "string"
   );
 }
@@ -356,8 +343,7 @@ function isSubtask(payload: unknown): payload is SubtaskPayload {
     typeof payload.parentSessionId === "string" &&
     typeof payload.parentLeaf === "string" &&
     typeof payload.query === "string" &&
-    typeof payload.budget === "number" &&
-    Number.isFinite(payload.budget) &&
+    isFiniteNumber(payload.budget) &&
     typeof payload.readOnly === "boolean"
   );
 }

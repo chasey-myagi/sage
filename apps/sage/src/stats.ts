@@ -17,6 +17,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import {
   errorText,
+  isFiniteNumber,
   isRecord,
   JsonlLogStore,
   runHealth,
@@ -25,7 +26,6 @@ import {
 import { EXPAND_TOOL_NAME, toolUseIdOfChunk } from "@sage/plugins";
 import { TOOL_NAMES } from "@sage/tools";
 import type { CommandIo } from "./command-io.js";
-import { isFiniteNumber } from "./guards.js";
 import {
   type CommandFlags,
   type OptionName,

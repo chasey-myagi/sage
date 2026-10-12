@@ -10,7 +10,7 @@
  * usage, and fallback onto the manifest.
  */
 
-import { isRecord } from "@sage/core";
+import { finiteOr, isFiniteNumber, isRecord } from "@sage/core";
 import {
   emptyUsage,
   type Sleeper,
@@ -18,6 +18,7 @@ import {
   type Usage,
 } from "@sage/provider/contract";
 import { summarizeInput } from "../compiler/stub.js";
+import { startDeadline } from "./deadline.js";
 import type {
   ScoreDecision,
   ScoreInput,
@@ -84,8 +85,8 @@ type Posted =
  * Never throws. A missing `apiKey`, a non-2xx status, a timeout
  * (`timeoutMs`, default 10000), and a body that is not an answers object
  * resolve `{ decisions: [], fallback }`. 429 and 529 retry at most 3 times,
- * sleeping `500 × 2^n` milliseconds (`n` starts at 0). `prevRequest` is
- * ignored.
+ * sleeping `500 × 2^n` milliseconds (`n` starts at 0); a caller abort ends
+ * that wait at once with fallback `aborted`. `prevRequest` is ignored.
  */
 export function jevScorer(opts: {
   apiKey?: string;
@@ -272,8 +273,7 @@ function decisionsFor(
 function readFull(answer: unknown): number | undefined {
   if (!isRecord(answer) || !isRecord(answer.probabilities)) return undefined;
   const full = answer.probabilities.full;
-  if (typeof full !== "number" || !Number.isFinite(full)) return undefined;
-  return full;
+  return isFiniteNumber(full) ? full : undefined;
 }
 
 async function postBatch(input: {
@@ -293,7 +293,8 @@ async function postBatch(input: {
       if (attempt === MAX_RETRIES) {
         return { ok: false, fallback: `http:${result.status}` };
       }
-      await input.sleepImpl(RETRY_BASE_MS * 2 ** attempt);
+      await input.sleepImpl(RETRY_BASE_MS * 2 ** attempt, input.signal);
+      if (input.signal?.aborted) return { ok: false, fallback: "aborted" };
       continue;
     }
     if (result.status < 200 || result.status >= 300) {
@@ -317,18 +318,7 @@ async function once(input: {
   | { kind: "http"; status: number; text: string }
   | { kind: "fallback"; fallback: string }
 > {
-  const controller = new AbortController();
-  let cause: "timeout" | "aborted" | undefined;
-  const timer = setTimeout(() => {
-    cause = cause ?? "timeout";
-    controller.abort();
-  }, input.timeoutMs);
-  const onCallerAbort = () => {
-    cause = cause ?? "aborted";
-    controller.abort();
-  };
-  if (input.signal?.aborted) onCallerAbort();
-  else input.signal?.addEventListener("abort", onCallerAbort, { once: true });
+  const deadline = startDeadline(input.timeoutMs, input.signal);
   try {
     const response = await input.fetchImpl(input.url, {
       method: "POST",
@@ -337,22 +327,19 @@ async function once(input: {
         "Content-Type": "application/json",
       },
       body: input.body,
-      signal: controller.signal,
+      signal: deadline.signal,
     });
-    if (cause === "timeout") return { kind: "fallback", fallback: "timeout" };
-    if (cause === "aborted") return { kind: "fallback", fallback: "aborted" };
+    const cause = deadline.cause();
+    if (cause) return { kind: "fallback", fallback: cause };
     return {
       kind: "http",
       status: response.status,
       text: await response.text(),
     };
   } catch {
-    if (cause === "timeout") return { kind: "fallback", fallback: "timeout" };
-    if (cause === "aborted") return { kind: "fallback", fallback: "aborted" };
+    const cause = deadline.cause();
+    if (cause) return { kind: "fallback", fallback: cause };
     return { kind: "fallback", fallback: "error" };
-  } finally {
-    clearTimeout(timer);
-    input.signal?.removeEventListener("abort", onCallerAbort);
   }
 }
 
@@ -371,9 +358,7 @@ function parseBody(
 
 function readInputTokens(body: Record<string, unknown>): number {
   if (!isRecord(body.usage)) return 0;
-  const tokens = body.usage.input_tokens;
-  if (typeof tokens !== "number" || !Number.isFinite(tokens)) return 0;
-  return tokens;
+  return finiteOr(body.usage.input_tokens, 0);
 }
 
 function usageFrom(inputOther: number): Usage {

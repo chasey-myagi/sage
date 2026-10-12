@@ -22,12 +22,13 @@
 
 import {
   epochSpan,
+  finiteOr,
+  isFiniteNumber,
   isMessage,
   isRecord,
   latestViewEpoch,
   type StoredEntry,
 } from "@sage/core";
-import { finite } from "../guards.js";
 
 /**
  * How this turn's estimates map to measured input tokens. Stored on the
@@ -53,8 +54,7 @@ export function measuredInput(
 /** Cache-read tokens of the latest assistant usage, or 0. */
 export function measuredCacheRead(path: readonly StoredEntry[]): number {
   const usage = latestUsage(path);
-  const read = usage ? finite(usage.inputCacheRead) : undefined;
-  return read ?? 0;
+  return usage ? finiteOr(usage.inputCacheRead, 0) : 0;
 }
 
 /**
@@ -154,15 +154,15 @@ function previousManifest(
 function budgetUsed(entry: StoredEntry): number | undefined {
   if (!isRecord(entry.payload)) return undefined;
   const budget = entry.payload.budget;
-  if (typeof budget === "number") return finite(budget);
+  if (typeof budget === "number") return finiteOr(budget, undefined);
   if (!isRecord(budget)) return undefined;
-  return finite(budget.used);
+  return finiteOr(budget.used, undefined);
 }
 
 function frozenTokens(payload: Record<string, unknown>): number {
   const budget = payload.budget;
   if (!isRecord(budget)) return 0;
-  return finite(budget.frozenTokens) ?? 0;
+  return finiteOr(budget.frozenTokens, 0);
 }
 
 function storedCalibration(payload: Record<string, unknown>): {
@@ -172,8 +172,8 @@ function storedCalibration(payload: Record<string, unknown>): {
   const calibration = payload.calibration;
   if (!isRecord(calibration)) return { overheadTokens: 0, ratio: 1 };
   return {
-    overheadTokens: finite(calibration.overheadTokens) ?? 0,
-    ratio: finite(calibration.ratio) ?? 1,
+    overheadTokens: finiteOr(calibration.overheadTokens, 0),
+    ratio: finiteOr(calibration.ratio, 1),
   };
 }
 
@@ -197,12 +197,18 @@ function isAssistant(entry: StoredEntry): boolean {
   );
 }
 
+/**
+ * Strict input total: undefined when any input count is missing or not
+ * finite, where `readTokenCounts` would read it as 0 and skew the ratio.
+ */
 function inputTotal(usage: Record<string, unknown>): number | undefined {
-  const other = finite(usage.inputOther);
-  const read = finite(usage.inputCacheRead);
-  const created = finite(usage.inputCacheCreation);
-  if (other === undefined || read === undefined || created === undefined) {
+  const { inputOther, inputCacheRead, inputCacheCreation } = usage;
+  if (
+    !isFiniteNumber(inputOther) ||
+    !isFiniteNumber(inputCacheRead) ||
+    !isFiniteNumber(inputCacheCreation)
+  ) {
     return undefined;
   }
-  return other + read + created;
+  return inputOther + inputCacheRead + inputCacheCreation;
 }

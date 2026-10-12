@@ -24,17 +24,20 @@ import type {
 } from "@sage/core";
 import {
   appendRequestEntries,
+  finiteOr,
   type HarnessTool,
+  isFiniteNumber,
   isMessage,
   isRecord,
   type LogStore,
   MemoryLogStore,
   passthroughView,
   type RequestHeaderPayload,
+  readTokenCounts,
   requestHeaderOf,
   type StoredEntry,
 } from "@sage/core";
-import type { PreparedCall } from "@sage/provider/contract";
+import { inputTokens, type PreparedCall } from "@sage/provider/contract";
 import { toolUseIdOfChunk } from "../compiler/chunks.js";
 import {
   contextCompiler,
@@ -42,7 +45,6 @@ import {
   DEFAULT_KEEP_RECENT,
 } from "../compiler/compiler.js";
 import { DEFAULT_ALPHA, DEFAULT_EXPECTED_TURNS } from "../compiler/epoch.js";
-import { finite } from "../guards.js";
 import { ruleScorer } from "../scorer/rule.js";
 import type { Scorer } from "../scorer/types.js";
 
@@ -341,8 +343,7 @@ export function sliceTurns(path: readonly StoredEntry[]): TurnSlice[] {
       const next = path[cursor];
       if (!next || next.kind === "request_header") break;
       if (next.kind === "manifest" && isRecord(next.payload)) {
-        const value = finite(next.payload.turn);
-        if (value !== undefined) turn = value;
+        if (isFiniteNumber(next.payload.turn)) turn = next.payload.turn;
       }
       if (isAssistantEntry(next)) {
         assistant = next;
@@ -414,14 +415,14 @@ export function buildViewContext(
 function estimateTokens(manifest: Manifest): number {
   const used = budgetUsed(manifest.budget);
   const ratio = manifest.calibration?.ratio;
-  const scale = typeof ratio === "number" && Number.isFinite(ratio) ? ratio : 1;
+  const scale = finiteOr(ratio, 1);
   return used * scale;
 }
 
 function budgetUsed(budget: Manifest["budget"]): number {
-  if (typeof budget === "number" && Number.isFinite(budget)) return budget;
+  if (isFiniteNumber(budget)) return budget;
   if (!budget || typeof budget !== "object") return 0;
-  return finite(budget.used) ?? 0;
+  return finiteOr(budget.used, 0);
 }
 
 function omittedChunkIds(manifest: Manifest): string[] {
@@ -520,13 +521,8 @@ function prefixStable(previous: CompiledView, next: CompiledView): boolean {
 }
 
 function inputTotal(entry: StoredEntry): number {
-  const usage = entry.details?.usage;
-  if (!isRecord(usage)) return 0;
-  return (
-    (finite(usage.inputOther) ?? 0) +
-    (finite(usage.inputCacheRead) ?? 0) +
-    (finite(usage.inputCacheCreation) ?? 0)
-  );
+  const usage = readTokenCounts(entry.details?.usage);
+  return usage ? inputTokens(usage) : 0;
 }
 
 function isAssistantEntry(entry: StoredEntry): boolean {

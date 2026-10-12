@@ -9,19 +9,14 @@
  * tool result the session logs.
  */
 
-import { readdirSync, statSync } from "node:fs";
-import path from "node:path";
 import { errorText, type HarnessTool } from "@sage/core";
 import { pathAccess } from "./access.js";
 import { globToRegExp } from "./glob.js";
 import { asRecord, fail, ok, optionalString, requiredString } from "./input.js";
 import { TOOL_NAMES } from "./names.js";
-import {
-  resolveInside,
-  SKIPPED_DIR_NAMES,
-  workspaceRelative,
-} from "./path-safety.js";
+import { resolveInside, workspaceRelative } from "./path-safety.js";
 import { LIST_MAX_ENTRIES } from "./truncate.js";
+import { walkWorkspaceFiles } from "./walk.js";
 
 const inputSchema = {
   type: "object",
@@ -68,7 +63,10 @@ export function createFind(cwd: string): HarnessTool {
         if (!resolved.ok) return resolved.result;
         const root = resolved.path;
         const matcher = globToRegExp(glob);
-        const found = walk(cwd, root, matcher);
+        const found = walkWorkspaceFiles(root)
+          .map((abs) => workspaceRelative(cwd, abs))
+          .filter((rel) => matcher.test(rel))
+          .sort();
         if (found.length === 0) return ok("No matches.");
         const shown = found.slice(0, LIST_MAX_ENTRIES);
         const lines = [...shown];
@@ -83,43 +81,4 @@ export function createFind(cwd: string): HarnessTool {
       }
     },
   };
-}
-
-function walk(cwd: string, root: string, matcher: RegExp): string[] {
-  const found: string[] = [];
-  const stack = [root];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) break;
-    let entries: {
-      name: string;
-      isSymbolicLink(): boolean;
-      isDirectory(): boolean;
-      isFile(): boolean;
-    }[];
-    try {
-      if (statSync(current).isFile()) {
-        const rel = workspaceRelative(cwd, current);
-        if (matcher.test(rel)) found.push(rel);
-        continue;
-      }
-      entries = readdirSync(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (SKIPPED_DIR_NAMES.has(entry.name)) continue;
-      const abs = path.join(current, entry.name);
-      if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) {
-        stack.push(abs);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      const rel = workspaceRelative(cwd, abs);
-      if (matcher.test(rel)) found.push(rel);
-    }
-  }
-  found.sort();
-  return found;
 }

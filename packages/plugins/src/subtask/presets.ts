@@ -16,7 +16,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { SAGE_DIR_NAME } from "@sage/core";
-import type { ModelRef } from "@sage/provider/contract";
+import { type ModelRef, parseModelRef } from "@sage/provider/contract";
 
 /** A subtask template loaded from `.sage/subtasks/<name>.md`. */
 export type SubtaskPreset = {
@@ -109,20 +109,11 @@ function parsePreset(name: string, text: string): SubtaskPreset {
       continue;
     }
     if (key === "model") {
-      const model = readModel(value);
+      const model = parseModelRef(value);
       if (model) preset.model = model;
     }
   }
   return preset;
-}
-
-function readModel(value: string): ModelRef | undefined {
-  const slash = value.indexOf("/");
-  if (slash <= 0 || slash === value.length - 1) return undefined;
-  return {
-    provider: value.slice(0, slash),
-    model: value.slice(slash + 1),
-  };
 }
 
 function stripQuotes(value: string): string {
