@@ -59,17 +59,16 @@ export type BenchErrorReason = (typeof BENCH_ERROR_REASONS)[number];
 
 /**
  * Classification of the provider failure that ended a run, copied from the
- * last assistant message's `details.finish.error`. `status` is the HTTP
- * status, null when the call failed below HTTP or inside a 2xx stream;
- * `transport` mirrors `FinishError.transport`; `event` mirrors
- * `FinishError.event`, null unless the server ended the stream with an
- * error event.
+ * last assistant message's `details.finish.error`. `cause` mirrors
+ * `FinishError.cause`; `http` carries the HTTP status and `event` the
+ * in-stream error event's fields. A logged error whose cause is missing or
+ * unknown, or whose cause-specific field is malformed, is `other`.
  */
-export type BenchProviderError = {
-  status: number | null;
-  transport: boolean;
-  event: BenchStreamErrorEvent | null;
-};
+export type BenchProviderError =
+  | { cause: "transport" }
+  | { cause: "http"; status: number }
+  | { cause: "event"; event: BenchStreamErrorEvent }
+  | { cause: "other" };
 
 /**
  * The structured fields of an in-stream error event, each null when the

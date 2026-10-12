@@ -198,7 +198,7 @@ GATEWAY_API_KEY=<key> node apps/sage/bin/sage.mjs bench run \
 <out>/sessions/<taskId>.jsonl
 ```
 
-`results.json` 有 `policy`、`model`、`provider`、`budget`、`baseUrl`、`apiKeyEnv`、`toolNetwork`、`maxTurns`、`scorerApply`，以及每个任务的 `id`、`status`、可选 `reason`、`health`、`stoppedEarly`。`reason` 为 `session-error` 的行另有 `providerError`：会话以 provider 错误结束时是 `{ status, transport }`，`status` 是 HTTP 状态码（HTTP 以下的失败为 `null`），`transport` 为 true 表示 fetch 抛错或响应体没读完；会话因 provider 以外的原因出错时为 `null`。错误文本不写进这份文件。compiler 组的 `budget` 是 `--budget` 的正整数；没写这个旗标，或策略是 passthrough，则为 `null`。`toolNetwork` 默认 `none`，写了 `--tool-network full` 时为 `full`。`maxTurns` 是 `--max-turns` 的正整数；没写这个旗标时为 80，两种策略都记。`provider` 是 `--provider` 的值；没写时是按自动选择顺序实际选中的那家，子进程拿到同一份环境变量，选的是同一家。`baseUrl` 和 `apiKeyEnv` 是这两个旗标的值，没写时为 `null`；只记变量名，不记 key。`health` 是该 session 的 `runHealth`。问题陈述和块原文不写进这份文件。跑完的目录不要提交。
+`results.json` 有 `policy`、`model`、`provider`、`budget`、`baseUrl`、`apiKeyEnv`、`toolNetwork`、`maxTurns`、`scorerApply`，以及每个任务的 `id`、`status`、可选 `reason`、`health`、`stoppedEarly`。`reason` 为 `session-error` 的行另有 `providerError`：会话以 provider 错误结束时按 `cause` 取 `{ cause: "transport" }`（fetch 抛错或响应体没读完）、`{ cause: "http", status }`（`status` 是 HTTP 状态码）、`{ cause: "event", event }`（200 流内的 error 事件，`event` 为 `{ transient, type, code, status }`，缺的字段为 `null`）或 `{ cause: "other" }`（其他失败，或会话 Log 里读不出分类）；会话因 provider 以外的原因出错时为 `null`。错误文本不写进这份文件。compiler 组的 `budget` 是 `--budget` 的正整数；没写这个旗标，或策略是 passthrough，则为 `null`。`toolNetwork` 默认 `none`，写了 `--tool-network full` 时为 `full`。`maxTurns` 是 `--max-turns` 的正整数；没写这个旗标时为 80，两种策略都记。`provider` 是 `--provider` 的值；没写时是按自动选择顺序实际选中的那家，子进程拿到同一份环境变量，选的是同一家。`baseUrl` 和 `apiKeyEnv` 是这两个旗标的值，没写时为 `null`；只记变量名，不记 key。`health` 是该 session 的 `runHealth`。问题陈述和块原文不写进这份文件。跑完的目录不要提交。
 
 ## 报表怎么读
 

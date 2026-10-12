@@ -12,8 +12,10 @@ import "./log/kinds.js";
 
 /** Re-exported so packages that depend only on core share the one definition. */
 export {
+  assertNever,
   errorText,
   finiteOr,
+  isFinishErrorCause,
   isFiniteNumber,
   isRecord,
   readTokenCounts,

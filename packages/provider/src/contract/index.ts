@@ -18,6 +18,7 @@ export {
   type Pricing,
   type ProviderAdapter,
 } from "./adapter.js";
+export { assertNever } from "./assert-never.js";
 export { backoffMs, type Sleeper, sleep } from "./backoff.js";
 export { collect } from "./collect.js";
 export { errorText } from "./error.js";
@@ -39,7 +40,13 @@ export type {
 } from "./message.js";
 export { isModelRef, parseModelRef } from "./model-ref.js";
 export { finiteOr, isFiniteNumber, isRecord } from "./record.js";
-export type { FinishKind, StreamChunk } from "./stream.js";
+export {
+  type FinishError,
+  type FinishKind,
+  isFinishErrorCause,
+  type StreamChunk,
+  type StreamErrorEvent,
+} from "./stream.js";
 export { replayToolInput } from "./tool-input.js";
 export {
   addUsage,

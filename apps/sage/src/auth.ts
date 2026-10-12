@@ -14,6 +14,7 @@
  * The session logs provider and model on `request_header`.
  */
 
+import { assertNever } from "@sage/core";
 import {
   AnthropicAdapter,
   defaultModel,
@@ -24,7 +25,6 @@ import {
   type ProviderPreset,
   resolvePreset,
 } from "@sage/provider";
-import { assertNever } from "./guards.js";
 
 /** Auto-selection order when `--provider` is absent. */
 const AUTO_PROVIDERS = [

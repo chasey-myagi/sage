@@ -97,7 +97,7 @@ type FailureCase = {
   steps: (fixtures: { truncated: string; errorEvent: string }) => FetchStep[];
   /** The failure happened before the response body began. */
   preBody: boolean;
-  transport: true | undefined;
+  cause: "transport" | "http" | "event";
   status?: number;
   /** The finish error message, when the server supplied it. */
   message?: string;
@@ -105,13 +105,13 @@ type FailureCase = {
 
 const ERROR_BODY = '{"error":{"message":"upstream said no"}}';
 
-/** finish.error.transport for each way a call can fail. */
+/** finish.error.cause for each way a call can fail. */
 const FAILURES: FailureCase[] = [
   {
     name: "fetch throws on every attempt",
     steps: () => [{ action: "throw", message: "getaddrinfo EAI_AGAIN" }],
     preBody: true,
-    transport: true,
+    cause: "transport",
   },
   {
     name: "reading a non-2xx error body throws",
@@ -119,26 +119,26 @@ const FAILURES: FailureCase[] = [
       { action: "cut", status: 502, body: "upst", message: "terminated" },
     ],
     preBody: true,
-    transport: true,
+    cause: "transport",
   },
   {
     name: "a 2xx response has no body",
     steps: () => [{ action: "respond", status: 200, body: null }],
     preBody: true,
-    transport: true,
+    cause: "transport",
   },
   {
     name: "HTTP 500 outlasts the pre-stream retries",
     steps: () => [{ action: "respond", status: 500, body: ERROR_BODY }],
     preBody: true,
-    transport: undefined,
+    cause: "http",
     status: 500,
   },
   {
     name: "HTTP 400 is read and not retried",
     steps: () => [{ action: "respond", status: 400, body: ERROR_BODY }],
     preBody: true,
-    transport: undefined,
+    cause: "http",
     status: 400,
   },
   {
@@ -152,7 +152,7 @@ const FAILURES: FailureCase[] = [
       },
     ],
     preBody: false,
-    transport: true,
+    cause: "transport",
   },
   {
     name: "the body closes before the stream completes",
@@ -160,7 +160,7 @@ const FAILURES: FailureCase[] = [
       { action: "respond", status: 200, body: truncated },
     ],
     preBody: false,
-    transport: true,
+    cause: "transport",
   },
   {
     name: "the stream carries an error event",
@@ -168,7 +168,7 @@ const FAILURES: FailureCase[] = [
       { action: "respond", status: 200, body: errorEvent },
     ],
     preBody: false,
-    transport: undefined,
+    cause: "event",
     message: "Overloaded",
   },
 ];
@@ -270,7 +270,10 @@ export function runContractSuite(
         expect(finish.error?.raw).toMatchObject({
           error: { message: "Overloaded" },
         });
-        expect(finish.error?.event).toEqual(fixtures.errorEventClass);
+        expect(finish.error?.cause).toBe("event");
+        if (finish.error?.cause === "event") {
+          expect(finish.error.event).toEqual(fixtures.errorEventClass);
+        }
       }
       expectStreamInvariants(chunks);
     });
@@ -312,8 +315,7 @@ export function runContractSuite(
     }
 
     for (const failure of FAILURES) {
-      const flag = failure.transport ? "marks" : "does not mark";
-      it(`${flag} transport when ${failure.name}`, async () => {
+      it(`finishes with cause ${failure.cause} when ${failure.name}`, async () => {
         const { fetchImpl } = scriptedFetch(failure.steps(fixtures));
         const adapter = makeAdapter(fetchImpl, noSleep);
         const chunks = await drain(
@@ -324,11 +326,16 @@ export function runContractSuite(
           throw new Error(`expected an error finish, got ${String(finish)}`);
         }
         expect(finish.kind).toBe("error");
-        expect(Object.hasOwn(finish.error, "transport")).toBe(
-          failure.transport === true,
+        expect(finish.error.cause).toBe(failure.cause);
+        expect(
+          finish.error.cause === "http" ? finish.error.status : undefined,
+        ).toBe(failure.status);
+        expect(Object.hasOwn(finish.error, "status")).toBe(
+          failure.cause === "http",
         );
-        expect(finish.error.transport).toBe(failure.transport);
-        expect(finish.error.status).toBe(failure.status);
+        expect(Object.hasOwn(finish.error, "event")).toBe(
+          failure.cause === "event",
+        );
         if (failure.message !== undefined) {
           expect(finish.error.message).toBe(failure.message);
         }

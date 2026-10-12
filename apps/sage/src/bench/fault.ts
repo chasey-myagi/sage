@@ -11,7 +11,7 @@
  * `results.json` each time a report is printed.
  */
 
-import { assertNever } from "../guards.js";
+import { assertNever } from "@sage/core";
 import {
   BENCH_ERROR_REASONS,
   type BenchErrorReason,

@@ -11,7 +11,7 @@
  * `{}` when its input is not a JSON object (`replayToolInput`, a pure
  * function of the logged block). Messages and tools are otherwise sent
  * unchanged. A
- * frame with an `error` object ends the call as a non-transport error
+ * frame with an `error` object ends the call as a `cause: "event"` error
  * finish carrying its message and `error.event`; its `error.type` or
  * `error.code` is permanent when it names a request the API will reject
  * again.

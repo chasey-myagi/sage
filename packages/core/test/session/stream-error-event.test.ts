@@ -2,7 +2,10 @@ import { AnthropicAdapter, OpenAIAdapter } from "@sage/provider";
 import { isRecord, type ProviderAdapter } from "@sage/provider/contract";
 import { describe, expect, it } from "vitest";
 import { AgentSession, MemoryLogStore } from "../../src/index.ts";
-import { FAUX_SYSTEM as SYSTEM } from "../../src/testing/index.ts";
+import {
+  FAUX_SYSTEM as SYSTEM,
+  scriptedSseFetch,
+} from "../../src/testing/index.ts";
 
 // The server rejects the request inside a 200 response, then closes. The
 // event's `type` names a permanent class, so a resend cannot help.
@@ -29,24 +32,6 @@ const ANTHROPIC_ERROR = [
   "",
   "",
 ].join("\n");
-
-/** Every fetch answers 200 with `body`; counts the calls. */
-function repeatingFetch(body: string): {
-  fetchImpl: typeof fetch;
-  calls: () => number;
-} {
-  let count = 0;
-  return {
-    fetchImpl: async () => {
-      count += 1;
-      return new Response(body, {
-        status: 200,
-        headers: { "content-type": "text/event-stream" },
-      });
-    },
-    calls: () => count,
-  };
-}
 
 async function runWith(
   sessionId: string,
@@ -105,7 +90,7 @@ const CASES: {
 describe("a permanent error event inside the stream", () => {
   for (const item of CASES) {
     it(`ends the run with the server's message and no turn retry (${item.name})`, async () => {
-      const { fetchImpl, calls } = repeatingFetch(item.body);
+      const { fetchImpl, calls } = scriptedSseFetch([item.body]);
       const path = await runWith(
         `${item.name}-error-event`,
         item.model,
@@ -124,10 +109,10 @@ describe("a permanent error event inside the stream", () => {
         kind: "error",
         error: {
           message: "Rejected",
+          cause: "event",
           event: { transient: false, type: "invalid_request_error" },
         },
       });
-      expect(finishes[0]).not.toHaveProperty("error.transport");
     });
   }
 });

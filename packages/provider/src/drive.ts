@@ -6,10 +6,10 @@
  * Fetch throws, HTTP 429, and HTTP 5xx are retried before the body starts;
  * once parsing begins, a later failure is not retried. A fetch throw, a
  * throw while reading the body, and a body that ends before the adapter
- * records a stop finish with `error.transport = true`; a throw from the
- * adapter's `onEvent` and an error event the adapter records do not. A
- * recorded error event finishes with `error.event`, classified against the
- * adapter's `permanentErrors`.
+ * records a stop finish with `cause: "transport"`; a non-2xx finishes with
+ * `cause: "http"`; a recorded error event finishes with `cause: "event"`
+ * and `error.event`, classified against the adapter's `permanentErrors`;
+ * a throw from the adapter's `onEvent` finishes with `cause: "other"`.
  *
  * Intentionally not in the Log: this is the live decode of one call. Wire
  * frames stay in the SSE parser and the abort signal stays here.
@@ -58,7 +58,7 @@ export type Driver = {
   /**
    * Records a server error event. `raw` is the parsed event object; the
    * finish message is its `error.message` (or `message`), else
-   * `STREAM_ERROR_EVENT`. The finish is not a transport failure; it carries
+   * `STREAM_ERROR_EVENT`. The finish has `cause: "event"` and carries
    * `error.event`, read from `raw.error`.
    */
   fail(raw: Record<string, unknown>): void;
@@ -129,8 +129,14 @@ export async function* driveStream(
     else finish = yield* readBody(opened.body, call, decode);
   } catch (error) {
     // postJson already turned fetch and error-body throws into data, so
-    // only the SSE body read can throw here: a failure below HTTP.
-    finish = failureFinish(signal, error, opened?.ok === true);
+    // only the SSE body read can throw here: a failure below HTTP. `other`
+    // is a defensive value for a throw before the call opened, which
+    // openWithRetry does not do.
+    finish = failureFinish(
+      signal,
+      error,
+      opened?.ok === true ? "transport" : "other",
+    );
   }
   const usage = withRetry(decode.usage, opened?.retries ?? 0, opened?.reason);
   yield* end(usage, finish);
@@ -173,10 +179,10 @@ function startDecode(): Decode {
 
 /**
  * Feeds SSE events to `onEvent` and yields the chunks it queues. Returns
- * the finish chunk: the recorded stop or error event, `aborted`, an `onEvent` failure
- * (after yielding what it queued first), or a transport `INCOMPLETE_STREAM`
- * when the body ends without a stop. A throw while reading the body
- * propagates.
+ * the finish chunk: the recorded stop or error event, `aborted`, an
+ * `onEvent` failure as `cause: "other"` (after yielding what it queued
+ * first), or `INCOMPLETE_STREAM` as `cause: "transport"` when the body ends
+ * without a stop. A throw while reading the body propagates.
  */
 async function* readBody(
   body: ReadableStream<Uint8Array>,
@@ -190,7 +196,7 @@ async function* readBody(
       call.onEvent(event, decode.driver);
     } catch (error) {
       yield* decode.pending.splice(0, decode.pending.length);
-      return failureFinish(signal, error, false);
+      return failureFinish(signal, error, "other");
     }
     yield* take(decode.pending, signal);
     if (signal?.aborted) return abortedFinish();
@@ -200,17 +206,12 @@ async function* readBody(
   // as a proxy cutting the socket, only without a thrown error.
   return signal?.aborted
     ? abortedFinish()
-    : errorFinish({ message: INCOMPLETE_STREAM, transport: true });
+    : errorFinish({ message: INCOMPLETE_STREAM, cause: "transport" });
 }
 
 function openFailure(opened: Extract<OpenedCall, { ok: false }>): StreamChunk {
   if (opened.aborted) return abortedFinish();
-  return errorFinish({
-    message: opened.message,
-    status: opened.status,
-    raw: opened.raw,
-    transport: opened.transport,
-  });
+  return errorFinish(opened.error);
 }
 
 function* take(
@@ -231,10 +232,10 @@ function abortedFinish(): StreamChunk {
 function failureFinish(
   signal: AbortSignal | undefined,
   error: unknown,
-  transport: boolean,
+  cause: "transport" | "other",
 ): StreamChunk {
   if (signal?.aborted || isAbortError(error)) return abortedFinish();
-  return errorFinish({ message: messageOf(error), transport });
+  return errorFinish({ message: messageOf(error), cause });
 }
 
 function* end(
@@ -252,6 +253,7 @@ function endFinish(
   if (end.type === "stop") return successFinish(end.stop);
   return errorFinish({
     message: messageFromPayload(end.raw) ?? STREAM_ERROR_EVENT,
+    cause: "event",
     raw: end.raw,
     event: classifyEvent(end.raw, permanentErrors),
   });
@@ -295,18 +297,7 @@ function successFinish(stop: WireStop): StreamChunk {
   return { type: "finish", kind: stop.kind };
 }
 
-function errorFinish(from: {
-  message: string;
-  status?: number;
-  raw?: unknown;
-  transport?: boolean;
-  event?: StreamErrorEvent;
-}): StreamChunk {
-  const error: FinishError = { message: from.message };
-  if (from.status !== undefined) error.status = from.status;
-  if (from.raw !== undefined) error.raw = from.raw;
-  if (from.transport) error.transport = true;
-  if (from.event !== undefined) error.event = from.event;
+function errorFinish(error: FinishError): StreamChunk {
   return { type: "finish", kind: "error", error };
 }
 

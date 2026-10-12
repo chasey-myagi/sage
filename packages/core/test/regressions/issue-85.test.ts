@@ -1,4 +1,7 @@
-import type { StreamChunk as FauxChunk } from "@sage/provider/contract";
+import type {
+  StreamChunk as FauxChunk,
+  FinishError,
+} from "@sage/provider/contract";
 import { describe, expect, it } from "vitest";
 import { AgentSession, MemoryLogStore } from "../../src/index.ts";
 import {
@@ -9,10 +12,7 @@ import {
   FAUX_USAGE as USAGE,
 } from "../../src/testing/index.ts";
 
-function cut(
-  text: string,
-  error: { message: string; status?: number; transport?: boolean },
-): FauxChunk[] {
+function cut(text: string, error: FinishError): FauxChunk[] {
   return [
     { type: "block_start", index: 0, blockType: "text" },
     { type: "text_delta", index: 0, text },
@@ -47,7 +47,10 @@ describe("issue 85 turn retry", () => {
     const sessionId = "retry-once";
     const { waits, sleep } = recordingSleep();
     const { adapter, requests } = createFaux([
-      cut("half-terminated-text", { message: "terminated", transport: true }),
+      cut("half-terminated-text", {
+        message: "terminated",
+        cause: "transport",
+      }),
       stopScript("done"),
     ]);
     const session = new AgentSession({
@@ -99,9 +102,9 @@ describe("issue 85 turn retry", () => {
     const sessionId = "retry-exhausted";
     const { waits, sleep } = recordingSleep();
     const { adapter, requests } = createFaux([
-      cut("partial-1", { message: "terminated", transport: true }),
-      cut("partial-2", { message: "terminated", transport: true }),
-      cut("partial-3", { message: "terminated", transport: true }),
+      cut("partial-1", { message: "terminated", cause: "transport" }),
+      cut("partial-2", { message: "terminated", cause: "transport" }),
+      cut("partial-3", { message: "terminated", cause: "transport" }),
     ]);
     const session = new AgentSession({
       store,
@@ -140,7 +143,11 @@ describe("issue 85 turn retry", () => {
     const sessionId = "no-retry-400";
     const { waits, sleep } = recordingSleep();
     const { adapter, requests } = createFaux([
-      cut("bad-request-text", { message: "bad request", status: 400 }),
+      cut("bad-request-text", {
+        message: "bad request",
+        cause: "http",
+        status: 400,
+      }),
     ]);
     const session = new AgentSession({
       store,
@@ -165,27 +172,27 @@ describe("issue 85 turn retry", () => {
 
   it("retries provider-marked transport and the other transport messages", async () => {
     const cases: {
-      error: { message: string; transport?: boolean };
+      error: FinishError;
       reason: string;
     }[] = [
       {
-        error: { message: "upstream reset", transport: true },
+        error: { message: "upstream reset", cause: "transport" },
         reason: "upstream reset",
       },
       {
-        error: { message: "fetch failed", transport: true },
+        error: { message: "fetch failed", cause: "transport" },
         reason: "fetch failed",
       },
       {
-        error: { message: "read ECONNRESET", transport: true },
+        error: { message: "read ECONNRESET", cause: "transport" },
         reason: "read ECONNRESET",
       },
       {
-        error: { message: "socket hang up", transport: true },
+        error: { message: "socket hang up", cause: "transport" },
         reason: "socket hang up",
       },
       {
-        error: { message: "aborted by peer", transport: true },
+        error: { message: "aborted by peer", cause: "transport" },
         reason: "aborted by peer",
       },
     ];
