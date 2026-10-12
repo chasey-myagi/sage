@@ -129,7 +129,7 @@ CLI `--scorer model` 给根编译器装上模型打分，沿用已装配的 adap
 
 档位由代码合成，阈值取 `thresholds` 选项，缺省 `DEFAULT_JEV_THRESHOLDS`：`reports_failure`、`is_edit_target` 或 `answers_lookup` 不低于 `full`（0.4）判 full（新结果里正好有 assistant 要找的东西，就不摘成 3 行）；`is_broad_listing` 不低于 `none`（0.8），且另外三项都低于 `low`（0.2）判 none；其余判 summary，从 `keep_*` 不低于 `keep`（0.5）的行里取概率最高的至多 3 行，按原文顺序用 `; ` 连接，截到 200 字，仍须通过入口打分用的可定位检查，过不了就判 full。丢掉以后还要用的证据，代价是多一次读取或走错一步；多留原文只多花 token，所以留的门槛低、丢的门槛高。清单上的 reason 是 `scorer:jev:<tier>:failure=<p>,edit=<p>,lookup=<p>,broad=<p>`，有候选时再加 `,keep=<最高 p>`，保留两位，只供审计，代码不读。四个固定回答缺任何一个，这块不给判定。
 
-长度遵守 Jev 的两条限制：state 加最长的一个问题不超过 32k token，state 加全部问题不超过 64k token。估算按每 2.5 个 UTF-8 字节算一个 token，比真实分词偏多。超了先把 head 和 tail 一起减半，减到都为空仍超，再把候选减半，head 和 tail 从默认重新开始；什么都减完仍超，这块不发。
+长度遵守 Jev 的两条限制：state 加最长的一个问题不超过 32k token，state 加全部问题不超过 64k token。估算按每 2.5 个 UTF-8 字节算一个 token，与实测的每 token 约 2.4–3 字节接近，可能偏少几个百分点。超了先把 head 和 tail 一起减半，减到都为空仍超，再把候选减半，head 和 tail 从默认重新开始；什么都减完仍超，这块不发。
 
 一个块的请求非 2xx、超时（默认 10000ms）、被调用方中止或正文不是 answers 对象时，只有这个块拿不到判定，编译器保留它原来的档位；其余请求照发，判定照常生效，usage 照记，失败数写进结果的 `failedRequests`，编译器抄到对应报告上。只有全部请求都失败才返回 `{ decisions: [], fallback }`，原因取请求顺序里第一个失败的请求，不带 usage，也不带 `failedRequests`。有两种情况会停发新请求，还没开始的请求不打网络、按失败计：`signal` 中止后（原因 `aborted`；编译器目前不传 `signal`，只有直接调用 `score` 的调用方会传）；任一请求在 429 或 529 上重试用尽后（熔断，原因取该请求的 `http:429` 或 `http:529`），用来限住速率受限时一次打分的墙钟时间。第一次 429 不触发熔断，只有重试用尽才触发；已在途的请求照常结束，已答上的判定照常保留。不抛。没有 key 时返回 `fallback: "no-api-key"`，不发请求，结果带 `requested: false`，清单上的 `calls` 记 0；发了请求时 `calls` 记 1，不论发了几个。429 和 529 最多再试 3 次。响应带 `retry-after`（秒数或 HTTP 日期）时按它等待，最长 30 秒；没有时间隔 `500ms × 2^n`。各请求的 `usage.input_tokens` 相加写入 `inputOther`，`usage.output_tokens` 相加写入 `output`；Jev 的输出不计费，记下来只为对账。
 

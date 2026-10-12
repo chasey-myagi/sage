@@ -11,7 +11,7 @@ jev 打分器 v2 的四个阈值（`full` / `none` / `low` / `keep`）是按两�
 - **发送池只有一份。**worker pool 与熔断从 `jev.ts` 下沉为 `jev/http.ts` 的 `postMany(bodies, endpoint, hooks)`：4 个在途，单个请求失败只占自己那一格、其余照发，429 / 529 重试用尽才熔断，`signal` 中止后不再开新请求。jev 打分器的 `postRequests` 与校准都调它。校准经 `hooks.shouldStop` 卡预算，经 `hooks.onPosted` 在每个回答到达时写缓存与花费。`postSystemOne`、`PostTarget`、默认地址与并发上限都留在 `http.ts` 里，不从包入口导出；`MODEL_ID` 在 `jev.ts` 里改名为 `JEV_MODEL_ID`，包入口直接转出，不起别名。
 - **校准的失败语义。**单个请求失败只计入 `failed`，其余照发：一个总失败的请求不会让每次重跑都卡在同一位置。熔断时剩下的计入 `unsent`，`stopped` 为 `rate-limited`。有失败或熔断时结果照常写出，退出 1。
 - **缓存键是请求体的 sha256**，文件在 `<out>/cache/<hash>.json`，只存 `answers` 和用量。`JEV_MODEL` 在请求体里，换模型自然是新键；多条会话问出相同请求体时只发一次。
-- **预算闸门。**估算用 `estimateRequestTokens`：state 加全部问题，每 2.5 个 UTF-8 字节算一个 token，与打分器控制长度的估算同源，偏多不偏少。单价不另写数字，运行时读内置目录 `typesafe/jev-latest` 一行的 `inputPerMTok`（`jevInputUsdPerMTok`，出处是该行的 `source`，TypeSafe 发布 System One 的公告）；只在 `calibrate-jev` 里按需读取，目录缺这一行时只有这个子命令报错。`--max-usd`（默认 1 美元）是跨次累计上限：`spend.json` 已有花费加本次估算超过它就拒绝执行，退出 2；执行中累计实际花费一旦超过，不再发新请求，在途的收完，结果照常写出，退出 2。每个请求开始前才检查，越线时最多 4 个在途，超支上界是 4 个请求的费用。
+- **预算闸门。**估算用 `estimateRequestTokens`：state 加全部问题，每 2.5 个 UTF-8 字节算一个 token，与打分器控制长度的估算同源。Jev 按 state 计一次、加上各问题自身的 token 计费，与这个加法同构；按字节折算的实测值约为每 token 2.4–3 字节，所以估算与实际接近，可能偏少几个百分点。发前闸门只是粗估，真正封顶靠执行中按实际 `usage.input_tokens` 的检查。单价不另写数字，运行时读内置目录 `typesafe/jev-latest` 一行的 `inputPerMTok`（`jevInputUsdPerMTok`，出处是该行的 `source`，TypeSafe 发布 System One 的公告）；只在 `calibrate-jev` 里按需读取，目录缺这一行时只有这个子命令报错。`--max-usd`（默认 1 美元）是跨次累计上限：`spend.json` 已有花费加本次估算超过它就拒绝执行，退出 2；执行中累计实际花费一旦超过，不再发新请求，在途的收完，结果照常写出，退出 2。每个请求开始前才检查，越线时最多 4 个在途，超支上界是 4 个请求的费用。
 - **标签。**`stats.ts` 的 `neededLaterIn(entries)` 组合 `expandedLater` 与 `touchedLater`：后者对 `read` 结果判断同一 `path` 在更后的轮次是否又被 `read`（重读）或 `edit`（编辑）。影子对账与校准共用这一份。判定点 `at` 是该轮视图提交的起点，`turn` 是该轮清单的 `turn`；compiler 与 passthrough 会话都会写清单。
 - **扫描**在 `calibrate-sweep.ts`，纯函数：每组阈值把缓存的回答交给打分器自己的 `decideTier`，summary 与 none 都算省略。每行输出各档数量、`needed`、`omittedNeeded`、漏判率 `missRate = omittedNeeded / needed`、`precision`、`recall` 和期望成本。成本与编译器阶段决策同一套输入价等价 token 口径（`ratesFor`）：`read = cacheRead / input`，`write = max(cacheWrite, input) / input`，缺定价时用默认的 0.1 / 1.25；省略后又被需要按 `tokens × write` 计一次取回，保留 full 却从未用到按 `tokens × read × 剩余轮数` 计。这样不同币种和没有内置定价的会话可以相加，汇总里的 `unpriced` 数出按默认费率计的块。推荐取成本最低的一组，平局取离 `DEFAULT_JEV_THRESHOLDS` 最近的一组。
 - `sweep.json` 的每个块带 `session`（会话文件名），块 id 跨会话不唯一。
@@ -27,7 +27,7 @@ jev 打分器 v2 的四个阈值（`full` / `none` / `low` / `keep`）是按两�
 - **成本按各会话定价的币种直接相加**：币种混用时数字没有意义，缺定价的会话会记 0、显得最便宜。换成输入价等价 token 与编译器的阶段决策同一口径。
 - **平局取网格最前**：网格最前是各阈值最小的一角，也就是最激进省略的一组。离默认值最近的一组改动最小。
 - **单价直接写 0.042**：目录里已经有这一行和出处，第二份数字迟早不一致。
-- **按真实分词器估算**：要引入分词依赖，且 Jev 的分词并不公开。保守估算只会让闸门更早拒绝。
+- **按真实分词器估算**：要引入分词依赖，且 Jev 的分词并不公开。字节估算与实测足够接近，偏差由执行中按实际用量的闸门兜住。
 
 ## Consequences
 

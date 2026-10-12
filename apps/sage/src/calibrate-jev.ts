@@ -73,7 +73,7 @@ import { neededLaterIn } from "./stats.js";
  * Default `--max-usd`: one dollar, far above a calibration over a few
  * dozen sessions, low enough that a wrong glob cannot run up a bill.
  */
-export const DEFAULT_MAX_USD = 1;
+const DEFAULT_MAX_USD = 1;
 /**
  * Per-attempt timeout in milliseconds. Offline nothing waits on the
  * answer, so it is looser than the scorer's in-turn timeout.

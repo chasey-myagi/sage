@@ -4,9 +4,9 @@
  *
  * Guarantees: the estimated tokens of the state plus its longest question
  * stay at or below `PAIR_TOKEN_LIMIT`, and of the state plus every
- * question at or below `TOTAL_TOKEN_LIMIT`. The estimate is conservative
- * (`BYTES_PER_TOKEN` UTF-8 bytes per token), so a real tokenizer counts no
- * more. Head and tail are cut before candidate lines; a chunk that cannot
+ * question at or below `TOTAL_TOKEN_LIMIT`. The estimate is
+ * `BYTES_PER_TOKEN` UTF-8 bytes per token; measured Jev usage runs about
+ * 2.4-3 bytes per token, so it can undercount by a few percent. Head and tail are cut before candidate lines; a chunk that cannot
  * fit even with neither yields no request.
  *
  * Intentionally not in the Log: the state. It is copied from a request the
@@ -181,8 +181,9 @@ export function requestBody(request: ChunkRequest, model: string): string {
 
 /**
  * The estimated input tokens of `request`: its state plus every question,
- * at `BYTES_PER_TOKEN`. An upper bound on what Jev bills, by the same
- * estimate that sizes the request.
+ * at `BYTES_PER_TOKEN`. Jev bills the state once plus each question, the
+ * same sum; the estimate is close to the bill and may undercount by a few
+ * percent, so spend caps must also check the reported usage.
  */
 export function estimateRequestTokens(request: ChunkRequest): number {
   let total = estimateTokens(request.state);
