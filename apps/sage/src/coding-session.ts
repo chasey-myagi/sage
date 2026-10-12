@@ -68,12 +68,11 @@ type CodingSession = {
   sessionId: string;
 };
 
-/** Inputs to {@link createCodingSession}. One of `adapter` / `adapters` is required. */
+/** Inputs to {@link createCodingSession}. */
 type CodingSessionOptions = {
   cwd: string;
-  /** Adapter for `model.provider` alone. Ignored when `adapters` is set. */
-  adapter?: ProviderAdapter;
-  adapters?: Record<string, ProviderAdapter>;
+  /** Adapters by provider; must serve `model.provider`. */
+  adapters: Record<string, ProviderAdapter>;
   model: ModelRef;
   /** Defaults to {@link systemPrompt} for `cwd`. */
   system?: string;
@@ -105,12 +104,15 @@ type CodingSessionOptions = {
 };
 
 /**
- * Builds the coding session. Throws when neither `adapter` nor `adapters`
- * is given, or no adapter serves `model.provider`, and when the sandbox
+ * Builds the coding session. Throws when no adapter serves
+ * `model.provider`, and when the sandbox
  * cannot be enforced on this platform (from `createTools`).
  */
 export function createCodingSession(opts: CodingSessionOptions): CodingSession {
-  const adapters = requireAdapters(opts);
+  const { adapters } = opts;
+  if (!adapters[opts.model.provider]) {
+    throw new Error(`No adapter for provider: ${opts.model.provider}`);
+  }
   const sessionId = opts.sessionId ?? randomUUID();
   const store =
     opts.store ??
@@ -211,20 +213,6 @@ function systemPrompt(cwd: string): string {
     "Stop when the task is done.",
     `Workspace: ${cwd}`,
   ].join("\n");
-}
-
-function requireAdapters(
-  opts: CodingSessionOptions,
-): Record<string, ProviderAdapter> {
-  const provider = opts.model.provider;
-  if (opts.adapters) {
-    if (!opts.adapters[provider]) {
-      throw new Error(`No adapter for provider: ${provider}`);
-    }
-    return opts.adapters;
-  }
-  if (opts.adapter) return { [provider]: opts.adapter };
-  throw new Error("createCodingSession requires adapter or adapters");
 }
 
 /** passthroughView, or the root compiler with the session's scorers. */

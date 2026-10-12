@@ -88,7 +88,7 @@ async function runWith(
   const session = new AgentSession({
     store,
     sessionId,
-    adapter,
+    adapters: { [model.provider]: adapter },
     model,
     system: SYSTEM,
     tools: [],

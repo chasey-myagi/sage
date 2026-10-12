@@ -59,7 +59,7 @@ describe("issue 79 tool errors do not end the session", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [throwingTool("boom", "async")],
@@ -95,7 +95,7 @@ describe("issue 79 tool errors do not end the session", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [throwingTool("boom", "sync")],
@@ -130,7 +130,7 @@ describe("issue 79 tool errors do not end the session", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [throwingTool("boom", "async")],

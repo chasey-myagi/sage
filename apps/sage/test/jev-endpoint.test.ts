@@ -81,7 +81,7 @@ async function runScored(opts: {
     env: opts.env,
     stdout: io.stdout,
     stderr: io.stderr,
-    adapter: adapter as ProviderAdapter,
+    adapters: { anthropic: adapter as ProviderAdapter },
     jevFetch: recorded.fetchImpl,
   });
   return { code, stderr: io.text(), seen: recorded.seen };

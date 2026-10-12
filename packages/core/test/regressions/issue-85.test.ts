@@ -53,7 +53,7 @@ describe("issue 85 turn retry", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [],
@@ -106,7 +106,7 @@ describe("issue 85 turn retry", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [],
@@ -145,7 +145,7 @@ describe("issue 85 turn retry", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [],
@@ -201,7 +201,7 @@ describe("issue 85 turn retry", () => {
       const session = new AgentSession({
         store,
         sessionId,
-        adapter,
+        adapters: { anthropic: adapter },
         model: MODEL,
         system: SYSTEM,
         tools: [],

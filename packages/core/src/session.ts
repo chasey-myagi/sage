@@ -137,9 +137,9 @@ export class AgentSession {
   };
 
   /**
-   * Takes `adapters` (provider name → adapter), or one `adapter`, which is
-   * stored under the starting model's provider unless `adapters` already has
-   * one there. Throws when no adapter serves the starting provider.
+   * `adapters` maps provider name to adapter and is copied; a model switch
+   * looks its provider up here. Throws when no adapter serves the starting
+   * provider.
    *
    * `viewProvider` defaults to the passthrough view. `sleep` replaces the
    * wait between turn retries (test seam; production uses a real timer).
@@ -148,30 +148,21 @@ export class AgentSession {
    * `ViewContext.parentPath` and sets `ViewContext.depth`. The kernel does
    * not copy those entries onto this session.
    */
-  constructor(
-    opts: {
-      store: LogStore;
-      sessionId: string;
-      model: ModelRef;
-      system: string;
-      tools: HarnessTool[];
-      viewProvider?: ViewProvider;
-      sampling?: Sampling;
-      sleep?: Sleeper;
-      parent?: { sessionId: string; leafId: EntryId; depth: number };
-    } & (
-      | { adapter: ProviderAdapter; adapters?: Record<string, ProviderAdapter> }
-      | { adapters: Record<string, ProviderAdapter>; adapter?: ProviderAdapter }
-    ),
-  ) {
+  constructor(opts: {
+    store: LogStore;
+    sessionId: string;
+    adapters: Record<string, ProviderAdapter>;
+    model: ModelRef;
+    system: string;
+    tools: HarnessTool[];
+    viewProvider?: ViewProvider;
+    sampling?: Sampling;
+    sleep?: Sleeper;
+    parent?: { sessionId: string; leafId: EntryId; depth: number };
+  }) {
     this.store = opts.store;
     this.sessionId = opts.sessionId;
-    const adapters: Record<string, ProviderAdapter> = {
-      ...(opts.adapters ?? {}),
-    };
-    if (opts.adapter && adapters[opts.model.provider] === undefined) {
-      adapters[opts.model.provider] = opts.adapter;
-    }
+    const adapters = { ...opts.adapters };
     const selected = adapters[opts.model.provider];
     if (!selected) {
       throw new Error(`No adapter for provider: ${opts.model.provider}`);

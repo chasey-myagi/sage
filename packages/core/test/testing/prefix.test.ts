@@ -45,7 +45,7 @@ it("reprints the whole prompt when a view stamps the date into system", async ()
   const session = new AgentSession({
     store,
     sessionId: "date",
-    adapter,
+    adapters: { anthropic: adapter },
     model: { provider: "anthropic", model: "claude-test" },
     system: "base",
     tools: [echo()],

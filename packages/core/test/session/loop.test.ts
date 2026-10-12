@@ -62,7 +62,7 @@ describe("an abort ends the run as aborted", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [tool()],
@@ -96,7 +96,7 @@ describe("the run stops at the turn limit", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [tool()],
@@ -126,7 +126,7 @@ describe("the run stops at the turn limit", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [tool()],

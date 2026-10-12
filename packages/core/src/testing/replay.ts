@@ -87,11 +87,12 @@ export async function replaySession(
   });
   const store = new MemoryLogStore();
   const recorder = recordViews(opts.viewProvider ?? passthroughView);
+  const model = recordedModel(log);
   const session = new AgentSession({
     store,
     sessionId: "replay",
-    adapter,
-    model: recordedModel(log),
+    adapters: { [model.provider]: adapter },
+    model,
     system: opts.system,
     tools: opts.tools,
     viewProvider: recorder,

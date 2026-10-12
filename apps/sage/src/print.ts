@@ -151,25 +151,30 @@ function planSandbox(parsed: PrintOptions, io: CliIo): string | SandboxPlan {
 }
 
 /**
- * Injected adapters win; otherwise one adapter per keyed preset. The
- * selected provider always gets an adapter built from the resolved key and
- * base URL, unless an injected one already serves it.
+ * Injected adapters are used as given; otherwise one adapter per keyed
+ * preset, plus the selected provider's adapter built from the resolved key
+ * and base URL. Throws when an injected map does not serve the selected
+ * provider: injection is a test seam, and filling the gap with a real
+ * adapter would send the test to the network.
  */
 function assembleAdapters(
   io: CliIo,
   auth: { provider: string; apiKey: string; baseUrl: string },
 ): Record<string, ProviderAdapter> {
-  const injected = Boolean(io.adapters || io.adapter);
-  const adapters =
-    io.adapters ??
-    (io.adapter ? { [auth.provider]: io.adapter } : adaptersFromEnv(io.env));
-  if (!injected || !adapters[auth.provider]) {
-    adapters[auth.provider] = createAdapter(
-      auth.provider,
-      auth.apiKey,
-      auth.baseUrl,
-    );
+  if (io.adapters) {
+    if (!io.adapters[auth.provider]) {
+      throw new Error(
+        `Injected adapters do not serve the selected provider: ${auth.provider}`,
+      );
+    }
+    return io.adapters;
   }
+  const adapters = adaptersFromEnv(io.env);
+  adapters[auth.provider] = createAdapter(
+    auth.provider,
+    auth.apiKey,
+    auth.baseUrl,
+  );
   return adapters;
 }
 

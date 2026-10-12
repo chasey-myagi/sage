@@ -157,7 +157,7 @@ it("logs network none on the bash tool result and not in model-visible text", as
   ]);
   const { session, store, sessionId } = createCodingSession({
     cwd: dir,
-    adapter: adapter as ProviderAdapter,
+    adapters: { anthropic: adapter as ProviderAdapter },
     model: { provider: "anthropic", model: "claude-test" },
     passthrough: true,
     sandbox: { network: "none" },

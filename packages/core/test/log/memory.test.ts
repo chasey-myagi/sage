@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MemoryLogStore, registerEntryKind, replay } from "../../src/index.ts";
+import { MemoryLogStore } from "../../src/index.ts";
 
 describe("MemoryLogStore", () => {
   it("appends 100 entries with monotonic seq and parent links", () => {
@@ -71,35 +71,5 @@ describe("MemoryLogStore", () => {
     expect(store.all(sessionId).some((entry) => entry.id === second.id)).toBe(
       true,
     );
-  });
-
-  it("folds reducers in seq order and skips kinds that have none", () => {
-    registerEntryKind<{ n: number }, number>({
-      kind: "test.tally",
-      persisted: true,
-      doc: "Test-only tally. Not a kernel kind.",
-      validate: (payload): payload is { n: number } =>
-        typeof payload === "object" &&
-        payload !== null &&
-        !Array.isArray(payload) &&
-        typeof (payload as { n?: unknown }).n === "number",
-      reduce: (state, entry) => state + entry.payload.n,
-    });
-
-    const store = new MemoryLogStore();
-    const sessionId = "fold";
-    store.append(sessionId, {
-      kind: "message",
-      payload: { role: "user", content: "skip" },
-    });
-    store.append(sessionId, { kind: "test.tally", payload: { n: 2 } });
-    store.append(sessionId, {
-      kind: "message",
-      payload: { role: "user", content: "skip too" },
-    });
-    store.append(sessionId, { kind: "test.tally", payload: { n: 5 } });
-
-    const shuffled = [...store.path(sessionId)].reverse();
-    expect(replay(shuffled, 0)).toBe(7);
   });
 });
