@@ -2,8 +2,8 @@
  * `sage bench report <runA> <runB>`: compares two bench result directories.
  *
  * Contract: prints one JSON object `{ a, b, delta }`. `a` and `b` are
- * {@link BenchMetrics} plus that run's `budget`; `delta` is B minus A, null
- * where either side is null. Rates are counts over the task list.
+ * {@link BenchMetrics} plus that run's `budget`, `baseUrl`, and
+ * `provider`; `delta` is B minus A, null where either side is null. Rates are counts over the task list.
  * `tokensPerResolved` is the sum of `health.tokens.total` over the resolved
  * count; `cacheHitRatio` and `expandRate` are means of the non-null
  * per-task values. Results files are read leniently: unknown fields fall
@@ -52,8 +52,8 @@ export function runBenchReport(argv: string[], io: BenchIo): number {
     const metricsA = benchMetrics(a);
     const metricsB = benchMetrics(b);
     const report = {
-      a: { ...metricsA, budget: a.budget },
-      b: { ...metricsB, budget: b.budget },
+      a: { ...metricsA, ...runConfig(a) },
+      b: { ...metricsB, ...runConfig(b) },
       delta: deltaOf(metricsA, metricsB),
     };
     io.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
@@ -62,6 +62,17 @@ export function runBenchReport(argv: string[], io: BenchIo): number {
     io.stderr.write(`${errorText(error)}\n`);
     return 1;
   }
+}
+
+/** The run settings printed beside each side's metrics. */
+function runConfig(
+  results: BenchResults,
+): Pick<BenchResults, "budget" | "baseUrl" | "provider"> {
+  return {
+    budget: results.budget,
+    baseUrl: results.baseUrl,
+    provider: results.provider,
+  };
 }
 
 /** Aggregate rates for one run. */
@@ -95,7 +106,10 @@ function loadResults(dir: string): BenchResults {
   return {
     policy: parsed.policy === "passthrough" ? "passthrough" : "compiler",
     model: typeof parsed.model === "string" ? parsed.model : "",
+    provider: typeof parsed.provider === "string" ? parsed.provider : null,
     budget: isFiniteNumber(parsed.budget) ? parsed.budget : null,
+    baseUrl: typeof parsed.baseUrl === "string" ? parsed.baseUrl : null,
+    apiKeyEnv: typeof parsed.apiKeyEnv === "string" ? parsed.apiKeyEnv : null,
     toolNetwork: parsed.toolNetwork === "full" ? "full" : "none",
     maxTurns:
       typeof maxTurns === "number" &&

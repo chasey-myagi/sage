@@ -9,7 +9,7 @@
 - Node.js 22。系统自带的 Node 25 没有 corepack。`ts-mini.json` 里 vuejs/core 的四条，`setupCommand` 和 `testCommand` 都调用 `corepack pnpm`，跑之前要把 Node 22 放到 `PATH` 前面，并确认 `corepack pnpm` 能用。`ts-mini-2.json` 还要 corepack 能取到 `yarn@1.22.22`（zod、react-router-11160）和 `pnpm@9.9.0`（react-hook-form-12505），命令里写死了这两个版本。两份任务集都是在 Node 22.20.0、npm 10.9.3、corepack 0.34.0 上验证的
 - `git`
 - 目标仓库能跑通的测试工具。Verified 任务的 `testCommand` 是 `python -m pytest …`，Python、依赖和被测仓库的构建由跑的人在执行测试的环境里准备好。`ts-mini.json` 和 `ts-mini-2.json` 的依赖由每条任务的 `setupCommand` 安装
-- 模型 key。没写 `--provider` 时，`DEEPSEEK_API_KEY`、`DASHSCOPE_API_KEY`、`MOONSHOT_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 里有一把即可。指定了 `--provider` 就只认那一把。没有对应的 key 时 `bench run` 直接退出 2，不会去取仓库
+- 模型 key。`--api-key-env` 只替换读哪个变量，选哪家仍由 `--provider` 或下面的自动顺序决定。没写 `--provider` 时，`DEEPSEEK_API_KEY`、`DASHSCOPE_API_KEY`、`MOONSHOT_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 里有一把即可。指定了 `--provider` 就只认那一把。没有对应的 key 时 `bench run` 直接退出 2，不会去取仓库
 
 任务文件是 JSON 数组，每项：
 
@@ -133,6 +133,19 @@ node apps/sage/bin/sage.mjs bench run \
   --out bench/runs/<时间戳>-ts-passthrough
 ```
 
+通过 OpenAI 兼容的第三方网关跑时，加 `--base-url` 和 `--api-key-env`，两者原样透传给每个任务的 `sage -p`。开跑前检查的是 `--api-key-env` 指定的变量，不是预设的默认变量：
+
+```sh
+GATEWAY_API_KEY=<key> node apps/sage/bin/sage.mjs bench run \
+  --tasks bench/tasks/ts-mini.json \
+  --policy compiler \
+  --provider moonshot \
+  --model <模型 id> \
+  --base-url <网关基址> \
+  --api-key-env GATEWAY_API_KEY \
+  --out bench/runs/<时间戳>-ts-compiler
+```
+
 工作区不能带着 `baseCommit` 之后的历史。agent 会跑 `git log --all`、`git show <sha>`、`git log --grep` 去翻上游是怎么改的；全量 clone 再 checkout 会把后来的修复提交、分支和标签留在仓库里，模型能把答案抄出来，通过率就失真了。
 
 每个任务：
@@ -184,7 +197,7 @@ node apps/sage/bin/sage.mjs bench run \
 <out>/sessions/<taskId>.jsonl
 ```
 
-`results.json` 有 `policy`、`model`、`budget`、`toolNetwork`、`maxTurns`、`scorerApply`，以及每个任务的 `id`、`status`、可选 `reason`、`health`。compiler 组的 `budget` 是 `--budget` 的正整数；没写这个旗标，或策略是 passthrough，则为 `null`。`toolNetwork` 默认 `none`，写了 `--tool-network full` 时为 `full`。`maxTurns` 是 `--max-turns` 的正整数；没写这个旗标时为 80，两种策略都记。`health` 是该 session 的 `runHealth`。问题陈述和块原文不写进这份文件。跑完的目录不要提交。
+`results.json` 有 `policy`、`model`、`provider`、`budget`、`baseUrl`、`apiKeyEnv`、`toolNetwork`、`maxTurns`、`scorerApply`，以及每个任务的 `id`、`status`、可选 `reason`、`health`。compiler 组的 `budget` 是 `--budget` 的正整数；没写这个旗标，或策略是 passthrough，则为 `null`。`toolNetwork` 默认 `none`，写了 `--tool-network full` 时为 `full`。`maxTurns` 是 `--max-turns` 的正整数；没写这个旗标时为 80，两种策略都记。`provider` 是 `--provider` 的值；没写时是按自动选择顺序实际选中的那家，子进程拿到同一份环境变量，选的是同一家。`baseUrl` 和 `apiKeyEnv` 是这两个旗标的值，没写时为 `null`；只记变量名，不记 key。`health` 是该 session 的 `runHealth`。问题陈述和块原文不写进这份文件。跑完的目录不要提交。
 
 ## 报表怎么读
 
@@ -192,7 +205,7 @@ node apps/sage/bin/sage.mjs bench run \
 node apps/sage/bin/sage.mjs bench report <runA> <runB>
 ```
 
-stdout 是一份 JSON：`a`、`b`、`delta`。`a` 和 `b` 各带 `budget`，与该目录 `results.json` 的顶层 `budget` 相同。`delta` 是 B 减 A，不含 `budget`。没有 key 也能打报表。
+stdout 是一份 JSON：`a`、`b`、`delta`。`a` 和 `b` 各带 `budget`、`baseUrl` 和 `provider`，与该目录 `results.json` 的顶层同名字段相同，文件里没有时为 `null`。`delta` 是 B 减 A，不含这三项。没有 key 也能打报表。
 
 | 字段 | 口径 |
 |---|---|

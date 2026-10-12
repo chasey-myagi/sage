@@ -87,19 +87,24 @@ export function resolveAuth(flags: AuthFlags, env: NodeJS.ProcessEnv): Auth {
 }
 
 /**
- * The bench pre-flight key check: the named preset's key, or any auto
- * provider's key. Returns the stderr line, or undefined when a key is set.
+ * The bench pre-flight key check, mirroring {@link resolveAuth}: the
+ * provider each child will select (`--provider`, else the first auto
+ * provider with a key in `env`) and whether the key it reads (the
+ * `--api-key-env` variable, else the preset's) is set. Children get the
+ * same env, so the returned provider is the one they use. On failure,
+ * `message` is the stderr line.
  */
-export function missingBenchKey(
-  provider: string | undefined,
+export function resolveBenchProvider(
+  flags: Pick<AuthFlags, "provider" | "apiKeyEnv">,
   env: NodeJS.ProcessEnv,
-): string | undefined {
-  if (provider) {
-    const preset = resolvePreset(provider);
-    if (!preset) return `Unknown provider: ${provider}`;
-    return env[preset.envKey] ? undefined : `Missing ${preset.envKey}`;
-  }
-  return autoProvider(env) ? undefined : missingAutoKeyMessage();
+): { ok: true; provider: string } | { ok: false; message: string } {
+  const provider = flags.provider ?? autoProvider(env);
+  if (!provider) return { ok: false, message: missingAutoKeyMessage() };
+  const preset = resolvePreset(provider);
+  if (!preset) return { ok: false, message: `Unknown provider: ${provider}` };
+  const envKey = flags.apiKeyEnv ?? preset.envKey;
+  if (!env[envKey]) return { ok: false, message: `Missing ${envKey}` };
+  return { ok: true, provider };
 }
 
 /** One adapter per preset whose env key is set, keyed by preset name. */

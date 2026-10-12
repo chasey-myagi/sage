@@ -5,7 +5,7 @@ one-shot CLI，发布为 npm 包 `@chasey-myagi/sage`，命令名 `sage`。`sage
 ```
 usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--passthrough] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild]
        sage stats [--turns] <session.jsonl>
-       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>
+       sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--base-url <url>] [--api-key-env <NAME>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>
        sage bench report <runA> <runB>
 ```
 
@@ -70,7 +70,7 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 离线跑分，不是 CI 闸门。
 
-`bench run` 先查 key：写了 `--provider` 就要那个预设的环境变量，没写就要自动选择顺序里任一家的 key，报错文本和 `sage -p` 相同。缺 key 退出 2，此时还没读任务文件、没拉仓库。`--provider` 不是已知预设时打印 usage 并退出 1。
+`bench run` 先查 key：选哪家由 `--provider` 决定，没写时按自动选择顺序取第一个设了预设 key 的那家；`--api-key-env` 只替换读哪个变量，不参与选家。选中那家要读的变量没有值时报错，文本和 `sage -p` 相同。`--base-url` 与 `--api-key-env` 写了就原样转发给每个任务的 `sage -p`，没写不传；含义与 `sage -p` 相同。缺 key 退出 2，此时还没读任务文件、没拉仓库。`--provider` 不是已知预设时打印 usage 并退出 1。
 
 任务文件是 JSON 数组，每项 `{ id, repo, baseCommit, problem, testCommand, timeoutSec }`，可选 `setupCommand` 与 `testPatch`。任何一项不合法都在开跑前报错并退出 1。
 
@@ -89,11 +89,11 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 结果文件同时保存 `stoppedEarly`。报告的 `stoppedEarlyRate` 是 true 的任务数除以全部任务数（含未知项），空任务集为 null；差值仍为 B 减 A。
 
-`<out>/results.json` 每跑完一个任务重写一次，只存 id、状态、原因、health 数字和 stoppedEarly，不复制题面。顶层字段：`budget` 是 compiler 策略下 `--budget` 的值，没写或 passthrough 时为 null；`toolNetwork` 默认 `none`，写 `--tool-network full` 才是 `full`；`maxTurns` 是 `--max-turns` 的值或 80，两种策略都记；`scorerApply` 是 `entry` 或 `rebuild`，没写记 `rebuild`。
+`<out>/results.json` 每跑完一个任务重写一次，只存 id、状态、原因、health 数字和 stoppedEarly，不复制题面。顶层字段：`budget` 是 compiler 策略下 `--budget` 的值，没写或 passthrough 时为 null；`toolNetwork` 默认 `none`，写 `--tool-network full` 才是 `full`；`maxTurns` 是 `--max-turns` 的值或 80，两种策略都记；`scorerApply` 是 `entry` 或 `rebuild`，没写记 `rebuild`。`provider` 是 `--provider` 的值，没写时是按自动选择顺序选中的那家（子进程拿到同一份环境变量，选的是同一家）；`baseUrl` 是 `--base-url` 的值，`apiKeyEnv` 是 `--api-key-env` 的变量名，没写时都为 null；key 的值不写进这份文件。
 
 bench 的网络默认 `none`，并总是写进子进程的 `--tool-network`。这时每个子进程的 bash 只能读本次运行根目录，任务可以 `cd` 到自己的绝对路径，其他 `sage-bench-*` 根目录仍被拒绝；运行根目录经 `SAGE_SANDBOX_ALLOW_ROOT` 传给子进程。开跑前，临时根下遗留的 `sage-bench-*` 目录会在 stderr 列出并提示手动清理，不会被删除。每个任务目录在任务结束时删除，运行根目录在整次运行结束时删除。全部任务跑完退出 0。
 
-`bench report <runA> <runB>` 打印一个 JSON 对象 `{ a, b, delta }` 并退出 0。参数不是两个目录时打印 usage 并退出 1，缺 `results.json` 时退出 1。`a`、`b` 各带该次的 `budget`。比率都以任务数为分母。`tokensPerResolved` 是 `health.tokens.total` 之和除以 resolved 数，没有 resolved 时为 null。`cacheHitRatio` 和 `expandRate` 是各任务非 null 值的均值。`delta` 是 B 减 A，任一侧为 null 时该项为 null。
+`bench report <runA> <runB>` 打印一个 JSON 对象 `{ a, b, delta }` 并退出 0。参数不是两个目录时打印 usage 并退出 1，缺 `results.json` 时退出 1。`a`、`b` 各带该次的 `budget`、`baseUrl` 与 `provider`；`results.json` 里没有 `provider` 或 `baseUrl` 时为 null。比率都以任务数为分母。`tokensPerResolved` 是 `health.tokens.total` 之和除以 resolved 数，没有 resolved 时为 null。`cacheHitRatio` 和 `expandRate` 是各任务非 null 值的均值。`delta` 是 B 减 A，任一侧为 null 时该项为 null。
 
 ## Model Experience
 
