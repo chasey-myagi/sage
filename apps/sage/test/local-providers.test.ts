@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createFaux, stopScript } from "@sage/core/testing";
 import type { ProviderAdapter } from "@sage/provider";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BenchDeps } from "../src/bench/types.ts";
 import { defaultRoutePolicy } from "../src/coding-session.ts";
 import { runCli } from "../src/main.ts";
@@ -46,6 +46,7 @@ const FILE = {
 let dir = "";
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   if (dir) rmSync(dir, { recursive: true, force: true });
   dir = "";
 });
@@ -293,23 +294,18 @@ describe("sage -p with a user providers file", () => {
 
   it("reads no providers file when the CLI env has no HOME, whatever the process HOME holds", async () => {
     const { home, work } = setup("{ providers: [");
-    const processHome = process.env.HOME;
-    process.env.HOME = home;
+    vi.stubEnv("HOME", home);
     const { adapter } = createFaux([stopScript("ok")]);
     const io = capture();
-    try {
-      const code = await runCli(["-p", "hi"], {
-        cwd: work,
-        env: { DEEPSEEK_API_KEY: "sk-deepseek" },
-        stdout: io.stdout,
-        stderr: io.stderr,
-        adapters: { deepseek: adapter as ProviderAdapter },
-      });
-      expect(io.text().stderr).not.toContain("providers.json");
-      expect(code).toBe(0);
-    } finally {
-      process.env.HOME = processHome;
-    }
+    const code = await runCli(["-p", "hi"], {
+      cwd: work,
+      env: { DEEPSEEK_API_KEY: "sk-deepseek" },
+      stdout: io.stdout,
+      stderr: io.stderr,
+      adapters: { deepseek: adapter as ProviderAdapter },
+    });
+    expect(io.text().stderr).not.toContain("providers.json");
+    expect(code).toBe(0);
     expect(requestHeaders(work)[0]).toMatchObject({
       provider: "deepseek",
       model: "deepseek-flash",
