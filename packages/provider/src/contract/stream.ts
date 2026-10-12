@@ -13,13 +13,9 @@
  *   of a non-2xx response), or the response ended before it completed (a
  *   2xx without a body, or an SSE body that closes without a stop). Such a
  *   failure carries no status. Callers classify transport failures by this
- *   flag alone. HTTP statuses whose body was read leave it unset, and so
- *   does an error event inside the stream (Anthropic `event: error`, an
- *   OpenAI frame with an `error` object): that ends the call with the
- *   server's message, the event object as `raw`, no `status`, no later
- *   block chunk, and `finish.error.event` set
- * - finish.error.event is set exactly when the call ended on such an error
- *   event; callers classify in-stream server errors by it alone
+ *   flag alone. HTTP statuses whose body was read leave it unset
+ * - `event` is set exactly when the call ended on an in-stream error event;
+ *   `transport` and `status` are then unset
  *
  * Intentionally not in the Log: chunks, the live decode of one call. The
  * assistant entry that lands in the Log is the collected message. Wire SSE
@@ -77,7 +73,13 @@ export type FinishError = {
   raw?: unknown;
   /** Set only for failures below HTTP. See the invariant above. */
   transport?: boolean;
-  /** Set only when the server ended a 2xx stream with an error event. */
+  /**
+   * Set only when the server ended a 2xx stream with an error event
+   * (Anthropic `event: error`, an OpenAI frame with an `error` object).
+   * Such a finish carries the server's message and the event object as
+   * `raw`, and no block chunk follows it. Callers classify in-stream server
+   * errors by this field alone.
+   */
   event?: StreamErrorEvent;
 };
 

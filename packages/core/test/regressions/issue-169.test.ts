@@ -5,6 +5,7 @@ import { AgentSession, MemoryLogStore } from "../../src/index.ts";
 import {
   pathlessTool,
   FAUX_SYSTEM as SYSTEM,
+  scriptedSseFetch,
 } from "../../src/testing/index.ts";
 
 type Wire = {
@@ -16,6 +17,8 @@ type Wire = {
   /** Streams partial tool input, then an error event. */
   failingTool: (error: Record<string, unknown>) => string;
   ok: string;
+  /** An error event `error` this wire classifies as permanent. */
+  permanent: Record<string, unknown>;
 };
 
 const OPENAI: Wire = {
@@ -39,6 +42,11 @@ const OPENAI: Wire = {
     '{"id":"c2","object":"chat.completion.chunk","model":"gpt-5","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1}}',
     "[DONE]",
   ]),
+  permanent: {
+    message: "too long",
+    type: "invalid_request_error",
+    code: "context_length_exceeded",
+  },
 };
 
 const ANTHROPIC_START =
@@ -71,6 +79,7 @@ const ANTHROPIC: Wire = {
     'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}',
     'event: message_stop\ndata: {"type":"message_stop"}',
   ]),
+  permanent: { message: "bad", type: "invalid_request_error" },
 };
 
 const WIRES = [OPENAI, ANTHROPIC];
@@ -80,16 +89,6 @@ const RATE_LIMITED = {
 };
 const STALLED = { message: "Upstream response stream stalled" };
 
-/** A permanent error event per wire, classified by its `type` or `code`. */
-const PERMANENT: Record<string, Record<string, unknown>> = {
-  OpenAI: {
-    message: "too long",
-    type: "invalid_request_error",
-    code: "context_length_exceeded",
-  },
-  Anthropic: { message: "bad", type: "invalid_request_error" },
-};
-
 function sse(frames: string[]): string {
   return `${frames.map((frame) => `data: ${frame}`).join("\n\n")}\n\n`;
 }
@@ -98,28 +97,9 @@ function events(blocks: string[]): string {
   return `${blocks.join("\n\n")}\n\n`;
 }
 
-/** Answers each fetch with the next body as a 200 SSE response. */
-function scriptedFetch(bodies: string[]): {
-  fetchImpl: typeof fetch;
-  calls: () => number;
-} {
-  let count = 0;
-  return {
-    fetchImpl: async () => {
-      const body = bodies[Math.min(count, bodies.length - 1)];
-      count += 1;
-      return new Response(body, {
-        status: 200,
-        headers: { "content-type": "text/event-stream" },
-      });
-    },
-    calls: () => count,
-  };
-}
-
 async function runWith(wire: Wire, bodies: string[]) {
   const store = new MemoryLogStore();
-  const { fetchImpl, calls } = scriptedFetch(bodies);
+  const { fetchImpl, calls } = scriptedSseFetch(bodies);
   const waits: number[] = [];
   const sessionId = `${wire.name}-issue-169`;
   const session = new AgentSession({
@@ -223,9 +203,8 @@ describe("a transient error event inside a 200 stream", () => {
 describe("a permanent error event inside a 200 stream", () => {
   for (const wire of WIRES) {
     it(`ends the run on the first call without a turn retry (${wire.name})`, async () => {
-      const permanent = PERMANENT[wire.name] ?? {};
       const { path, calls } = await runWith(wire, [
-        wire.failing(permanent),
+        wire.failing(wire.permanent),
         wire.ok,
       ]);
 
