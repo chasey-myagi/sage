@@ -9,7 +9,11 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createFaux, stopScript, toolScript } from "@sage/core/testing";
-import { OpenAIAdapter, type ProviderAdapter } from "@sage/provider";
+import {
+  NO_LOCAL_PROVIDERS,
+  OpenAIAdapter,
+  type ProviderAdapter,
+} from "@sage/provider";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../src/args.ts";
 import { createCodingSession } from "../src/coding-session.ts";
@@ -900,16 +904,16 @@ describe("routing across two assembled adapters", () => {
       provider: "openai",
       model: "gpt-5.4",
     });
-    const built = adaptersFromEnv({
-      ANTHROPIC_API_KEY: "a",
-      OPENAI_API_KEY: "b",
-    });
+    const built = adaptersFromEnv(
+      { ANTHROPIC_API_KEY: "a", OPENAI_API_KEY: "b" },
+      NO_LOCAL_PROVIDERS,
+    );
     expect(Object.keys(built).sort()).toEqual(["anthropic", "openai"]);
     expect(built.anthropic?.api).toBe("anthropic-messages");
     expect(built.openai?.api).toBe("openai-chat");
-    expect(Object.keys(adaptersFromEnv({ OPENAI_API_KEY: "b" }))).toEqual([
-      "openai",
-    ]);
+    expect(
+      Object.keys(adaptersFromEnv({ OPENAI_API_KEY: "b" }, NO_LOCAL_PROVIDERS)),
+    ).toEqual(["openai"]);
   });
 
   it("picks the cheapest explicit ladder rung and still denies a non-home provider", async () => {

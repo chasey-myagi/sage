@@ -4,8 +4,9 @@
  * Contract: `sensitivePolicy` drops providers when a chunk whose tier is
  * not `none` has an access key matching a rule. `costTierPolicy` picks the
  * ladder entry with the lowest catalog input price that is still in
- * `candidates`. Ladder entries the catalog cannot price are skipped. Models
- * off the ladder are not considered.
+ * `candidates`. Ladder entries the catalog (built-in plus the caller's
+ * `localModels`) cannot price are skipped; a candidate's own pricing is
+ * not trusted. Models off the ladder are not considered.
  *
  * Intentionally not in the Log: these functions. Reasons reach the manifest
  * only when the compiler appends them.
@@ -82,13 +83,15 @@ export function withSensitiveFilter(
 
 /**
  * Picks the ladder entry with the lowest catalog input price that is still
- * a candidate; reason `cheapest-allowed:<provider>/<model>`. Unpriced
- * entries and models off the ladder are skipped; returns undefined when no
- * entry qualifies.
+ * a candidate; reason `cheapest-allowed:<provider>/<model>`. The catalog is
+ * the built-in table plus `localModels` (the user's providers file).
+ * Unpriced entries and models off the ladder are skipped; returns
+ * undefined when no entry qualifies.
  */
 export function costTierPolicy(opts: {
   ladder: { provider: string; model: string }[];
   pick: "cheapest-allowed";
+  localModels?: readonly CatalogEntry[];
 }): RoutePolicy {
   return (input) => {
     if (opts.pick !== "cheapest-allowed") return undefined;
@@ -98,7 +101,7 @@ export function costTierPolicy(opts: {
         (entry) => entry.provider === ref.provider && entry.model === ref.model,
       );
       if (!offered) continue;
-      const priced = listModels(ref.provider).find(
+      const priced = listModels(ref.provider, opts.localModels).find(
         (entry) => entry.model === ref.model,
       );
       const price = priced?.pricing.inputPerMTok;

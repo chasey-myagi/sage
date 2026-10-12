@@ -15,7 +15,7 @@ import { INCOMPLETE_STREAM } from "./contract/stream.js";
 import { asRecord } from "./record.js";
 import type { RetryPolicy } from "./retry.js";
 
-/** Adapter constructor options. */
+/** Transport options of an adapter: auth, endpoint, fetch, and retries. */
 export type ClientOptions = {
   apiKey: string;
   baseUrl?: string;

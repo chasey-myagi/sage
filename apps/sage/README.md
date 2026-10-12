@@ -13,9 +13,47 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 任务写在 `-p` / `--print` 之后，或者 `--print=任务`；不写 `-p` 时，所有位置参数用空格连起来就是任务。两种同时出现，或者任务为空，打印 usage 并退出 1。旗标的值可以写成 `--flag value` 或 `--flag=value`；分开写时值不能以 `-` 开头。未知旗标、缺值、`--help` 都打印 usage 并退出 1。同一个旗标写两次，后写的生效。`sage -p` 与 `bench run` 共用一张参数表（`src/options.ts`）和同一套校验与报错文本。
 
+## 自定义 provider：`~/.sage/providers.json`
+
+经 OpenAI / Anthropic 兼容的中转站跑时，可以在用户主目录的 `.sage/providers.json` 声明 provider 和模型单价，不用改仓库。主目录取环境变量 `HOME`，没设时只有内置预设，也不读用户级子任务预设。只读这一个用户级文件，不读工作区里的同名文件：项目目录下的文件容易被提交，会把私有网关的地址和计价公开出去。
+
+```json
+{
+  "providers": [
+    {
+      "name": "example-gateway",
+      "baseUrl": "https://gateway.example.com/v1",
+      "envKey": "EXAMPLE_GATEWAY_KEY",
+      "api": "openai-chat"
+    }
+  ],
+  "models": [
+    {
+      "provider": "example-gateway",
+      "model": "example-model",
+      "contextWindow": 200000,
+      "pricing": {
+        "inputPerMTok": 3,
+        "outputPerMTok": 12,
+        "cacheReadPerMTok": 0.3,
+        "cacheWritePerMTok": 3.75,
+        "currency": "credit",
+        "source": "https://gateway.example.com/pricing"
+      }
+    }
+  ]
+}
+```
+
+- `api` 是 `openai-chat` 或 `anthropic-messages`。`--provider example-gateway` 选用它，`envKey` 与 `baseUrl` 和内置预设走同一条路径，`--base-url`、`--api-key-env` 照样覆盖。用户 provider 不参与自动选择，要写 `--provider`。没写 `--model` 时取该 provider 在文件里的第一个模型；一个都没声明时退出 1，stderr 提示写 `--model`。
+- `models[].provider` 可以是内置预设或本文件声明的 provider。单价按 (provider, model) 查，同一模型 id 在两个 provider 上可以不同价。`currency` 是计价单位的短标签，缺省 USD，中转站自己的单位（例如 `credit`）原样写进 `request_header.pricing`，不换算。`source` 缺省为 `~/.sage/providers.json`。
+- 声明过的模型拿到文件里的 `contextWindow` 与单价，`adapterDefaults` 不再带 `catalogFallback`，编译器的阶段重建按这四个单价算读写倍率。回放读 Log 里记录的单价，不读当前文件。
+- 文件不存在就只有内置预设。文件存在但读不了、不是 JSON，或者形状不对时退出 2，stderr 一行写出文件路径和出错字段，例如 `models[0].pricing.currency`，不发任何请求。会报错的形状：与内置预设或目录 provider（含 `typesafe`）同名的 provider、重复的 provider 名、引用未声明 provider 的模型、重复的 (provider, model)、与内置目录重复的模型、未知的键、负数或非数字的单价、非正整数的 `contextWindow`。
+- `bench run` 先读这个文件再查 key；子进程继承父进程的环境变量，因而是同一个 `HOME`、同一份文件。
+
 ## 会话
 
-每次运行装一个 `AgentSession`：七个一方工具，加上 `update_ledger`、`expand`、`spawn_subtask`、`spawn_subtasks`。Log 写在 `<cwd>/.sage/sessions/<id>.jsonl`。子任务预设从 `<cwd>/.sage/subtasks` 和用户主目录读。视图是上下文编译器，带四个一方 claim 和「路由」一节的策略；`--passthrough` 改用 passthrough 视图。子任务总是编译。
+每次运行装一个 `AgentSession`：七个一方工具，加上 `update_ledger`、`expand`、`spawn_subtask`、`spawn_subtasks`。Log 写在 `<cwd>/.sage/sessions/<id>.jsonl`。子任务预设从 `<cwd>/.sage/subtasks` 和 `$HOME/.sage/subtasks` 读；没设 `HOME` 时只读前者。视图是上下文编译器，带四个一方 claim 和「路由」一节的策略；`--passthrough` 改用 passthrough 视图。子任务总是编译。
 
 `--budget <tokens>` 覆盖默认预算 40000，必须是正整数，否则退出 2，stderr 一行说明。和 `--passthrough` 一起用时忽略这个值，并在 stderr 提示一句。对照实验请显式压预算，默认 40000 在短任务上不会触发编译器。
 
@@ -70,7 +108,7 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 离线跑分，不是 CI 闸门。
 
-`bench run` 先查 key：选哪家由 `--provider` 决定，没写时按自动选择顺序取第一个设了预设 key 的那家；`--api-key-env` 只替换读哪个变量，不参与选家。选中那家要读的变量没有值时报错，文本和 `sage -p` 相同。`--base-url` 与 `--api-key-env` 写了就原样转发给每个任务的 `sage -p`，没写不传；含义与 `sage -p` 相同。缺 key 退出 2，此时还没读任务文件、没拉仓库。`--provider` 不是已知预设时打印 usage 并退出 1。
+`bench run` 先查 key：选哪家由 `--provider` 决定，没写时按自动选择顺序取第一个设了预设 key 的那家；`--api-key-env` 只替换读哪个变量，不参与选家。选中那家要读的变量没有值时报错，文本和 `sage -p` 相同。用户文件里声明的 provider 也能用 `--provider` 选，见「自定义 provider」。`--base-url` 与 `--api-key-env` 写了就原样转发给每个任务的 `sage -p`，没写不传；含义与 `sage -p` 相同。`~/.sage/providers.json` 坏了或缺 key 都退出 2，此时还没读任务文件、没拉仓库。`--provider` 既不是内置预设也不在用户文件里时，stderr 写 `Unknown provider: <name>` 并退出 1。
 
 任务文件是 JSON 数组，每项 `{ id, repo, baseCommit, problem, testCommand, timeoutSec }`，可选 `setupCommand` 与 `testPatch`。任何一项不合法都在开跑前报错并退出 1。
 
@@ -116,11 +154,11 @@ system prompt 是固定的几行；system prompt 与工具 schema 不变时，�
 
 ## 路由
 
-默认梯子只有当前型号。多家 key 都在时，阶段重开不会改跑更便宜的型号。要跨型号，显式传 `--ladder provider/model,provider/model`，在这些档里选目录 input 价最低、且这次视图允许的那一档。新视图碰到 `.env` 或 `secrets` 时，非当前 provider 的档会被拿掉。`--help` 只列出 `--ladder` 的写法，不含这段说明。
+默认梯子只有当前型号。多家 key 都在时，阶段重开不会改跑更便宜的型号。要跨型号，显式传 `--ladder provider/model,provider/model`，在这些档里选目录 input 价最低、且这次视图允许的那一档。目录包括 `~/.sage/providers.json` 里声明的模型；用户 provider 的 key 设了才有适配器，才会出现在候选里。新视图碰到 `.env` 或 `secrets` 时，非当前 provider 的档会被拿掉。`--help` 只列出 `--ladder` 的写法，不含这段说明。
 
 ## `--provider`
 
-`--provider <name>` 选用预设。`--base-url` 覆盖该预设的基址，`--api-key-env` 覆盖读哪一个环境变量。没拿到 key 时退出 2，stderr 点名这个变量。不认识的预设退出 1。`--provider typesafe` 被拒绝并退出 1：目录里那一行是给 Jev 打分计价的，不是对话端点。没写 `--provider` 时，按 deepseek、dashscope、moonshot、openai、anthropic 取第一个已经设了 key 的预设；一个都没有时退出 1。显式 `--provider` 盖住这个顺序。不写 `--model` 时用该 provider 目录的第一条：deepseek 是 `deepseek-flash`，`deepseek-v4-pro` 用 `--model` 选。每个已经设了 key 的预设都会装上适配器：OpenAI 兼容的几家是同一个适配器类，基址不同。
+`--provider <name>` 选用预设。`--base-url` 覆盖该预设的基址，`--api-key-env` 覆盖读哪一个环境变量。没拿到 key 时退出 2，stderr 点名这个变量。不认识的预设退出 1。`--provider typesafe` 被拒绝并退出 1：目录里那一行是给 Jev 打分计价的，不是对话端点。没写 `--provider` 时，按 deepseek、dashscope、moonshot、openai、anthropic 取第一个已经设了 key 的预设；一个都没有时退出 1。显式 `--provider` 盖住这个顺序。不写 `--model` 时用该 provider 目录的第一条：deepseek 是 `deepseek-flash`，`deepseek-v4-pro` 用 `--model` 选。每个已经设了 key 的预设都会装上适配器：OpenAI 兼容的几家是同一个适配器类，基址不同。下表是内置预设；`~/.sage/providers.json` 里声明的 provider 走同一条路径，但不参与自动选择，见「自定义 provider」。
 
 | provider | base URL | 环境变量 | api |
 | --- | --- | --- | --- |

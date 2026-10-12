@@ -2,9 +2,11 @@
  * `sage bench run`: runs every task in a tasks file under one policy and
  * writes `<out>/results.json`.
  *
- * Contract: the provider key (or the `--api-key-env` variable) is checked
- * before the tasks file is read or any repository fetched (missing key
- * exits 2). Tasks run one at a time in
+ * Contract: the user providers file and then the provider key (or the
+ * `--api-key-env` variable) are checked before the tasks file is read or
+ * any repository fetched (a broken providers file or missing key exits 2,
+ * an unknown provider exits 1). Children inherit the env, hence HOME, and
+ * read the same providers file. Tasks run one at a time in
  * a fresh run root `<realpath(tmpdir)>/sage-bench-<random>/`, deleted when
  * the run ends; `results.json` is rewritten after each task. Leftover
  * `sage-bench-*` directories from earlier runs are reported on stderr and
@@ -29,6 +31,7 @@ import path from "node:path";
 import { errorText } from "@sage/core";
 import { resolveToolSandbox, type ToolSandbox } from "@sage/tools";
 import { resolveBenchProvider } from "../auth.js";
+import { loadLocalProviders } from "../local-providers.js";
 import { type BenchRunArgs, parseRun } from "./args.js";
 import { defaultDeps } from "./deps.js";
 import { runTask } from "./task.js";
@@ -43,8 +46,9 @@ import {
 
 /**
  * Runs `sage bench run <argv>`. Returns 0 once every task has a result
- * row, 1 for a usage error or unreadable tasks file, and 2 for an invalid
- * value or missing API key.
+ * row, 1 for a usage error, unknown provider, or unreadable tasks file,
+ * and 2 for an invalid value, a broken providers file, or a missing API
+ * key.
  */
 export async function runBenchRun(
   argv: string[],
@@ -56,10 +60,15 @@ export async function runBenchRun(
     return parsed.exitCode;
   }
   const args = parsed.value;
-  const selected = resolveBenchProvider(args, io.env);
+  const loaded = loadLocalProviders(io.env);
+  if (!loaded.ok) {
+    io.stderr.write(`${loaded.message}\n`);
+    return 2;
+  }
+  const selected = resolveBenchProvider(args, io.env, loaded.local);
   if (!selected.ok) {
     io.stderr.write(`${selected.message}\n`);
-    return 2;
+    return selected.exitCode;
   }
   let tasks: BenchTask[];
   try {

@@ -23,16 +23,24 @@ export type Pricing = {
   cacheWritePerMTok: number;
   source: string;
   /**
-   * Billing currency of the per-MTok prices. Absent means USD.
-   * Cache rate ratios use only the four prices, never this field.
+   * Billing unit of the four prices: an ISO code such as `USD` or `CNY`,
+   * or a gateway's own unit such as `credit`. Absent means USD. Prices are
+   * never converted between units, and cache rate ratios use only the four
+   * prices, never this field. Matches {@link PRICE_UNIT}.
    */
-  currency?: "USD" | "CNY";
+  currency?: string;
 };
 
 /**
+ * Shape of `Pricing.currency`: a letter, then up to 15 letters, digits,
+ * `_` or `-`. Short enough to print beside a number; no spaces.
+ */
+export const PRICE_UNIT = /^[A-Za-z][A-Za-z0-9_-]{0,15}$/;
+
+/**
  * Narrows untrusted JSON to `Pricing`: four finite prices, a string
- * `source`, and `currency` absent or `USD` / `CNY`. Other fields are
- * ignored.
+ * `source`, and `currency` absent or matching {@link PRICE_UNIT}. Other
+ * fields are ignored.
  */
 export function isPricing(value: unknown): value is Pricing {
   if (!isRecord(value)) return false;
@@ -46,8 +54,7 @@ export function isPricing(value: unknown): value is Pricing {
   if (typeof value.source !== "string") return false;
   return (
     value.currency === undefined ||
-    value.currency === "USD" ||
-    value.currency === "CNY"
+    (typeof value.currency === "string" && PRICE_UNIT.test(value.currency))
   );
 }
 

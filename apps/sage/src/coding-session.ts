@@ -46,6 +46,7 @@ import {
   withSensitiveFilter,
 } from "@sage/plugins";
 import {
+  type CatalogEntry,
   listModels,
   type ModelRef,
   type ProviderAdapter,
@@ -101,6 +102,11 @@ type CodingSessionOptions = {
   ladder?: readonly ModelRef[];
   /** Home dir for user-level subtask presets. */
   home?: string;
+  /**
+   * Catalog entries from the user's providers file. Route candidates and
+   * ladder prices include them; the adapters carry their own copy.
+   */
+  localModels?: readonly CatalogEntry[];
 };
 
 /**
@@ -131,6 +137,7 @@ export function createCodingSession(opts: CodingSessionOptions): CodingSession {
     Object.keys(adapters),
     opts.model.provider,
     opts.ladder,
+    opts.localModels,
   );
   const tools = [
     ...firstPartyTools(opts),
@@ -170,16 +177,20 @@ export function createCodingSession(opts: CodingSessionOptions): CodingSession {
 /**
  * Route policy for the root and subtask compilers. The ladder is `ladder`
  * when given, else only the current model, and the cheapest allowed rung
- * wins. When the view touches `.env` or `secrets/`, every provider other
- * than `home` is denied.
+ * wins. Candidates are the catalog entries, built-in plus `localModels`,
+ * of `providers`. When the view touches `.env` or `secrets/`, every
+ * provider other than `home` is denied.
  */
 export function defaultRoutePolicy(
   providers: readonly string[],
   home: string,
   ladder?: readonly ModelRef[],
+  localModels: readonly CatalogEntry[] = [],
 ): RoutePolicy {
   const unique = [...new Set(providers)];
-  const candidates = unique.flatMap((provider) => [...listModels(provider)]);
+  const candidates = unique.flatMap((provider) => [
+    ...listModels(provider, localModels),
+  ]);
   const deny = unique.filter((provider) => provider !== home);
   const filter = sensitivePolicy({
     rules:
@@ -197,6 +208,7 @@ export function defaultRoutePolicy(
       costTierPolicy({
         ladder: explicit ?? [input.current],
         pick: "cheapest-allowed",
+        localModels,
       }),
       filter,
     );

@@ -28,7 +28,17 @@ usage 按三种形状映射，`raw` 原样保留，`inputCacheCreation` 恒为 0
 - OpenAI、DashScope、Moonshot：有 `prompt_tokens_details.cached_tokens` 时，命中进 `inputCacheRead`，其余 `prompt_tokens` 进 `inputOther`。
 - 两种字段都没有：`inputOther = prompt_tokens`，`inputCacheRead = 0`。
 
-目录 `Pricing.currency` 可选，缺省 USD。百炼和 Kimi 标 `CNY`，价格不换算成美元。缓存读写比率只除四个单价，不看币种。
+目录 `Pricing.currency` 可选，缺省 USD。它是计价单位的短标签（`PRICE_UNIT`：字母开头，最多 16 个字母、数字、`_`、`-`），内置条目写 ISO 代码，百炼和 Kimi 标 `CNY`；中转站可以写自己的单位，例如 `credit`。价格不在单位之间换算。缓存读写比率只除四个单价，不看单位。
+
+## 用户声明的 provider 与模型
+
+`parseLocalProviders(json, { defaultSource })` 校验用户文件解析出的 JSON，返回 `{ ok: true, value: LocalProviders }` 或 `{ ok: false, field, message }`，`field` 是出错字段的路径，例如 `models[0].pricing.currency`。本包不读文件，读文件的是 `apps/sage`。
+
+- `providers[]`：`{ name, baseUrl, envKey, api }`，`api` 为 `openai-chat` 或 `anthropic-messages`。`name` 不能与内置预设或目录里的 provider（含 `typesafe`）同名，不能重复，只能含字母、数字、`.`、`_`、`-`。
+- `models[]`：`{ provider, model, contextWindow, pricing }`。`provider` 必须是内置预设或本文件声明的 provider。同一 (provider, model) 不能出现两次，也不能与内置目录重复。`pricing` 的四个单价是非负有限数，`currency` 可选，`source` 缺省为 `defaultSource`。
+- 未知键一律报错，不忽略。
+
+`resolvePreset(name, local.providers)`、`listModels(provider, local.models)`、`defaultModel(provider, local.models)` 在内置表之后接上用户条目；`defaultModel` 在该 provider 没有任何条目时返回 `undefined`。适配器构造参数 `models` 传入 `local.models` 后，`prepare` 按 (provider, model) 在内置表与用户条目里查，同一模型 id 在不同 provider 上可以不同价。查到的单价随 `PreparedCall.pricing` 写进每条 `request_header`，回放读记录的值，不读当前文件。
 
 ## 传输错误重试
 
