@@ -15,21 +15,11 @@
  * fallback onto the manifest.
  */
 
-import {
-  emptyUsage,
-  type Sleeper,
-  sleep,
-  type Usage,
-} from "@sage/provider/contract";
-import {
-  type JevFetch,
-  type Posted,
-  type PostTarget,
-  postSystemOne,
-} from "./jev/http.js";
+import { emptyUsage, type Sleeper, type Usage } from "@sage/provider/contract";
+import { type JevEndpoint, type JevFetch, postMany } from "./jev/http.js";
 import { readJudgment } from "./jev/questions.js";
 import { readSources } from "./jev/sources.js";
-import { type ChunkRequest, chunkRequest } from "./jev/state.js";
+import { type ChunkRequest, chunkRequest, requestBody } from "./jev/state.js";
 import {
   DEFAULT_JEV_THRESHOLDS,
   decideTier,
@@ -43,15 +33,9 @@ import type {
   Scorer,
 } from "./types.js";
 
-const DEFAULT_BASE_URL = "https://api.typesafe.ai";
-const MODEL_ID = "jev-latest";
+/** Jev model the scorer names when `model` is empty. */
+export const JEV_MODEL_ID = "jev-latest";
 const DEFAULT_TIMEOUT_MS = 10_000;
-/**
- * Requests in flight at once. The API limits each key to 100K tokens and
- * 80 requests per second; four requests of at most ~20KB stay well under
- * both, and a 429 still backs off per `retry-after`.
- */
-const MAX_PARALLEL_REQUESTS = 4;
 
 /**
  * Creates the jev scorer. Its `name` is `jev`.
@@ -113,16 +97,15 @@ export function jevScorer(opts: {
   timeoutMs?: number;
 }): Scorer {
   const apiKey = opts.apiKey ?? "";
-  const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
-  const model = opts.model || MODEL_ID;
+  const model = opts.model || JEV_MODEL_ID;
   const thresholds = { ...DEFAULT_JEV_THRESHOLDS, ...opts.thresholds };
-  const target = (signal: AbortSignal | undefined): PostTarget => ({
-    fetchImpl: opts.fetchImpl ?? defaultFetch,
-    sleepImpl: opts.sleepImpl ?? sleep,
-    url: `${baseUrl}/v1/systemone`,
+  const endpoint = (signal: AbortSignal | undefined): JevEndpoint => ({
     apiKey,
+    ...(opts.baseUrl !== undefined ? { baseUrl: opts.baseUrl } : {}),
     timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    signal,
+    ...(signal ? { signal } : {}),
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+    ...(opts.sleepImpl ? { sleepImpl: opts.sleepImpl } : {}),
   });
 
   return {
@@ -145,7 +128,7 @@ export function jevScorer(opts: {
           return { decisions: built.decided, requested: false };
         }
         const posted = await postRequests(built.requests, {
-          target: target(input.signal),
+          endpoint: endpoint(input.signal),
           model,
           thresholds,
         });
@@ -192,75 +175,44 @@ function buildRequests(
 }
 
 /**
- * Sends every request, `MAX_PARALLEL_REQUESTS` at a time. A failed request
- * costs only its own chunk: the others still go out and keep their
- * decisions, and the failures are counted in `failedRequests`. The result
- * falls back, with the first failure's reason, only when no request is
- * answered. Two cases stop new requests, which then count as failed
- * without being sent: `signal` aborted (reason `aborted`), and a circuit
- * breaker that opens once any request has exhausted its 429/529 retries
- * (reason that request's `http:429` or `http:529`), which bounds the wall
- * clock a rate-limited call can spend. A first 429 does not open it;
- * requests already in flight finish either way.
+ * Sends every request through `postMany`. A failed request costs only its
+ * own chunk: the others keep their decisions, and the failures, including
+ * requests the rate-limit breaker or an abort kept from being sent, are
+ * counted in `failedRequests`. The result falls back, with the first
+ * failure's reason in request order, only when no request is answered.
  */
 async function postRequests(
   requests: readonly ChunkRequest[],
-  opts: { target: PostTarget; model: string; thresholds: JevThresholds },
+  opts: { endpoint: JevEndpoint; model: string; thresholds: JevThresholds },
 ): Promise<ScoreResult> {
-  const answers: (Record<string, unknown> | undefined)[] = [];
+  const results = await postMany(
+    requests.map((request) => requestBody(request, opts.model)),
+    opts.endpoint,
+  );
   const usage: Usage = emptyUsage();
   let failed = 0;
   let firstFallback: string | undefined;
-  /** Set once a request outlasts its 429/529 retries: the breaker is open. */
-  let rateLimit: string | undefined;
-  let next = 0;
-  const worker = async () => {
-    while (next < requests.length) {
-      const index = next;
-      next += 1;
-      const request = requests[index];
-      if (!request) return;
-      const skipped = opts.target.signal?.aborted ? "aborted" : rateLimit;
-      const posted =
-        skipped !== undefined
-          ? notSent(skipped)
-          : await postSystemOne(opts.target, requestBody(request, opts.model));
-      if (!posted.ok) {
-        failed += 1;
-        firstFallback ??= posted.fallback;
-        if (posted.rateLimited) rateLimit ??= posted.fallback;
-        continue;
-      }
-      usage.inputOther += posted.inputTokens;
-      usage.output += posted.outputTokens;
-      answers[index] = posted.answers;
+  for (const posted of results) {
+    if (!posted?.ok) {
+      failed += 1;
+      firstFallback ??= posted?.fallback;
+      continue;
     }
-  };
-  const workers = Math.min(MAX_PARALLEL_REQUESTS, requests.length);
-  await Promise.all(Array.from({ length: workers }, worker));
+    usage.inputOther += posted.inputTokens;
+    usage.output += posted.outputTokens;
+  }
   if (failed === requests.length) {
     return { decisions: [], fallback: firstFallback ?? "error" };
   }
   return {
-    decisions: requests.flatMap((request, index) =>
-      decisionFor(request, answers[index], opts.thresholds),
-    ),
+    decisions: requests.flatMap((request, index) => {
+      const posted = results[index];
+      const answers = posted?.ok ? posted.answers : undefined;
+      return decisionFor(request, answers, opts.thresholds);
+    }),
     usage,
     ...(failed > 0 ? { failedRequests: failed } : {}),
   };
-}
-
-/** A request the scorer chose not to send, counted as failed with `fallback`. */
-function notSent(fallback: string): Posted {
-  return { ok: false, fallback };
-}
-
-function requestBody(request: ChunkRequest, model: string): string {
-  return JSON.stringify({
-    state: request.state,
-    model,
-    questions: request.questions,
-  });
 }
 
 function decisionFor(
@@ -279,11 +231,4 @@ function decisionFor(
       thresholds,
     ),
   ];
-}
-
-function defaultFetch(
-  url: string,
-  init?: Parameters<JevFetch>[1],
-): Promise<Response> {
-  return globalThis.fetch(url, init);
 }

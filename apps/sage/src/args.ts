@@ -15,6 +15,7 @@ import { assertNever } from "@sage/core";
 import type { ModelRef } from "@sage/provider/contract";
 import type { ToolNetwork } from "@sage/tools";
 import { benchReportUsage, benchRunUsage } from "./bench/args.js";
+import { calibrateUsage } from "./calibrate-jev.js";
 import {
   type CommandFlags,
   checkChoice,
@@ -124,6 +125,7 @@ export function usage(): string {
     `       ${statsUsage()}`,
     `       ${benchRunUsage()}`,
     `       ${benchReportUsage()}`,
+    `       ${calibrateUsage()}`,
   ].join("\n");
 }
 

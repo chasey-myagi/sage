@@ -20,14 +20,37 @@ export {
   contextCompiler,
   DEFAULT_COMPILER_BUDGET,
 } from "./compiler/compiler.js";
+export { type Rates, ratesFor } from "./compiler/decide.js";
 export { EXPAND_TOOL_NAME, expandTool } from "./compiler/expand.js";
+export {
+  type EntryJevRequest,
+  type EntryJevScan,
+  entryJevRequests,
+} from "./replay/jev-entry.js";
 export {
   costTierPolicy,
   sensitivePolicy,
   withSensitiveFilter,
 } from "./routing/policy.js";
 export type { RoutePolicy } from "./routing/types.js";
-export { jevScorer } from "./scorer/jev.js";
+export {
+  type JevEndpoint,
+  type Posted,
+  type PostHooks,
+  postMany,
+} from "./scorer/jev/http.js";
+export { type Judgment, readJudgment } from "./scorer/jev/questions.js";
+export {
+  type ChunkRequest,
+  estimateRequestTokens,
+  requestBody,
+} from "./scorer/jev/state.js";
+export {
+  DEFAULT_JEV_THRESHOLDS,
+  decideTier,
+  type JevThresholds,
+} from "./scorer/jev/tiers.js";
+export { JEV_MODEL_ID, jevScorer } from "./scorer/jev.js";
 export { modelScorer } from "./scorer/model.js";
 export { ruleScorer } from "./scorer/rule.js";
 export type { Scorer } from "./scorer/types.js";

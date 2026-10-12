@@ -7,6 +7,7 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
        sage stats [--turns] <session.jsonl>
        sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--base-url <url>] [--api-key-env <NAME>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>
        sage bench report [--exclude-faults] <runA> <runB>
+       sage calibrate-jev --out <dir> [--max-usd <usd>] [--dry-run] [--t-full <p,p,…>] [--t-none <p,p,…>] [--t-low <p,p,…>] [--t-keep <p,p,…>] <session.jsonl…>
 ```
 
 ## 参数
@@ -79,7 +80,7 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 `sage stats <session.jsonl>` 读一个会话文件，不启动运行，打印一行 JSON：`runHealth` 加上三个对账数，退出 0。`runHealth` 里的 `scorerCalls`、`entryScored.calls`、`shadow.calls` 都只数真正发出的打分请求，例如 `--shadow-scorer jev` 缺 key 的轮次不计。参数不是单个 `.jsonl` 路径（可另加一个 `--turns`）时打印 usage 并退出 1；文件不存在或读不了时 stderr 一行说明并退出 1。缺 `request_header.contextWindow` 等字段的旧格式会话读不了，同样退出 1。
 
-`shadowNone` 是影子判过 `none` 的块 id 个数，同一个 id 只算一次。`laterNeeded` 是其中后来仍需要的个数：该块 id 出现在更后面的 `expand` 参数 `id` 里，或者该块是 `read` 的结果，且同一 `path` 在更后的轮次又被 `read` 了一次。判 `none` 的那一轮里再次 read 不算后续轮次。`precision = 1 − laterNeeded / shadowNone`。`shadowNone` 为 0 时 `precision` 是 null。这三个数是事后标签，编译器不读它们。
+`shadowNone` 是影子判过 `none` 的块 id 个数，同一个 id 只算一次。`laterNeeded` 是其中后来仍需要的个数：该块 id 出现在更后面的 `expand` 参数 `id` 里，或者该块是 `read` 的结果，且同一 `path` 在更后的轮次又被 `read` 或 `edit` 了一次。判 `none` 的那一轮里再次 read 或 edit 不算后续轮次。`precision = 1 − laterNeeded / shadowNone`。`shadowNone` 为 0 时 `precision` 是 null。这三个数是事后标签，编译器不读它们。
 
 ### `--turns`
 
@@ -103,6 +104,38 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 `invariants` 汇总整条路径：`toolUses`、`toolResults` 是两种块的个数；`unpairedToolUses` 是路径上找不到 tool_result 的 tool_use id，`orphanToolResults` 是找不到 tool_use 的 tool_result id；`toolErrors` 是 `isError: true` 的结果数；`requestHeaders`、`manifests` 是两种条目的条数；`models` 是出现过的 `{ provider, model }`，按首次出现排序；`outcome` 是最后一条 `terminal` 的 `outcome`，没有时为 null；`health` 是这条路径的 `runHealth`。
 
 输出只有计数、块 id、tool_use id、工具名和档位，不含消息文本、任何 `reason` 字符串、工具输入和路径。
+
+## `sage calibrate-jev`
+
+`sage calibrate-jev <session.jsonl…> --out <dir>` 用录好的会话离线校准 jev 打分器的阈值。只调 Jev，不调主模型，也不改会话文件。
+
+**请求。**每条会话按轮回放：每个工具块在第一次进入视图的那一轮，若不是 `expand` 结果、估算不少于 300 token（入口打分的 `minScoreTokens` 默认值），就按入口模式的方式构造一个 Jev 请求：块本身、原文、发出这次调用的 assistant 文字、该轮最新的用户问题，以及从 Log 重建的该轮请求里的进度账本。请求体与线上入口打分发出的逐字节相同。与线上不同的是不要求该块此时仍是 full：被预算裁掉的块也会问。工具已标 `isError` 的块线上不发问、直接判 full，这里同样不发，计入 `skipped.isError`；没有原文或塞不进 Jev 长度上限的块计入 `skipped.unsendable`。passthrough 会话没有申领单，请求里的 `ledger` 恒为空串，Jev 看到的输入分布与 compiler 会话不同。地址、密钥和 `model` 的读取与 `--scorer jev` 相同（`JEV_BASE_URL`、`JEV_API_KEY` / `TYPESAFE_API_KEY`、`JEV_MODEL`）。
+
+**发送。**与打分器共用同一个发送池：同时最多 4 个请求在途，429 与 529 按 `retry-after` 退避，单次超时 30 秒。单个请求失败（其他非 2xx、超时、响应里没有 `answers`）只计入 `failed`，其余请求照发；某个请求的 429 / 529 重试用尽时熔断，尚未发出的请求不再发，计入 `unsent`，`stopped` 为 `{ kind: "rate-limited", fallback }`。有失败或熔断时，结果照常写出，退出 1。
+
+**缓存。**每个回答存到 `<out>/cache/<请求体的 sha256>.json`。重跑时命中缓存的请求不发、不计费；换了 `JEV_MODEL` 或会话内容变了，请求体不同，就是新请求。几条会话问出逐字节相同的请求时只发一次。
+
+**预算。**发请求前先估算未命中缓存的请求的输入 token：每个请求是 state 加全部问题的 UTF-8 字节数除以 2.5 再向上取整，与打分器控制请求长度用的是同一个估算；Jev 按 state 计一次加各问题计费，实测每 token 约 2.4–3 字节，所以估算与实际接近，可能偏少几个百分点，真正封顶靠执行中的检查。美元数是 `token × 0.042 / 1e6`，单价取自内置目录 `typesafe/jev-latest` 一行（只计输入，输出不计费）。`--max-usd`（默认 1，可写 0 或小数）是跨次的累计上限：`<out>/spend.json` 里已有的花费加上本次估算超过它时，不发任何请求，stderr 一行说明（含已花的累计数）并退出 2。`--dry-run` 只往 stdout 打一行估算 JSON（`dryRun`、`sessions`、`chunks`、`cached`、`pending`、`estimate { inputTokens, usd }`、`priorUsd`、`maxUsd`、`withinBudget`）并退出 0，不发请求、不写文件，也不需要密钥。实际用量取响应里的 `usage.input_tokens`，每答完一个请求就把跨次累计的 `{ requests, inputTokens, outputTokens, usd }` 写进 `<out>/spend.json`。累计实际花费一旦超过 `--max-usd`，不再发新请求，在途的照常收完，已拿到的结果照常写出，退出 2。每个请求开始前才检查上限，越线时最多还有 4 个请求在途，所以超支不超过 4 个请求的费用；单个请求受 Jev 的 64k token 上限约束，上界约为 `4 × 64000 × 0.042 / 1e6 ≈ $0.011`。
+
+**标签。**块之后被 `expand` 取回，或者它是 `read` 的结果、同一 `path` 在更后的轮次又被 `read` 或被 `edit`，就记为「需要」，口径与 `sage stats` 的 `laterNeeded` 是同一份代码。轮次按清单的 `turn` 算，compiler 与 passthrough 会话都会写清单。passthrough 从不省略，模型没有理由 `expand`，只能靠重读和编辑打上「需要」，所以它的需要率是下界。
+
+**扫描。**对 `--t-full`、`--t-none`、`--t-low`、`--t-keep`（逗号分隔、取值 [0, 1]）的每种组合，用打分器自己的定档函数把缓存的回答重新定档。默认网格是 full `0.2,0.3,0.4,0.5,0.6`、none `0.6,0.7,0.8,0.9`、low `0.1,0.2,0.3`、keep `0.3,0.5,0.7`，共 180 组。summary 和 none 都算「省略」：两者都把原文移出视图。每组输出：
+
+| 字段 | 口径 |
+|---|---|
+| `thresholds` | 这一组的 `{ full, none, low, keep }` |
+| `tiers` | `{ full, summary, none }` 各档块数 |
+| `omitted` / `needed` / `omittedNeeded` | 省略的块数、后来需要的块数、两者都是的块数 |
+| `missRate` | 漏判率 `omittedNeeded ÷ needed`；没有块需要时为 null |
+| `precision` | 省略且从未需要的块数 ÷ 省略的块数；没有省略时为 null |
+| `recall` | 省略且从未需要的块数 ÷ 从未需要的块数；所有块都需要时为 null |
+| `cost` | 期望成本，单位是「输入价等价 token」，费率与编译器的阶段决策同一个 `ratesFor`：`read = cacheRead / input`，`write = max(cacheWrite, input) / input`，按该块进入那一轮的 `request_header.pricing` 算，没有定价时用默认的 0.1 与 1.25。省略后又被需要的块付一次取回：`tokens × write`；保留 full 却从未用到的块付 `tokens × read × 剩余轮数`。不同币种、没有内置定价的会话可以直接相加 |
+
+`cost` 没有计入三项：expand 多出的那一轮模型调用；取回的文本在之后各轮的缓存读；取回时实际的写价差异（取回按写价计，实际可能部分命中缓存）。summary 笔记本身占的 token 也不计。
+
+结果写入 `<out>/sweep.json`：`{ grid, chunks, rows, recommended }`，`chunks` 每项是 `{ session, chunkId, tokens, remainingTurns, needed }`，`session` 是会话文件名（块 id 跨会话不唯一）。推荐取 `cost` 最低的一组；相同时取离 `DEFAULT_JEV_THRESHOLDS` 最近（四个值的欧氏距离）的一组，再相同取网格里靠前的。stdout 打一行汇总 JSON：`sessions`、`chunks`、`cached`、`sent`（本次发出的请求，含失败的）、`failed`、`unsent`、`skipped { isError, unsendable, unanswered }`、`unpriced`（没有定价、按默认费率计的块数）、`estimate`、`spent`（本次）、`totalSpentUsd`（累计）、`stopped`（null、`{ kind: "budget" }` 或 `{ kind: "rate-limited", fallback }`）、`recommended`。`unanswered` 是没有回答或回答里缺固定判断、无法定档的块。
+
+`sweep.json`、`spend.json` 和 stdout 只有会话文件名、块 id、计数和价格，不含会话文本；缓存文件只存 Jev 的 `answers` 和用量。参数错误打印 usage 并退出 1；`--max-usd` 或阈值写错退出 2；会话文件不存在、需要发请求却没有密钥时 stderr 一行说明并退出 1。
 
 ## `sage bench`
 
