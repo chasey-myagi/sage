@@ -155,10 +155,11 @@ GATEWAY_API_KEY=<key> node apps/sage/bin/sage.mjs bench run \
 3. 在该目录执行 `sage -p <problem>`。argv 里有 `--max-turns <n>`，没写旗标时 n 是 80。argv 里有 `--tool-network none`，除非这次 run 写了 `--tool-network full`。写了 `--budget` 时，argv 里同时有 `--budget <tokens>`。时限 `timeoutSec` 秒
 4. 复制 session。这一步在应用 `testPatch` 之前，session 里没有隐藏测试
 5. sage 超时记 `error`，`reason` 为 `timeout`
-6. `git status --porcelain`（排除 sage 的运行时目录 `.sage/`）为空则记 `empty-patch`，不应用 `testPatch`，不跑测试
-7. 有 `testPatch` 时，把 diff 涉及的文件还原到 `baseCommit`（base 没有的文件删掉），再 `git apply`。失败记 `error`，`reason` 为 `test-patch-failed`，不跑测试
-8. 执行 `testCommand`，同样受 `timeoutSec` 限制。退出码 0 记 `resolved`，否则记 `error`，`reason` 为 `tests-failed`
-9. fetch 失败记 `clone-failed`。工作区不是恰好一个提交，或还留着 tag、remote，记 `clone-unclean`。sage 启动失败、diff 失败记 `sage-failed` 或 `diff-failed`
+6. 会话最后一条 `terminal` 的 `outcome` 为 `error` 时记 `error`，`reason` 为 `session-error`；为 `aborted` 时 `reason` 为 `session-aborted`。不看 diff，不应用 `testPatch`，不跑测试，工作区有改动也一样。`max_turns` 结束的会话照常往下判。`session-error` 的结果行另带 `providerError`，见下文结果目录
+7. `git status --porcelain`（排除 sage 的运行时目录 `.sage/`）为空则记 `empty-patch`，不应用 `testPatch`，不跑测试
+8. 有 `testPatch` 时，把 diff 涉及的文件还原到 `baseCommit`（base 没有的文件删掉），再 `git apply`。失败记 `error`，`reason` 为 `test-patch-failed`，不跑测试
+9. 执行 `testCommand`，同样受 `timeoutSec` 限制。退出码 0 记 `resolved`，否则记 `error`，`reason` 为 `tests-failed`
+10. fetch 失败记 `clone-failed`。工作区不是恰好一个提交，或还留着 tag、remote，记 `clone-unclean`。sage 启动失败、diff 失败记 `sage-failed` 或 `diff-failed`
 
 `ts-mini.json` 的 install / test 秒数（2026-09-23，Node 22.20.0，npm 与 pnpm 缓存是温的）。`test@base` 是打上隐藏测试后失败那次，`test@fix` 是再打上 gold patch 后通过那次。dayjs 的 install 首轮是 31.5s，表内 7.2s 是温缓存。vue core 冷的 pnpm store 大约 14s，darkreader 冷的 `npm ci` 大约 20s。
 
@@ -197,7 +198,7 @@ GATEWAY_API_KEY=<key> node apps/sage/bin/sage.mjs bench run \
 <out>/sessions/<taskId>.jsonl
 ```
 
-`results.json` 有 `policy`、`model`、`provider`、`budget`、`baseUrl`、`apiKeyEnv`、`toolNetwork`、`maxTurns`、`scorerApply`，以及每个任务的 `id`、`status`、可选 `reason`、`health`。compiler 组的 `budget` 是 `--budget` 的正整数；没写这个旗标，或策略是 passthrough，则为 `null`。`toolNetwork` 默认 `none`，写了 `--tool-network full` 时为 `full`。`maxTurns` 是 `--max-turns` 的正整数；没写这个旗标时为 80，两种策略都记。`provider` 是 `--provider` 的值；没写时是按自动选择顺序实际选中的那家，子进程拿到同一份环境变量，选的是同一家。`baseUrl` 和 `apiKeyEnv` 是这两个旗标的值，没写时为 `null`；只记变量名，不记 key。`health` 是该 session 的 `runHealth`。问题陈述和块原文不写进这份文件。跑完的目录不要提交。
+`results.json` 有 `policy`、`model`、`provider`、`budget`、`baseUrl`、`apiKeyEnv`、`toolNetwork`、`maxTurns`、`scorerApply`，以及每个任务的 `id`、`status`、可选 `reason`、`health`、`stoppedEarly`。`reason` 为 `session-error` 的行另有 `providerError`：会话以 provider 错误结束时是 `{ status, transport }`，`status` 是 HTTP 状态码（HTTP 以下的失败为 `null`），`transport` 为 true 表示 fetch 抛错或响应体没读完；会话因 provider 以外的原因出错时为 `null`。错误文本不写进这份文件。compiler 组的 `budget` 是 `--budget` 的正整数；没写这个旗标，或策略是 passthrough，则为 `null`。`toolNetwork` 默认 `none`，写了 `--tool-network full` 时为 `full`。`maxTurns` 是 `--max-turns` 的正整数；没写这个旗标时为 80，两种策略都记。`provider` 是 `--provider` 的值；没写时是按自动选择顺序实际选中的那家，子进程拿到同一份环境变量，选的是同一家。`baseUrl` 和 `apiKeyEnv` 是这两个旗标的值，没写时为 `null`；只记变量名，不记 key。`health` 是该 session 的 `runHealth`。问题陈述和块原文不写进这份文件。跑完的目录不要提交。
 
 ## 报表怎么读
 
@@ -211,7 +212,7 @@ stdout 是一份 JSON：`a`、`b`、`delta`。`a` 和 `b` 各带 `budget`、`bas
 |---|---|
 | `resolvedRate` | `status === "resolved"` 的任务数 / 任务总数 |
 | `emptyPatchRate` | `empty-patch` 的任务数 / 任务总数 |
-| `errorRate` | `error` 的任务数 / 任务总数 |
+| `errorRate` | `error` 的任务数 / 任务总数。含 `session-error` 与 `session-aborted`：会话没有正常结束的任务不进 `emptyPatchRate`，也不进 `resolvedRate`。对照实验要剔除故障格时，按 `reason` 从两边的 `results.json` 去掉这些任务再比 |
 | `tokensPerResolved` | 全部任务 `health.tokens.total` 之和 / resolved 数。失败任务的 token 算在分子里。resolved 为 0 时是 `null` |
 | `cacheHitRatio` | 各任务 `health.cacheHitRatio` 的算术平均，`null` 不进入平均。单个任务的这个数是 Σ cacheRead / Σ (cacheRead + inputOther + cacheCreation) |
 | `expandRate` | 各任务 `health.expandRate` 的算术平均，`null` 不进入平均。单个任务的这个数是最后一份清单的 `budget.expands / budget.omitted`，`omitted` 为 0 时该任务是 `null` |

@@ -79,21 +79,22 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 1. 拉取到 `<realpath(tmpdir)>/sage-bench-<随机>/<taskId>/`：`git init`，加 origin，`git fetch --depth 1 --no-tags` 拉 `baseCommit`，`git checkout -q FETCH_HEAD`，再删掉 origin。`repo` 不带 scheme 时拉 `https://github.com/<repo>.git`。拉取失败是 `clone-failed`。拉完必须恰好一个提交、没有 tag、没有 remote，否则是 `clone-unclean`，setup 和 agent 都不跑。
 2. 有 `setupCommand` 时在该目录用 `sh -c` 跑，受 `timeoutSec` 限制。非零退出是 `setup-failed`：不启动 sage，也不跑测试。
 3. 在该目录跑 `sage -p <problem>`。argv 总带 `--max-turns`（写了旗标用那个数，没写就是 80）和 `--tool-network`；`--budget`、`--scorer`、`--shadow-scorer`、`--scorer-apply` 只在写了时转发，passthrough 下也转发。启动失败是 `sage-failed`，超时是 `timeout`。随后把会话 jsonl 复制到 `<out>/sessions/<taskId>.jsonl`。
-4. `git status` 为空是 `empty-patch`（sage 自己的运行时目录 `.sage/` 不算改动，例如会话 Log 与溢出的工具输出），不跑测试；读不到 status 是 `diff-failed`。
-5. 有 `testPatch` 时，先把 diff 头里每个路径从 `baseCommit` 恢复（`git checkout`，基线里没有的文件就删掉），再 `git apply`。失败是 `test-patch-failed`，不跑测试。agent 看不到 `testPatch`。
-6. 跑 `testCommand`：退出 0 是 `resolved`，超时是 `timeout`，其他是 `tests-failed`。
+4. 会话最后一条 `terminal` 的 `outcome` 是 `error` 时记 `session-error`，是 `aborted` 时记 `session-aborted`：不看 diff、不跑测试，工作区有改动也一样。`max_turns` 与 `done` 照常往下判。`session-error` 的结果行带 `providerError`：最后一条助手消息以 `finish.kind === "error"` 结束时是 `{ status, transport }`（`status` 是 HTTP 状态码，HTTP 以下的失败为 null；`transport` 即 `finish.error.transport`，没有时为 false），会话因 provider 以外的原因出错（seam 断言、没有对应 adapter）时为 null。错误文本不写进结果。会话读不到时这一步跳过。
+5. `git status` 为空是 `empty-patch`（sage 自己的运行时目录 `.sage/` 不算改动，例如会话 Log 与溢出的工具输出），不跑测试；读不到 status 是 `diff-failed`。
+6. 有 `testPatch` 时，先把 diff 头里每个路径从 `baseCommit` 恢复（`git checkout`，基线里没有的文件就删掉），再 `git apply`。失败是 `test-patch-failed`，不跑测试。agent 看不到 `testPatch`。
+7. 跑 `testCommand`：退出 0 是 `resolved`，超时是 `timeout`，其他是 `tests-failed`。
 
 `health` 是复制出来的会话的 `runHealth`，读不到时为 null。
 
-`stoppedEarly` 是工具顺序的启发式指标：会话以 `done` 结束、最后一次成功的 `edit` / `write` 之后没有 `bash` 结果，且工作区 diff 非空时为 true。失败的编辑忽略，失败的 bash 也算一次检查尝试。不解析命令或输出，因此不能证明是否执行了测试，也不识别 bash 内的文件修改。只读父会话：子任务会话里的 `bash` / `edit` 不计入，所以父会话 `edit` 之后交给子任务跑测试，也会被记为早停（误报）。空 diff 且会话可读时为 false；会话不可读、diff 读取失败或子进程超时未检查 diff 时为 null。它只影响统计，不改变 agent 行为或任务状态。
+`stoppedEarly` 是工具顺序的启发式指标：会话以 `done` 结束、最后一次成功的 `edit` / `write` 之后没有 `bash` 结果，且工作区 diff 非空时为 true。失败的编辑忽略，失败的 bash 也算一次检查尝试。不解析命令或输出，因此不能证明是否执行了测试，也不识别 bash 内的文件修改。只读父会话：子任务会话里的 `bash` / `edit` 不计入，所以父会话 `edit` 之后交给子任务跑测试，也会被记为早停（误报）。空 diff 且会话可读时为 false；会话不可读、diff 读取失败、子进程超时或会话以 `error` / `aborted` 结束而未检查 diff 时为 null。它只影响统计，不改变 agent 行为或任务状态。
 
 结果文件同时保存 `stoppedEarly`。报告的 `stoppedEarlyRate` 是 true 的任务数除以全部任务数（含未知项），空任务集为 null；差值仍为 B 减 A。
 
-`<out>/results.json` 每跑完一个任务重写一次，只存 id、状态、原因、health 数字和 stoppedEarly，不复制题面。顶层字段：`budget` 是 compiler 策略下 `--budget` 的值，没写或 passthrough 时为 null；`toolNetwork` 默认 `none`，写 `--tool-network full` 才是 `full`；`maxTurns` 是 `--max-turns` 的值或 80，两种策略都记；`scorerApply` 是 `entry` 或 `rebuild`，没写记 `rebuild`。`provider` 是 `--provider` 的值，没写时是按自动选择顺序选中的那家（子进程拿到同一份环境变量，选的是同一家）；`baseUrl` 是 `--base-url` 的值，`apiKeyEnv` 是 `--api-key-env` 的变量名，没写时都为 null；key 的值不写进这份文件。
+`<out>/results.json` 每跑完一个任务重写一次，只存 id、状态、原因、`session-error` 行的 `providerError`、health 数字和 stoppedEarly，不复制题面。顶层字段：`budget` 是 compiler 策略下 `--budget` 的值，没写或 passthrough 时为 null；`toolNetwork` 默认 `none`，写 `--tool-network full` 才是 `full`；`maxTurns` 是 `--max-turns` 的值或 80，两种策略都记；`scorerApply` 是 `entry` 或 `rebuild`，没写记 `rebuild`。`provider` 是 `--provider` 的值，没写时是按自动选择顺序选中的那家（子进程拿到同一份环境变量，选的是同一家）；`baseUrl` 是 `--base-url` 的值，`apiKeyEnv` 是 `--api-key-env` 的变量名，没写时都为 null；key 的值不写进这份文件。
 
 bench 的网络默认 `none`，并总是写进子进程的 `--tool-network`。这时每个子进程的 bash 只能读本次运行根目录，任务可以 `cd` 到自己的绝对路径，其他 `sage-bench-*` 根目录仍被拒绝；运行根目录经 `SAGE_SANDBOX_ALLOW_ROOT` 传给子进程。开跑前，临时根下遗留的 `sage-bench-*` 目录会在 stderr 列出并提示手动清理，不会被删除。每个任务目录在任务结束时删除，运行根目录在整次运行结束时删除。全部任务跑完退出 0。
 
-`bench report <runA> <runB>` 打印一个 JSON 对象 `{ a, b, delta }` 并退出 0。参数不是两个目录时打印 usage 并退出 1，缺 `results.json` 时退出 1。`a`、`b` 各带该次的 `budget`、`baseUrl` 与 `provider`；`results.json` 里没有 `provider` 或 `baseUrl` 时为 null。比率都以任务数为分母。`tokensPerResolved` 是 `health.tokens.total` 之和除以 resolved 数，没有 resolved 时为 null。`cacheHitRatio` 和 `expandRate` 是各任务非 null 值的均值。`delta` 是 B 减 A，任一侧为 null 时该项为 null。
+`bench report <runA> <runB>` 打印一个 JSON 对象 `{ a, b, delta }` 并退出 0。参数不是两个目录时打印 usage 并退出 1，缺 `results.json` 时退出 1。`a`、`b` 各带该次的 `budget`、`baseUrl` 与 `provider`；`results.json` 里没有 `provider` 或 `baseUrl` 时为 null。比率都以任务数为分母。`session-error` 与 `session-aborted` 计入 `errorRate`，不计入 `emptyPatchRate` 和 `resolvedRate`；要剔除故障格时按 `results.json` 的 `reason` 过滤。`tokensPerResolved` 是 `health.tokens.total` 之和除以 resolved 数，没有 resolved 时为 null。`cacheHitRatio` 和 `expandRate` 是各任务非 null 值的均值。`delta` 是 B 减 A，任一侧为 null 时该项为 null。
 
 ## Model Experience
 
