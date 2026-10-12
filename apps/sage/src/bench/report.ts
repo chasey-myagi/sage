@@ -1,9 +1,14 @@
 /**
- * `sage bench report <runA> <runB>`: compares two bench result directories.
+ * `sage bench report [--exclude-faults] <runA> <runB>`: compares two bench
+ * result directories.
  *
- * Contract: prints one JSON object `{ a, b, delta }`. `a` and `b` are
- * {@link BenchMetrics} plus that run's `budget`, `baseUrl`, and
- * `provider`; `delta` is B minus A, null where either side is null. Rates are counts over the task list.
+ * Contract: prints one JSON object `{ a, b, delta, excluded }`. `a` and `b`
+ * are {@link BenchMetrics} plus that run's `budget`, `baseUrl`, and
+ * `provider`; `delta` is B minus A, null where either side is null. Rates
+ * are counts over the compared tasks. With `--exclude-faults`, every task
+ * either run faulted on (`isFaultRow`) is dropped from both sides before
+ * any rate is computed and `excluded` lists those ids, each once, in A's
+ * order then B's; without it `excluded` is empty and every task counts.
  * `tokensPerResolved` is the sum of `health.tokens.total` over the resolved
  * count; `cacheHitRatio` and `expandRate` are means of the non-null
  * per-task values. Results files are read leniently: unknown fields fall
@@ -22,7 +27,8 @@ import {
   isRecord,
   type RunHealth,
 } from "@sage/core";
-import { benchUsage } from "./args.js";
+import { benchUsage, parseReport } from "./args.js";
+import { isFaultRow } from "./fault.js";
 import type {
   BenchIo,
   BenchMetrics,
@@ -36,25 +42,22 @@ import type {
  * error or a missing or unreadable `results.json`.
  */
 export function runBenchReport(argv: string[], io: BenchIo): number {
-  const [left, right] = argv;
-  if (
-    argv.length !== 2 ||
-    argv.some((arg) => arg.startsWith("-")) ||
-    !left ||
-    !right
-  ) {
+  const parsed = parseReport(argv);
+  if (!parsed) {
     io.stderr.write(`${benchUsage()}\n`);
     return 1;
   }
   try {
-    const a = loadResults(path.resolve(io.cwd, left));
-    const b = loadResults(path.resolve(io.cwd, right));
-    const metricsA = benchMetrics(a);
-    const metricsB = benchMetrics(b);
+    const a = loadResults(path.resolve(io.cwd, parsed.left));
+    const b = loadResults(path.resolve(io.cwd, parsed.right));
+    const excluded = parsed.excludeFaults ? faultedIds(a.tasks, b.tasks) : [];
+    const metricsA = benchMetrics(withoutIds(a.tasks, excluded));
+    const metricsB = benchMetrics(withoutIds(b.tasks, excluded));
     const report = {
       a: { ...metricsA, ...runConfig(a) },
       b: { ...metricsB, ...runConfig(b) },
       delta: deltaOf(metricsA, metricsB),
+      excluded,
     };
     io.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return 0;
@@ -75,19 +78,40 @@ function runConfig(
   };
 }
 
-/** Aggregate rates for one run. */
-function benchMetrics(results: BenchResults): BenchMetrics {
-  const tasks = results.tasks;
+/**
+ * Ids of the tasks either run faulted on, each once, in A's order then B's.
+ * Dropping them from both sides keeps the comparison to the same tasks.
+ */
+function faultedIds(
+  left: readonly BenchTaskResult[],
+  right: readonly BenchTaskResult[],
+): string[] {
+  const ids = [...left, ...right].filter(isFaultRow).map((task) => task.id);
+  return [...new Set(ids)];
+}
+
+function withoutIds(
+  tasks: readonly BenchTaskResult[],
+  ids: readonly string[],
+): BenchTaskResult[] {
+  const dropped = new Set(ids);
+  return tasks.filter((task) => !dropped.has(task.id));
+}
+
+/** Aggregate rates over one run's compared tasks. */
+function benchMetrics(tasks: readonly BenchTaskResult[]): BenchMetrics {
   const total = tasks.length;
   const resolved = tasks.filter((task) => task.status === "resolved").length;
   const empty = tasks.filter((task) => task.status === "empty-patch").length;
   const error = tasks.filter((task) => task.status === "error").length;
+  const faults = tasks.filter(isFaultRow).length;
   const stopped = tasks.filter((task) => task.stoppedEarly === true).length;
   const tokens = tasks.reduce((sum, task) => sum + tokenTotal(task), 0);
   return {
     resolvedRate: total === 0 ? null : resolved / total,
     emptyPatchRate: total === 0 ? null : empty / total,
     errorRate: total === 0 ? null : error / total,
+    faultRate: total === 0 ? null : faults / total,
     tokensPerResolved: resolved === 0 ? null : tokens / resolved,
     cacheHitRatio: mean(tasks.map((task) => task.health?.cacheHitRatio)),
     expandRate: mean(tasks.map((task) => task.health?.expandRate)),
@@ -156,6 +180,7 @@ function deltaOf(a: BenchMetrics, b: BenchMetrics): BenchMetrics {
     resolvedRate: subtract(a.resolvedRate, b.resolvedRate),
     emptyPatchRate: subtract(a.emptyPatchRate, b.emptyPatchRate),
     errorRate: subtract(a.errorRate, b.errorRate),
+    faultRate: subtract(a.faultRate, b.faultRate),
     tokensPerResolved: subtract(a.tokensPerResolved, b.tokensPerResolved),
     cacheHitRatio: subtract(a.cacheHitRatio, b.cacheHitRatio),
     expandRate: subtract(a.expandRate, b.expandRate),

@@ -204,19 +204,23 @@ GATEWAY_API_KEY=<key> node apps/sage/bin/sage.mjs bench run \
 
 ```sh
 node apps/sage/bin/sage.mjs bench report <runA> <runB>
+node apps/sage/bin/sage.mjs bench report --exclude-faults <runA> <runB>
 ```
 
-stdout 是一份 JSON：`a`、`b`、`delta`。`a` 和 `b` 各带 `budget`、`baseUrl` 和 `provider`，与该目录 `results.json` 的顶层同名字段相同，文件里没有时为 `null`。`delta` 是 B 减 A，不含这三项。没有 key 也能打报表。
+stdout 是一份 JSON：`a`、`b`、`delta`、`excluded`。`a` 和 `b` 各带 `budget`、`baseUrl` 和 `provider`，与该目录 `results.json` 的顶层同名字段相同，文件里没有时为 `null`。`delta` 是 B 减 A，不含这三项。没有 key 也能打报表。
 
 | 字段 | 口径 |
 |---|---|
 | `resolvedRate` | `status === "resolved"` 的任务数 / 任务总数 |
 | `emptyPatchRate` | `empty-patch` 的任务数 / 任务总数 |
-| `errorRate` | `error` 的任务数 / 任务总数。含 `session-error` 与 `session-aborted`：会话没有正常结束的任务不进 `emptyPatchRate`，也不进 `resolvedRate`。对照实验要剔除故障格时，按 `reason` 从两边的 `results.json` 去掉这些任务再比 |
+| `errorRate` | `error` 的任务数 / 任务总数，含故障格。会话没有正常结束的任务不进 `emptyPatchRate`，也不进 `resolvedRate` |
+| `faultRate` | 故障格数 / 任务总数。故障格是 `reason` 为 `clone-failed`、`clone-unclean`、`setup-failed`、`sage-failed`、`session-error`、`session-aborted`、`diff-failed` 的 `error` 行；`timeout`、`test-patch-failed`、`tests-failed` 算 agent 的结果 |
 | `tokensPerResolved` | 全部任务 `health.tokens.total` 之和 / resolved 数。失败任务的 token 算在分子里。resolved 为 0 时是 `null` |
 | `cacheHitRatio` | 各任务 `health.cacheHitRatio` 的算术平均，`null` 不进入平均。单个任务的这个数是 Σ cacheRead / Σ (cacheRead + inputOther + cacheCreation) |
 | `expandRate` | 各任务 `health.expandRate` 的算术平均，`null` 不进入平均。单个任务的这个数是最后一份清单的 `budget.expands / budget.omitted`，`omitted` 为 0 时该任务是 `null` |
 
-任务数为 0 时三率是 `null`。某一侧的指标是 `null` 时，对应的 `delta` 也是 `null`。
+对照实验要剔除故障格时加 `--exclude-faults`：任一侧是故障格的任务两侧都去掉，表里的「任务总数」变成双方都没有故障的任务数，`excluded` 列出被剔除的任务 id。不加时 `excluded` 是空数组。
+
+任务数为 0 时各比率是 `null`。某一侧的指标是 `null` 时，对应的 `delta` 也是 `null`。
 
 `tokensPerResolved` 下降表示每个解决样本花的 token 更少。`resolvedRate` 上升表示 B 解决得更多。`expandRate` 上升表示被省略的块里，后来又被 `expand` 取回的比例更高。

@@ -6,7 +6,7 @@ one-shot CLI，发布为 npm 包 `@chasey-myagi/sage`，命令名 `sage`。`sage
 usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-url <url>] [--api-key-env <NAME>] [--ladder provider/model,provider/model] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--passthrough] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild]
        sage stats [--turns] <session.jsonl>
        sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--base-url <url>] [--api-key-env <NAME>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>
-       sage bench report <runA> <runB>
+       sage bench report [--exclude-faults] <runA> <runB>
 ```
 
 ## 参数
@@ -94,7 +94,11 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 bench 的网络默认 `none`，并总是写进子进程的 `--tool-network`。这时每个子进程的 bash 只能读本次运行根目录，任务可以 `cd` 到自己的绝对路径，其他 `sage-bench-*` 根目录仍被拒绝；运行根目录经 `SAGE_SANDBOX_ALLOW_ROOT` 传给子进程。开跑前，临时根下遗留的 `sage-bench-*` 目录会在 stderr 列出并提示手动清理，不会被删除。每个任务目录在任务结束时删除，运行根目录在整次运行结束时删除。全部任务跑完退出 0。
 
-`bench report <runA> <runB>` 打印一个 JSON 对象 `{ a, b, delta }` 并退出 0。参数不是两个目录时打印 usage 并退出 1，缺 `results.json` 时退出 1。`a`、`b` 各带该次的 `budget`、`baseUrl` 与 `provider`；`results.json` 里没有 `provider` 或 `baseUrl` 时为 null。比率都以任务数为分母。`session-error` 与 `session-aborted` 计入 `errorRate`，不计入 `emptyPatchRate` 和 `resolvedRate`；要剔除故障格时按 `results.json` 的 `reason` 过滤。`tokensPerResolved` 是 `health.tokens.total` 之和除以 resolved 数，没有 resolved 时为 null。`cacheHitRatio` 和 `expandRate` 是各任务非 null 值的均值。`delta` 是 B 减 A，任一侧为 null 时该项为 null。
+`bench report [--exclude-faults] <runA> <runB>` 打印一个 JSON 对象 `{ a, b, delta, excluded }` 并退出 0。位置参数不是两个目录、或写了 `--exclude-faults` 以外的旗标时打印 usage 并退出 1，缺 `results.json` 时退出 1；`--exclude-faults` 写在目录前后都可以。`a`、`b` 各带该次的 `budget`、`baseUrl` 与 `provider`；`results.json` 里没有 `provider` 或 `baseUrl` 时为 null。比率都以参与比较的任务数为分母。
+
+故障格是与 agent 无关、因基础设施或上游丢掉的任务：`status` 为 `error` 且 `reason` 是 `clone-failed`、`clone-unclean`、`setup-failed`、`sage-failed`、`session-error`、`session-aborted`、`diff-failed` 之一。`timeout`、`test-patch-failed`（agent 自己的改动可能让测试补丁打不上）和 `tests-failed` 算 agent 的结果，不是故障；其他 `reason` 字符串也不算。分类只在 `src/bench/fault.ts` 定义一处。`faultRate` 是故障格数除以任务数；`errorRate` 含故障格，`errorRate - faultRate` 是 agent 自己失败的占比。故障格不计入 `emptyPatchRate` 和 `resolvedRate`。
+
+不写 `--exclude-faults` 时每个任务都参与比较，`excluded` 为空数组。写了之后按任务 id 对称剔除：任一侧是故障格的任务，两侧都去掉再算全部比率，`excluded` 列出被剔除的 id，每个只出现一次，先按 A 的顺序、再补 B 独有的。剔除后两侧的 `faultRate` 都是 0。`tokensPerResolved` 是 `health.tokens.total` 之和除以 resolved 数，没有 resolved 时为 null。`cacheHitRatio` 和 `expandRate` 是各任务非 null 值的均值。`delta` 是 B 减 A，任一侧为 null 时该项为 null。
 
 ## Model Experience
 

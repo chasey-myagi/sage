@@ -40,18 +40,22 @@ export type BenchTask = {
 /** Task outcome: tests passed, the agent changed nothing, or anything else. */
 export type BenchStatus = "resolved" | "empty-patch" | "error";
 
-/** Why a task ended as `error`. */
-export type BenchErrorReason =
-  | "clone-failed"
-  | "clone-unclean"
-  | "setup-failed"
-  | "sage-failed"
-  | "session-error"
-  | "session-aborted"
-  | "timeout"
-  | "diff-failed"
-  | "test-patch-failed"
-  | "tests-failed";
+/** Every reason the runner writes on an `error` row. */
+export const BENCH_ERROR_REASONS = [
+  "clone-failed",
+  "clone-unclean",
+  "setup-failed",
+  "sage-failed",
+  "session-error",
+  "session-aborted",
+  "timeout",
+  "diff-failed",
+  "test-patch-failed",
+  "tests-failed",
+] as const;
+
+/** Why a task ended as `error`. One of {@link BENCH_ERROR_REASONS}. */
+export type BenchErrorReason = (typeof BENCH_ERROR_REASONS)[number];
 
 /**
  * Classification of the provider failure that ended a run, copied from the
@@ -109,10 +113,12 @@ export type BenchMetrics = {
   resolvedRate: number | null;
   emptyPatchRate: number | null;
   /**
-   * Every `error` row over all tasks, `session-error` and `session-aborted`
-   * included; filter by `reason` to drop provider faults from a comparison.
+   * Every `error` row over all tasks, faults included; `errorRate` minus
+   * `faultRate` is the share the agent itself failed.
    */
   errorRate: number | null;
+  /** Rows `isFaultRow` accepts over all tasks. */
+  faultRate: number | null;
   tokensPerResolved: number | null;
   cacheHitRatio: number | null;
   expandRate: number | null;

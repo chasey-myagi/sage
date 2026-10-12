@@ -1,12 +1,13 @@
 /**
- * argv parsing for `sage bench run`.
+ * argv parsing for `sage bench run` and `sage bench report`.
  *
  * Contract: every flag takes a value; positionals and unknown flags print
  * the bench usage and exit 1. Repeated flags keep the last value, and
  * `--tool-sandbox` is the same switch as `--tool-network`. Values are
  * checked after the whole argv is read, in a fixed order, with the same
- * checks and messages as `sage -p`. Flag semantics are in
- * `apps/sage/README.md`.
+ * checks and messages as `sage -p`. `bench report` takes exactly two run
+ * directories and the `--exclude-faults` switch, in any order. Flag
+ * semantics are in `apps/sage/README.md`.
  *
  * Intentionally not in the Log: argv and the parsed options.
  */
@@ -50,6 +51,11 @@ const BENCH_RUN_FLAGS = [
   { name: "out", usage: "required" },
 ] as const satisfies CommandFlags<OptionName>;
 
+/** Flags `sage bench report` accepts; the two run directories are positionals. */
+const BENCH_REPORT_FLAGS = [
+  { name: "exclude-faults", usage: "optional" },
+] as const satisfies CommandFlags<OptionName>;
+
 type BenchFlag = (typeof BENCH_RUN_FLAGS)[number]["name"];
 type NetworkFlag = "tool-network" | "tool-sandbox";
 
@@ -83,12 +89,43 @@ export function benchRunUsage(): string {
   return renderUsage("sage bench run", BENCH_RUN_FLAGS);
 }
 
+/** Parsed `sage bench report` arguments. */
+export type BenchReportArgs = {
+  left: string;
+  right: string;
+  /** `--exclude-faults`: drop every task either run faulted on from both. */
+  excludeFaults: boolean;
+};
+
+/** The `sage bench report` usage line, without the `usage:` prefix. */
+export function benchReportUsage(): string {
+  return `${renderUsage("sage bench report", BENCH_REPORT_FLAGS)} <runA> <runB>`;
+}
+
 /** Usage for both bench subcommands. */
 export function benchUsage(): string {
-  return [
-    `usage: ${benchRunUsage()}`,
-    "       sage bench report <runA> <runB>",
-  ].join("\n");
+  return [`usage: ${benchRunUsage()}`, `       ${benchReportUsage()}`].join(
+    "\n",
+  );
+}
+
+/** Parses `sage bench report` argv; undefined means a usage error. */
+export function parseReport(
+  argv: readonly string[],
+): BenchReportArgs | undefined {
+  const dirs: string[] = [];
+  let excludeFaults = false;
+  for (const token of readFlags(argv, BENCH_REPORT_FLAGS)) {
+    if (token.kind === "switch") {
+      excludeFaults = true;
+      continue;
+    }
+    if (token.kind !== "positional") return undefined;
+    dirs.push(token.value);
+  }
+  const [left, right] = dirs;
+  if (dirs.length !== 2 || !left || !right) return undefined;
+  return { left, right, excludeFaults };
 }
 
 /** Parses `sage bench run` argv. Never throws. */
