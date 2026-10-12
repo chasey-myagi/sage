@@ -16,7 +16,7 @@ import type { ToolUseBlock } from "./message.js";
 import { isRecord } from "./record.js";
 
 /** The argument text a tool_use with unusable `input` replays as. */
-export const EMPTY_TOOL_ARGUMENTS = "{}";
+const EMPTY_TOOL_ARGUMENTS = "{}";
 
 /**
  * The arguments an adapter sends when it replays `block`: `input` for wire

@@ -28,7 +28,7 @@
 
 ## Testing
 
-- `packages/core/test/regressions/issue-172.test.ts`：经真实 adapter 与 `scriptedSseFetch`，第一轮流出截断的参数 `{"q":"half`。两个 adapter 各两例：第二轮请求体里的参数是 `{}`；Log 里保留原文，tool_result 为 `isError: true` 且引出原文，run 以 `done` 结束。修复前 4 例全红（openai-chat 回放原文，anthropic-messages 回放 null，tool_result 为空成功）。`scriptedSseFetch` 为此增加 `requestBodies()`。
+- `packages/core/test/regressions/issue-172.test.ts`：经真实 adapter 与 `scriptedSseFetch`，第一轮流出截断的参数 `{"q":"half`。两个 adapter 各两例：第二轮请求体里的参数是 `{}`；Log 里保留原文，tool_result 为 `isError: true` 且引出原文，主循环照常结束（替身总回 200，这一条不是回归证据）。修复前 4 例全红（openai-chat 回放原文，anthropic-messages 回放 null，tool_result 为空成功）。`scriptedSseFetch` 为此增加 `requestBodies()`。
 - `packages/provider/test/collect.test.ts`：空白参数解析为 `{}`，修复前红。
 - `packages/core/test/session/hooks.test.ts`：坏参数的调用不执行；tool_pre 用 `updatedInput` 换成对象后照常执行。
 - `pnpm check` 全绿。

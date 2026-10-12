@@ -40,7 +40,7 @@ export type {
 export { isModelRef, parseModelRef } from "./model-ref.js";
 export { finiteOr, isFiniteNumber, isRecord } from "./record.js";
 export type { FinishKind, StreamChunk } from "./stream.js";
-export { EMPTY_TOOL_ARGUMENTS, replayToolInput } from "./tool-input.js";
+export { replayToolInput } from "./tool-input.js";
 export {
   addUsage,
   emptyUsage,

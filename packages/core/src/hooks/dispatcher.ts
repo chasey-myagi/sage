@@ -63,9 +63,11 @@ const ARGUMENTS_PREVIEW_CHARS = 500;
  * model would otherwise never see what it sent.
  */
 function unusableArguments(call: ToolUseBlock): ToolResultBlock {
+  // Cut by code point so the preview never ends in a lone surrogate.
+  const chars = Array.from(call.rawInput);
   const preview =
-    call.rawInput.length > ARGUMENTS_PREVIEW_CHARS
-      ? `${call.rawInput.slice(0, ARGUMENTS_PREVIEW_CHARS)}...`
+    chars.length > ARGUMENTS_PREVIEW_CHARS
+      ? `${chars.slice(0, ARGUMENTS_PREVIEW_CHARS).join("")}...`
       : call.rawInput;
   return {
     type: "tool_result",
