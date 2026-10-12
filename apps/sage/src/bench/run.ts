@@ -2,8 +2,9 @@
  * `sage bench run`: runs every task in a tasks file under one policy and
  * writes `<out>/results.json`.
  *
- * Contract: the provider key is checked before the tasks file is read or
- * any repository fetched (missing key exits 2). Tasks run one at a time in
+ * Contract: the provider key (or the `--api-key-env` variable) is checked
+ * before the tasks file is read or any repository fetched (missing key
+ * exits 2). Tasks run one at a time in
  * a fresh run root `<realpath(tmpdir)>/sage-bench-<random>/`, deleted when
  * the run ends; `results.json` is rewritten after each task. Leftover
  * `sage-bench-*` directories from earlier runs are reported on stderr and
@@ -27,7 +28,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { errorText } from "@sage/core";
 import { resolveToolSandbox, type ToolSandbox } from "@sage/tools";
-import { missingBenchKey } from "../auth.js";
+import { resolveBenchProvider } from "../auth.js";
 import { type BenchRunArgs, parseRun } from "./args.js";
 import { defaultDeps } from "./deps.js";
 import { runTask } from "./task.js";
@@ -55,9 +56,9 @@ export async function runBenchRun(
     return parsed.exitCode;
   }
   const args = parsed.value;
-  const missing = missingBenchKey(args.provider, io.env);
-  if (missing) {
-    io.stderr.write(`${missing}\n`);
+  const selected = resolveBenchProvider(args, io.env);
+  if (!selected.ok) {
+    io.stderr.write(`${selected.message}\n`);
     return 2;
   }
   let tasks: BenchTask[];
@@ -72,13 +73,14 @@ export async function runBenchRun(
       `warning: leftover bench workspace ${leftover}; remove it manually\n`,
     );
   }
-  await runAll(tasks, args, io);
+  await runAll(tasks, args, selected.provider, io);
   return 0;
 }
 
 async function runAll(
   tasks: readonly BenchTask[],
   args: BenchRunArgs,
+  provider: string,
   io: BenchIo,
 ): Promise<void> {
   const out = path.resolve(io.cwd, args.out);
@@ -87,7 +89,10 @@ async function runAll(
   const results: BenchResults = {
     policy: args.policy,
     model: args.model,
+    provider,
     budget: args.policy === "passthrough" ? null : args.budget,
+    baseUrl: args.baseUrl ?? null,
+    apiKeyEnv: args.apiKeyEnv ?? null,
     toolNetwork: sandbox.network,
     maxTurns: args.maxTurns,
     scorerApply: args.scorerApply,
@@ -125,6 +130,8 @@ function sageRunOptions(
     policy: args.policy,
     model: args.model,
     ...(args.provider ? { provider: args.provider } : {}),
+    ...(args.baseUrl ? { baseUrl: args.baseUrl } : {}),
+    ...(args.apiKeyEnv ? { apiKeyEnv: args.apiKeyEnv } : {}),
     env,
     budget: args.budget,
     toolNetwork: sandbox.network,
@@ -141,7 +148,10 @@ function writeResults(out: string, results: BenchResults): void {
   const body = {
     policy: results.policy,
     model: results.model,
+    provider: results.provider,
     budget: results.budget,
+    baseUrl: results.baseUrl,
+    apiKeyEnv: results.apiKeyEnv,
     toolNetwork: results.toolNetwork,
     maxTurns: results.maxTurns,
     scorerApply: results.scorerApply,

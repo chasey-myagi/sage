@@ -73,8 +73,17 @@ export type BenchTaskResult = {
 export type BenchResults = {
   policy: BenchPolicy;
   model: string;
+  /**
+   * `--provider`, or the auto-selected preset when omitted. Null only when
+   * read back from a results file without it.
+   */
+  provider: string | null;
   /** `--budget` for a compiler run; null when omitted or under passthrough. */
   budget: number | null;
+  /** `--base-url`; null when omitted. */
+  baseUrl: string | null;
+  /** `--api-key-env`, the variable name only; null when omitted. */
+  apiKeyEnv: string | null;
   toolNetwork: ToolNetwork;
   maxTurns: number;
   scorerApply: ScorerApply;
@@ -94,13 +103,15 @@ export type BenchMetrics = {
 };
 
 /**
- * Settings for each child `sage -p`. Optional scorer fields are forwarded
- * only when the bench flag was written.
+ * Settings for each child `sage -p`. Optional provider and scorer fields
+ * are forwarded only when the bench flag was written.
  */
 export type SageRunOptions = {
   policy: BenchPolicy;
   model: string;
   provider?: string;
+  baseUrl?: string;
+  apiKeyEnv?: string;
   env: NodeJS.ProcessEnv;
   budget: number | null;
   toolNetwork: ToolNetwork;

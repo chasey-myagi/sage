@@ -38,6 +38,8 @@ const BENCH_RUN_FLAGS = [
   { name: "policy", usage: "required" },
   { name: "model", usage: "required" },
   { name: "provider", usage: "optional" },
+  { name: "base-url", usage: "optional" },
+  { name: "api-key-env", usage: "optional" },
   { name: "budget", usage: "optional" },
   { name: "max-turns", usage: "optional" },
   { name: "tool-network", usage: "optional" },
@@ -57,6 +59,10 @@ export type BenchRunArgs = {
   policy: BenchPolicy;
   model: string;
   provider?: string;
+  /** `--base-url`, forwarded to each child when written. */
+  baseUrl?: string;
+  /** `--api-key-env`, forwarded to each child when written. */
+  apiKeyEnv?: string;
   out: string;
   /** `--budget`, or null when omitted. */
   budget: number | null;
@@ -99,6 +105,8 @@ export function parseRun(argv: string[]): Checked<BenchRunArgs> {
   if (!policy.ok) return policy;
   const provider = values.get("provider");
   if (provider && !resolvePreset(provider)) return usageError(benchUsage());
+  const baseUrl = values.get("base-url");
+  const apiKeyEnv = values.get("api-key-env");
   const limits = readLimits(values);
   if (!limits.ok) return limits;
   const scoring = readScoring(values);
@@ -121,6 +129,8 @@ export function parseRun(argv: string[]): Checked<BenchRunArgs> {
       ...limits.value,
       ...scoring.value,
       ...(provider ? { provider } : {}),
+      ...(baseUrl ? { baseUrl } : {}),
+      ...(apiKeyEnv ? { apiKeyEnv } : {}),
     },
   };
 }

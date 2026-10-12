@@ -184,6 +184,8 @@ it("bench report compares rates and the three numbers", async () => {
     cacheHitRatio: 0.5,
     expandRate: 0.25,
     budget: null,
+    baseUrl: null,
+    provider: null,
   });
   expect(json.b).toEqual({
     stoppedEarlyRate: 0,
@@ -194,6 +196,8 @@ it("bench report compares rates and the three numbers", async () => {
     cacheHitRatio: 0.5,
     expandRate: 0.5,
     budget: null,
+    baseUrl: null,
+    provider: null,
   });
   expect(json.delta).toEqual({
     stoppedEarlyRate: 0,
@@ -309,6 +313,139 @@ it("bench run --budget 6000 forwards the flag and records it unless passthrough"
   };
   expect(json.a.budget).toBe(6000);
   expect(json.b.budget).toBe(null);
+});
+
+it("bench run forwards --base-url and --api-key-env and records the provider, url, and variable name, not the key", async () => {
+  dir = mkdtempSync(path.join(tmpdir(), "sage-bench-gateway-"));
+  const tasks = path.join(dir, "tasks.json");
+  writeFileSync(tasks, JSON.stringify([task("one")]));
+  const gatewayOut = path.join(dir, "gateway");
+  const plainOut = path.join(dir, "plain");
+  const gatewayArgv: string[][] = [];
+  const plainArgv: string[][] = [];
+  const gateway = await runCli(
+    [
+      "bench",
+      "run",
+      "--tasks",
+      tasks,
+      "--policy",
+      "compiler",
+      "--provider",
+      "moonshot",
+      "--model",
+      "kimi-test",
+      "--base-url",
+      "https://gateway.example.test/v1",
+      "--api-key-env",
+      "GATEWAY_KEY",
+      "--out",
+      gatewayOut,
+    ],
+    {
+      cwd: dir,
+      env: { GATEWAY_KEY: "SECRET_GATEWAY_KEY_VALUE" },
+      stdout: capture().stdout,
+      stderr: capture().stderr,
+      benchDeps: recordingDeps(gatewayArgv),
+    },
+  );
+  const plain = await runCli(
+    [
+      "bench",
+      "run",
+      "--tasks",
+      tasks,
+      "--policy",
+      "compiler",
+      "--model",
+      "claude-test",
+      "--out",
+      plainOut,
+    ],
+    {
+      cwd: dir,
+      env: { ANTHROPIC_API_KEY: "test-key" },
+      stdout: capture().stdout,
+      stderr: capture().stderr,
+      benchDeps: recordingDeps(plainArgv),
+    },
+  );
+  expect(gateway).toBe(0);
+  expect(plain).toBe(0);
+  const forwarded = gatewayArgv[0] ?? [];
+  expect(valueAfter(forwarded, "--provider")).toBe("moonshot");
+  expect(valueAfter(forwarded, "--base-url")).toBe(
+    "https://gateway.example.test/v1",
+  );
+  expect(valueAfter(forwarded, "--api-key-env")).toBe("GATEWAY_KEY");
+  expect(plainArgv[0]).not.toContain("--provider");
+  expect(plainArgv[0]).not.toContain("--base-url");
+  expect(plainArgv[0]).not.toContain("--api-key-env");
+  const gatewayText = readFileSync(
+    path.join(gatewayOut, "results.json"),
+    "utf8",
+  );
+  expect(gatewayText).not.toContain("SECRET_GATEWAY_KEY_VALUE");
+  const gatewayResults: unknown = JSON.parse(gatewayText);
+  expect(gatewayResults).toMatchObject({
+    provider: "moonshot",
+    baseUrl: "https://gateway.example.test/v1",
+    apiKeyEnv: "GATEWAY_KEY",
+  });
+  const plainResults: unknown = JSON.parse(
+    readFileSync(path.join(plainOut, "results.json"), "utf8"),
+  );
+  expect(plainResults).toMatchObject({
+    provider: "anthropic",
+    baseUrl: null,
+    apiKeyEnv: null,
+  });
+  const report = capture();
+  const reportCode = await runCli(["bench", "report", plainOut, gatewayOut], {
+    cwd: dir,
+    env: {},
+    stdout: report.stdout,
+    stderr: report.stderr,
+  });
+  expect(reportCode).toBe(0);
+  expect(JSON.parse(report.text().stdout)).toMatchObject({
+    a: { provider: "anthropic", baseUrl: null },
+    b: { provider: "moonshot", baseUrl: "https://gateway.example.test/v1" },
+  });
+  expect(report.text().stdout).not.toContain("SECRET_GATEWAY_KEY_VALUE");
+});
+
+it("bench run checks the --api-key-env variable before reading tasks, not the preset default", async () => {
+  dir = mkdtempSync(path.join(tmpdir(), "sage-bench-gateway-key-"));
+  const io = capture();
+  const code = await runCli(
+    [
+      "bench",
+      "run",
+      "--tasks",
+      path.join(dir, "absent.json"),
+      "--policy",
+      "compiler",
+      "--provider",
+      "moonshot",
+      "--model",
+      "kimi-test",
+      "--api-key-env",
+      "GATEWAY_KEY",
+      "--out",
+      path.join(dir, "out"),
+    ],
+    {
+      cwd: dir,
+      env: { MOONSHOT_API_KEY: "preset-key" },
+      stdout: io.stdout,
+      stderr: io.stderr,
+    },
+  );
+  expect(code).toBe(2);
+  expect(io.text().stderr).toBe("Missing GATEWAY_KEY\n");
+  expect(existsSync(path.join(dir, "out", "results.json"))).toBe(false);
 });
 
 it("fetch-swe-verified writes pytest commands from a fixture payload", () => {
@@ -1055,6 +1192,27 @@ function writeResults(
 function flagArgv(opts: object): string[] {
   if (!("argv" in opts) || !Array.isArray(opts.argv)) return [];
   return opts.argv.filter((item): item is string => typeof item === "string");
+}
+
+function recordingDeps(seen: string[][]) {
+  return {
+    async prepare() {},
+    async runSage(spec: { id: string }, cwd: string, opts: object) {
+      seen.push(flagArgv(opts));
+      return { code: 0, sessionFile: writeSession(cwd, spec.id) };
+    },
+    async diffEmpty() {
+      return false;
+    },
+    async runTests() {
+      return { code: 0 };
+    },
+  };
+}
+
+function valueAfter(argv: string[], flag: string): string | undefined {
+  const index = argv.indexOf(flag);
+  return index >= 0 ? argv[index + 1] : undefined;
 }
 
 function adjacentBudget(argv: string[]): boolean {

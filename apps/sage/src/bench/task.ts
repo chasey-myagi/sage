@@ -68,12 +68,15 @@ export async function runTask(
 
 /**
  * The child argv: sage bin, `-p <problem>`, and the forwarded flags.
- * `--max-turns` and `--tool-network` are always present; `--budget` and
- * the scorer flags only when set.
+ * `--max-turns` and `--tool-network` are always present; `--provider`,
+ * `--base-url`, `--api-key-env`, `--budget`, and the scorer flags only
+ * when set.
  */
 function sageArgv(task: BenchTask, opts: SageRunOptions): string[] {
   const args = [sageBin(), "-p", task.problem, "--model", opts.model];
   if (opts.provider) args.push("--provider", opts.provider);
+  if (opts.baseUrl) args.push("--base-url", opts.baseUrl);
+  if (opts.apiKeyEnv) args.push("--api-key-env", opts.apiKeyEnv);
   if (opts.budget !== null) args.push("--budget", String(opts.budget));
   args.push("--max-turns", String(opts.maxTurns));
   if (opts.policy === "passthrough") args.push("--passthrough");
