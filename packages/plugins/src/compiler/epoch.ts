@@ -4,8 +4,10 @@
  *
  * Contract: an epoch keeps the view prefix byte-identical so the provider's
  * prefix cache keeps hitting. The only rebuild allowed on an epoch's first
- * turn, or before the epoch is `minRebuildInterval` turns old, is the
- * context-window guard. The guard fires when the projected
+ * turn is the context-window guard. A payback rebuild also waits until the
+ * epoch has lasted the payback it was opened on, which is read from the
+ * epoch's first manifest; a guard-opened epoch commits to none. The guard
+ * fires when the projected
  * frozen view exceeds `CONTEXT_WINDOW_GUARD_RATIO` of the context window,
  * and does not fire again inside an epoch the guard itself opened.
  *
@@ -49,13 +51,6 @@ export const DEFAULT_ALPHA = 0.5;
  * frozen view, worth a rebuild.
  */
 export const DEFAULT_MIN_SAVINGS_RATIO = 0.2;
-/**
- * Default `minRebuildInterval`: fewest turns between the first turn of an
- * epoch and a cost rebuild that ends it. A rebuild usually needs several
- * turns of cheaper reads to pay back its own write; ending the epoch sooner
- * throws that payment away before it is recovered.
- */
-export const DEFAULT_MIN_REBUILD_INTERVAL = 8;
 
 /**
  * Maps estimated tokens to measured input tokens:
@@ -121,7 +116,8 @@ export function chooseEpoch(input: {
   epochOpenReason: string | undefined;
   expands: ExpandEstimate;
   turnsSinceEpochOpen: number;
-  minRebuildInterval: number;
+  /** From the epoch's first manifest; ignored in a guard-opened epoch. */
+  committedPaybackTurns: number;
 }): EpochChoice {
   const isGuardOpenedEpoch =
     input.epochOpenReason === CONTEXT_WINDOW_GUARD_REASON;
@@ -139,7 +135,7 @@ export function chooseEpoch(input: {
     overContext: isFrozenOverWindow && !isGuardOpenedEpoch,
     expands: input.expands,
     turnsSinceEpochOpen: input.turnsSinceEpochOpen,
-    minRebuildInterval: input.minRebuildInterval,
+    committedPaybackTurns: isGuardOpenedEpoch ? 0 : input.committedPaybackTurns,
   });
   const decision: EpochDecision = {
     ...classified.decision,

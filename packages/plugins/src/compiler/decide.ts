@@ -3,20 +3,20 @@
  *
  * Contract: rates are relative to the uncached input price. `ratesFor`
  * reads them from the call's pricing (the object this turn's
- * request_header records) and marks each rate's source; a missing price
- * uses the conservative defaults below. The rebuild cost is
+ * request_header records); only a missing pricing uses the defaults. The
+ * rebuild cost is
  *   extraCost = new * write - old * read + postRebuildCost
  * where postRebuildCost = expandTokens * write prices the omitted tokens a
  * rebuild is expected to fetch back with `expand`; expandTokens never
- * exceeds the drop (old - new). savingsPerTurn =
- * (old - new) * read. paybackTurns is ceil(extraCost / savingsPerTurn),
- * null when savings are not positive, 0 when extraCost is not positive.
- * Rules, in order: overContext rebuilds (`context-window-guard`); a drop
- * below minSavingsRatio * old does not (`savings-too-small`); a rebuild
- * the rules below would approve waits while the epoch is younger than
- * minRebuildInterval turns (`min-interval:`); extraCost <= 0 rebuilds
- * (`immediate`); otherwise rebuild when paybackTurns <= remainingTurns.
- * This module estimates none of its inputs.
+ * exceeds the drop (old - new). savingsPerTurn = (old - new) * read.
+ * paybackTurns is ceil(extraCost / savingsPerTurn), null when savings are
+ * not positive, 0 when extraCost is not positive. Rules, in order:
+ * overContext rebuilds (`context-window-guard`); a drop below
+ * minSavingsRatio * old does not (`savings-too-small`); extraCost <= 0
+ * rebuilds (`immediate`); otherwise rebuild when paybackTurns <=
+ * remainingTurns, unless the current epoch has not yet lasted the payback
+ * it committed to (`payback-pending:`). This module estimates none of its
+ * inputs.
  *
  * Intentionally not in the Log: these functions. The compiler copies the
  * decision onto the manifest.
@@ -24,7 +24,7 @@
 
 import { assertNever, type Pricing } from "@sage/provider/contract";
 
-/** Where a cache rate came from: the call's pricing, or a default here. */
+/** Where the cache rates came from: the call's pricing, or the defaults. */
 export type RateSource = "pricing" | "default";
 
 /** Cache price multipliers relative to the uncached input price. */
@@ -33,8 +33,7 @@ export type Rates = {
   read: number;
   /** Cache-write price as a multiple of the input price; never below 1. */
   write: number;
-  readSource: RateSource;
-  writeSource: RateSource;
+  source: RateSource;
 };
 
 /**
@@ -67,8 +66,7 @@ export type EpochDecision = {
   remainingTurns: number;
   readRate: number;
   writeRate: number;
-  readRateSource: RateSource;
-  writeRateSource: RateSource;
+  rateSource: RateSource;
   savingsPerTurn: number;
   /** Includes `postRebuildCost`. Input-price-equivalent tokens. */
   extraCost: number;
@@ -81,8 +79,12 @@ export type EpochDecision = {
   expandEstimate: ExpandEstimate;
   /** Turns since the current epoch's first manifest; 0 on that turn. */
   turnsSinceEpochOpen: number;
-  /** Fewest turns an epoch lasts before a cost rebuild may end it. */
-  minRebuildInterval: number;
+  /**
+   * Payback the current epoch was opened on: its first manifest's
+   * `paybackTurns` when a cost rebuild opened it, else 0. A payback rebuild
+   * waits until `turnsSinceEpochOpen` reaches it.
+   */
+  committedPaybackTurns: number;
   /** Turns until a rebuild pays for itself; null without savings. */
   paybackTurns: number | null;
   /** Human-readable rule that decided; Log text, not a branch key. */
@@ -105,18 +107,13 @@ export type EpochTrigger =
  */
 export const CONTEXT_WINDOW_GUARD_REASON = "context-window-guard";
 
-/**
- * Read rate when the call has no pricing: the common cache-read discount.
- * A lower read rate only makes rebuilds rarer.
- */
+/** Read rate when the call has no pricing: the common cache-read discount. */
 export const DEFAULT_READ_RATE = 0.1;
 
 /**
- * Write rate when the pricing lists no cache-write price (no pricing, or
- * `cacheWritePerMTok` 0): the highest write multiplier in the built-in
- * catalog. A zero price cannot tell "no surcharge" from "not published",
- * and such endpoints report no cache creation in usage either, so nothing
- * confirms a cheaper rate. A higher write rate only makes rebuilds rarer.
+ * Write rate when the call has no pricing: the highest write multiplier in
+ * the built-in catalog, so an unknown model never looks cheaper to rebuild
+ * than a known one.
  */
 export const DEFAULT_WRITE_RATE = 1.25;
 
@@ -128,43 +125,34 @@ export const DEFAULT_WRITE_RATE = 1.25;
 export const PRIOR_EXPAND_SHARE = 0.1;
 
 /**
- * Derives cache rates from the call's pricing. Without pricing, or with a
- * zero input price, both rates are defaults. A zero cache-write price keeps
- * the pricing's read rate and uses `DEFAULT_WRITE_RATE`. A listed write
- * price below the input price is raised to it: the first fill still pays
- * the miss price.
+ * Derives cache rates from the call's pricing. Only a missing pricing, or
+ * a zero input price, uses `DEFAULT_READ_RATE` and `DEFAULT_WRITE_RATE`.
+ * A write price below the input price is raised to it: the first fill
+ * still pays the miss price.
  */
 export function ratesFor(pricing: Pricing | null): Rates {
   if (!pricing || pricing.inputPerMTok <= 0) {
     return {
       read: DEFAULT_READ_RATE,
       write: DEFAULT_WRITE_RATE,
-      readSource: "default",
-      writeSource: "default",
+      source: "default",
     };
   }
   const input = pricing.inputPerMTok;
-  const read = pricing.cacheReadPerMTok / input;
-  if (pricing.cacheWritePerMTok <= 0) {
-    return {
-      read,
-      write: DEFAULT_WRITE_RATE,
-      readSource: "pricing",
-      writeSource: "default",
-    };
-  }
   return {
-    read,
+    read: pricing.cacheReadPerMTok / input,
     write: Math.max(pricing.cacheWritePerMTok, input) / input,
-    readSource: "pricing",
-    writeSource: "pricing",
+    source: "pricing",
   };
 }
 
 /**
  * Expand estimate from the result tokens of this session's successful
  * expands and the number of epochs so far, floored at 1. No observations
- * yield the prior.
+ * yield the prior. The observed figure is an upper bound on what a rebuild
+ * causes: it counts every expand on the path, including those of chunks
+ * that epoch 0's budget omitted, and `epochCosts` prices the tokens at the
+ * write rate although some of them may be read from cache later.
  */
 export function expandEstimateFor(
   resultTokens: readonly number[],
@@ -192,7 +180,7 @@ type EpochInput = {
   overContext: boolean;
   expands: ExpandEstimate;
   turnsSinceEpochOpen: number;
-  minRebuildInterval: number;
+  committedPaybackTurns: number;
 };
 
 /**
@@ -204,8 +192,8 @@ export function decideEpoch(input: EpochInput): EpochDecision {
 }
 
 /**
- * Runs the cost check and also reports which rule decided. A rebuild held
- * by the minimum interval reports `no-rebuild`.
+ * Runs the cost check and also reports which rule decided. A payback
+ * rebuild held by the current epoch's commitment reports `no-rebuild`.
  * Throws when `contextWindow` is not finite.
  */
 export function classifyEpoch(input: EpochInput): {
@@ -229,46 +217,51 @@ export function classifyEpoch(input: EpochInput): {
   ) {
     return { decision, trigger: "no-rebuild" };
   }
-  const costed = costRule(decision, input.remainingTurns);
-  if (
-    costed.decision.rebuild &&
-    input.turnsSinceEpochOpen < input.minRebuildInterval
-  ) {
-    return {
-      decision: {
-        ...costed.decision,
-        rebuild: false,
-        reason: `min-interval:${input.turnsSinceEpochOpen}<${input.minRebuildInterval}`,
-      },
-      trigger: "no-rebuild",
-    };
-  }
-  return costed;
-}
-
-/** The `immediate` and `payback` rules on a costed decision. */
-function costRule(
-  decision: EpochDecision,
-  remainingTurns: number,
-): { decision: EpochDecision; trigger: EpochTrigger } {
   if (decision.extraCost <= 0) {
     return {
       decision: { ...decision, rebuild: true, reason: "immediate" },
       trigger: "immediate",
     };
   }
+  return paybackRule(decision, input);
+}
+
+/**
+ * Rebuild when payback fits the horizon and the current epoch has already
+ * lasted the payback it was opened on; ending it sooner discards a cache
+ * write that has not been earned back.
+ */
+function paybackRule(
+  decision: EpochDecision,
+  input: EpochInput,
+): { decision: EpochDecision; trigger: EpochTrigger } {
   const { paybackTurns } = decision;
   if (paybackTurns === null) return { decision, trigger: "no-rebuild" };
-  const rebuild = paybackTurns <= remainingTurns;
+  if (paybackTurns > input.remainingTurns) {
+    return {
+      decision: {
+        ...decision,
+        reason: `payback:${paybackTurns}>${input.remainingTurns}`,
+      },
+      trigger: "no-rebuild",
+    };
+  }
+  if (input.turnsSinceEpochOpen < input.committedPaybackTurns) {
+    return {
+      decision: {
+        ...decision,
+        reason: `payback-pending:${input.turnsSinceEpochOpen}<${input.committedPaybackTurns}`,
+      },
+      trigger: "no-rebuild",
+    };
+  }
   return {
     decision: {
       ...decision,
-      rebuild,
-      reason: rebuild
-        ? `payback:${paybackTurns}<=${remainingTurns}`
-        : `payback:${paybackTurns}>${remainingTurns}`,
+      rebuild: true,
+      reason: `payback:${paybackTurns}<=${input.remainingTurns}`,
     },
-    trigger: rebuild ? "payback" : "no-rebuild",
+    trigger: "payback",
   };
 }
 
@@ -297,14 +290,13 @@ function epochCosts(input: EpochInput): EpochDecision {
     remainingTurns: input.remainingTurns,
     readRate: read,
     writeRate: write,
-    readRateSource: input.rates.readSource,
-    writeRateSource: input.rates.writeSource,
+    rateSource: input.rates.source,
     savingsPerTurn,
     extraCost,
     postRebuildCost,
     expandEstimate: { ...input.expands },
     turnsSinceEpochOpen: input.turnsSinceEpochOpen,
-    minRebuildInterval: input.minRebuildInterval,
+    committedPaybackTurns: input.committedPaybackTurns,
     paybackTurns,
     reason: "savings-too-small",
   };

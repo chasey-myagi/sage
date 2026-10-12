@@ -39,6 +39,7 @@ import {
 } from "@sage/core";
 import { inputTokens, type PreparedCall } from "@sage/provider/contract";
 import { toolUseIdOfChunk } from "../compiler/chunks.js";
+import type { ClaimProvider } from "../compiler/claim.js";
 import {
   contextCompiler,
   DEFAULT_COMPILER_BUDGET,
@@ -58,6 +59,11 @@ type Policy = {
   scorer?: Scorer;
   /** Defaults to `DEFAULT_EXPECTED_TURNS`. */
   expectedTurns?: number;
+  /**
+   * Claim providers the policy compiles with; defaults to none. Supply the
+   * recorded run's providers to reproduce its budget figures.
+   */
+  claims?: ClaimProvider[];
   /** Defaults to `DEFAULT_ALPHA`. */
   alpha?: number;
   /** Replay the passthrough view instead of the compiler. */
@@ -181,7 +187,7 @@ export async function replayOffline(
   return diffs;
 }
 
-/** passthroughView, or a compiler with no claims under `policy`. */
+/** passthroughView, or a compiler with `policy.claims` under `policy`. */
 function replayProvider(
   policy: Policy,
   scorer: Scorer | undefined,
@@ -189,7 +195,7 @@ function replayProvider(
   if (policy.passthrough) return passthroughView;
   return contextCompiler({
     budget: policy.budget ?? DEFAULT_COMPILER_BUDGET,
-    claims: [],
+    claims: policy.claims ?? [],
     keepRecent: policy.keepRecent ?? DEFAULT_KEEP_RECENT,
     expectedTurns: policy.expectedTurns ?? DEFAULT_EXPECTED_TURNS,
     alpha: policy.alpha ?? DEFAULT_ALPHA,

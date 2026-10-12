@@ -10,7 +10,6 @@ import { expect, it } from "vitest";
 import { indexChunks } from "../../src/compiler/chunks.ts";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
 import {
-  DEFAULT_WRITE_RATE,
   decideEpoch,
   type ExpandEstimate,
   type Rates,
@@ -28,19 +27,14 @@ const SONNET: Pricing = {
 const DEEPSEEK: Pricing = {
   inputPerMTok: 0.3,
   outputPerMTok: 1.2,
-  cacheWritePerMTok: 0,
+  cacheWritePerMTok: 0.3,
   cacheReadPerMTok: 0.006,
   source: "https://api-docs.deepseek.com/quick_start/pricing",
 };
 
-const RATES: Rates = {
-  read: 0.1,
-  write: 1.25,
-  readSource: "pricing",
-  writeSource: "pricing",
-};
+const RATES: Rates = { read: 0.1, write: 1.25, source: "pricing" };
 
-// Observed zero expands and an old epoch: the bare cost inequality.
+// Observed zero expands and no committed payback: the bare inequality.
 const COST_ONLY = {
   expands: {
     source: "observed",
@@ -48,7 +42,7 @@ const COST_ONLY = {
     tokensPerExpand: 0,
   } satisfies ExpandEstimate,
   turnsSinceEpochOpen: 100,
-  minRebuildInterval: 8,
+  committedPaybackTurns: 0,
 };
 
 function baseDecision(over: Partial<Parameters<typeof decideEpoch>[0]> = {}) {
@@ -69,41 +63,33 @@ it("derives read and write rates from catalog pricing", () => {
   expect(ratesFor(SONNET)).toEqual({
     read: 0.1,
     write: 1.25,
-    readSource: "pricing",
-    writeSource: "pricing",
+    source: "pricing",
   });
   expect(ratesFor(null)).toEqual({
     read: 0.1,
     write: 1.25,
-    readSource: "default",
-    writeSource: "default",
+    source: "default",
   });
   expect(
     ratesFor({
       inputPerMTok: 2.5,
       outputPerMTok: 15,
       cacheReadPerMTok: 0.25,
-      cacheWritePerMTok: 0,
+      cacheWritePerMTok: 2.5,
       source: "https://developers.openai.com/api/docs/pricing",
     }),
-  ).toEqual({
-    read: 0.1,
-    write: DEFAULT_WRITE_RATE,
-    readSource: "pricing",
-    writeSource: "default",
-  });
+  ).toEqual({ read: 0.1, write: 1, source: "pricing" });
 });
 
-it("a zero cache-write price keeps the catalog read rate and takes the default write rate", () => {
+it("a write price equal to the input price is a 1.0 write rate", () => {
   expect(ratesFor(DEEPSEEK)).toEqual({
     read: 0.02,
-    write: DEFAULT_WRITE_RATE,
-    readSource: "pricing",
-    writeSource: "default",
+    write: 1,
+    source: "pricing",
   });
 });
 
-it("rebuilds a DeepSeek epoch when 25 turns remain and refuses when 10 remain", () => {
+it("rebuilds a DeepSeek epoch when 20 turns remain and refuses when 10 remain", () => {
   const rates = ratesFor(DEEPSEEK);
   const input = {
     oldTokens: 150000,
@@ -114,18 +100,18 @@ it("rebuilds a DeepSeek epoch when 25 turns remain and refuses when 10 remain", 
     overContext: false,
     ...COST_ONLY,
   };
-  const open = decideEpoch({ ...input, remainingTurns: 25 });
+  const open = decideEpoch({ ...input, remainingTurns: 20 });
   expect(open.savingsPerTurn).toBe(2200);
-  expect(open.extraCost).toBe(47000);
-  expect(open.paybackTurns).toBe(22);
+  expect(open.extraCost).toBe(37000);
+  expect(open.paybackTurns).toBe(17);
   expect(open.rebuild).toBe(true);
-  expect(open.reason).toBe("payback:22<=25");
+  expect(open.reason).toBe("payback:17<=20");
 
   const hold = decideEpoch({ ...input, remainingTurns: 10 });
-  expect(hold.extraCost).toBe(47000);
-  expect(hold.paybackTurns).toBe(22);
+  expect(hold.extraCost).toBe(37000);
+  expect(hold.paybackTurns).toBe(17);
   expect(hold.rebuild).toBe(false);
-  expect(hold.reason).toBe("payback:22>10");
+  expect(hold.reason).toBe("payback:17>10");
 });
 
 it("pays back in 4 turns when 20 remain and refuses when 3 remain", () => {
@@ -195,8 +181,7 @@ it("marks pricing fallback on the manifest when pricing is null", async () => {
   });
   expect(view.manifest.epochDecision?.readRate).toBe(0.1);
   expect(view.manifest.epochDecision?.writeRate).toBe(1.25);
-  expect(view.manifest.epochDecision?.readRateSource).toBe("default");
-  expect(view.manifest.epochDecision?.writeRateSource).toBe("default");
+  expect(view.manifest.epochDecision?.rateSource).toBe("default");
   expect(view.manifest.epochDecision?.reason).toContain("pricing:fallback");
 });
 
@@ -278,8 +263,6 @@ it("opens the next epoch when the inequality pays back", async () => {
     count,
     expectedTurns: 20,
     minSavingsRatio: 0.2,
-    // The seeded epoch is one turn old; this test pins the payback rule.
-    minRebuildInterval: 0,
   });
   const recording: ViewProvider = {
     async view(ctx) {

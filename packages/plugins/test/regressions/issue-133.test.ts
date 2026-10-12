@@ -11,6 +11,7 @@ import { listModels } from "@sage/provider";
 import type { ToolDef } from "@sage/provider/contract";
 import { expect, it } from "vitest";
 import { caseDir, REPLAY_CASES } from "../../../core/test/replay/cases.ts";
+import { systemReminder } from "../../src/claims/system-reminder.ts";
 import { replayOffline } from "../../src/replay/offline.ts";
 
 const fixtureDir = path.join(
@@ -19,25 +20,26 @@ const fixtureDir = path.join(
 );
 const SESSION = "budget8000-vue10874-36turns";
 
-it("replays a recorded deepseek session to the same rebuild flag and deciding rule on every turn", async () => {
+it("replays a recorded deepseek session to the same cost-check inputs and rebuild flag on every turn", async () => {
   const recorded = new JsonlLogStore({ dir: fixtureDir }).path(SESSION);
   const head = recordedHead(recorded);
+  const shadow = new MemoryLogStore();
   // The recording predates the adaptive horizon: its remainingTurns is
-  // max(1, expectedTurns - started), which alpha 0 reproduces.
-  const diffs = await replayOffline(
+  // max(1, expectedTurns - started), which alpha 0 reproduces. It ran with
+  // the system-reminder claim, whose text its first manifest stored.
+  await replayOffline(
     new JsonlLogStore({ dir: fixtureDir }),
     SESSION,
-    { budget: 8000, keepRecent: 6, expectedTurns: 20, alpha: 0 },
-    { tools: head.tools.map(pathTool), system: head.system },
+    {
+      budget: 8000,
+      keepRecent: 6,
+      expectedTurns: 20,
+      alpha: 0,
+      claims: [systemReminder({ text: "Work in small verified steps." })],
+    },
+    { tools: head.tools.map(pathTool), system: head.system, shadow },
   );
-  // Payback numbers in the reason come from the cost model in force when
-  // the session was recorded, so only the rule name before ":" is compared.
-  const replayed = diffs.map((diff) => ({
-    turn: diff.turn,
-    rebuild: diff.rebuild,
-    rule: ruleOf(diff.decisionReason),
-  }));
-  expect(replayed).toEqual(recordedDecisions(recorded));
+  expect(decisionRows(shadow.path("offline"))).toEqual(decisionRows(recorded));
 });
 
 it("writes system and tools only on the first replayed request_header when the head is unchanged", async () => {
@@ -88,10 +90,13 @@ it("copies the recorded context window and pricing onto the replayed request_hea
     (entry) => entry.model === "deepseek-flash",
   );
   expect(replayed).toHaveLength(36);
+  // The recording predates the catalog listing deepseek's write price as
+  // the input price, so matching it proves replay ignores the catalog.
   expect(replayed[0]).toEqual({
     contextWindow: flash?.contextWindow,
-    pricing: flash?.pricing,
+    pricing: { ...flash?.pricing, cacheWritePerMTok: 0 },
   });
+  expect(flash?.pricing.cacheWritePerMTok).not.toBe(0);
   expect(replayed).toEqual(recorded);
 });
 
@@ -103,22 +108,24 @@ function windowAndPricing(payload: unknown): {
   return { contextWindow: payload.contextWindow, pricing: payload.pricing };
 }
 
-type DecisionRow = { turn: unknown; rebuild: unknown; rule: unknown };
-
-function ruleOf(reason: unknown): unknown {
-  return typeof reason === "string" ? reason.split(/[:;]/)[0] : reason;
-}
-
-function recordedDecisions(recorded: readonly StoredEntry[]): DecisionRow[] {
-  const rows: DecisionRow[] = [];
-  for (const entry of recorded) {
+/**
+ * The cost-check inputs and outcome of every manifest on `path`. These do
+ * not depend on the cost model's constants, so the recording stays a valid
+ * reference when they change.
+ */
+function decisionRows(path: readonly StoredEntry[]): Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = [];
+  for (const entry of path) {
     if (entry.kind !== "manifest" || !isRecord(entry.payload)) continue;
     const decision = entry.payload.epochDecision;
     if (!isRecord(decision)) throw new Error("manifest has no epochDecision");
     rows.push({
       turn: entry.payload.turn,
+      oldTokens: decision.oldTokens,
+      newTokens: decision.newTokens,
+      remainingTurns: decision.remainingTurns,
+      readRate: decision.readRate,
       rebuild: decision.rebuild,
-      rule: ruleOf(decision.reason),
     });
   }
   return rows;

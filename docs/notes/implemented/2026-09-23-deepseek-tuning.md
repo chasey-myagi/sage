@@ -35,3 +35,7 @@ OpenAI 适配器把 `delta.reasoning_content` 的字符串增量收成独立 ind
 ## Testing
 
 `pnpm check` 退出码 0（lint、tsc、分层、README、log manifest、vitest 297 项）。红灯时 DeepSeek 写价倍率是 0，`extraCost` 为 -3000；`reasoning_content` 没有变成 `thinking_delta`；只有 `DEEPSEEK_API_KEY` 时退出码是 1；目录第一条仍是 `deepseek-flash`。
+
+## 后续
+
+内置目录里这些型号的 `cacheWritePerMTok` 已改为直接写输入价（价格页写的就是「未命中按输入价、无创建费」），写价倍率仍是 1.0，`max` 只兜住用户自填的 0。定价来源字段改名为 `rateSource`（`pricing` / `default`）。见 [rebuild-cost](./2026-10-13-rebuild-cost.md)。

@@ -1,6 +1,7 @@
 import { MemoryLogStore } from "@sage/core";
 import type { Message, Pricing } from "@sage/provider/contract";
 import { expect, it } from "vitest";
+import { contextCompiler } from "../../src/compiler/compiler.ts";
 import {
   classifyEpoch,
   DEFAULT_READ_RATE,
@@ -11,8 +12,9 @@ import {
   type Rates,
   ratesFor,
 } from "../../src/compiler/decide.ts";
+import { chooseEpoch } from "../../src/compiler/epoch.ts";
 import { EXPAND_TOOL_NAME } from "../../src/compiler/expand.ts";
-import { turnsSinceEpochOpen } from "../../src/compiler/freeze.ts";
+import { epochCommitment } from "../../src/compiler/freeze.ts";
 import { expandResultTokens } from "../../src/compiler/log-read.ts";
 
 // Observed zero expands: the cost rule without any expand term.
@@ -22,12 +24,7 @@ const NO_EXPANDS: ExpandEstimate = {
   tokensPerExpand: 0,
 };
 
-const RATES: Rates = {
-  read: 0.1,
-  write: 1.25,
-  readSource: "pricing",
-  writeSource: "pricing",
-};
+const RATES: Rates = { read: 0.1, write: 1.25, source: "pricing" };
 
 function classify(over: Partial<Parameters<typeof classifyEpoch>[0]> = {}) {
   return classifyEpoch({
@@ -40,7 +37,7 @@ function classify(over: Partial<Parameters<typeof classifyEpoch>[0]> = {}) {
     overContext: false,
     expands: NO_EXPANDS,
     turnsSinceEpochOpen: 100,
-    minRebuildInterval: 8,
+    committedPaybackTurns: 0,
     ...over,
   });
 }
@@ -56,27 +53,24 @@ function pricing(over: Partial<Pricing>): Pricing {
   };
 }
 
-it("takes both cache rates from the pricing when it lists a write price", () => {
+it("takes both cache rates from the pricing", () => {
   expect(ratesFor(pricing({}))).toEqual({
     read: 0.1,
     write: 1.25,
-    readSource: "pricing",
-    writeSource: "pricing",
+    source: "pricing",
   });
 });
 
-it("falls back to the default rates and marks both sources when pricing is missing", () => {
-  const rates = ratesFor(null);
-  expect(rates).toEqual({
+it("falls back to the default rates only when pricing is missing", () => {
+  expect(ratesFor(null)).toEqual({
     read: DEFAULT_READ_RATE,
     write: DEFAULT_WRITE_RATE,
-    readSource: "default",
-    writeSource: "default",
+    source: "default",
   });
-  expect(ratesFor(pricing({ inputPerMTok: 0 })).readSource).toBe("default");
+  expect(ratesFor(pricing({ inputPerMTok: 0 })).source).toBe("default");
 });
 
-it("keeps the measured read rate but defaults the write rate when the pricing lists no write price", () => {
+it("keeps a user's zero write price as the input price, sourced from the pricing", () => {
   expect(
     ratesFor(
       pricing({
@@ -85,18 +79,13 @@ it("keeps the measured read rate but defaults the write rate when the pricing li
         cacheWritePerMTok: 0,
       }),
     ),
-  ).toEqual({
-    read: 0.2,
-    write: DEFAULT_WRITE_RATE,
-    readSource: "pricing",
-    writeSource: "default",
-  });
+  ).toEqual({ read: 0.2, write: 1, source: "pricing" });
 });
 
 it("never prices a cache write below the input price", () => {
   const rates = ratesFor(pricing({ cacheWritePerMTok: 1 }));
   expect(rates.write).toBe(1);
-  expect(rates.writeSource).toBe("pricing");
+  expect(rates.source).toBe("pricing");
 });
 
 it("a write rate above the read rate raises the rebuild cost and can turn a rebuild down", () => {
@@ -112,46 +101,80 @@ it("a write rate above the read rate raises the rebuild cost and can turn a rebu
   expect(dear.decision.rebuild).toBe(false);
 });
 
-it("records the rate sources on the decision", () => {
-  const { decision } = classify({ rates: ratesFor(null) });
-  expect(decision.readRateSource).toBe("default");
-  expect(decision.writeRateSource).toBe("default");
+it("records the rate source on the decision", () => {
+  expect(classify({ rates: ratesFor(null) }).decision.rateSource).toBe(
+    "default",
+  );
+  expect(classify().decision.rateSource).toBe("pricing");
 });
 
-it("holds a rebuild the cost rule approves until the epoch is old enough", () => {
-  const held = classify({ turnsSinceEpochOpen: 3, minRebuildInterval: 8 });
+it("holds a payback rebuild until the epoch has lasted the payback it was opened on", () => {
+  const held = classify({ turnsSinceEpochOpen: 5, committedPaybackTurns: 9 });
   expect(held.decision.rebuild).toBe(false);
   expect(held.trigger).toBe("no-rebuild");
-  expect(held.decision.reason).toBe("min-interval:3<8");
+  expect(held.decision.reason).toBe("payback-pending:5<9");
   expect(held.decision.paybackTurns).toBe(4);
-  expect(held.decision.turnsSinceEpochOpen).toBe(3);
-  expect(held.decision.minRebuildInterval).toBe(8);
+  expect(held.decision.turnsSinceEpochOpen).toBe(5);
+  expect(held.decision.committedPaybackTurns).toBe(9);
 
-  const due = classify({ turnsSinceEpochOpen: 8, minRebuildInterval: 8 });
+  const due = classify({ turnsSinceEpochOpen: 9, committedPaybackTurns: 9 });
   expect(due.decision.rebuild).toBe(true);
   expect(due.decision.reason).toBe("payback:4<=20");
 });
 
-it("holds an immediate rebuild too while the epoch is young", () => {
-  const held = classify({
+it("an epoch with no committed payback does not hold a payback rebuild", () => {
+  const free = classify({ turnsSinceEpochOpen: 1, committedPaybackTurns: 0 });
+  expect(free.decision.rebuild).toBe(true);
+  expect(free.trigger).toBe("payback");
+});
+
+it("does not hold an immediate rebuild: it is cheaper on its own turn", () => {
+  const immediate = classify({
     oldTokens: 400_000,
     newTokens: 30_000,
     turnsSinceEpochOpen: 1,
+    committedPaybackTurns: 9,
   });
-  expect(held.decision.extraCost).toBeLessThanOrEqual(0);
-  expect(held.decision.rebuild).toBe(false);
-  expect(held.decision.reason).toBe("min-interval:1<8");
+  expect(immediate.decision.extraCost).toBeLessThanOrEqual(0);
+  expect(immediate.decision.rebuild).toBe(true);
+  expect(immediate.trigger).toBe("immediate");
 });
 
-it("the context-window guard still fires inside the minimum interval", () => {
+it("the context-window guard still fires before the committed payback", () => {
   const guarded = classify({
     turnsSinceEpochOpen: 0,
-    minRebuildInterval: 8,
+    committedPaybackTurns: 9,
     overContext: true,
   });
   expect(guarded.decision.rebuild).toBe(true);
   expect(guarded.trigger).toBe("context-window-guard");
   expect(guarded.decision.reason).toBe("context-window-guard");
+});
+
+it("a guard-opened epoch commits to no payback", () => {
+  const project = (used: number) => used;
+  const input = {
+    frozenUsed: 150_000,
+    recompiledUsed: 40_000,
+    hasFrozen: true,
+    project,
+    rates: RATES,
+    remainingTurns: 20,
+    minSavingsRatio: 0.2,
+    contextWindow: 1_000_000,
+    expands: NO_EXPANDS,
+    turnsSinceEpochOpen: 2,
+    committedPaybackTurns: 9,
+  };
+  const cost = chooseEpoch({ ...input, epochOpenReason: "cost:9" });
+  expect(cost.decision.rebuild).toBe(false);
+  expect(cost.decision.committedPaybackTurns).toBe(9);
+  const guard = chooseEpoch({
+    ...input,
+    epochOpenReason: "context-window-guard",
+  });
+  expect(guard.decision.rebuild).toBe(true);
+  expect(guard.decision.committedPaybackTurns).toBe(0);
 });
 
 it("uses the named prior share when the session has no expand observations", () => {
@@ -205,10 +228,6 @@ it("an expected expand cost can turn a marginal rebuild down", () => {
   expect(costly.decision.reason).toBe("payback:5>4");
 });
 
-function store(): MemoryLogStore {
-  return new MemoryLogStore();
-}
-
 function append(log: MemoryLogStore, message: Message): void {
   log.append("s", { kind: "message", payload: message });
 }
@@ -236,7 +255,7 @@ function result(id: string, content: string, isError = false): Message {
 }
 
 it("reads the token size of every successful expand result on the path", () => {
-  const log = store();
+  const log = new MemoryLogStore();
   append(log, { role: "user", content: [{ type: "text", text: "task" }] });
   append(log, expandCall("e1", "chunk-a"));
   append(log, result("e1", "x".repeat(40)));
@@ -245,13 +264,7 @@ it("reads the token size of every successful expand result on the path", () => {
   append(log, {
     role: "assistant",
     content: [
-      {
-        type: "tool_use",
-        id: "b1",
-        name: "bash",
-        input: {},
-        rawInput: "{}",
-      },
+      { type: "tool_use", id: "b1", name: "bash", input: {}, rawInput: "{}" },
     ],
   });
   append(log, result("b1", "y".repeat(400)));
@@ -259,26 +272,76 @@ it("reads the token size of every successful expand result on the path", () => {
   expect(expandResultTokens(log.path("s"), count)).toEqual([40]);
 });
 
-it("counts turns since the current epoch's first manifest", () => {
-  const log = store();
-  expect(turnsSinceEpochOpen(log.path("s"), 0, 1)).toBe(0);
-  log.append("s", {
-    kind: "manifest",
-    payload: { epoch: 0, turn: 1, claims: [], chunks: [], anomalies: [] },
+function manifest(epoch: number, turn: number, decision?: object) {
+  return {
+    kind: "manifest" as const,
+    payload: {
+      epoch,
+      turn,
+      claims: [],
+      chunks: [],
+      anomalies: [],
+      ...(decision
+        ? { epochDecision: { remainingTurns: 20, ...decision } }
+        : {}),
+    },
+  };
+}
+
+it("reads the epoch's age and committed payback from its first manifest", () => {
+  const log = new MemoryLogStore();
+  expect(epochCommitment(log.path("s"), 0, 1)).toEqual({
+    turnsSinceEpochOpen: 0,
+    committedPaybackTurns: 0,
   });
-  log.append("s", {
-    kind: "manifest",
-    payload: { epoch: 0, turn: 2, claims: [], chunks: [], anomalies: [] },
+  log.append("s", manifest(0, 1, { rebuild: false, paybackTurns: 30 }));
+  log.append("s", manifest(0, 2));
+  expect(epochCommitment(log.path("s"), 0, 3)).toEqual({
+    turnsSinceEpochOpen: 2,
+    committedPaybackTurns: 0,
   });
-  expect(turnsSinceEpochOpen(log.path("s"), 0, 3)).toBe(2);
   log.append("s", {
     kind: "view_epoch",
-    payload: { epoch: 1, reason: "cost:4" },
+    payload: { epoch: 1, reason: "cost:7" },
   });
-  expect(turnsSinceEpochOpen(log.path("s"), 1, 3)).toBe(0);
+  expect(epochCommitment(log.path("s"), 1, 3)).toEqual({
+    turnsSinceEpochOpen: 0,
+    committedPaybackTurns: 0,
+  });
+  log.append("s", manifest(1, 3, { rebuild: true, paybackTurns: 7 }));
+  log.append("s", manifest(1, 4, { rebuild: true, paybackTurns: 2 }));
+  expect(epochCommitment(log.path("s"), 1, 5)).toEqual({
+    turnsSinceEpochOpen: 2,
+    committedPaybackTurns: 7,
+  });
+});
+
+it("the compiler copies the epoch's age and committed payback from the Log onto the manifest", async () => {
+  const log = new MemoryLogStore();
+  append(log, { role: "user", content: [{ type: "text", text: "task" }] });
   log.append("s", {
-    kind: "manifest",
-    payload: { epoch: 1, turn: 3, claims: [], chunks: [], anomalies: [] },
+    kind: "view_epoch",
+    payload: { epoch: 1, reason: "cost:7" },
   });
-  expect(turnsSinceEpochOpen(log.path("s"), 1, 5)).toBe(2);
+  log.append("s", manifest(1, 3, { rebuild: true, paybackTurns: 7 }));
+  const compiler = contextCompiler({ budget: 1_000_000, claims: [] });
+  const view = await compiler.view({
+    sessionId: "s",
+    turn: 6,
+    path: log.path("s"),
+    model: { provider: "anthropic", model: "claude-sonnet-5" },
+    prepared: {
+      model: { provider: "anthropic", model: "claude-sonnet-5" },
+      contextWindow: 1_000_000,
+      pricing: pricing({}),
+      adapterDefaults: {},
+    },
+    head: { system: "You are sage.", tools: [] },
+    tools: [],
+  });
+  expect(view.manifest.epochDecision).toMatchObject({
+    turnsSinceEpochOpen: 3,
+    committedPaybackTurns: 7,
+    rebuild: false,
+  });
 });

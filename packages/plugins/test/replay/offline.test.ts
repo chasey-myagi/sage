@@ -9,11 +9,7 @@ import {
 import { FAUX_CONTEXT_WINDOW } from "@sage/core/testing";
 import { expect, it } from "vitest";
 import { caseDir, REPLAY_CASES } from "../../../core/test/replay/cases.ts";
-import {
-  DEFAULT_WRITE_RATE,
-  PRIOR_EXPAND_SHARE,
-} from "../../src/compiler/decide.ts";
-import { DEFAULT_MIN_REBUILD_INTERVAL } from "../../src/compiler/epoch.ts";
+import { PRIOR_EXPAND_SHARE } from "../../src/compiler/decide.ts";
 import { compareOffline, replayOffline } from "../../src/replay/offline.ts";
 import type { Scorer } from "../../src/scorer/types.ts";
 
@@ -160,8 +156,8 @@ it("replays a model scorer as the rule scorer and labels the report", async () =
 });
 
 it("records every epoch decision field on each manifest of a replayed session", async () => {
-  // A recorded deepseek-flash session: its pricing lists a read price and
-  // no cache-write price, so the two rate sources differ.
+  // A recorded deepseek-flash session. Its request_header pricing has a
+  // zero write price, which still prices a write at the input price.
   const dir = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
     "fixtures/issue-63",
@@ -187,15 +183,14 @@ it("records every epoch decision field on each manifest of a replayed session", 
       newTokens: expect.any(Number),
       remainingTurns: expect.any(Number),
       readRate: 0.02,
-      writeRate: DEFAULT_WRITE_RATE,
-      readRateSource: "pricing",
-      writeRateSource: "default",
+      writeRate: 1,
+      rateSource: "pricing",
       savingsPerTurn: expect.any(Number),
       extraCost: expect.any(Number),
       postRebuildCost: expect.any(Number),
       expandEstimate: { source: "prior", share: PRIOR_EXPAND_SHARE },
       turnsSinceEpochOpen: expect.any(Number),
-      minRebuildInterval: DEFAULT_MIN_REBUILD_INTERVAL,
+      committedPaybackTurns: 0,
       paybackTurns: expect.toSatisfy(
         (value: unknown) => value === null || typeof value === "number",
       ),

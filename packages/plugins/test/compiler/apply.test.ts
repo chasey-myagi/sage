@@ -124,13 +124,7 @@ it("omits a superseded tool result in the compiled view and keeps anomalies empt
   ]);
   const store = new MemoryLogStore();
   const recorder = recordViews(
-    contextCompiler({
-      budget: 100_000,
-      claims: [],
-      keepRecent: 0,
-      // The test pins supersession on rebuild, not rebuild frequency.
-      minRebuildInterval: 0,
-    }),
+    contextCompiler({ budget: 100_000, claims: [], keepRecent: 0 }),
   );
   const session = new AgentSession({
     store,

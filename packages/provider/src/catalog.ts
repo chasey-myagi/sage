@@ -8,7 +8,9 @@
  * fallback numbers, `pricing: null`, and `adapterDefaults.catalogFallback:
  * true`. Built-in prices were checked on 2026-09-23 against each entry's
  * `source`. `currency` absent means USD; cache read/write ratios divide the
- * four prices and ignore currency.
+ * four prices and ignore currency. `cacheWritePerMTok` is what writing a
+ * prefix into the cache costs: providers whose page bills a cache miss at
+ * the input price with no creation fee list the input price there.
  *
  * Intentionally not in the Log: the table itself, built-in or local. Lookup
  * happens before the call; the session stores the returned pricing, window,
@@ -115,7 +117,7 @@ export const MODELS: readonly CatalogEntry[] = [
     pricing: {
       inputPerMTok: 2.5,
       outputPerMTok: 15,
-      cacheWritePerMTok: 0,
+      cacheWritePerMTok: 2.5,
       cacheReadPerMTok: 0.25,
       source: OPENAI_SOURCE,
     },
@@ -127,7 +129,7 @@ export const MODELS: readonly CatalogEntry[] = [
     pricing: {
       inputPerMTok: 5,
       outputPerMTok: 30,
-      cacheWritePerMTok: 0,
+      cacheWritePerMTok: 5,
       cacheReadPerMTok: 0.5,
       source: OPENAI_SOURCE,
     },
@@ -139,7 +141,7 @@ export const MODELS: readonly CatalogEntry[] = [
     pricing: {
       inputPerMTok: 0.75,
       outputPerMTok: 4.5,
-      cacheWritePerMTok: 0,
+      cacheWritePerMTok: 0.75,
       cacheReadPerMTok: 0.075,
       source: OPENAI_SOURCE,
     },
@@ -153,7 +155,7 @@ export const MODELS: readonly CatalogEntry[] = [
     pricing: {
       inputPerMTok: 0.3,
       outputPerMTok: 1.2,
-      cacheWritePerMTok: 0,
+      cacheWritePerMTok: 0.3,
       cacheReadPerMTok: 0.006,
       source: DEEPSEEK_SOURCE,
     },
@@ -165,7 +167,7 @@ export const MODELS: readonly CatalogEntry[] = [
     pricing: {
       inputPerMTok: 1.32,
       outputPerMTok: 3.96,
-      cacheWritePerMTok: 0,
+      cacheWritePerMTok: 1.32,
       cacheReadPerMTok: 0.044,
       source: DEEPSEEK_SOURCE,
     },
@@ -177,7 +179,7 @@ export const MODELS: readonly CatalogEntry[] = [
     pricing: {
       inputPerMTok: 6.5,
       outputPerMTok: 27,
-      cacheWritePerMTok: 0,
+      cacheWritePerMTok: 6.5,
       cacheReadPerMTok: 1.1,
       source: MOONSHOT_SOURCE,
       currency: "CNY",
@@ -190,7 +192,7 @@ export const MODELS: readonly CatalogEntry[] = [
     pricing: {
       inputPerMTok: 6.5,
       outputPerMTok: 27,
-      cacheWritePerMTok: 0,
+      cacheWritePerMTok: 6.5,
       cacheReadPerMTok: 1.3,
       source: MOONSHOT_SOURCE,
       currency: "CNY",
@@ -220,7 +222,7 @@ export const MODELS: readonly CatalogEntry[] = [
     pricing: {
       inputPerMTok: 0.8,
       outputPerMTok: 2,
-      cacheWritePerMTok: 0,
+      cacheWritePerMTok: 0.8,
       cacheReadPerMTok: 0.08,
       source: DASHSCOPE_SOURCE,
       currency: "CNY",
@@ -233,7 +235,7 @@ export const MODELS: readonly CatalogEntry[] = [
     pricing: {
       inputPerMTok: 2.4,
       outputPerMTok: 9.6,
-      cacheWritePerMTok: 0,
+      cacheWritePerMTok: 2.4,
       cacheReadPerMTok: 0.24,
       source: DASHSCOPE_SOURCE,
       currency: "CNY",
@@ -246,7 +248,7 @@ export const MODELS: readonly CatalogEntry[] = [
     pricing: {
       inputPerMTok: 12,
       outputPerMTok: 36,
-      cacheWritePerMTok: 0,
+      cacheWritePerMTok: 12,
       cacheReadPerMTok: 1.2,
       source: DASHSCOPE_SOURCE,
       currency: "CNY",
@@ -259,7 +261,7 @@ export const MODELS: readonly CatalogEntry[] = [
     pricing: {
       inputPerMTok: 0.15,
       outputPerMTok: 1.5,
-      cacheWritePerMTok: 0,
+      cacheWritePerMTok: 0.15,
       cacheReadPerMTok: 0.015,
       source: DASHSCOPE_SOURCE,
       currency: "CNY",
