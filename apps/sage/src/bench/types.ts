@@ -2,8 +2,8 @@
  * Types shared by the bench runner, its report, and its test seams.
  *
  * Contract: `BenchResults` is the shape of `<out>/results.json`. It holds
- * ids, statuses, reasons, and health numbers, never problem text, test
- * output, or test patches.
+ * ids, statuses, reasons, provider error classes, and health numbers, never
+ * problem text, error messages, test output, or test patches.
  *
  * Intentionally not in the Log: everything here. Bench results live beside
  * the copied session jsonl, not inside it.
@@ -46,14 +46,27 @@ export type BenchErrorReason =
   | "clone-unclean"
   | "setup-failed"
   | "sage-failed"
+  | "session-error"
+  | "session-aborted"
   | "timeout"
   | "diff-failed"
   | "test-patch-failed"
   | "tests-failed";
 
 /**
+ * Classification of the provider failure that ended a run, copied from the
+ * last assistant message's `details.finish.error`. `status` is the HTTP
+ * status, null when the call failed below HTTP; `transport` mirrors
+ * `FinishError.transport`.
+ */
+export type BenchProviderError = { status: number | null; transport: boolean };
+
+/**
  * Outcome of one task. `reason` is a {@link BenchErrorReason} when the
  * runner wrote it; a hand-edited results file may hold any string.
+ * `providerError` is present only on `session-error` rows: the provider
+ * failure that ended the run, or null when the run ended on a harness error
+ * (a seam assertion, a missing adapter) rather than a provider finish.
  * `health` is `runHealth` of the copied session, or null when none was
  * copied or it could not be read. `stoppedEarly` is true when the agent
  * ended its own run after an edit it never followed with bash and the diff
@@ -65,6 +78,7 @@ export type BenchTaskResult = {
   id: string;
   status: BenchStatus;
   reason?: string;
+  providerError?: BenchProviderError | null;
   health: RunHealth | null;
   stoppedEarly: boolean | null;
 };
@@ -94,6 +108,10 @@ export type BenchResults = {
 export type BenchMetrics = {
   resolvedRate: number | null;
   emptyPatchRate: number | null;
+  /**
+   * Every `error` row over all tasks, `session-error` and `session-aborted`
+   * included; filter by `reason` to drop provider faults from a comparison.
+   */
   errorRate: number | null;
   tokensPerResolved: number | null;
   cacheHitRatio: number | null;

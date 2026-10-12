@@ -159,6 +159,9 @@ function writeResults(out: string, results: BenchResults): void {
       id: task.id,
       status: task.status,
       ...(task.reason ? { reason: task.reason } : {}),
+      ...(task.providerError !== undefined
+        ? { providerError: task.providerError }
+        : {}),
       health: task.health,
       stoppedEarly: task.stoppedEarly,
     })),

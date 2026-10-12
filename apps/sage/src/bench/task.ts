@@ -4,7 +4,9 @@
  * Contract: the task gets its own directory under the run root, deleted
  * when the task ends. Steps run in order and the first failure decides the
  * result: fetch (`clone-failed` / `clone-unclean`), `setupCommand`
- * (`setup-failed`), the child `sage -p` (`sage-failed` / `timeout`), an
+ * (`setup-failed`), the child `sage -p` (`sage-failed` / `timeout`), a
+ * session whose terminal outcome is `error` or `aborted`
+ * (`session-error` / `session-aborted`, diff and tests not checked), an
  * empty `git status` (`empty-patch`, tests not run), the test patch
  * (`test-patch-failed`), and the test command (`resolved` on exit 0, else
  * `tests-failed` / `timeout`). The session jsonl is copied to
@@ -22,6 +24,7 @@ import { sageBin } from "./deps.js";
 import { endedAfterUnverifiedEdit } from "./early-stop.js";
 import { exec } from "./exec.js";
 import { applyTestPatch, CloneUncleanError } from "./git.js";
+import { type SessionFault, sessionFault } from "./session-end.js";
 import type {
   BenchDeps,
   BenchErrorReason,
@@ -60,6 +63,7 @@ export async function runTask(
     if (sage.timedOut) {
       return failed(task, "timeout", { ...session, unverifiedEdit: null });
     }
+    if (session.fault) return faulted(task, session.fault, session);
     return await grade(task, work, deps, session);
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -114,14 +118,20 @@ async function prepareWorkspace(
 
 /**
  * What the copied session says about the run. `unverifiedEdit` is
- * `endedAfterUnverifiedEdit`, before the diff is known.
+ * `endedAfterUnverifiedEdit`, before the diff is known; `fault` is
+ * `sessionFault`.
  */
 type SessionReadout = {
   health: RunHealth | null;
   unverifiedEdit: boolean | null;
+  fault: SessionFault | null;
 };
 
-const NO_SESSION: SessionReadout = { health: null, unverifiedEdit: null };
+const NO_SESSION: SessionReadout = {
+  health: null,
+  unverifiedEdit: null,
+  fault: null,
+};
 
 async function grade(
   task: BenchTask,
@@ -185,6 +195,23 @@ function failed(
   };
 }
 
+/**
+ * The row for a run that ended on an error or abort. Grading stops here
+ * even when the work tree has changes, so a fault never counts as
+ * `resolved` or `empty-patch`; `stoppedEarly` is null because the diff was
+ * not checked.
+ */
+function faulted(
+  task: BenchTask,
+  fault: SessionFault,
+  session: SessionReadout,
+): BenchTaskResult {
+  const row = failed(task, fault.reason, { ...session, unverifiedEdit: null });
+  return fault.reason === "session-error"
+    ? { ...row, providerError: fault.providerError }
+    : row;
+}
+
 function copySession(
   file: string,
   out: string,
@@ -199,6 +226,7 @@ function copySession(
     return {
       health: runHealth(entries),
       unverifiedEdit: endedAfterUnverifiedEdit(entries),
+      fault: sessionFault(entries),
     };
   } catch {
     // A corrupt or partial session still counts; both readings are unknown.

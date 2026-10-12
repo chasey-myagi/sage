@@ -13,6 +13,7 @@
 
 import { isMessage, isRecord, type StoredEntry } from "@sage/core";
 import { TOOL_NAMES } from "@sage/tools";
+import { terminalOutcome } from "./session-end.js";
 
 const EDIT_TOOLS: ReadonlySet<string> = new Set([
   TOOL_NAMES.edit,
@@ -55,12 +56,4 @@ export function endedAfterUnverifiedEdit(
     }
   }
   return lastEdit > lastBash;
-}
-
-function terminalOutcome(path: readonly StoredEntry[]): string | undefined {
-  const last = path.at(-1);
-  if (last?.kind !== "terminal" || !isRecord(last.payload)) return undefined;
-  return typeof last.payload.outcome === "string"
-    ? last.payload.outcome
-    : undefined;
 }
