@@ -1,7 +1,12 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createFaux, stopScript, toolScript } from "@sage/core/testing";
+import {
+  createFaux,
+  jsonFetch,
+  stopScript,
+  toolScript,
+} from "@sage/core/testing";
 import type { ProviderAdapter } from "@sage/provider";
 import { afterEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/main.ts";
@@ -37,27 +42,26 @@ function capture() {
 }
 
 function recordFetch() {
-  const seen: Seen[] = [];
-  const fetchImpl = async (
-    url: string,
-    init?: { headers?: Record<string, string>; body?: string },
-  ) => {
-    let model: string | undefined;
-    if (init?.body) {
-      const parsed = JSON.parse(init.body) as { model?: unknown };
-      if (typeof parsed.model === "string") model = parsed.model;
-    }
-    seen.push({
-      url,
-      authorization: init?.headers?.Authorization,
-      model,
+  const fake = jsonFetch(() => ({
+    json: { answers: {}, usage: { input_tokens: 1 } },
+  }));
+  const seen = (): Seen[] =>
+    fake.requests().map((request) => {
+      const body = request.body;
+      const model =
+        typeof body === "object" &&
+        body !== null &&
+        "model" in body &&
+        typeof body.model === "string"
+          ? body.model
+          : undefined;
+      return {
+        url: request.url,
+        authorization: request.headers.Authorization,
+        model,
+      };
     });
-    return new Response(
-      JSON.stringify({ answers: {}, usage: { input_tokens: 1 } }),
-      { status: 200, headers: { "content-type": "application/json" } },
-    );
-  };
-  return { seen, fetchImpl };
+  return { seen, fetchImpl: fake.fetchImpl };
 }
 
 // Entry scoring is what makes this two-turn fixture call jev. Rebuild
@@ -84,7 +88,7 @@ async function runScored(opts: {
     adapters: { anthropic: adapter as ProviderAdapter },
     jevFetch: recorded.fetchImpl,
   });
-  return { code, stderr: io.text(), seen: recorded.seen };
+  return { code, stderr: io.text(), seen: recorded.seen() };
 }
 
 describe("jev endpoint", () => {
