@@ -6,7 +6,9 @@
  * response chunk (message.id, message.model). `toolChoice` becomes
  * `tool_choice: { type }`; an absent toolChoice omits the field. Messages
  * and tools are otherwise sent unchanged. An `error` event ends the call
- * as a non-transport error finish carrying the server's message.
+ * as a non-transport error finish carrying the server's message and
+ * `error.event`; its `error.type` is permanent when it names a request the
+ * API will reject again.
  *
  * Intentionally not in the Log: the API key, request bytes, and abort
  * signal. adapterDefaults are returned so the request_header can store what
@@ -40,6 +42,18 @@ import type { SseEvent } from "../sse.js";
 const DEFAULT_BASE = "https://api.anthropic.com";
 /** Messages API version header this encoder and decoder are written against. */
 const ANTHROPIC_VERSION = "2023-06-01";
+/**
+ * Error event types a resend cannot fix. `overloaded_error`, `api_error`,
+ * `rate_limit_error`, and unknown types stay transient.
+ */
+const PERMANENT_ERRORS: ReadonlySet<string> = new Set([
+  "invalid_request_error",
+  "authentication_error",
+  "permission_error",
+  "not_found_error",
+  "request_too_large",
+  "billing_error",
+]);
 
 type AnthropicState = {
   rawUsage: Record<string, unknown>;
@@ -82,6 +96,7 @@ export class AnthropicAdapter implements ProviderAdapter {
       json: encodeRequest(request, prepared),
       signal,
       onEvent: (event, driver) => interpret(event, state, driver),
+      permanentErrors: PERMANENT_ERRORS,
     });
   }
 }

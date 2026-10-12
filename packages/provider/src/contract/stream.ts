@@ -13,10 +13,9 @@
  *   of a non-2xx response), or the response ended before it completed (a
  *   2xx without a body, or an SSE body that closes without a stop). Such a
  *   failure carries no status. Callers classify transport failures by this
- *   flag alone. HTTP statuses whose body was read leave it unset, and so
- *   does an error event inside the stream (Anthropic `event: error`, an
- *   OpenAI frame with an `error` object): that ends the call with the
- *   server's message, the event object as `raw`, and no later block chunk
+ *   flag alone. HTTP statuses whose body was read leave it unset
+ * - `event` is set exactly when the call ended on an in-stream error event;
+ *   `transport` and `status` are then unset
  *
  * Intentionally not in the Log: chunks, the live decode of one call. The
  * assistant entry that lands in the Log is the collected message. Wire SSE
@@ -69,8 +68,37 @@ export const INCOMPLETE_STREAM = "stream ended before completion";
 /** What went wrong in a failed call. `raw` is the provider payload, if any. */
 export type FinishError = {
   message: string;
+  /** The HTTP status of a non-2xx response whose body was read. */
   status?: number;
   raw?: unknown;
   /** Set only for failures below HTTP. See the invariant above. */
   transport?: boolean;
+  /**
+   * Set only when the server ended a 2xx stream with an error event
+   * (Anthropic `event: error`, an OpenAI frame with an `error` object).
+   * Such a finish carries the server's message and the event object as
+   * `raw`, and no block chunk follows it. Callers classify in-stream server
+   * errors by this field alone.
+   */
+  event?: StreamErrorEvent;
+};
+
+/**
+ * The structured fields of an in-stream error event, read from its `error`
+ * object, plus the adapter's verdict on them. The message text is never
+ * read. `status` is the event's own `error.status`, not the HTTP status,
+ * which was 2xx. `code` keeps the wire value, string or number.
+ *
+ * `transient` is false when `type` or `code` is one of the adapter's
+ * known permanent classes (a malformed request, auth, a content filter, an
+ * oversized context, an exhausted quota), or `status` is a 4xx other than
+ * 429; resending the same request cannot fix those. Every other event,
+ * including one with no structured fields, is transient: a whole-turn
+ * resend may succeed.
+ */
+export type StreamErrorEvent = {
+  transient: boolean;
+  type?: string;
+  code?: string | number;
+  status?: number;
 };

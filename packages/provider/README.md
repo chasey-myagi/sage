@@ -60,9 +60,23 @@ usage 按三种形状映射，`raw` 原样保留，`inputCacheCreation` 恒为 0
 
 响应体一开始就不再重试。前面可能已经吐出一段文本，再请求一次会把同一段输出生成两遍，调用方对不上。半截输出留在这一轮的 finish error 里。流开始之后的传输断开不在本包重试，同一请求的整轮重发由 `@sage/core` 负责。流开始之前的传输失败在这里重试耗尽后，finish 仍带 `transport: true`，core 还会整轮重发，两层叠加最多 9 次请求。
 
-finish error 上的 `transport: true` 标出传输失败：`fetch` 抛错、读响应体抛错（SSE 体或非 2xx 的错误体）、响应在完成前结束（2xx 没有 body，或 SSE 体在收到结束信号前正常关闭，消息为 `stream ended before completion`）。读完错误体的 HTTP 状态和流内 error 事件不打标。core 只凭这个标记决定是否整轮重发。
+finish error 上的 `transport: true` 标出传输失败：`fetch` 抛错、读响应体抛错（SSE 体或非 2xx 的错误体）、响应在完成前结束（2xx 没有 body，或 SSE 体在收到结束信号前正常关闭，消息为 `stream ended before completion`）。读完错误体的 HTTP 状态和流内 error 事件不打标。
 
-流内 error 事件是服务端在 200 响应里明确报错：Anthropic 的 `event: error`，OpenAI 兼容接口里带 `error` 对象的帧。adapter 把它解码成 `finish{kind:"error"}`，`error.message` 取服务端文本（例如 `Overloaded`），`error.raw` 是整个事件对象，不打 `transport`，之后的帧不再产出块。服务端已经给出结论，不是连接意外断开，所以 core 不整轮重发。
+流内 error 事件是服务端在 200 响应里报错：Anthropic 的 `event: error`，OpenAI 兼容接口里带 `error` 对象的帧。adapter 把它解码成 `finish{kind:"error"}`，`error.message` 取服务端文本（例如 `Overloaded`），`error.raw` 是整个事件对象，不打 `transport`、不带 `status`，之后的帧不再产出块。它另带 `error.event`，只在这种结局出现：
+
+| 字段 | 含义 |
+| --- | --- |
+| `transient` | adapter 依据下面三个字段给出的判断：`false` 表示重发同一请求也修不好，`true` 表示可以重发 |
+| `type` | 事件 `error.type`，是字符串时才有 |
+| `code` | 事件 `error.code`，字符串或数字时才有，保留原值 |
+| `status` | 事件 `error.status`，是数字时才有。这是事件自带的字段，不是 HTTP 状态（HTTP 是 200） |
+
+`type` 或字符串 `code` 命中 adapter 的不可重试表，或 `status` 是 429 以外的 4xx，`transient` 为 `false`；其余一律为 `true`，包括什么结构化字段都没有的事件。从不读 message 文本。数字 `code` 只照抄、不当状态码用，各家接口对它的含义不一致。不可重试表：
+
+- Anthropic（它的事件只带 `type`）：`invalid_request_error`、`authentication_error`、`permission_error`、`not_found_error`、`request_too_large`、`billing_error`
+- OpenAI 兼容：`invalid_request_error`、`authentication_error`、`permission_error`、`invalid_api_key`、`insufficient_quota`、`model_not_found`、`context_length_exceeded`、`content_filter`
+
+core 凭 `transport: true` 或 `event.transient: true` 决定是否整轮重发，见 `@sage/core` README 的「整轮重试」。本包自己不重试流内 error 事件：它到达时响应体早已开始。
 
 重试次数和最后一次失败原因写在这一轮的 usage 上：`details: { retries, reason }`。没重试就不写这个字段。会话本来会把 usage 和 finish 抄进 assistant 条目的 `details`，Log 因此能看见，不新增条目种类。中间几次失败的响应体不进 Log。成功那次如果前面失败过，`reason` 是最后一次失败的消息，不是成功本身。
 

@@ -7,8 +7,11 @@
  * opens its own thinking block. The first SSE object with a non-empty
  * `id` or a choice supplies the response chunk's `id` and `model`.
  * `toolChoice` is sent as `tool_choice` unchanged; an absent toolChoice
- * omits the field. Messages and tools are otherwise sent unchanged. A frame with an `error` object
- * ends the call as a non-transport error finish carrying its message.
+ * omits the field. Messages and tools are otherwise sent unchanged. A
+ * frame with an `error` object ends the call as a non-transport error
+ * finish carrying its message and `error.event`; its `error.type` or
+ * `error.code` is permanent when it names a request the API will reject
+ * again.
  *
  * Intentionally not in the Log: the API key, request bytes, and abort
  * signal. adapterDefaults are returned so the request_header can store what
@@ -35,6 +38,21 @@ import { asRecord, indexOf, parseRecord } from "../record.js";
 import type { SseEvent } from "../sse.js";
 
 const DEFAULT_BASE = "https://api.openai.com/v1";
+/**
+ * Error frame types and codes a resend cannot fix, matched against both
+ * `error.type` and `error.code`. `server_error` and unknown values stay
+ * transient.
+ */
+const PERMANENT_ERRORS: ReadonlySet<string> = new Set([
+  "invalid_request_error",
+  "authentication_error",
+  "permission_error",
+  "invalid_api_key",
+  "insufficient_quota",
+  "model_not_found",
+  "context_length_exceeded",
+  "content_filter",
+]);
 
 type OpenKind = "text" | "tool" | "thinking";
 
@@ -87,6 +105,7 @@ export class OpenAIAdapter implements ProviderAdapter {
       json: encodeRequest(request, prepared),
       signal,
       onEvent: (event, driver) => interpret(event, state, driver),
+      permanentErrors: PERMANENT_ERRORS,
     });
   }
 }

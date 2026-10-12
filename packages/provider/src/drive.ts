@@ -7,7 +7,9 @@
  * once parsing begins, a later failure is not retried. A fetch throw, a
  * throw while reading the body, and a body that ends before the adapter
  * records a stop finish with `error.transport = true`; a throw from the
- * adapter's `onEvent` and an error event the adapter records do not.
+ * adapter's `onEvent` and an error event the adapter records do not. A
+ * recorded error event finishes with `error.event`, classified against the
+ * adapter's `permanentErrors`.
  *
  * Intentionally not in the Log: this is the live decode of one call. Wire
  * frames stay in the SSE parser and the abort signal stays here.
@@ -16,11 +18,13 @@
  */
 
 import type { ContentBlock } from "./contract/message.js";
+import { isFiniteNumber } from "./contract/record.js";
 import {
   type FinishError,
   type FinishKind,
   INCOMPLETE_STREAM,
   type StreamChunk,
+  type StreamErrorEvent,
 } from "./contract/stream.js";
 import { emptyUsage, type Usage } from "./contract/usage.js";
 import {
@@ -30,7 +34,8 @@ import {
   messageFromPayload,
   messageOf,
 } from "./http.js";
-import { type OpenedCall, openWithRetry } from "./retry.js";
+import { asRecord } from "./record.js";
+import { isRetryableStatus, type OpenedCall, openWithRetry } from "./retry.js";
 import type { SseEvent } from "./sse.js";
 import { parseSse } from "./sse.js";
 
@@ -53,7 +58,8 @@ export type Driver = {
   /**
    * Records a server error event. `raw` is the parsed event object; the
    * finish message is its `error.message` (or `message`), else
-   * `STREAM_ERROR_EVENT`. The finish is not a transport failure.
+   * `STREAM_ERROR_EVENT`. The finish is not a transport failure; it carries
+   * `error.event`, read from `raw.error`.
    */
   fail(raw: Record<string, unknown>): void;
 };
@@ -87,6 +93,11 @@ type SseCall = {
   signal?: AbortSignal;
   /** Translates one wire event; runs synchronously between yields. */
   onEvent(event: SseEvent, driver: Driver): void;
+  /**
+   * Error event `type` or `code` values that name a failure a resend cannot
+   * fix. An event matching one finishes with `event.transient = false`.
+   */
+  permanentErrors: ReadonlySet<string>;
 };
 
 /**
@@ -183,7 +194,7 @@ async function* readBody(
     }
     yield* take(decode.pending, signal);
     if (signal?.aborted) return abortedFinish();
-    if (decode.end) return endFinish(decode.end);
+    if (decode.end) return endFinish(decode.end, call.permanentErrors);
   }
   // The connection closed before the response completed: the same failure
   // as a proxy cutting the socket, only without a thrown error.
@@ -234,12 +245,43 @@ function* end(
   yield finish;
 }
 
-function endFinish(end: WireEnd): StreamChunk {
+function endFinish(
+  end: WireEnd,
+  permanentErrors: ReadonlySet<string>,
+): StreamChunk {
   if (end.type === "stop") return successFinish(end.stop);
   return errorFinish({
     message: messageFromPayload(end.raw) ?? STREAM_ERROR_EVENT,
     raw: end.raw,
+    event: classifyEvent(end.raw, permanentErrors),
   });
+}
+
+/**
+ * Reads `type`, `code`, and `status` off the event's `error` object and
+ * decides `transient` from them alone. A numeric `code` is carried but not
+ * read as a status: wire formats disagree on what it means.
+ */
+function classifyEvent(
+  raw: Record<string, unknown>,
+  permanentErrors: ReadonlySet<string>,
+): StreamErrorEvent {
+  const error = asRecord(raw.error) ?? {};
+  const type = typeof error.type === "string" ? error.type : undefined;
+  const code =
+    typeof error.code === "string" || isFiniteNumber(error.code)
+      ? error.code
+      : undefined;
+  const status = isFiniteNumber(error.status) ? error.status : undefined;
+  const permanent =
+    (type !== undefined && permanentErrors.has(type)) ||
+    (typeof code === "string" && permanentErrors.has(code)) ||
+    (status !== undefined && status >= 400 && !isRetryableStatus(status));
+  const event: StreamErrorEvent = { transient: !permanent };
+  if (type !== undefined) event.type = type;
+  if (code !== undefined) event.code = code;
+  if (status !== undefined) event.status = status;
+  return event;
 }
 
 function successFinish(stop: WireStop): StreamChunk {
@@ -258,11 +300,13 @@ function errorFinish(from: {
   status?: number;
   raw?: unknown;
   transport?: boolean;
+  event?: StreamErrorEvent;
 }): StreamChunk {
   const error: FinishError = { message: from.message };
   if (from.status !== undefined) error.status = from.status;
   if (from.raw !== undefined) error.raw = from.raw;
   if (from.transport) error.transport = true;
+  if (from.event !== undefined) error.event = from.event;
   return { type: "finish", kind: "error", error };
 }
 

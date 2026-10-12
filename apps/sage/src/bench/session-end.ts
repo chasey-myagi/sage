@@ -15,7 +15,11 @@ import {
   isRecord,
   type StoredEntry,
 } from "@sage/core";
-import type { BenchErrorReason, BenchProviderError } from "./types.js";
+import type {
+  BenchErrorReason,
+  BenchProviderError,
+  BenchStreamErrorEvent,
+} from "./types.js";
 
 /**
  * A run that did not finish on its own terms. `session-error` is a terminal
@@ -71,6 +75,19 @@ function providerError(
   return {
     status: isFiniteNumber(error.status) ? error.status : null,
     transport: error.transport === true,
+    event: streamErrorEvent(error.event),
+  };
+}
+
+/** `FinishError.event` with absent fields as null, or null when absent. */
+function streamErrorEvent(value: unknown): BenchStreamErrorEvent | null {
+  if (!isRecord(value) || typeof value.transient !== "boolean") return null;
+  const { code } = value;
+  return {
+    transient: value.transient,
+    type: typeof value.type === "string" ? value.type : null,
+    code: typeof code === "string" || isFiniteNumber(code) ? code : null,
+    status: isFiniteNumber(value.status) ? value.status : null,
   };
 }
 

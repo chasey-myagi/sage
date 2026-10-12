@@ -60,10 +60,28 @@ export type BenchErrorReason = (typeof BENCH_ERROR_REASONS)[number];
 /**
  * Classification of the provider failure that ended a run, copied from the
  * last assistant message's `details.finish.error`. `status` is the HTTP
- * status, null when the call failed below HTTP; `transport` mirrors
- * `FinishError.transport`.
+ * status, null when the call failed below HTTP or inside a 2xx stream;
+ * `transport` mirrors `FinishError.transport`; `event` mirrors
+ * `FinishError.event`, null unless the server ended the stream with an
+ * error event.
  */
-export type BenchProviderError = { status: number | null; transport: boolean };
+export type BenchProviderError = {
+  status: number | null;
+  transport: boolean;
+  event: BenchStreamErrorEvent | null;
+};
+
+/**
+ * The structured fields of an in-stream error event, each null when the
+ * event did not carry it. `status` is the event's own status field, not
+ * the HTTP status. The event's message is never copied.
+ */
+export type BenchStreamErrorEvent = {
+  transient: boolean;
+  type: string | null;
+  code: string | number | null;
+  status: number | null;
+};
 
 /**
  * Outcome of one task. `reason` is a {@link BenchErrorReason} when the
