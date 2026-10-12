@@ -6,8 +6,10 @@
  * an anomaly. An orphan tool_result is dropped and recorded. An empty message
  * left by that drop is dropped and recorded. The head is the one the session
  * injected on the context. Epoch is the latest view_epoch on the path, or 0.
- * Every emitted chunk is tier "full" with reason "passthrough".
- * cacheBreakpoints is ["head"].
+ * Every emitted chunk is tier "full" with reason "passthrough", and
+ * `manifest.chunks[i]` describes `messages[i]`: its id is the source
+ * message entry's `id`, or, for a synthesized tool_result message, an id
+ * that names no entry. cacheBreakpoints is ["head"].
  *
  * Intentionally not in the Log: the repaired messages and the anomaly list.
  * Callers append a synthesized result themselves if they want it in history.
@@ -79,7 +81,13 @@ function project(path: readonly StoredEntry[]): {
   return { messages, chunks, anomalies };
 }
 
-/** The kernel's default ViewProvider. Synchronous; never throws on a valid path. */
+/**
+ * The kernel's default ViewProvider. Synchronous; never throws on a valid
+ * path. Callers may map a chunk back to its Log entry by id: a projected
+ * message's chunk id is its entry id, and a synthesized message's chunk id
+ * (`dangling-before:<next entry id>` or `dangling:<tool_use id>`) matches no
+ * entry id.
+ */
 export const passthroughView: ViewProvider = {
   view(ctx: ViewContext): CompiledView {
     const epoch = latestViewEpoch(ctx.path);

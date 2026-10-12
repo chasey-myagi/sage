@@ -22,6 +22,7 @@ import {
   runHealth,
   type StoredEntry,
 } from "@sage/core";
+import { EXPAND_TOOL_NAME, toolUseIdOfChunk } from "@sage/plugins";
 import { TOOL_NAMES } from "@sage/tools";
 import type { CommandIo } from "./command-io.js";
 import { isFiniteNumber } from "./guards.js";
@@ -193,7 +194,7 @@ function expandedLater(
   return calls.some(
     (call) =>
       call.index > at &&
-      call.name === "expand" &&
+      call.name === EXPAND_TOOL_NAME &&
       nonEmptyString(call.input, "id") === chunkId,
   );
 }
@@ -203,7 +204,7 @@ function rereadLater(
   judgedTurn: number,
   calls: readonly ToolCall[],
 ): boolean {
-  const toolUseId = toolUseIdOf(chunkId);
+  const toolUseId = toolUseIdOfChunk(chunkId);
   if (!toolUseId) return false;
   const origin = calls.find((call) => call.toolUseId === toolUseId);
   if (origin?.name !== TOOL_NAMES.read) return false;
@@ -216,13 +217,6 @@ function rereadLater(
       call.toolUseId !== toolUseId &&
       nonEmptyString(call.input, "path") === file,
   );
-}
-
-/** A tool chunk id is `<prefix>#<toolUseId>`. */
-function toolUseIdOf(chunkId: string): string | undefined {
-  const hash = chunkId.indexOf("#");
-  if (hash <= 0 || hash === chunkId.length - 1) return undefined;
-  return chunkId.slice(hash + 1);
 }
 
 function nonEmptyString(input: unknown, key: string): string | undefined {
