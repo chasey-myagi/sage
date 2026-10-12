@@ -132,7 +132,7 @@ describe("entry kinds", () => {
       {
         ...base,
         contextWindow: 1_000_000,
-        pricing: { ...pricing, currency: "EUR" },
+        pricing: { ...pricing, currency: "not a unit" },
       },
     ];
     for (const payload of broken) {

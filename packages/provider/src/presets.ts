@@ -1,6 +1,7 @@
 /**
  * Named endpoint presets: base URL, API-key environment variable, and wire
- * protocol per provider name. Data only; nothing is fetched.
+ * protocol per provider name. Data only; nothing is fetched. Callers pass
+ * the user's own presets (from `parseLocalProviders`) beside the built-ins.
  *
  * Intentionally not in the Log: base URLs and env key names are deploy
  * config. The API key itself never lives here.
@@ -9,7 +10,7 @@
 import type { ProviderAdapter } from "./contract/adapter.js";
 
 /** One named endpoint. `envKey` names the variable that holds its API key. */
-type ProviderPreset = {
+export type ProviderPreset = {
   name: string;
   baseUrl: string;
   envKey: string;
@@ -50,7 +51,13 @@ export const PRESETS: readonly ProviderPreset[] = [
   },
 ];
 
-/** The preset called `name`, or undefined. */
-export function resolvePreset(name: string): ProviderPreset | undefined {
-  return PRESETS.find((preset) => preset.name === name);
+/**
+ * The preset called `name` among the built-ins and `local`, or undefined.
+ * `parseLocalProviders` guarantees no local preset shadows a built-in.
+ */
+export function resolvePreset(
+  name: string,
+  local: readonly ProviderPreset[] = [],
+): ProviderPreset | undefined {
+  return [...PRESETS, ...local].find((preset) => preset.name === name);
 }

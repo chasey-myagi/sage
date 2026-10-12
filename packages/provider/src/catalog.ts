@@ -2,14 +2,17 @@
  * Static model table: context window and pricing per known model, plus the
  * `adapterDefaults` an adapter reports for a call.
  *
- * Guarantees: an unknown model still prepares, with fallback numbers,
- * `pricing: null`, and `adapterDefaults.catalogFallback: true`. Prices were
- * checked on 2026-09-23 against each entry's `source`. `currency` absent
- * means USD; cache read/write ratios divide the four prices and ignore
- * currency.
+ * Guarantees: lookup is keyed by (provider, model) over the built-in table
+ * plus the caller's local entries, so one model id may carry different
+ * prices on different providers. An unknown model still prepares, with
+ * fallback numbers, `pricing: null`, and `adapterDefaults.catalogFallback:
+ * true`. Built-in prices were checked on 2026-09-23 against each entry's
+ * `source`. `currency` absent means USD; cache read/write ratios divide the
+ * four prices and ignore currency.
  *
- * Intentionally not in the Log: the table itself. Lookup happens before the
- * call; the session stores the returned `adapterDefaults` on request_header.
+ * Intentionally not in the Log: the table itself, built-in or local. Lookup
+ * happens before the call; the session stores the returned pricing, window,
+ * and `adapterDefaults` on request_header, and replay reads those.
  */
 
 import type { PreparedCall, Pricing } from "./contract/adapter.js";
@@ -44,7 +47,8 @@ export type CatalogEntry = {
   pricing: Pricing;
 };
 
-const MODELS: readonly CatalogEntry[] = [
+/** The built-in table. */
+export const MODELS: readonly CatalogEntry[] = [
   {
     provider: "anthropic",
     model: "claude-sonnet-5",
@@ -264,27 +268,40 @@ const MODELS: readonly CatalogEntry[] = [
   },
 ];
 
-/** Known models for `provider`, in table order; empty when none. */
-export function listModels(provider: string): readonly CatalogEntry[] {
-  return MODELS.filter((entry) => entry.provider === provider);
-}
-
-/** The first table entry for `provider`. Throws when the provider has none. */
-export function defaultModel(provider: string): ModelRef {
-  const first = listModels(provider)[0];
-  if (!first) {
-    throw new Error(`No models for provider: ${provider}`);
-  }
-  return { provider: first.provider, model: first.model };
+/**
+ * Known models for `provider`: built-in entries in table order, then
+ * `local` entries in file order; empty when none.
+ */
+export function listModels(
+  provider: string,
+  local: readonly CatalogEntry[] = [],
+): readonly CatalogEntry[] {
+  return [...MODELS, ...local].filter((entry) => entry.provider === provider);
 }
 
 /**
- * The prepared call for `model`: table values when known, fallback values
- * with `catalogFallback: true` otherwise. Never throws.
+ * The first {@link listModels} entry for `provider`, or undefined when the
+ * provider has none (a user provider whose models are not declared).
  */
-export function prepareModel(model: ModelRef): PreparedCall {
-  const hit = MODELS.find(
-    (entry) => entry.provider === model.provider && entry.model === model.model,
+export function defaultModel(
+  provider: string,
+  local: readonly CatalogEntry[] = [],
+): ModelRef | undefined {
+  const first = listModels(provider, local)[0];
+  return first ? { provider: first.provider, model: first.model } : undefined;
+}
+
+/**
+ * The prepared call for `model`: the (provider, model) entry from the
+ * built-in table or `local` when known, fallback values with
+ * `catalogFallback: true` otherwise. Never throws.
+ */
+export function prepareModel(
+  model: ModelRef,
+  local: readonly CatalogEntry[] = [],
+): PreparedCall {
+  const hit = listModels(model.provider, local).find(
+    (entry) => entry.model === model.model,
   );
   if (!hit) {
     return {

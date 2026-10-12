@@ -4,7 +4,8 @@
  * Contract: every check that can fail runs before the session is built, in
  * this order: argv, `--scorer-apply entry` without a model or jev scorer
  * (exit 2), sandbox support on this platform (exit 2), the Jev key when a
- * jev scorer is named (exit 2), then provider auth (exit 1 or 2). stdout
+ * jev scorer is named (exit 2), the user providers file (exit 2), then
+ * provider auth (exit 1 or 2). stdout
  * is one JSON RunSummary line, including `health`; exit 0 when the outcome
  * is `done`, otherwise 1. stderr gets one progress line per model call.
  * Flag semantics are in `apps/sage/README.md`.
@@ -16,9 +17,8 @@
  * and the sibling-workspace deny are not Log entries.
  */
 
-import { homedir } from "node:os";
 import { type AgentSession, errorText } from "@sage/core";
-import type { ProviderAdapter } from "@sage/provider";
+import type { LocalProviders, ProviderAdapter } from "@sage/provider";
 import { inputTokens } from "@sage/provider/contract";
 import {
   resolveToolSandbox,
@@ -31,6 +31,7 @@ import { adaptersFromEnv, createAdapter, resolveAuth } from "./auth.js";
 import { createCodingSession } from "./coding-session.js";
 import type { TextOut } from "./command-io.js";
 import type { CliIo } from "./io.js";
+import { loadLocalProviders } from "./local-providers.js";
 import { jevApiKey, namedScorer } from "./scorers.js";
 
 type SandboxPlan = {
@@ -52,12 +53,18 @@ export async function runPrint(argv: string[], io: CliIo): Promise<number> {
     stderr.write(`${plan}\n`);
     return 2;
   }
-  const auth = resolveAuth(parsed, env);
+  const loaded = loadLocalProviders(env);
+  if (!loaded.ok) {
+    stderr.write(`${loaded.message}\n`);
+    return 2;
+  }
+  const { home, local } = loaded;
+  const auth = resolveAuth(parsed, env, local);
   if (!auth.ok) {
     stderr.write(`${auth.message}\n`);
     return auth.exitCode;
   }
-  const adapters = assembleAdapters(io, auth);
+  const adapters = assembleAdapters(io, auth, local);
   if (parsed.passthrough && parsed.budget !== undefined) {
     stderr.write(
       "Ignoring --budget because --passthrough does not compile a context\n",
@@ -69,7 +76,8 @@ export async function runPrint(argv: string[], io: CliIo): Promise<number> {
     adapters,
     model,
     passthrough: parsed.passthrough,
-    home: homedir(),
+    home,
+    localModels: local.models,
     sandbox: plan.sandbox,
     platform: plan.platform,
     ...(plan.unshareAvailable !== undefined
@@ -160,6 +168,7 @@ function planSandbox(parsed: PrintOptions, io: CliIo): string | SandboxPlan {
 function assembleAdapters(
   io: CliIo,
   auth: { provider: string; apiKey: string; baseUrl: string },
+  local: LocalProviders,
 ): Record<string, ProviderAdapter> {
   if (io.adapters) {
     if (!io.adapters[auth.provider]) {
@@ -169,11 +178,12 @@ function assembleAdapters(
     }
     return io.adapters;
   }
-  const adapters = adaptersFromEnv(io.env);
+  const adapters = adaptersFromEnv(io.env, local);
   adapters[auth.provider] = createAdapter(
     auth.provider,
     auth.apiKey,
     auth.baseUrl,
+    local,
   );
   return adapters;
 }

@@ -13,7 +13,6 @@
  */
 
 import { DEFAULT_MAX_TURNS } from "@sage/core";
-import { resolvePreset } from "@sage/provider";
 import type { ToolNetwork } from "@sage/tools";
 import {
   BENCH_POLICIES,
@@ -141,7 +140,6 @@ export function parseRun(argv: string[]): Checked<BenchRunArgs> {
   const policy = checkChoice(BENCH_POLICIES, rawPolicy, benchUsage());
   if (!policy.ok) return policy;
   const provider = values.get("provider");
-  if (provider && !resolvePreset(provider)) return usageError(benchUsage());
   const baseUrl = values.get("base-url");
   const apiKeyEnv = values.get("api-key-env");
   const limits = readLimits(values);

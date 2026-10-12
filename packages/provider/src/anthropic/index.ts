@@ -55,7 +55,7 @@ export class AnthropicAdapter implements ProviderAdapter {
   }
 
   prepare(model: ModelRef): PreparedCall {
-    return prepareModel(model);
+    return prepareModel(model, this.client.models);
   }
 
   stream(

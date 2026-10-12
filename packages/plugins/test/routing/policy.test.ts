@@ -181,6 +181,37 @@ describe("cheapest-allowed cost ladder", () => {
     expect(result?.model).toEqual({ provider: "openai", model: "gpt-5.4" });
   });
 
+  it("prices ladder entries from localModels the caller passes", () => {
+    const local: CatalogEntry = {
+      provider: "example-gateway",
+      model: "example-small",
+      contextWindow: 100,
+      pricing: {
+        inputPerMTok: 0.01,
+        outputPerMTok: 0,
+        cacheReadPerMTok: 0,
+        cacheWritePerMTok: 0,
+        currency: "credit",
+        source: "~/.sage/providers.json",
+      },
+    };
+    const ladder = [
+      { provider: "anthropic", model: "claude-haiku-4-5-20251001" },
+      { provider: "example-gateway", model: "example-small" },
+    ];
+    const route = input({ viewChunks: [], candidates: [...both(), local] });
+    expect(
+      costTierPolicy({ ladder, pick: "cheapest-allowed" })(route)?.model,
+    ).toEqual({ provider: "anthropic", model: "claude-haiku-4-5-20251001" });
+    expect(
+      costTierPolicy({
+        ladder,
+        pick: "cheapest-allowed",
+        localModels: [local],
+      })(route)?.model,
+    ).toEqual({ provider: "example-gateway", model: "example-small" });
+  });
+
   it("returns undefined when every ladder entry is missing a catalog price", () => {
     const result = costTierPolicy({
       ladder: [{ provider: "openai", model: "gpt-not-in-catalog" }],

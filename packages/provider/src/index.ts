@@ -1,6 +1,7 @@
 /**
  * Provider package entry: the two adapters, the model catalog, endpoint
- * presets, and the contract types callers name alongside them. Callers
+ * presets, the user providers-file validator, and the contract types
+ * callers name alongside them. Callers
  * above core use this; core uses `@sage/provider/contract` only.
  *
  * Intentionally not in the Log: this module only re-exports. API keys,
@@ -11,5 +12,11 @@ export { AnthropicAdapter } from "./anthropic/index.js";
 export type { CatalogEntry } from "./catalog.js";
 export { defaultModel, listModels } from "./catalog.js";
 export type { ModelRef, ProviderAdapter, Sampling } from "./contract/index.js";
+export {
+  type LocalProviders,
+  type LocalProvidersResult,
+  NO_LOCAL_PROVIDERS,
+  parseLocalProviders,
+} from "./local.js";
 export { OpenAIAdapter } from "./openai/index.js";
-export { PRESETS, resolvePreset } from "./presets.js";
+export { PRESETS, type ProviderPreset, resolvePreset } from "./presets.js";
