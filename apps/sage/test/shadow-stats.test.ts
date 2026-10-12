@@ -218,12 +218,16 @@ it("reconciles shadow none labels on a real bench trace plus a synthetic expand"
   expect(code).toBe(0);
   const printed = JSON.parse(io.text().stdout.trim()) as {
     shadowNone?: number;
-    laterNeeded?: number;
-    precision?: number | null;
+    touch?: { laterNeeded: number; precision: number | null };
+    content?: { laterNeeded: number; precision: number | null };
   };
   expect(printed.shadowNone).toBe(5);
-  expect(printed.laterNeeded).toBe(2);
-  expect(printed.precision).toBe(1 - 2 / 5);
+  expect(printed.touch).toEqual({ laterNeeded: 2, precision: 1 - 2 / 5 });
+  // Content: READ_NONE's output fed a later call, LS_NONE is expanded, and
+  // the next edit's old_string is nearest in SPEC_NONE's read of the spec
+  // file. The synthetic re-read repeats a path the first read's own input
+  // named, so it credits nothing.
+  expect(printed.content).toEqual({ laterNeeded: 3, precision: 1 - 3 / 5 });
 });
 
 it("bench run forwards --shadow-scorer and rejects an unknown name", async () => {

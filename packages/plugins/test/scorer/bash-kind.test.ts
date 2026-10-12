@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { classifyBashCommand } from "../../src/index.ts";
+import {
+  bashFileOperands,
+  bashSearchPatterns,
+  classifyBashCommand,
+  normalizeBashCommand,
+} from "../../src/index.ts";
 
 describe("classifyBashCommand", () => {
   it.each([
@@ -148,5 +153,65 @@ describe("classifyBashCommand", () => {
     expect(classifyBashCommand("cat a.ts # then pnpm test")).toBe("reader");
     expect(classifyBashCommand("# just a note\npnpm test")).toBe("runner");
     expect(classifyBashCommand("grep -n '# pnpm test' a.ts")).toBe("reader");
+  });
+});
+
+describe("normalizeBashCommand", () => {
+  it.each([
+    ["pnpm   test", "pnpm test"],
+    ["pnpm test # again", "pnpm test"],
+    ["cd repo && pnpm test", "cd repo&&pnpm test"],
+    ["grep -rn 'a b' src", 'grep -rn "a b" src'],
+    ["pnpm test;", "pnpm test"],
+  ])("gives %j and %j the same key", (left, right) => {
+    expect(normalizeBashCommand(left)).toBe(normalizeBashCommand(right));
+  });
+
+  it.each([
+    ["pnpm test", "pnpm build"],
+    ["echo a b", "echo 'a b'"],
+    ["cat a | grep x", "cat a; grep x"],
+    ["cat > f <<EOF\none\nEOF", "cat > f <<EOF\ntwo\nEOF"],
+  ])("tells %j from %j", (left, right) => {
+    expect(normalizeBashCommand(left)).not.toBe(normalizeBashCommand(right));
+  });
+});
+
+describe("bashSearchPatterns", () => {
+  it.each([
+    ["grep -rn needle src", ["needle"]],
+    ["rg -n -e first -e second .", ["first", "second"]],
+    ["rg --regexp=inline .", ["inline"]],
+    ["rg -A 3 -g '*.ts' 'two words' src", ["two words"]],
+    ["cd repo && git log | grep -i fix", ["fix"]],
+    ["xargs grep -l marker", ["marker"]],
+    ["egrep -- -dash file", ["-dash"]],
+    ["grep -E 'a|b' src", ["a|b"]],
+    ["grep -r needle src", ["needle"]],
+    ["rg -r NEW -E utf8 --color never --sort path needle .", ["needle"]],
+    ["rg --replace NEW --encoding utf8 needle", ["needle"]],
+    ["cat a.txt", []],
+    ["grep -n", []],
+  ])("reads the patterns of %j", (command, patterns) => {
+    expect(bashSearchPatterns(command)).toEqual(patterns);
+  });
+});
+
+describe("bashFileOperands", () => {
+  it.each([
+    ["cat src/a.ts", ["src/a.ts"]],
+    ["cd /repo && cat src/a.ts", ["src/a.ts"]],
+    ["sed -n '10,40p' src/a.ts", ["src/a.ts"]],
+    ["sed -e 's/a/b/' -n src/a.ts", ["src/a.ts"]],
+    ["head -n 40 src/a.ts src/b.ts", ["src/a.ts", "src/b.ts"]],
+    ["awk -F, '{print $1}' data.csv", ["data.csv"]],
+    ["wc -l a.ts", ["a.ts"]],
+    ["cat a.ts | grep -n x", ["a.ts"]],
+    ["sed -i 's/a/b/' f.ts", []],
+    ["cat src/*.ts 2>/dev/null", []],
+    ["pnpm test", []],
+    ["grep -n x a.ts", []],
+  ])("reads the files %j opens", (command, files) => {
+    expect(bashFileOperands(command)).toEqual(files);
   });
 });

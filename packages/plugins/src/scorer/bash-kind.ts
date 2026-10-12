@@ -3,7 +3,7 @@
  * workspace (`reader`), runs something (`runner`), or cannot be told apart
  * (`mixed`).
  *
- * Contract: `classifyBashCommand` is a pure function of the command text.
+ * Contract: every export is a pure function of the command text.
  * It never runs, fully parses, or expands the command. One quote-aware scan
  * splits it into parts, pipeline stages, and words; every operator,
  * redirect, and comment is recognized only outside quotes. Each stage is
@@ -25,7 +25,7 @@ type PartKind = BashKind | "neutral";
  * the same length with every quoted or escaped character replaced by
  * `QUOTED_MASK`, so operator checks on `bare` never see quoted text.
  */
-type Word = { text: string; bare: string };
+export type Word = { text: string; bare: string };
 
 /** Stands in for a quoted or escaped character in `Word.bare`. */
 const QUOTED_MASK = "_";
@@ -290,7 +290,11 @@ function combine(kinds: readonly BashKind[]): BashKind {
   return "mixed";
 }
 
-function withoutHeredocBodies(command: string): string {
+/**
+ * `command` with every heredoc body, from the line after its opener to
+ * the closing word's line, removed.
+ */
+export function withoutHeredocBodies(command: string): string {
   const kept: string[] = [];
   let terminator: string | undefined;
   for (const line of command.split("\n")) {
@@ -349,7 +353,7 @@ function createPartsBuilder() {
  * stages (`|`, `|&`), each a list of words. Quotes and backslash escapes
  * keep operators, `#`, and `>` literal.
  */
-function splitParts(command: string): Word[][][] {
+export function splitParts(command: string): Word[][][] {
   const out = createPartsBuilder();
   let quote: "'" | '"' | undefined;
   for (let index = 0; index < command.length; index += 1) {
@@ -412,6 +416,11 @@ function pipelineKind(stages: readonly Word[][], pipefail: boolean): PartKind {
   return combine(relevant);
 }
 
+/** Whether one pipeline stage is judged a reader, by the rules above. */
+export function isReaderStage(stage: readonly Word[]): boolean {
+  return stageKind(stage) === "reader";
+}
+
 function stageKind(stage: readonly Word[]): PartKind {
   const words = commandWords(stage);
   if (words === "compound") return "mixed";
@@ -436,7 +445,7 @@ function stageKind(stage: readonly Word[]): PartKind {
  * filler keywords, and wrappers removed. `compound` when the stage opens a
  * compound command.
  */
-function commandWords(stage: readonly Word[]): Word[] | "compound" {
+export function commandWords(stage: readonly Word[]): Word[] | "compound" {
   let words = withoutGrouping(stage);
   for (;;) {
     words = withoutAssignments(words);

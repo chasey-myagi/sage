@@ -79,6 +79,7 @@ const OPTIONS = {
   "t-full": { type: "string", hint: "--t-full <p,p,…>" },
   "t-low": { type: "string", hint: "--t-low <p,p,…>" },
   "t-keep": { type: "string", hint: "--t-keep <p,p,…>" },
+  label: { type: "string", hint: "--label touch|content" },
 } as const satisfies Record<string, OptionSpec>;
 
 /** A key of {@link OPTIONS}: a flag name without the leading dashes. */
