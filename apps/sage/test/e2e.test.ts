@@ -94,8 +94,8 @@ describe("health output", () => {
     expect(JSON.parse(printed)).toEqual({
       ...summary.health,
       shadowNone: 0,
-      laterNeeded: 0,
-      precision: null,
+      touch: { laterNeeded: 0, precision: null },
+      content: { laterNeeded: 0, precision: null },
     });
     expect(printed).not.toContain("You are sage");
     expect(printed).not.toContain(file);

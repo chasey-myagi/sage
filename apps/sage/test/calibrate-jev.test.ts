@@ -168,7 +168,7 @@ const DROP_ALL: Answers = {
  * path. Reuses the current temp directory, so two calls leave two
  * sessions side by side. A compiler session expands `EXPANDED` after
  * the calls. `passthrough` records a passthrough session without jev or
- * expand; `editAfter` adds an `edit` of `b.txt` after the calls.
+ * expand; `editAfter` adds edits of `b.txt` and `c.txt` after the calls.
  */
 async function recordSession(
   opts: { passthrough?: boolean; editAfter?: boolean } = {},
@@ -199,14 +199,17 @@ async function recordSession(
       "update_ledger",
       JSON.stringify({ goal, plan: ["read files"] }),
     );
-  const edit = toolScript(
-    "edit0",
-    "edit",
-    JSON.stringify({
-      path: "b.txt",
-      old_string: "b.txt line 0 of plain notes",
-      new_string: "b.txt line 0 rewritten",
-    }),
+  // b.txt was read; c.txt was only grepped, so its line came from grep3.
+  const edits = ["b.txt", "c.txt"].map((name, index) =>
+    toolScript(
+      `edit${index}`,
+      "edit",
+      JSON.stringify({
+        path: name,
+        old_string: `${name} line 0 of plain notes`,
+        new_string: `${name} line 0 rewritten`,
+      }),
+    ),
   );
   const faux = createFaux([
     ledger("ledger0", "find the helpers"),
@@ -214,7 +217,7 @@ async function recordSession(
     ledger("ledger1", "compare the notes"),
     ...scripts.slice(3),
     ...(opts.passthrough ? [] : [expand]),
-    ...(opts.editAfter ? [edit] : []),
+    ...(opts.editAfter ? edits : []),
     stopScript("done"),
   ]);
   const adapter: ProviderAdapter = {
@@ -354,24 +357,27 @@ describe("sage calibrate-jev", () => {
     }
   });
 
-  it("labels a read needed when its file is read again on a later turn, and a grep when it is expanded", async () => {
+  it("labels touch on a later re-read or expand, and content on an expand or a later pattern the chunk's output introduced", async () => {
     const session = await recordSession();
     const out = path.join(dir, "calibration");
     const run = await calibrate([session.file, "--out", out], (request) =>
       reply(request, KEEP_ALL),
     );
     expect(run.code).toBe(0);
-    const needed = chunkRows(readJson(path.join(out, "sweep.json"))).map(
-      (row) => [String(row.chunkId).split("#")[1], row.needed],
+    const labels = chunkRows(readJson(path.join(out, "sweep.json"))).map(
+      (row) => [String(row.chunkId).split("#")[1], row.touch, row.content],
     );
-    expect(needed).toEqual([
-      ["read0", true],
-      ["grep1", true],
-      ["read2", false],
-      ["grep3", false],
-      ["read4", false],
-      ["read5", false],
-      ["bash6", false],
+    // read0 is only touched: read5 re-reads a.ts, whose path read0's own
+    // input named. read2 is used: b.txt is the first text to show "plain
+    // notes", the pattern grep3 searches for.
+    expect(labels).toEqual([
+      ["read0", true, false],
+      ["grep1", true, true],
+      ["read2", false, true],
+      ["grep3", false, false],
+      ["read4", false, false],
+      ["read5", false, false],
+      ["bash6", false, false],
     ]);
   });
 
@@ -387,6 +393,8 @@ describe("sage calibrate-jev", () => {
     expect(grep).toMatchObject({
       tool: "grep",
       bashKind: null,
+      ledgerEmpty: false,
+      turn: 4,
       questions: "triage",
     });
     expect(rows.find((row) => row.tool === "bash")).toMatchObject({
@@ -557,7 +565,7 @@ describe("sage calibrate-jev", () => {
     );
     const triaged = chunks.filter((row) => row.questions === "triage");
     expect(triaged).toHaveLength(TRIAGED);
-    const needed = triaged.find((row) => row.needed === true);
+    const needed = triaged.find((row) => row.content === true);
     if (!needed) throw new Error("no needed triaged chunk");
     const rows = rowsOf(sweep);
     expect(rows.map((row) => row.thresholds)).toEqual([
@@ -591,7 +599,7 @@ describe("sage calibrate-jev", () => {
     });
     const readRate = CACHE_READ_PER_MTOK / INPUT_PER_MTOK;
     const keptCost = triaged
-      .filter((row) => row.needed === false)
+      .filter((row) => row.content === false)
       .reduce(
         (total, row) =>
           total + Number(row.tokens) * readRate * Number(row.remainingTurns),
@@ -643,7 +651,7 @@ describe("sage calibrate-jev", () => {
     expect(run.code).toBe(0);
     const sweep = readJson(path.join(out, "sweep.json"));
     const needed = chunkRows(sweep).find(
-      (row) => row.questions === "triage" && row.needed === true,
+      (row) => row.questions === "triage" && row.content === true,
     );
     const [row] = rowsOf(sweep);
     // Without pricing an expand pays the default write rate, 1.25.
@@ -651,24 +659,29 @@ describe("sage calibrate-jev", () => {
     expect(JSON.parse(run.stdout)).toMatchObject({ unpriced: TRIAGED });
   });
 
-  it("labels re-read and later-edited chunks needed in a passthrough session", async () => {
+  it("labels a grep used in a passthrough session when a later edit's old_string came from its output", async () => {
     const session = await recordSession({ passthrough: true, editAfter: true });
     const out = path.join(dir, "calibration");
     const run = await calibrate([session.file, "--out", out], (request) =>
       reply(request, KEEP_ALL),
     );
     expect(run.code).toBe(0);
-    const needed = chunkRows(readJson(path.join(out, "sweep.json"))).map(
-      (row) => [String(row.chunkId).split("#")[1], row.needed],
-    );
-    expect(needed).toEqual([
-      ["read0", true],
-      ["grep1", false],
-      ["read2", true],
-      ["grep3", false],
-      ["read4", false],
-      ["read5", false],
-      ["bash6", false],
+    const rows = chunkRows(readJson(path.join(out, "sweep.json")));
+    const labels = rows.map((row) => [
+      String(row.chunkId).split("#")[1],
+      row.touch,
+      row.content,
+    ]);
+    // Without expand, touch never marks a grep; content marks grep3, whose
+    // output is where the edited c.txt line first appeared.
+    expect(labels).toEqual([
+      ["read0", true, false],
+      ["grep1", false, false],
+      ["read2", true, true],
+      ["grep3", false, true],
+      ["read4", false, false],
+      ["read5", false, false],
+      ["bash6", false, false],
     ]);
     // Passthrough renders no claims, so no request carries a ledger.
     const ledgers = run.requests.map((request) => {
@@ -676,6 +689,46 @@ describe("sage calibrate-jev", () => {
       return isRecord(body) && isRecord(body.state) ? body.state.ledger : null;
     });
     expect(ledgers).toEqual(CALLS.map(() => ""));
+    for (const row of rows) expect(row.ledgerEmpty).toBe(true);
+  });
+
+  it("sweeps on the content label by default and on touch with --label touch", async () => {
+    const session = await recordSession({ passthrough: true, editAfter: true });
+    const grid = ["--t-full", "0.4", "--t-low", "0.2", "--t-keep", "0.5"];
+    const byContent = path.join(dir, "by-content");
+    const byTouch = path.join(dir, "by-touch");
+    const first = await calibrate(
+      [session.file, "--out", byContent, ...grid],
+      (request) => reply(request, DROP_ALL),
+    );
+    const second = await calibrate(
+      [session.file, "--out", byTouch, ...grid, "--label", "touch"],
+      (request) => reply(request, DROP_ALL),
+    );
+    expect(first.code).toBe(0);
+    expect(second.code).toBe(0);
+    const content = readJson(path.join(byContent, "sweep.json"));
+    const touch = readJson(path.join(byTouch, "sweep.json"));
+    expect(content.label).toBe("content");
+    expect(touch.label).toBe("touch");
+    // Of the triaged grep1, grep3, and bash6, only grep3 is used, and
+    // nothing is touched.
+    expect(rowsOf(content)[0]).toMatchObject({ needed: 1, omittedNeeded: 1 });
+    expect(rowsOf(touch)[0]).toMatchObject({ needed: 0, omittedNeeded: 0 });
+    expect(JSON.parse(first.stdout)).toMatchObject({ label: "content" });
+    expect(JSON.parse(second.stdout)).toMatchObject({ label: "touch" });
+  });
+
+  it("rejects a --label other than touch or content with the usage", async () => {
+    const session = await recordSession();
+    const run = await calibrate(
+      [session.file, "--out", path.join(dir, "bad"), "--label", "needed"],
+      () => {
+        throw new Error("a bad --label sent a request");
+      },
+    );
+    expect(run.code).toBe(1);
+    expect(run.stderr).toContain("--label touch|content");
   });
 
   it("calibrates several sessions at once, tagging each chunk with its session and sending a shared body once", async () => {

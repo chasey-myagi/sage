@@ -1,8 +1,8 @@
 /**
  * The threshold sweep of `sage calibrate-jev`: replays Jev's cached
  * triage answers through the production tier policy (`decideTier`) under
- * every combination of a threshold grid and scores each against the
- * later-need labels. Read probes decide nothing and are not swept.
+ * every combination of a threshold grid and scores each against one
+ * later-use label. Read probes decide nothing and are not swept.
  *
  * Contract: pure; rows come out in grid order (`full`, then `low`,
  * `keep`, each ascending). A chunk is omitted when its tier is `summary` or
@@ -31,7 +31,10 @@ export type LabeledChunk = {
   tokens: number;
   /** Turns with a reply after the chunk's entry turn. */
   remainingTurns: number;
-  /** Expanded, re-read, or edited after its entry turn (`NeededLater`). */
+  /**
+   * Needed after its entry turn under the label being swept: `touch` or
+   * `content` of the `LaterUse` labels.
+   */
   needed: boolean;
   /** `ratesFor` of the entry turn's `request_header.pricing`. */
   rates: Rates;

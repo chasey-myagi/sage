@@ -35,6 +35,10 @@ export {
 export type { RoutePolicy } from "./routing/types.js";
 export { type BashKind, classifyBashCommand } from "./scorer/bash-kind.js";
 export {
+  bashSearchPatterns,
+  normalizeBashCommand,
+} from "./scorer/bash-search.js";
+export {
   type JevEndpoint,
   type Posted,
   type PostHooks,

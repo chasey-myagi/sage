@@ -11,9 +11,10 @@
  * prints the estimate and exits 0 without sending or needing a key. A run
  * writes `<out>/cache/`, `<out>/spend.json`, and `<out>/sweep.json`, then
  * prints one JSON summary line with the recommended thresholds. Triaged
- * chunks are swept; read probes only report their answer. Exit 0
- * when every request was answered, 2 when cumulative spend passed
- * `--max-usd` mid-run, 1 when a request failed or the rate-limit breaker
+ * chunks are swept against the `--label` later-use label (default
+ * `content`); every chunk row carries both labels, and read probes only
+ * report their answer. Exit 0 when every request was answered, 2 when
+ * cumulative spend passed `--max-usd` mid-run, 1 when a request failed or the rate-limit breaker
  * opened, for a missing key, a bad argument (with the usage), or an
  * unreadable file. Outputs hold ids, counts, and prices, never chunk text.
  *
@@ -63,8 +64,15 @@ import {
 } from "./calibrate-sweep.js";
 import type { CommandIo } from "./command-io.js";
 import {
+  LATER_USE_LABELS,
+  type LaterUse,
+  type LaterUseLabel,
+  laterUseIn,
+} from "./later-use.js";
+import {
   type Checked,
   type CommandFlags,
+  checkChoice,
   checkProbabilities,
   checkUsd,
   type FlagError,
@@ -74,7 +82,6 @@ import {
   usageError,
 } from "./options.js";
 import { type JevFetch, jevApiKey } from "./scorers.js";
-import { neededLaterIn } from "./stats.js";
 
 /**
  * Default `--max-usd`: one dollar, far above a calibration over a few
@@ -86,6 +93,11 @@ const DEFAULT_MAX_USD = 1;
  * answer, so it is looser than the scorer's in-turn timeout.
  */
 const REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * Default `--label`: whether the chunk's content was used, which counts
+ * grep and bash chunks that a path re-touch never marks.
+ */
+const DEFAULT_LABEL: LaterUseLabel = "content";
 
 /** Flags `sage calibrate-jev` accepts; session files are positionals. */
 const CALIBRATE_FLAGS = [
@@ -95,6 +107,7 @@ const CALIBRATE_FLAGS = [
   { name: "t-full", usage: "optional" },
   { name: "t-low", usage: "optional" },
   { name: "t-keep", usage: "optional" },
+  { name: "label", usage: "optional" },
 ] as const satisfies CommandFlags<OptionName>;
 
 type GridFlag = "t-full" | "t-low" | "t-keep";
@@ -111,6 +124,8 @@ type CalibrateOptions = {
   maxUsd: number;
   dryRun: boolean;
   grid: SweepGrid;
+  /** The later-use label the sweep scores against. */
+  label: LaterUseLabel;
 };
 
 /** One chunk to ask about: its rebuilt request, cache key, body, and label. */
@@ -120,13 +135,18 @@ type Planned = {
   entry: EntryJevRequest;
   key: string;
   body: string;
-  needed: boolean;
+  use: LaterUse;
 };
 
-/** One answered chunk: its label, the facts its costs need, and Jev's answers. */
-type AnsweredChunk = Omit<LabeledChunk, "judgment"> & {
+/** One answered chunk: its labels, the facts its costs need, and Jev's answers. */
+type AnsweredChunk = Omit<LabeledChunk, "judgment" | "needed"> & {
   tool: string;
   bashKind: EntryJevRequest["bashKind"];
+  /** Turn on which the chunk first entered the view. */
+  turn: number;
+  /** Whether the rebuilt request's ledger is "", as in every passthrough turn. */
+  ledgerEmpty: boolean;
+  use: LaterUse;
   judgment: Judgment;
 };
 
@@ -228,13 +248,14 @@ async function calibrate(
     failed: sent.failed,
     unsent: sent.unsent,
     skipped: { ...sumSkipped(scans), unanswered: labeled.unanswered },
-    unpriced: triaged(labeled.chunks).filter(
+    unpriced: triaged(labeled.chunks, opts.label).filter(
       (chunk) => chunk.rates.source === "default",
     ).length,
     estimate,
     spent: { inputTokens: sent.spent.inputTokens, usd: sent.spent.usd },
     totalSpentUsd: total.usd,
     stopped: sent.stopped ?? null,
+    label: opts.label,
     recommended,
   };
   io.stdout.write(`${JSON.stringify(summary)}\n`);
@@ -249,10 +270,11 @@ function writeSweep(
   chunks: readonly AnsweredChunk[],
   opts: CalibrateOptions,
 ): SweepRow | null {
-  const rows = sweepThresholds(triaged(chunks), opts.grid);
+  const rows = sweepThresholds(triaged(chunks, opts.label), opts.grid);
   const recommended = recommendRow(rows) ?? null;
   const sweep = {
     grid: opts.grid,
+    label: opts.label,
     chunks: chunks.map(chunkRow),
     rows,
     recommended,
@@ -297,11 +319,27 @@ function splitCached(
   };
 }
 
-/** The chunks whose answers decide a tier, as the sweep takes them. */
-function triaged(chunks: readonly AnsweredChunk[]): LabeledChunk[] {
-  return chunks.flatMap(({ judgment, ...chunk }) =>
-    judgment.set === "triage" ? [{ ...chunk, judgment }] : [],
-  );
+/** The chunks whose answers decide a tier, labeled by `label` for the sweep. */
+function triaged(
+  chunks: readonly AnsweredChunk[],
+  label: LaterUseLabel,
+): LabeledChunk[] {
+  return chunks.flatMap((chunk) => {
+    const { judgment } = chunk;
+    if (judgment.set !== "triage") return [];
+    return [
+      {
+        session: chunk.session,
+        chunkId: chunk.chunkId,
+        tokens: chunk.tokens,
+        remainingTurns: chunk.remainingTurns,
+        needed: chunk.use[label],
+        rates: chunk.rates,
+        judgment,
+        candidates: chunk.candidates,
+      },
+    ];
+  });
 }
 
 function sumSkipped(
@@ -382,7 +420,7 @@ async function planSession(
 ): Promise<{ planned: Planned[]; skipped: EntryJevScan["skipped"] }> {
   const entries = readSession(file);
   const scan = await entryJevRequests(entries);
-  const isNeeded = neededLaterIn(entries);
+  const useOf = laterUseIn(entries);
   const planned = scan.requests.map((entry) => {
     const body = requestBody(entry.request, model);
     return {
@@ -390,7 +428,7 @@ async function planSession(
       entry,
       key: requestKey(body),
       body,
-      needed: isNeeded(entry.chunkId, entry.decidedAt, entry.turn),
+      use: useOf(entry.chunkId, entry.decidedAt, entry.turn),
     };
   });
   return { planned, skipped: scan.skipped };
@@ -422,9 +460,11 @@ function labelChunks(
       chunkId: item.entry.chunkId,
       tool: item.entry.tool,
       bashKind: item.entry.bashKind,
+      turn: item.entry.turn,
+      ledgerEmpty: item.entry.request.state.ledger === "",
       tokens: item.entry.tokens,
       remainingTurns: item.entry.remainingTurns,
-      needed: item.needed,
+      use: item.use,
       rates: ratesFor(item.entry.pricing),
       judgment,
       candidates,
@@ -434,8 +474,8 @@ function labelChunks(
 }
 
 /**
- * A chunk as `sweep.json` lists it: ids, numbers, and Jev's probabilities
- * by question id, no text.
+ * A chunk as `sweep.json` lists it: ids, numbers, both later-use labels,
+ * and Jev's probabilities by question id, no text.
  */
 function chunkRow(chunk: AnsweredChunk): Record<string, unknown> {
   return {
@@ -443,9 +483,12 @@ function chunkRow(chunk: AnsweredChunk): Record<string, unknown> {
     chunkId: chunk.chunkId,
     tool: chunk.tool,
     bashKind: chunk.bashKind,
+    turn: chunk.turn,
+    ledgerEmpty: chunk.ledgerEmpty,
     tokens: chunk.tokens,
     remainingTurns: chunk.remainingTurns,
-    needed: chunk.needed,
+    touch: chunk.use.touch,
+    content: chunk.use.content,
     questions: chunk.judgment.set,
     answers: answerSummary(chunk.judgment),
   };
@@ -478,6 +521,7 @@ function parseCalibrateArgs(
     maxUsd: DEFAULT_MAX_USD,
     dryRun: false,
     grid: { ...DEFAULT_SWEEP_GRID },
+    label: DEFAULT_LABEL,
   };
   for (const token of readFlags(argv, CALIBRATE_FLAGS)) {
     if (token.kind === "invalid") return usageError(usage);
@@ -513,6 +557,16 @@ function applyValue(
     const checked = checkUsd(name, raw);
     if (!checked.ok) return checked;
     opts.maxUsd = checked.value;
+    return undefined;
+  }
+  if (name === "label") {
+    const checked = checkChoice(
+      LATER_USE_LABELS,
+      raw,
+      `usage: ${calibrateUsage()}`,
+    );
+    if (!checked.ok) return checked;
+    opts.label = checked.value;
     return undefined;
   }
   // readFlags turns `--dry-run=x` into an invalid token, so this only
