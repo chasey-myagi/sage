@@ -77,7 +77,6 @@ const OPTIONS = {
   "max-usd": { type: "string", hint: "--max-usd <usd>" },
   "dry-run": { type: "boolean", hint: "--dry-run" },
   "t-full": { type: "string", hint: "--t-full <p,p,…>" },
-  "t-none": { type: "string", hint: "--t-none <p,p,…>" },
   "t-low": { type: "string", hint: "--t-low <p,p,…>" },
   "t-keep": { type: "string", hint: "--t-keep <p,p,…>" },
 } as const satisfies Record<string, OptionSpec>;
@@ -234,7 +233,7 @@ export function checkUsd(flag: "max-usd", raw: string): Checked<number> {
  * Returns the values sorted ascending without duplicates.
  */
 export function checkProbabilities(
-  flag: "t-full" | "t-none" | "t-low" | "t-keep",
+  flag: "t-full" | "t-low" | "t-keep",
   raw: string,
 ): Checked<number[]> {
   const values: number[] = [];

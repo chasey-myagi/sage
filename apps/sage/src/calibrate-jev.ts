@@ -10,7 +10,8 @@
  * `DEFAULT_MAX_USD`) the command exits 2 without sending, and `--dry-run`
  * prints the estimate and exits 0 without sending or needing a key. A run
  * writes `<out>/cache/`, `<out>/spend.json`, and `<out>/sweep.json`, then
- * prints one JSON summary line with the recommended thresholds. Exit 0
+ * prints one JSON summary line with the recommended thresholds. Triaged
+ * chunks are swept; read probes only report their answer. Exit 0
  * when every request was answered, 2 when cumulative spend passed
  * `--max-usd` mid-run, 1 when a request failed or the rate-limit breaker
  * opened, for a missing key, a bad argument (with the usage), or an
@@ -22,7 +23,12 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { errorText, JsonlLogStore, type StoredEntry } from "@sage/core";
+import {
+  assertNever,
+  errorText,
+  JsonlLogStore,
+  type StoredEntry,
+} from "@sage/core";
 import {
   type EntryJevRequest,
   type EntryJevScan,
@@ -30,6 +36,7 @@ import {
   estimateRequestTokens,
   JEV_MODEL_ID,
   type JevEndpoint,
+  type Judgment,
   ratesFor,
   readJudgment,
   requestBody,
@@ -86,16 +93,14 @@ const CALIBRATE_FLAGS = [
   { name: "max-usd", usage: "optional" },
   { name: "dry-run", usage: "optional" },
   { name: "t-full", usage: "optional" },
-  { name: "t-none", usage: "optional" },
   { name: "t-low", usage: "optional" },
   { name: "t-keep", usage: "optional" },
 ] as const satisfies CommandFlags<OptionName>;
 
-type GridFlag = "t-full" | "t-none" | "t-low" | "t-keep";
+type GridFlag = "t-full" | "t-low" | "t-keep";
 
 const GRID_KEYS: Readonly<Record<GridFlag, keyof SweepGrid>> = {
   "t-full": "full",
-  "t-none": "none",
   "t-low": "low",
   "t-keep": "keep",
 };
@@ -116,6 +121,13 @@ type Planned = {
   key: string;
   body: string;
   needed: boolean;
+};
+
+/** One answered chunk: its label, the facts its costs need, and Jev's answers. */
+type AnsweredChunk = Omit<LabeledChunk, "judgment"> & {
+  tool: string;
+  bashKind: EntryJevRequest["bashKind"];
+  judgment: Judgment;
 };
 
 /** What `runCalibrateJev` reads from the process. */
@@ -216,8 +228,9 @@ async function calibrate(
     failed: sent.failed,
     unsent: sent.unsent,
     skipped: { ...sumSkipped(scans), unanswered: labeled.unanswered },
-    unpriced: labeled.chunks.filter((chunk) => chunk.rates.source === "default")
-      .length,
+    unpriced: triaged(labeled.chunks).filter(
+      (chunk) => chunk.rates.source === "default",
+    ).length,
     estimate,
     spent: { inputTokens: sent.spent.inputTokens, usd: sent.spent.usd },
     totalSpentUsd: total.usd,
@@ -228,12 +241,15 @@ async function calibrate(
   return exitCodeFor(sent);
 }
 
-/** Sweeps `chunks`, writes `<out>/sweep.json`, and returns the recommended row. */
+/**
+ * Sweeps the triaged `chunks`, writes `<out>/sweep.json` listing every
+ * answered chunk, and returns the recommended row.
+ */
 function writeSweep(
-  chunks: readonly LabeledChunk[],
+  chunks: readonly AnsweredChunk[],
   opts: CalibrateOptions,
 ): SweepRow | null {
-  const rows = sweepThresholds(chunks, opts.grid);
+  const rows = sweepThresholds(triaged(chunks), opts.grid);
   const recommended = recommendRow(rows) ?? null;
   const sweep = {
     grid: opts.grid,
@@ -281,12 +297,20 @@ function splitCached(
   };
 }
 
+/** The chunks whose answers decide a tier, as the sweep takes them. */
+function triaged(chunks: readonly AnsweredChunk[]): LabeledChunk[] {
+  return chunks.flatMap(({ judgment, ...chunk }) =>
+    judgment.set === "triage" ? [{ ...chunk, judgment }] : [],
+  );
+}
+
 function sumSkipped(
   scans: readonly { skipped: EntryJevScan["skipped"] }[],
 ): EntryJevScan["skipped"] {
-  const total = { isError: 0, unsendable: 0 };
+  const total = { isError: 0, unasked: 0, unsendable: 0 };
   for (const scan of scans) {
     total.isError += scan.skipped.isError;
+    total.unasked += scan.skipped.unasked;
     total.unsendable += scan.skipped.unsendable;
   }
   return total;
@@ -377,17 +401,18 @@ function readSession(file: string): StoredEntry[] {
   return store.path(path.basename(file, ".jsonl"));
 }
 
-/** Chunks whose answer carries every fixed judgment, in plan order. */
+/** Chunks whose answer carries every fixed judgment of their set, in plan order. */
 function labelChunks(
   planned: readonly Planned[],
   answers: ReadonlyMap<string, CachedAnswer>,
-): { chunks: LabeledChunk[]; unanswered: number } {
-  const chunks: LabeledChunk[] = [];
+): { chunks: AnsweredChunk[]; unanswered: number } {
+  const chunks: AnsweredChunk[] = [];
   let unanswered = 0;
   for (const item of planned) {
     const answer = answers.get(item.key);
-    const candidates = item.entry.request.candidates;
-    const judgment = answer && readJudgment(answer.answers, candidates.length);
+    const { set, candidates } = item.entry.request;
+    const judgment =
+      answer && readJudgment(answer.answers, set, candidates.length);
     if (!judgment) {
       unanswered += 1;
       continue;
@@ -395,6 +420,8 @@ function labelChunks(
     chunks.push({
       session: item.session,
       chunkId: item.entry.chunkId,
+      tool: item.entry.tool,
+      bashKind: item.entry.bashKind,
       tokens: item.entry.tokens,
       remainingTurns: item.entry.remainingTurns,
       needed: item.needed,
@@ -406,15 +433,38 @@ function labelChunks(
   return { chunks, unanswered };
 }
 
-/** A chunk as `sweep.json` lists it: ids and numbers, no text. */
-function chunkRow(chunk: LabeledChunk): Record<string, unknown> {
+/**
+ * A chunk as `sweep.json` lists it: ids, numbers, and Jev's probabilities
+ * by question id, no text.
+ */
+function chunkRow(chunk: AnsweredChunk): Record<string, unknown> {
   return {
     session: chunk.session,
     chunkId: chunk.chunkId,
+    tool: chunk.tool,
+    bashKind: chunk.bashKind,
     tokens: chunk.tokens,
     remainingTurns: chunk.remainingTurns,
     needed: chunk.needed,
+    questions: chunk.judgment.set,
+    answers: answerSummary(chunk.judgment),
   };
+}
+
+/** Each probability under the question id it answers; keep_<i> as one array. */
+function answerSummary(judgment: Judgment): Record<string, unknown> {
+  switch (judgment.set) {
+    case "triage":
+      return {
+        reports_failure: judgment.failure,
+        locates_next_step: judgment.locate,
+        keep: judgment.keep,
+      };
+    case "read-probe":
+      return { shows_target_code: judgment.target };
+    default:
+      return assertNever(judgment);
+  }
 }
 
 function parseCalibrateArgs(

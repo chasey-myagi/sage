@@ -86,9 +86,8 @@ export function requestWith(
 /** Noul values one fixture chunk answers with; absent judgments are 0. */
 export type FixtureNouls = {
   reports_failure?: number;
-  is_edit_target?: number;
-  answers_lookup?: number;
-  is_broad_listing?: number;
+  locates_next_step?: number;
+  shows_target_code?: number;
   /** keep_<i> by index; a missing index answers 0. */
   keep?: readonly number[];
 };
@@ -164,12 +163,10 @@ function valueFor(values: FixtureNouls, key: string): number {
   switch (key) {
     case "reports_failure":
       return values.reports_failure ?? 0;
-    case "is_edit_target":
-      return values.is_edit_target ?? 0;
-    case "answers_lookup":
-      return values.answers_lookup ?? 0;
-    case "is_broad_listing":
-      return values.is_broad_listing ?? 0;
+    case "locates_next_step":
+      return values.locates_next_step ?? 0;
+    case "shows_target_code":
+      return values.shows_target_code ?? 0;
     default:
       throw new Error(`unexpected question id ${key}`);
   }

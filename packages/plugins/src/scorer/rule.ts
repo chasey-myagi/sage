@@ -67,10 +67,21 @@ export const DEFAULT_RULE_TIERS: Readonly<Record<RuleCategory, RuleTier>> = {
 };
 
 /**
- * Category by tool name for tools judged by name alone. `edit`, `write`,
- * `read`, and `grep` match `TOOL_NAMES` in `@sage/tools`, spelled here
- * because plugins do not import the tools package; the ledger name comes
- * from `progressLedger`.
+ * Names of the tools scorers judge by content. They match `TOOL_NAMES` in
+ * `@sage/tools`, spelled here because plugins do not import the tools
+ * package. Not named `*_TOOL_NAME`: check-layers collects those as plugin
+ * tool names.
+ */
+export const READ_TOOL = "read";
+/** See `READ_TOOL`. */
+export const GREP_TOOL = "grep";
+/** See `READ_TOOL`. The tool whose calls `classifyBashCommand` judges. */
+export const BASH_TOOL = "bash";
+
+/**
+ * Category by tool name for tools judged by name alone. `edit` and
+ * `write` match `TOOL_NAMES` in `@sage/tools`; the ledger name comes from
+ * `progressLedger`.
  */
 const RULE_TOOL_CATEGORIES: ReadonlyMap<string, RuleCategory> = new Map<
   string,
@@ -79,15 +90,9 @@ const RULE_TOOL_CATEGORIES: ReadonlyMap<string, RuleCategory> = new Map<
   ["edit", "echo"],
   ["write", "echo"],
   [LEDGER_TOOL_NAME, "echo"],
-  ["read", "reader"],
-  ["grep", "reader"],
+  [READ_TOOL, "reader"],
+  [GREP_TOOL, "reader"],
 ]);
-
-/**
- * The tool whose calls `classifyBashCommand` judges. Not named
- * `*_TOOL_NAME`: check-layers collects those as plugin tool names.
- */
-const BASH_TOOL = "bash";
 
 /** Prefix of the reason a rule decision records. */
 const RULE_REASON_PREFIX = "scorer:rule:";

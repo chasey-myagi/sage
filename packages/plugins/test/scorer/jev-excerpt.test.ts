@@ -1,5 +1,6 @@
 import { jsonFetch } from "@sage/core/testing";
 import { expect, it } from "vitest";
+import { chunkRequest } from "../../src/scorer/jev/state.ts";
 import { jevScorer } from "../../src/scorer/jev.ts";
 import {
   answerNouls,
@@ -31,18 +32,22 @@ function call(tool: string, input: unknown, lines: string[]): FixtureCall {
   return { id: "t1", tool, input, output: lines.join("\n") };
 }
 
-it("offers read signature and export lines numbered from the input offset", async () => {
-  const chunk = await sentChunk(
-    call("read", { path: "src/a.py", offset: 40 }, [
-      "import os",
-      "def load(path):",
-      "    return open(path)",
-      "class Loader:",
-      "export const DEFAULT = 1;",
-      "[truncated: showing lines 40-44 of 90; call read with offset=45 to continue]",
-    ]),
+it("offers read signature and export lines numbered from the input offset", () => {
+  const read = call("read", { path: "src/a.py", offset: 40 }, [
+    "import os",
+    "def load(path):",
+    "    return open(path)",
+    "class Loader:",
+    "export const DEFAULT = 1;",
+    "[truncated: showing lines 40-44 of 90; call read with offset=45 to continue]",
+  ]);
+  const request = chunkRequest(
+    chunkOf(read, 1),
+    read.output,
+    { task: "q", ledger: "", prose: "" },
+    "read-probe",
   );
-  expect(chunk.candidates).toEqual([
+  expect(request?.state.chunk.candidates).toEqual([
     "L41: def load(path):",
     "L43: class Loader:",
     "L44: export const DEFAULT = 1;",
@@ -94,37 +99,6 @@ it("offers bash failures, stack frames, path:line refs, test summaries, and diff
   ]);
 });
 
-it("offers every ls and find entry and drops the truncation footer", async () => {
-  for (const tool of ["ls", "find"]) {
-    const chunk = await sentChunk(
-      call(tool, { path: "src" }, [
-        "a.ts",
-        "util/",
-        "[truncated: showing 2 of 400 entries]",
-      ]),
-    );
-    expect(chunk.candidates).toEqual(["a.ts", "util/"]);
-  }
-});
-
-it("offers failure, location, signature, and summary lines for a tool it does not know", async () => {
-  const chunk = await sentChunk(
-    call("mcp_search", { q: "x" }, [
-      "hello",
-      "error: upstream timed out",
-      "docs/guide.md:12: see the install section",
-      "export function search(q) {",
-      "3 passed",
-    ]),
-  );
-  expect(chunk.candidates).toEqual([
-    "error: upstream timed out",
-    "docs/guide.md:12: see the install section",
-    "export function search(q) {",
-    "3 passed",
-  ]);
-});
-
 it("keeps the first 8 and last 16 candidates, each cut to 200 characters", async () => {
   const lines = Array.from(
     { length: 100 },
@@ -147,16 +121,14 @@ it("sends no head or tail when the candidates already hold the whole output", as
   expect(covered).toMatchObject({ head: [], tail: [], omitted_lines: 0 });
 
   const cut = await sentChunk(
-    call("ls", { path: "." }, [
-      "a.ts",
-      "b.ts",
-      "[truncated: showing 2 of 9 entries]",
+    call("grep", { pattern: "a" }, [
+      ...hits,
+      "[truncated: showing 2 of 9 matches; narrow the path or raise max_results]",
     ]),
   );
   expect(cut.head).toEqual([
-    "a.ts",
-    "b.ts",
-    "[truncated: showing 2 of 9 entries]",
+    ...hits,
+    "[truncated: showing 2 of 9 matches; narrow the path or raise max_results]",
   ]);
 });
 

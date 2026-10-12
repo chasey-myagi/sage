@@ -1,10 +1,10 @@
 /**
  * The threshold sweep of `sage calibrate-jev`: replays Jev's cached
- * answers through the production tier policy (`decideTier`) under every
- * combination of a threshold grid and scores each against the later-need
- * labels.
+ * triage answers through the production tier policy (`decideTier`) under
+ * every combination of a threshold grid and scores each against the
+ * later-need labels. Read probes decide nothing and are not swept.
  *
- * Contract: pure; rows come out in grid order (`full`, then `none`, `low`,
+ * Contract: pure; rows come out in grid order (`full`, then `low`,
  * `keep`, each ascending). A chunk is omitted when its tier is `summary` or
  * `none`: either way the original text leaves the view. Costs are in
  * input-price-equivalent tokens under the compiler's `ratesFor`, so
@@ -18,11 +18,11 @@ import {
   DEFAULT_JEV_THRESHOLDS,
   decideTier,
   type JevThresholds,
-  type Judgment,
   type Rates,
+  type TriageJudgment,
 } from "@sage/plugins";
 
-/** One answered chunk with its label and the facts its costs need. */
+/** One triaged chunk with its label and the facts its costs need. */
 export type LabeledChunk = {
   /** Basename of the session file; chunk ids repeat across sessions. */
   session: string;
@@ -35,7 +35,7 @@ export type LabeledChunk = {
   needed: boolean;
   /** `ratesFor` of the entry turn's `request_header.pricing`. */
   rates: Rates;
-  judgment: Judgment;
+  judgment: TriageJudgment;
   /** The candidate lines `judgment.keep` indexes. */
   candidates: readonly string[];
 };
@@ -43,18 +43,16 @@ export type LabeledChunk = {
 /** Values to try per threshold; every combination is one row. */
 export type SweepGrid = {
   full: readonly number[];
-  none: readonly number[];
   low: readonly number[];
   keep: readonly number[];
 };
 
 /**
  * Default grid: brackets each `DEFAULT_JEV_THRESHOLDS` value with steps of
- * 0.1, 180 combinations in all.
+ * 0.1, 45 combinations in all.
  */
 export const DEFAULT_SWEEP_GRID: Readonly<SweepGrid> = {
   full: [0.2, 0.3, 0.4, 0.5, 0.6],
-  none: [0.6, 0.7, 0.8, 0.9],
   low: [0.1, 0.2, 0.3],
   keep: [0.3, 0.5, 0.7],
 };
@@ -99,11 +97,9 @@ export function sweepThresholds(
 ): SweepRow[] {
   const rows: SweepRow[] = [];
   for (const full of grid.full) {
-    for (const none of grid.none) {
-      for (const low of grid.low) {
-        for (const keep of grid.keep) {
-          rows.push(scoreRow(chunks, { full, none, low, keep }));
-        }
+    for (const low of grid.low) {
+      for (const keep of grid.keep) {
+        rows.push(scoreRow(chunks, { full, low, keep }));
       }
     }
   }
@@ -112,7 +108,7 @@ export function sweepThresholds(
 
 /**
  * The row with the lowest cost; among equal costs, the one closest to
- * `DEFAULT_JEV_THRESHOLDS` (Euclidean over the four values), then the
+ * `DEFAULT_JEV_THRESHOLDS` (Euclidean over the three values), then the
  * earliest in grid order. Undefined for no rows.
  */
 export function recommendRow(rows: readonly SweepRow[]): SweepRow | undefined {
@@ -133,7 +129,6 @@ export function recommendRow(rows: readonly SweepRow[]): SweepRow | undefined {
 function distanceToDefault(thresholds: JevThresholds): number {
   return Math.hypot(
     thresholds.full - DEFAULT_JEV_THRESHOLDS.full,
-    thresholds.none - DEFAULT_JEV_THRESHOLDS.none,
     thresholds.low - DEFAULT_JEV_THRESHOLDS.low,
     thresholds.keep - DEFAULT_JEV_THRESHOLDS.keep,
   );

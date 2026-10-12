@@ -67,6 +67,7 @@ function recordFetch() {
 // Entry scoring is what makes this two-turn fixture call jev. Rebuild
 // scoring waits for an epoch a short run never opens. Shadow scoring
 // runs on any new tool chunk and must not use --scorer-apply entry.
+// The fixture greps because jev sends no request for a read.
 async function runScored(opts: {
   args: string[];
   env: NodeJS.ProcessEnv;
@@ -75,7 +76,11 @@ async function runScored(opts: {
   dir = mkdtempSync(path.join(tmpdir(), "sage-jev-endpoint-"));
   writeFileSync(path.join(dir, "page.txt"), opts.body);
   const { adapter } = createFaux([
-    toolScript("read1", "read", JSON.stringify({ path: "page.txt" })),
+    toolScript(
+      "grep1",
+      "grep",
+      JSON.stringify({ pattern: "line", path: "page.txt" }),
+    ),
     stopScript("done"),
   ]);
   const io = capture();
@@ -96,7 +101,7 @@ describe("jev endpoint", () => {
     const result = await runScored({
       args: [
         "--print",
-        "read page",
+        "grep page",
         "--scorer",
         "jev",
         "--scorer-apply",
@@ -108,7 +113,7 @@ describe("jev endpoint", () => {
         JEV_API_KEY: "x",
         JEV_MODEL: "served-model",
       },
-      body: "A".repeat(2000),
+      body: "a line\n".repeat(200),
     });
     expect(result.code).toBe(0);
     expect(result.seen).toEqual([
@@ -122,14 +127,14 @@ describe("jev endpoint", () => {
 
   it("posts --shadow-scorer jev to JEV_BASE_URL with JEV_API_KEY and JEV_MODEL", async () => {
     const result = await runScored({
-      args: ["--print", "read page", "--shadow-scorer", "jev"],
+      args: ["--print", "grep page", "--shadow-scorer", "jev"],
       env: {
         ANTHROPIC_API_KEY: "test-key",
         JEV_BASE_URL: "http://127.0.0.1:30000",
         JEV_API_KEY: "x",
         JEV_MODEL: "served-model",
       },
-      body: "hi\n",
+      body: "one line\n",
     });
     expect(result.code).toBe(0);
     expect(result.seen).toEqual([
@@ -145,7 +150,7 @@ describe("jev endpoint", () => {
     const result = await runScored({
       args: [
         "--print",
-        "read page",
+        "grep page",
         "--scorer",
         "jev",
         "--scorer-apply",
@@ -155,7 +160,7 @@ describe("jev endpoint", () => {
         ANTHROPIC_API_KEY: "test-key",
         TYPESAFE_API_KEY: "typesafe-secret",
       },
-      body: "A".repeat(2000),
+      body: "a line\n".repeat(200),
     });
     expect(result.code).toBe(0);
     expect(result.seen).toEqual([

@@ -7,7 +7,7 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
        sage stats [--turns] <session.jsonl>
        sage bench run --tasks <file> --policy passthrough|compiler --model <id> [--provider <preset>] [--base-url <url>] [--api-key-env <NAME>] [--budget <tokens>] [--max-turns <n>] [--tool-network none|full] [--tool-sandbox none|full] [--scorer rule|model|jev] [--shadow-scorer rule|model|jev] [--scorer-apply entry|rebuild] --out <dir>
        sage bench report [--exclude-faults] <runA> <runB>
-       sage calibrate-jev --out <dir> [--max-usd <usd>] [--dry-run] [--t-full <p,p,…>] [--t-none <p,p,…>] [--t-low <p,p,…>] [--t-keep <p,p,…>] <session.jsonl…>
+       sage calibrate-jev --out <dir> [--max-usd <usd>] [--dry-run] [--t-full <p,p,…>] [--t-low <p,p,…>] [--t-keep <p,p,…>] <session.jsonl…>
 ```
 
 ## 参数
@@ -109,7 +109,7 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 `sage calibrate-jev <session.jsonl…> --out <dir>` 用录好的会话离线校准 jev 打分器的阈值。只调 Jev，不调主模型，也不改会话文件。
 
-**请求。**每条会话按轮回放：每个工具块在第一次进入视图的那一轮，若不是 `expand` 结果、估算不少于 300 token（入口打分的 `minScoreTokens` 默认值），就按入口模式的方式构造一个 Jev 请求：块本身、原文、发出这次调用的 assistant 文字、该轮最新的用户问题，以及从 Log 重建的该轮请求里的进度账本。请求体与线上入口打分发出的逐字节相同。与线上不同的是不要求该块此时仍是 full：被预算裁掉的块也会问。工具已标 `isError` 的块线上不发问、直接判 full，这里同样不发，计入 `skipped.isError`；没有原文或塞不进 Jev 长度上限的块计入 `skipped.unsendable`。passthrough 会话没有申领单，请求里的 `ledger` 恒为空串，Jev 看到的输入分布与 compiler 会话不同。地址、密钥和 `model` 的读取与 `--scorer jev` 相同（`JEV_BASE_URL`、`JEV_API_KEY` / `TYPESAFE_API_KEY`、`JEV_MODEL`）。
+**请求。**每条会话按轮回放：每个工具块在第一次进入视图的那一轮，若不是 `expand` 结果、估算不少于 300 token（入口打分的 `minScoreTokens` 默认值），就按入口模式的方式构造一个 Jev 请求：块本身、原文、发出这次调用的 assistant 文字、该轮最新的用户问题，以及从 Log 重建的该轮请求里的进度账本。问题集与线上打分器同样按块类型选：grep 与运行类、混合类 bash 问分诊问题集，请求体与线上入口打分发出的逐字节相同；read 问试验性的 `shows_target_code` 探针，线上不发；其余块（含读取类 bash）计入 `skipped.unasked`。bash 的分类与线上同用 `classifyBashCommand`。与线上不同的还有不要求该块此时仍是 full：被预算裁掉的块也会问。工具已标 `isError` 的块线上不发问、直接判 full，这里同样不发，计入 `skipped.isError`；没有原文或塞不进 Jev 长度上限的块计入 `skipped.unsendable`。passthrough 会话没有申领单，请求里的 `ledger` 恒为空串，Jev 看到的输入分布与 compiler 会话不同。地址、密钥和 `model` 的读取与 `--scorer jev` 相同（`JEV_BASE_URL`、`JEV_API_KEY` / `TYPESAFE_API_KEY`、`JEV_MODEL`）。
 
 **发送。**与打分器共用同一个发送池：同时最多 4 个请求在途，429 与 529 按 `retry-after` 退避，单次超时 30 秒。单个请求失败（其他非 2xx、超时、响应里没有 `answers`）只计入 `failed`，其余请求照发；某个请求的 429 / 529 重试用尽时熔断，尚未发出的请求不再发，计入 `unsent`，`stopped` 为 `{ kind: "rate-limited", fallback }`。有失败或熔断时，结果照常写出，退出 1。
 
@@ -119,11 +119,11 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 **标签。**块之后被 `expand` 取回，或者它是 `read` 的结果、同一 `path` 在更后的轮次又被 `read` 或被 `edit`，就记为「需要」，口径与 `sage stats` 的 `laterNeeded` 是同一份代码。轮次按清单的 `turn` 算，compiler 与 passthrough 会话都会写清单。passthrough 从不省略，模型没有理由 `expand`，只能靠重读和编辑打上「需要」，所以它的需要率是下界。
 
-**扫描。**对 `--t-full`、`--t-none`、`--t-low`、`--t-keep`（逗号分隔、取值 [0, 1]）的每种组合，用打分器自己的定档函数把缓存的回答重新定档。默认网格是 full `0.2,0.3,0.4,0.5,0.6`、none `0.6,0.7,0.8,0.9`、low `0.1,0.2,0.3`、keep `0.3,0.5,0.7`，共 180 组。summary 和 none 都算「省略」：两者都把原文移出视图。每组输出：
+**扫描。**对 `--t-full`、`--t-low`、`--t-keep`（逗号分隔、取值 [0, 1]）的每种组合，用打分器自己的定档函数把缓存的分诊回答重新定档；read 探针不定档，不进扫描。默认网格是 full `0.2,0.3,0.4,0.5,0.6`、low `0.1,0.2,0.3`、keep `0.3,0.5,0.7`，共 45 组。summary 和 none 都算「省略」：两者都把原文移出视图。每组输出：
 
 | 字段 | 口径 |
 |---|---|
-| `thresholds` | 这一组的 `{ full, none, low, keep }` |
+| `thresholds` | 这一组的 `{ full, low, keep }` |
 | `tiers` | `{ full, summary, none }` 各档块数 |
 | `omitted` / `needed` / `omittedNeeded` | 省略的块数、后来需要的块数、两者都是的块数 |
 | `missRate` | 漏判率 `omittedNeeded ÷ needed`；没有块需要时为 null |
@@ -133,9 +133,9 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 `cost` 没有计入三项：expand 多出的那一轮模型调用；取回的文本在之后各轮的缓存读；取回时实际的写价差异（取回按写价计，实际可能部分命中缓存）。summary 笔记本身占的 token 也不计。
 
-结果写入 `<out>/sweep.json`：`{ grid, chunks, rows, recommended }`，`chunks` 每项是 `{ session, chunkId, tokens, remainingTurns, needed }`，`session` 是会话文件名（块 id 跨会话不唯一）。推荐取 `cost` 最低的一组；相同时取离 `DEFAULT_JEV_THRESHOLDS` 最近（四个值的欧氏距离）的一组，再相同取网格里靠前的。stdout 打一行汇总 JSON：`sessions`、`chunks`、`cached`、`sent`（本次发出的请求，含失败的）、`failed`、`unsent`、`skipped { isError, unsendable, unanswered }`、`unpriced`（没有定价、按默认费率计的块数）、`estimate`、`spent`（本次）、`totalSpentUsd`（累计）、`stopped`（null、`{ kind: "budget" }` 或 `{ kind: "rate-limited", fallback }`）、`recommended`。`unanswered` 是没有回答或回答里缺固定判断、无法定档的块。
+结果写入 `<out>/sweep.json`：`{ grid, chunks, rows, recommended }`，`chunks` 列出每个拿到回答的块，含 read 探针，每项是 `{ session, chunkId, tool, bashKind, tokens, remainingTurns, needed, questions, answers }`，`bashKind` 是 bash 块的 `classifyBashCommand` 结果（`reader` / `runner` / `mixed`），其他块为 null，`session` 是会话文件名（块 id 跨会话不唯一），`questions` 是问题集（`triage` 或 `read-probe`），`answers` 是各问题的原始概率：分诊块是 `{ reports_failure, locates_next_step, keep }`（`keep` 按候选行顺序排的数组），read 探针是 `{ shows_target_code }`。推荐取 `cost` 最低的一组；相同时取离 `DEFAULT_JEV_THRESHOLDS` 最近（三个值的欧氏距离）的一组，再相同取网格里靠前的。stdout 打一行汇总 JSON：`sessions`、`chunks`、`cached`、`sent`（本次发出的请求，含失败的）、`failed`、`unsent`、`skipped { isError, unasked, unsendable, unanswered }`、`unpriced`（进扫描的块里没有定价、按默认费率计的块数）、`estimate`、`spent`（本次）、`totalSpentUsd`（累计）、`stopped`（null、`{ kind: "budget" }` 或 `{ kind: "rate-limited", fallback }`）、`recommended`。`unanswered` 是没有回答或回答里缺该问题集固定判断的块。
 
-`sweep.json`、`spend.json` 和 stdout 只有会话文件名、块 id、计数和价格，不含会话文本；缓存文件只存 Jev 的 `answers` 和用量。参数错误打印 usage 并退出 1；`--max-usd` 或阈值写错退出 2；会话文件不存在、需要发请求却没有密钥时 stderr 一行说明并退出 1。
+`sweep.json`、`spend.json` 和 stdout 只有会话文件名、块 id、工具名、计数、概率和价格，不含会话文本；缓存文件只存 Jev 的 `answers` 和用量。参数错误打印 usage 并退出 1；`--max-usd` 或阈值写错退出 2；会话文件不存在、需要发请求却没有密钥时 stderr 一行说明并退出 1。
 
 ## `sage bench`
 

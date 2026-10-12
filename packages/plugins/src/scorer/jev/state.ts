@@ -18,7 +18,11 @@ import type { Chunk } from "../../compiler/chunks.js";
 import { clipEnd, clipStart } from "../../compiler/clip.js";
 import { summarizeInput } from "../../compiler/stub.js";
 import { candidateLines } from "./candidates.js";
-import { type NoulQuestion, questionsFor } from "./questions.js";
+import {
+  type NoulQuestion,
+  type QuestionSet,
+  questionsFor,
+} from "./questions.js";
 
 /** Jev's limit on the state plus the single longest question, in tokens. */
 const PAIR_TOKEN_LIMIT = 32_000;
@@ -66,8 +70,13 @@ export type JevState = {
   chunk: ChunkState;
 };
 
-/** One request's state and questions, and the candidates `keep_<i>` indexes. */
+/**
+ * One request's question set, state, and questions, and the candidates
+ * `keep_<i>` indexes. A read probe asks no `keep_<i>`, but its state
+ * still carries the candidates.
+ */
 export type ChunkRequest = {
+  set: QuestionSet;
   state: JevState;
   questions: Record<string, NoulQuestion>;
   candidates: string[];
@@ -81,8 +90,8 @@ export type ChunkContext = {
 };
 
 /**
- * Builds the request for `chunk` whose original output is `text`, or
- * undefined when no cut fits the limits. Head and tail halve together
+ * Builds the `set` request for `chunk` whose original output is `text`,
+ * or undefined when no cut fits the limits. Head and tail halve together
  * until both are empty; only then do the candidates halve, and head and
  * tail start over at full size. When every output line is a candidate
  * (`coversOutput`), head and tail are empty and `omitted_lines` is 0.
@@ -91,6 +100,7 @@ export function chunkRequest(
   chunk: Chunk,
   text: string,
   context: ChunkContext,
+  set: QuestionSet,
 ): ChunkRequest | undefined {
   const lines = text.length === 0 ? [] : text.split(/\r?\n/);
   const tool = chunk.toolName ?? "";
@@ -101,7 +111,7 @@ export function chunkRequest(
   };
   const all = candidateLines(tool, chunk.input, lines);
   for (const candidates of halvings(all.lines)) {
-    const questions = questionsFor(candidates);
+    const questions = questionsFor(set, candidates);
     const covered = all.coversOutput && candidates.length === all.lines.length;
     const sizes: Iterable<[number, number]> = covered
       ? [[0, 0]]
@@ -121,7 +131,7 @@ export function chunkRequest(
         },
       };
       if (fitsLimits(state, questions)) {
-        return { state, questions, candidates };
+        return { set, state, questions, candidates };
       }
     }
   }
