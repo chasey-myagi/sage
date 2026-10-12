@@ -166,6 +166,32 @@ function excerpt(
   };
 }
 
+/**
+ * The JSON body POSTed to System One for `request` under `model`. The jev
+ * scorer and offline calibration both send exactly this string, so a hash
+ * of it identifies one question set about one chunk.
+ */
+export function requestBody(request: ChunkRequest, model: string): string {
+  return JSON.stringify({
+    state: request.state,
+    model,
+    questions: request.questions,
+  });
+}
+
+/**
+ * The estimated input tokens of `request`: its state plus every question,
+ * at `BYTES_PER_TOKEN`. An upper bound on what Jev bills, by the same
+ * estimate that sizes the request.
+ */
+export function estimateRequestTokens(request: ChunkRequest): number {
+  let total = estimateTokens(request.state);
+  for (const question of Object.values(request.questions)) {
+    total += estimateTokens(question);
+  }
+  return total;
+}
+
 function fitsLimits(
   state: JevState,
   questions: Record<string, NoulQuestion>,

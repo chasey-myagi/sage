@@ -1,7 +1,7 @@
 /**
  * The one option table shared by `sage -p`, `sage stats`, `sage bench
- * run`, and `sage bench report`, the argv tokenizer built on `node:util`
- * parseArgs, and the value checks the commands apply.
+ * run`, `sage bench report`, and `sage calibrate-jev`, the argv tokenizer
+ * built on `node:util` parseArgs, and the value checks the commands apply.
  *
  * Contract: each command names the options it accepts; anything else is a
  * usage error. Tokens come back in argv order so each command can report the
@@ -74,6 +74,12 @@ const OPTIONS = {
   out: { type: "string", hint: "--out <dir>" },
   turns: { type: "boolean", hint: "--turns" },
   "exclude-faults": { type: "boolean", hint: "--exclude-faults" },
+  "max-usd": { type: "string", hint: "--max-usd <usd>" },
+  "dry-run": { type: "boolean", hint: "--dry-run" },
+  "t-full": { type: "string", hint: "--t-full <p,p,…>" },
+  "t-none": { type: "string", hint: "--t-none <p,p,…>" },
+  "t-low": { type: "string", hint: "--t-low <p,p,…>" },
+  "t-keep": { type: "string", hint: "--t-keep <p,p,…>" },
 } as const satisfies Record<string, OptionSpec>;
 
 /** A key of {@link OPTIONS}: a flag name without the leading dashes. */
@@ -211,6 +217,36 @@ export function checkPositiveInt(
   const value = positiveInt(raw);
   if (value !== undefined) return { ok: true, value };
   return invalidValue(flag, raw, "a positive integer");
+}
+
+/** Checks a `--max-usd` value: a finite decimal ≥ 0; anything else exits 2. */
+export function checkUsd(flag: "max-usd", raw: string): Checked<number> {
+  if (/^[0-9]+(?:\.[0-9]+)?$/.test(raw)) {
+    const value = Number(raw);
+    if (Number.isFinite(value)) return { ok: true, value };
+  }
+  return invalidValue(flag, raw, "a number of US dollars, 0 or more");
+}
+
+/**
+ * Checks a comma-separated list of probabilities in [0, 1], such as
+ * `--t-full 0.3,0.4`; an empty item or a value outside the range exits 2.
+ * Returns the values sorted ascending without duplicates.
+ */
+export function checkProbabilities(
+  flag: "t-full" | "t-none" | "t-low" | "t-keep",
+  raw: string,
+): Checked<number[]> {
+  const values: number[] = [];
+  for (const part of raw.split(",")) {
+    const text = part.trim();
+    const value = Number(text);
+    if (!/^[0-9.]+$/.test(text) || !Number.isFinite(value) || value > 1) {
+      return invalidValue(flag, raw, "comma-separated numbers in [0, 1]");
+    }
+    if (!values.includes(value)) values.push(value);
+  }
+  return { ok: true, value: values.sort((a, b) => a - b) };
 }
 
 /**

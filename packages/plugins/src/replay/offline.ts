@@ -116,7 +116,7 @@ const SCORER_NOTE = "scorer:offline-rule";
 const scorerSwappedRuns = new WeakSet<readonly TurnDiff[]>();
 
 /** One recorded turn: a request_header followed by its assistant reply. */
-type TurnSlice = {
+export type TurnSlice = {
   /** The turn's recorded manifest `turn`, else its 1-based slice position. */
   turn: number;
   /**

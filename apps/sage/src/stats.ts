@@ -112,35 +112,45 @@ function parseStatsArgs(
 }
 
 /**
- * Audits shadow `none` decisions against what happened later. A chunk
- * counts as later needed when its id appears as an `expand` input `id`
- * after the decision, or it is a `read` result whose `path` is read again
- * on a strictly later turn. A re-read on the deciding turn does not count.
+ * Whether chunk `chunkId`, decided at path index `at` on turn `turn`, was
+ * needed afterwards: its id appears as an `expand` input `id` at a later
+ * index, or it is a `read` result whose `path` is read again or edited
+ * (`edit` with the same `path`) on a strictly later turn. A re-read or
+ * edit on the deciding turn does not count. Turns are manifest turns,
+ * which compiler and passthrough sessions both log.
  */
+export type NeededLater = (
+  chunkId: string,
+  at: number,
+  turn: number,
+) => boolean;
+
+/** The {@link NeededLater} label over the tool calls logged on `entries`. */
+export function neededLaterIn(entries: readonly StoredEntry[]): NeededLater {
+  const calls = loggedToolCalls(entries);
+  return (chunkId, at, turn) =>
+    expandedLater(chunkId, at, calls) ||
+    touchedLater(chunkId, turn, calls, TOOL_NAMES.read) ||
+    touchedLater(chunkId, turn, calls, TOOL_NAMES.edit);
+}
+
+/** Audits shadow `none` decisions against {@link NeededLater}. */
 function shadowAudit(entries: readonly StoredEntry[]): ShadowAudit {
   const judgedTurn = new Map<string, number>();
   const judgedAt = new Map<string, number>();
-  const calls: ToolCall[] = [];
   let currentTurn = 0;
   entries.forEach((entry, index) => {
-    if (entry.kind === "manifest" && isRecord(entry.payload)) {
-      if (isFiniteNumber(entry.payload.turn)) currentTurn = entry.payload.turn;
-      rememberShadow(entry.payload.shadow, index, currentTurn, {
-        judgedTurn,
-        judgedAt,
-      });
-      return;
-    }
-    if (entry.kind === "message") {
-      calls.push(...toolCalls(entry.payload, index, currentTurn));
-    }
+    if (entry.kind !== "manifest" || !isRecord(entry.payload)) return;
+    if (isFiniteNumber(entry.payload.turn)) currentTurn = entry.payload.turn;
+    rememberShadow(entry.payload.shadow, index, currentTurn, {
+      judgedTurn,
+      judgedAt,
+    });
   });
+  const isNeeded = neededLaterIn(entries);
   let laterNeeded = 0;
   for (const [id, turn] of judgedTurn) {
-    const at = judgedAt.get(id) ?? -1;
-    if (expandedLater(id, at, calls) || rereadLater(id, turn, calls)) {
-      laterNeeded += 1;
-    }
+    if (isNeeded(id, judgedAt.get(id) ?? -1, turn)) laterNeeded += 1;
   }
   const shadowNone = judgedTurn.size;
   return {
@@ -148,6 +158,22 @@ function shadowAudit(entries: readonly StoredEntry[]): ShadowAudit {
     laterNeeded,
     precision: shadowNone === 0 ? null : 1 - laterNeeded / shadowNone,
   };
+}
+
+/** Every assistant tool_use on `entries`, with the manifest turn before it. */
+function loggedToolCalls(entries: readonly StoredEntry[]): ToolCall[] {
+  const calls: ToolCall[] = [];
+  let currentTurn = 0;
+  entries.forEach((entry, index) => {
+    if (entry.kind === "manifest" && isRecord(entry.payload)) {
+      if (isFiniteNumber(entry.payload.turn)) currentTurn = entry.payload.turn;
+      return;
+    }
+    if (entry.kind === "message") {
+      calls.push(...toolCalls(entry.payload, index, currentTurn));
+    }
+  });
+  return calls;
 }
 
 /** Records the first `none` decision per chunk id. */
@@ -199,10 +225,16 @@ function expandedLater(
   );
 }
 
-function rereadLater(
+/**
+ * True when chunk `chunkId` is a `read` result and a different `tool`
+ * call (`read` for a re-read, `edit` for an edit) names the same `path` on
+ * a turn after `judgedTurn`.
+ */
+function touchedLater(
   chunkId: string,
   judgedTurn: number,
   calls: readonly ToolCall[],
+  tool: string,
 ): boolean {
   const toolUseId = toolUseIdOfChunk(chunkId);
   if (!toolUseId) return false;
@@ -212,7 +244,7 @@ function rereadLater(
   if (!file) return false;
   return calls.some(
     (call) =>
-      call.name === TOOL_NAMES.read &&
+      call.name === tool &&
       call.turn > judgedTurn &&
       call.toolUseId !== toolUseId &&
       nonEmptyString(call.input, "path") === file,

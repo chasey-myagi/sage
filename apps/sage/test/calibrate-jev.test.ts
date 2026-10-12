@@ -1,0 +1,669 @@
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { isRecord } from "@sage/core";
+import {
+  createFaux,
+  type JsonFetchReply,
+  type JsonFetchRequest,
+  jsonFetch,
+  stopScript,
+  toolScript,
+} from "@sage/core/testing";
+import type { ProviderAdapter } from "@sage/provider";
+import type { StreamChunk } from "@sage/provider/contract";
+import { afterEach, describe, expect, it } from "vitest";
+import { runCli } from "../src/main.ts";
+
+let dir = "";
+
+afterEach(() => {
+  if (dir) rmSync(dir, { recursive: true, force: true });
+  dir = "";
+});
+
+/** Input price per million tokens on the recorded request_header. */
+const INPUT_PER_MTOK = 1;
+/** Cache-read price per million tokens on the recorded request_header. */
+const CACHE_READ_PER_MTOK = 0.3;
+/**
+ * Cache-write price per million tokens; equal to the input price, so the
+ * write rate an expand pays is 1.
+ */
+const CACHE_WRITE_PER_MTOK = 1;
+/** The Jev input price the budget gate converts with, per million tokens. */
+const JEV_USD_PER_MTOK = 0.042;
+
+/** Files the recorded session reads, in call order; `a.ts` is read twice. */
+const READS = ["a.ts", "b.txt", "c.txt", "d.txt", "e.txt", "a.ts"];
+
+function sourceFile(): string {
+  const lines: string[] = [];
+  for (let index = 0; index < 40; index += 1) {
+    lines.push(`export function helper${index}(value: number) {`);
+    lines.push(`  return value + ${index};`);
+    lines.push("}");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function proseFile(name: string): string {
+  return `${Array.from({ length: 60 }, (_, index) => `${name} line ${index} of plain notes`).join("\n")}\n`;
+}
+
+/** One model call that says `prose`, then calls `read` on `file`. */
+function readWithProse(id: string, file: string, prose: string): StreamChunk[] {
+  return [
+    { type: "block_start", index: 0, blockType: "text" },
+    { type: "text_delta", index: 0, text: prose },
+    { type: "block_end", index: 0 },
+    { type: "block_start", index: 1, blockType: "tool_use", id, name: "read" },
+    {
+      type: "tool_input_delta",
+      index: 1,
+      partialJson: JSON.stringify({ path: file }),
+    },
+    { type: "block_end", index: 1 },
+    {
+      type: "usage",
+      usage: {
+        inputOther: 1,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+        output: 1,
+      },
+    },
+    { type: "finish", kind: "tool_use" },
+  ];
+}
+
+type Answers = {
+  failure: number;
+  edit: number;
+  lookup: number;
+  broad: number;
+  keep: number;
+};
+
+/** A Jev reply that answers every question in the request body. */
+function reply(
+  request: JsonFetchRequest,
+  answers: Answers,
+  inputTokens = 100,
+): JsonFetchReply {
+  const body = request.body;
+  const questions =
+    isRecord(body) && isRecord(body.questions)
+      ? Object.keys(body.questions)
+      : [];
+  const fixed: Record<string, number> = {
+    reports_failure: answers.failure,
+    is_edit_target: answers.edit,
+    answers_lookup: answers.lookup,
+    is_broad_listing: answers.broad,
+  };
+  const out: Record<string, { noul: number }> = {};
+  for (const key of questions) {
+    out[key] = { noul: fixed[key] ?? answers.keep };
+  }
+  return {
+    json: {
+      answers: out,
+      usage: { input_tokens: inputTokens, output_tokens: 1 },
+    },
+  };
+}
+
+const KEEP_ALL: Answers = {
+  failure: 0.9,
+  edit: 0.1,
+  lookup: 0.1,
+  broad: 0.1,
+  keep: 0.1,
+};
+const DROP_ALL: Answers = {
+  failure: 0.05,
+  edit: 0.05,
+  lookup: 0.05,
+  broad: 0.95,
+  keep: 0.1,
+};
+
+/**
+ * Runs a real `sage -p` session, by default with entry-mode jev scoring,
+ * so the Log and the online request bodies both come from the production
+ * path. Reuses the current temp directory, so two calls leave two
+ * sessions side by side. `passthrough` records a passthrough session
+ * without jev; `editAfter` adds an `edit` of `b.txt` after the reads.
+ */
+async function recordSession(
+  opts: { passthrough?: boolean; editAfter?: boolean } = {},
+): Promise<{
+  file: string;
+  online: JsonFetchRequest[];
+}> {
+  if (!dir) {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-calibrate-jev-"));
+    writeFileSync(path.join(dir, "a.ts"), sourceFile());
+    for (const name of ["b.txt", "c.txt", "d.txt", "e.txt"]) {
+      writeFileSync(path.join(dir, name), proseFile(name));
+    }
+  }
+  const scripts = READS.map((file, index) =>
+    readWithProse(
+      `read${index}`,
+      file,
+      `Next I read ${file} to find helper${index}.`,
+    ),
+  );
+  // Ledger updates before the first read and midway, so requests carry
+  // both a first ledger and a changed one.
+  const ledger = (id: string, goal: string) =>
+    toolScript(
+      id,
+      "update_ledger",
+      JSON.stringify({ goal, plan: ["read files"] }),
+    );
+  const edit = toolScript(
+    "edit0",
+    "edit",
+    JSON.stringify({
+      path: "b.txt",
+      old_string: "b.txt line 0 of plain notes",
+      new_string: "b.txt line 0 rewritten",
+    }),
+  );
+  const faux = createFaux([
+    ledger("ledger0", "find the helpers"),
+    ...scripts.slice(0, 3),
+    ledger("ledger1", "compare the notes"),
+    ...scripts.slice(3),
+    ...(opts.editAfter ? [edit] : []),
+    stopScript("done"),
+  ]);
+  const adapter: ProviderAdapter = {
+    ...faux.adapter,
+    prepare: () => ({
+      ...faux.prepared,
+      contextWindow: 200_000,
+      pricing: {
+        inputPerMTok: INPUT_PER_MTOK,
+        outputPerMTok: 15,
+        cacheReadPerMTok: CACHE_READ_PER_MTOK,
+        cacheWritePerMTok: CACHE_WRITE_PER_MTOK,
+        source: "test",
+      },
+    }),
+  };
+  const online = jsonFetch((request) => reply(request, KEEP_ALL));
+  const sessions = path.join(dir, ".sage", "sessions");
+  const before = new Set(existsSync(sessions) ? readdirSync(sessions) : []);
+  const mode = opts.passthrough
+    ? ["--passthrough"]
+    : ["--scorer", "jev", "--scorer-apply", "entry"];
+  const code = await runCli(["--print", "find the helpers", ...mode], {
+    cwd: dir,
+    env: { ANTHROPIC_API_KEY: "test-key", JEV_API_KEY: "x" },
+    stdout: { write() {} },
+    stderr: { write() {} },
+    adapters: { anthropic: adapter },
+    jevFetch: online.fetchImpl,
+  });
+  expect(code).toBe(0);
+  const [name] = readdirSync(sessions).filter(
+    (entry) => entry.endsWith(".jsonl") && !before.has(entry),
+  );
+  if (!name) throw new Error("no session written");
+  return { file: path.join(sessions, name), online: online.requests() };
+}
+
+async function calibrate(
+  args: string[],
+  respond: (request: JsonFetchRequest) => JsonFetchReply,
+  env: NodeJS.ProcessEnv = { JEV_API_KEY: "x" },
+): Promise<{
+  code: number;
+  stdout: string;
+  stderr: string;
+  requests: JsonFetchRequest[];
+}> {
+  const fake = jsonFetch((request) => respond(request));
+  let stdout = "";
+  let stderr = "";
+  const code = await runCli(["calibrate-jev", ...args], {
+    cwd: dir,
+    env,
+    stdout: {
+      write(chunk: string) {
+        stdout += chunk;
+      },
+    },
+    stderr: {
+      write(chunk: string) {
+        stderr += chunk;
+      },
+    },
+    jevFetch: fake.fetchImpl,
+  });
+  return { code, stdout, stderr, requests: fake.requests() };
+}
+
+function readJson(file: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+  if (!isRecord(parsed)) throw new Error(`${file} is not an object`);
+  return parsed;
+}
+
+function bodiesByChunk(
+  requests: readonly JsonFetchRequest[],
+): Map<string, unknown> {
+  const out = new Map<string, unknown>();
+  for (const request of requests) {
+    const body = request.body;
+    if (
+      !isRecord(body) ||
+      !isRecord(body.state) ||
+      !isRecord(body.state.chunk)
+    ) {
+      throw new Error("request without state.chunk");
+    }
+    out.set(String(body.state.chunk.id), body);
+  }
+  return out;
+}
+
+function chunkRows(sweep: Record<string, unknown>): Record<string, unknown>[] {
+  const chunks = sweep.chunks;
+  if (!Array.isArray(chunks)) throw new Error("sweep.json has no chunks");
+  return chunks.filter(isRecord);
+}
+
+function rowsOf(sweep: Record<string, unknown>): Record<string, unknown>[] {
+  const rows = sweep.rows;
+  if (!Array.isArray(rows)) throw new Error("sweep.json has no rows");
+  return rows.filter(isRecord);
+}
+
+describe("sage calibrate-jev", () => {
+  it("sends Jev the same request bodies the online entry scorer sent", async () => {
+    const session = await recordSession();
+    const out = path.join(dir, "calibration");
+    const run = await calibrate([session.file, "--out", out], (request) =>
+      reply(request, KEEP_ALL),
+    );
+    expect(run.stderr).not.toContain("Error");
+    expect(run.code).toBe(0);
+    const online = bodiesByChunk(session.online);
+    expect(online.size).toBe(READS.length);
+    expect(bodiesByChunk(run.requests)).toEqual(online);
+    for (const request of run.requests) {
+      expect(request.url).toBe("https://api.typesafe.ai/v1/systemone");
+      expect(request.headers.Authorization).toBe("Bearer x");
+    }
+  });
+
+  it("labels a chunk needed when its file is read again on a later turn", async () => {
+    const session = await recordSession();
+    const out = path.join(dir, "calibration");
+    const run = await calibrate([session.file, "--out", out], (request) =>
+      reply(request, KEEP_ALL),
+    );
+    expect(run.code).toBe(0);
+    const needed = chunkRows(readJson(path.join(out, "sweep.json"))).map(
+      (row) => [String(row.chunkId).split("#")[1], row.needed],
+    );
+    expect(needed).toEqual([
+      ["read0", true],
+      ["read1", false],
+      ["read2", false],
+      ["read3", false],
+      ["read4", false],
+      ["read5", false],
+    ]);
+  });
+
+  it("answers a rerun from the cache without sending or billing", async () => {
+    const session = await recordSession();
+    const out = path.join(dir, "calibration");
+    const first = await calibrate([session.file, "--out", out], (request) =>
+      reply(request, KEEP_ALL),
+    );
+    expect(first.code).toBe(0);
+    expect(readdirSync(path.join(out, "cache"))).toHaveLength(READS.length);
+    const spent = readJson(path.join(out, "spend.json"));
+    expect(spent.inputTokens).toBe(100 * READS.length);
+
+    const second = await calibrate([session.file, "--out", out], () => {
+      throw new Error("a cached request was sent");
+    });
+    expect(second.code).toBe(0);
+    expect(second.requests).toEqual([]);
+    expect(readJson(path.join(out, "spend.json"))).toEqual(spent);
+    const summary: unknown = JSON.parse(second.stdout);
+    expect(summary).toMatchObject({
+      chunks: READS.length,
+      cached: READS.length,
+      sent: 0,
+    });
+  });
+
+  it("prints the estimate on --dry-run without sending, writing spend, or needing a key", async () => {
+    const session = await recordSession();
+    const out = path.join(dir, "calibration");
+    const run = await calibrate(
+      [session.file, "--out", out, "--dry-run"],
+      () => {
+        throw new Error("dry run sent a request");
+      },
+      {},
+    );
+    expect(run.code).toBe(0);
+    expect(run.requests).toEqual([]);
+    expect(existsSync(path.join(out, "spend.json"))).toBe(false);
+    const summary: unknown = JSON.parse(run.stdout);
+    if (!isRecord(summary) || !isRecord(summary.estimate)) {
+      throw new Error("dry run printed no estimate");
+    }
+    expect(summary.dryRun).toBe(true);
+    expect(summary.pending).toBe(READS.length);
+    const tokens = Number(summary.estimate.inputTokens);
+    expect(tokens).toBeGreaterThan(0);
+    expect(summary.estimate.usd).toBeCloseTo(
+      (tokens * JEV_USD_PER_MTOK) / 1e6,
+      12,
+    );
+  });
+
+  it("refuses with exit 2 when the estimate exceeds --max-usd", async () => {
+    const session = await recordSession();
+    const out = path.join(dir, "calibration");
+    const run = await calibrate(
+      [session.file, "--out", out, "--max-usd", "0"],
+      () => {
+        throw new Error("an over-budget run sent a request");
+      },
+    );
+    expect(run.code).toBe(2);
+    expect(run.requests).toEqual([]);
+    expect(run.stderr).toContain("--max-usd");
+    expect(existsSync(path.join(out, "spend.json"))).toBe(false);
+  });
+
+  it("counts spend already in spend.json against --max-usd", async () => {
+    const session = await recordSession();
+    const out = path.join(dir, "calibration");
+    mkdirSync(out, { recursive: true });
+    // 30M tokens is 1.26 USD, past the default 1 USD cap before any request.
+    const prior = {
+      requests: 1,
+      inputTokens: 30_000_000,
+      outputTokens: 0,
+      usd: 1.26,
+    };
+    writeFileSync(path.join(out, "spend.json"), JSON.stringify(prior));
+    const run = await calibrate([session.file, "--out", out], () => {
+      throw new Error("a run over its cumulative cap sent a request");
+    });
+    expect(run.code).toBe(2);
+    expect(run.requests).toEqual([]);
+    expect(run.stderr).toContain("$1.2600");
+  });
+
+  it("exits 1 and names both key variables when uncached requests need a key", async () => {
+    const session = await recordSession();
+    const out = path.join(dir, "calibration");
+    const run = await calibrate(
+      [session.file, "--out", out],
+      () => {
+        throw new Error("a keyless run sent a request");
+      },
+      {},
+    );
+    expect(run.code).toBe(1);
+    expect(run.requests).toEqual([]);
+    expect(run.stderr).toContain("JEV_API_KEY");
+    expect(run.stderr).toContain("TYPESAFE_API_KEY");
+  });
+
+  it("stops sending once actual spend passes --max-usd and still writes what it got", async () => {
+    const session = await recordSession();
+    const out = path.join(dir, "calibration");
+    // One reply alone costs 0.042 USD, past the 0.01 cap; the estimate is far below it.
+    const run = await calibrate(
+      [session.file, "--out", out, "--max-usd", "0.01"],
+      (request) => reply(request, KEEP_ALL, 1_000_000),
+    );
+    expect(run.code).toBe(2);
+    // Four requests are in flight when the first reply lands; no fifth starts.
+    expect(run.requests).toHaveLength(4);
+    expect(readdirSync(path.join(out, "cache"))).toHaveLength(4);
+    const spent = readJson(path.join(out, "spend.json"));
+    expect(spent.inputTokens).toBe(4_000_000);
+    expect(spent.usd).toBeCloseTo(4 * JEV_USD_PER_MTOK, 12);
+    const sweep = readJson(path.join(out, "sweep.json"));
+    expect(chunkRows(sweep)).toHaveLength(4);
+  });
+
+  it("writes one sweep row per threshold combination with tiers, labels, and input-equivalent cost", async () => {
+    const session = await recordSession();
+    const out = path.join(dir, "calibration");
+    const run = await calibrate(
+      [
+        session.file,
+        "--out",
+        out,
+        "--t-full",
+        "0.4",
+        "--t-none",
+        "0.5,0.99",
+        "--t-low",
+        "0.2",
+        "--t-keep",
+        "0.3,0.5",
+      ],
+      (request) => reply(request, DROP_ALL),
+    );
+    expect(run.code).toBe(0);
+    const sweep = readJson(path.join(out, "sweep.json"));
+    const chunks = chunkRows(sweep);
+    expect(new Set(chunks.map((row) => row.session))).toEqual(
+      new Set([path.basename(session.file)]),
+    );
+    const needed = chunks.find((row) => row.needed === true);
+    if (!needed) throw new Error("no needed chunk");
+    const rows = rowsOf(sweep);
+    expect(rows.map((row) => row.thresholds)).toEqual([
+      { full: 0.4, none: 0.5, low: 0.2, keep: 0.3 },
+      { full: 0.4, none: 0.5, low: 0.2, keep: 0.5 },
+      { full: 0.4, none: 0.99, low: 0.2, keep: 0.3 },
+      { full: 0.4, none: 0.99, low: 0.2, keep: 0.5 },
+    ]);
+    const [dropping, , keeping] = rows;
+    expect(dropping).toMatchObject({
+      tiers: { full: 0, summary: 0, none: READS.length },
+      omitted: READS.length,
+      needed: 1,
+      omittedNeeded: 1,
+      missRate: 1,
+      precision: 5 / 6,
+      recall: 1,
+    });
+    // An expand pays the write rate: max(cacheWrite, input) / input = 1.
+    expect(dropping?.cost).toBeCloseTo(Number(needed.tokens), 9);
+    // No candidate line reaches keep 0.5, so nothing summarizes: every chunk stays full.
+    expect(keeping).toMatchObject({
+      tiers: { full: READS.length, summary: 0, none: 0 },
+      omitted: 0,
+      needed: 1,
+      omittedNeeded: 0,
+      missRate: 0,
+      precision: null,
+      recall: 0,
+    });
+    const readRate = CACHE_READ_PER_MTOK / INPUT_PER_MTOK;
+    const keptCost = chunks
+      .filter((row) => row.needed === false)
+      .reduce(
+        (total, row) =>
+          total + Number(row.tokens) * readRate * Number(row.remainingTurns),
+        0,
+      );
+    expect(keeping?.cost).toBeCloseTo(keptCost, 9);
+    expect(run.stdout.trim().split("\n")).toHaveLength(1);
+    const summary: unknown = JSON.parse(run.stdout);
+    // The two dropping rows tie on cost; the one nearer the defaults wins,
+    // not the grid's first (most aggressive) corner.
+    expect(summary).toMatchObject({
+      unpriced: 0,
+      recommended: {
+        thresholds: { full: 0.4, none: 0.5, low: 0.2, keep: 0.5 },
+      },
+    });
+  });
+
+  it("counts chunks without recorded pricing as unpriced and prices them at the default rates", async () => {
+    const session = await recordSession();
+    const out = path.join(dir, "calibration");
+    const unpriced = readFileSync(session.file, "utf8")
+      .split("\n")
+      .map((line) => {
+        if (!line) return line;
+        const entry: unknown = JSON.parse(line);
+        if (!isRecord(entry) || entry.kind !== "request_header") return line;
+        if (!isRecord(entry.payload)) return line;
+        return JSON.stringify({
+          ...entry,
+          payload: { ...entry.payload, pricing: null },
+        });
+      })
+      .join("\n");
+    writeFileSync(session.file, unpriced);
+    const run = await calibrate(
+      [
+        session.file,
+        "--out",
+        out,
+        "--t-full",
+        "0.4",
+        "--t-none",
+        "0.5",
+        "--t-low",
+        "0.2",
+        "--t-keep",
+        "0.5",
+      ],
+      (request) => reply(request, DROP_ALL),
+    );
+    expect(run.code).toBe(0);
+    const sweep = readJson(path.join(out, "sweep.json"));
+    const needed = chunkRows(sweep).find((row) => row.needed === true);
+    const [row] = rowsOf(sweep);
+    // Without pricing an expand pays the default write rate, 1.25.
+    expect(row?.cost).toBeCloseTo(Number(needed?.tokens) * 1.25, 9);
+    expect(JSON.parse(run.stdout)).toMatchObject({ unpriced: READS.length });
+  });
+
+  it("labels re-read and later-edited chunks needed in a passthrough session", async () => {
+    const session = await recordSession({ passthrough: true, editAfter: true });
+    const out = path.join(dir, "calibration");
+    const run = await calibrate([session.file, "--out", out], (request) =>
+      reply(request, KEEP_ALL),
+    );
+    expect(run.code).toBe(0);
+    const needed = chunkRows(readJson(path.join(out, "sweep.json"))).map(
+      (row) => [String(row.chunkId).split("#")[1], row.needed],
+    );
+    expect(needed).toEqual([
+      ["read0", true],
+      ["read1", true],
+      ["read2", false],
+      ["read3", false],
+      ["read4", false],
+      ["read5", false],
+    ]);
+    // Passthrough renders no claims, so no request carries a ledger.
+    const ledgers = run.requests.map((request) => {
+      const body = request.body;
+      return isRecord(body) && isRecord(body.state) ? body.state.ledger : null;
+    });
+    expect(ledgers).toEqual(READS.map(() => ""));
+  });
+
+  it("calibrates several sessions at once, tagging each chunk with its session and sending a shared body once", async () => {
+    const first = await recordSession();
+    const second = await recordSession();
+    const out = path.join(dir, "calibration");
+    const run = await calibrate(
+      [first.file, second.file, "--out", out],
+      (request) => reply(request, KEEP_ALL),
+    );
+    expect(run.code).toBe(0);
+    const chunks = chunkRows(readJson(path.join(out, "sweep.json")));
+    expect(chunks.map((row) => row.session)).toEqual([
+      ...READS.map(() => path.basename(first.file)),
+      ...READS.map(() => path.basename(second.file)),
+    ]);
+    // Same files, same task: the two sessions ask byte-identical questions.
+    expect(run.requests).toHaveLength(READS.length);
+    expect(JSON.parse(run.stdout)).toMatchObject({
+      sessions: 2,
+      chunks: 2 * READS.length,
+      sent: READS.length,
+    });
+  });
+
+  it("keeps sending after a failed request and exits 1 with the failure counted", async () => {
+    const session = await recordSession();
+    const out = path.join(dir, "calibration");
+    let calls = 0;
+    const run = await calibrate([session.file, "--out", out], (request) => {
+      calls += 1;
+      return calls === 1
+        ? { status: 500, text: "boom" }
+        : reply(request, KEEP_ALL);
+    });
+    expect(run.code).toBe(1);
+    expect(run.requests).toHaveLength(READS.length);
+    expect(readdirSync(path.join(out, "cache"))).toHaveLength(READS.length - 1);
+    expect(JSON.parse(run.stdout)).toMatchObject({
+      sent: READS.length,
+      failed: 1,
+      unsent: 0,
+      stopped: null,
+    });
+    expect(chunkRows(readJson(path.join(out, "sweep.json")))).toHaveLength(
+      READS.length - 1,
+    );
+  });
+
+  it("stops sending once a request stays rate-limited through every retry", async () => {
+    const session = await recordSession();
+    const out = path.join(dir, "calibration");
+    const run = await calibrate([session.file, "--out", out], () => ({
+      status: 429,
+      text: "slow down",
+      headers: { "retry-after": "0" },
+    }));
+    expect(run.code).toBe(1);
+    // Four requests are in flight when the breaker opens; each makes its
+    // first attempt and three retries, and the last two are never sent.
+    const bodies = new Set(
+      run.requests.map((request) => JSON.stringify(request.body)),
+    );
+    expect(bodies.size).toBe(4);
+    expect(run.requests).toHaveLength(16);
+    expect(JSON.parse(run.stdout)).toMatchObject({
+      failed: 4,
+      unsent: READS.length - 4,
+      stopped: { kind: "rate-limited", fallback: "http:429" },
+    });
+  });
+});

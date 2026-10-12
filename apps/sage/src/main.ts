@@ -1,6 +1,6 @@
 /**
- * CLI entry: dispatches `sage stats`, `sage bench`, and the one-shot
- * `sage [-p] <task>`.
+ * CLI entry: dispatches `sage stats`, `sage bench`, `sage calibrate-jev`,
+ * and the one-shot `sage [-p] <task>`.
  *
  * Contract: `runCli` never throws for bad input; it writes to the given
  * streams and returns the process exit code. Each subcommand owns its
@@ -12,6 +12,7 @@
  */
 
 import { runBenchCli } from "./bench/cli.js";
+import { runCalibrateJev } from "./calibrate-jev.js";
 import type { CliIo } from "./io.js";
 import { runPrint } from "./print.js";
 import { runStats } from "./stats.js";
@@ -33,6 +34,7 @@ export async function runCli(
   };
   const [command, ...rest] = argv;
   if (command === "stats") return runStats(rest, resolved);
+  if (command === "calibrate-jev") return runCalibrateJev(rest, resolved);
   if (command === "bench") {
     return runBenchCli(rest, {
       ...resolved,

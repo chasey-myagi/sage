@@ -131,7 +131,7 @@ CLI `--scorer model` 给根编译器装上模型打分，沿用已装配的 adap
 
 长度遵守 Jev 的两条限制：state 加最长的一个问题不超过 32k token，state 加全部问题不超过 64k token。估算按每 2.5 个 UTF-8 字节算一个 token，比真实分词偏多。超了先把 head 和 tail 一起减半，减到都为空仍超，再把候选减半，head 和 tail 从默认重新开始；什么都减完仍超，这块不发。
 
-一个块的请求非 2xx、超时（默认 10000ms）、被调用方中止或正文不是 answers 对象时，只有这个块拿不到判定，编译器保留它原来的档位；其余请求照发，判定照常生效，usage 照记，失败数写进结果的 `failedRequests`，编译器抄到对应报告上。只有全部请求都失败才返回 `{ decisions: [], fallback }`，原因取第一个失败的请求，不带 usage，也不带 `failedRequests`。有两种情况会停发新请求，还没开始的请求不打网络、按失败计：`signal` 中止后（原因 `aborted`；编译器目前不传 `signal`，只有直接调用 `score` 的调用方会传）；任一请求在 429 或 529 上重试用尽后（熔断，原因取该请求的 `http:429` 或 `http:529`），用来限住速率受限时一次打分的墙钟时间。第一次 429 不触发熔断，只有重试用尽才触发；已在途的请求照常结束，已答上的判定照常保留。不抛。没有 key 时返回 `fallback: "no-api-key"`，不发请求，结果带 `requested: false`，清单上的 `calls` 记 0；发了请求时 `calls` 记 1，不论发了几个。429 和 529 最多再试 3 次。响应带 `retry-after`（秒数或 HTTP 日期）时按它等待，最长 30 秒；没有时间隔 `500ms × 2^n`。各请求的 `usage.input_tokens` 相加写入 `inputOther`，`usage.output_tokens` 相加写入 `output`；Jev 的输出不计费，记下来只为对账。
+一个块的请求非 2xx、超时（默认 10000ms）、被调用方中止或正文不是 answers 对象时，只有这个块拿不到判定，编译器保留它原来的档位；其余请求照发，判定照常生效，usage 照记，失败数写进结果的 `failedRequests`，编译器抄到对应报告上。只有全部请求都失败才返回 `{ decisions: [], fallback }`，原因取请求顺序里第一个失败的请求，不带 usage，也不带 `failedRequests`。有两种情况会停发新请求，还没开始的请求不打网络、按失败计：`signal` 中止后（原因 `aborted`；编译器目前不传 `signal`，只有直接调用 `score` 的调用方会传）；任一请求在 429 或 529 上重试用尽后（熔断，原因取该请求的 `http:429` 或 `http:529`），用来限住速率受限时一次打分的墙钟时间。第一次 429 不触发熔断，只有重试用尽才触发；已在途的请求照常结束，已答上的判定照常保留。不抛。没有 key 时返回 `fallback: "no-api-key"`，不发请求，结果带 `requested: false`，清单上的 `calls` 记 0；发了请求时 `calls` 记 1，不论发了几个。429 和 529 最多再试 3 次。响应带 `retry-after`（秒数或 HTTP 日期）时按它等待，最长 30 秒；没有时间隔 `500ms × 2^n`。各请求的 `usage.input_tokens` 相加写入 `inputOther`，`usage.output_tokens` 相加写入 `output`；Jev 的输出不计费，记下来只为对账。
 
 CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https://api.typesafe.ai`）、`JEV_API_KEY`（缺省回退 `TYPESAFE_API_KEY`）和 `JEV_MODEL`（缺省 `jev-latest`）。两个 key 都没有时进程以退出码 2 结束，stderr 点名这两个变量。接到本地 LLM2Jev 时，例如 `JEV_BASE_URL=http://127.0.0.1:30000 JEV_API_KEY=local JEV_MODEL=<served-model-name>`。目录里的 provider `typesafe` 只有 `jev-latest` 的定价（输入 $0.042/MTok，输出和缓存读写都是 0），`listModels("typesafe")` 可见。`--provider typesafe` 会报错：它不是聊天端点。
 
@@ -177,6 +177,14 @@ compareOffline(diffsA, diffsB) // { markdown, json }
 `compareOffline` 的表是每轮两边的 `policyTokens`、总 `saved`、前缀稳定轮数、疑似误删条数。Markdown 和 JSON 只有数字、id 和 `scorer:offline-rule`，没有块原文。
 
 下一步动作是否一致、任务成不成，由真机基准比较两套策略。见仓库 [`bench/README.md`](../../bench/README.md)。基准不进 CI。
+
+### 离线 jev 请求
+
+`entryJevRequests(path, { minScoreTokens? })` 在 `src/replay/jev-entry.ts`，从包入口导出，`sage calibrate-jev` 用它。它按 `sliceTurns` 的轮次走一遍录下的 path，每个工具块在第一次出现的那一轮、不是 `expand` 结果、估算不少于 `minScoreTokens`（缺省 `DEFAULT_MIN_SCORE_TOKENS`，300）时，用 `chunkRequest` 构造 jev 请求。输入与线上入口打分相同：块按 `indexChunks` 从该轮前缀的 passthrough 投影建索引，原文和 assistant 文字来自同一投影，`task` 是该轮前缀的 `latestQuery`，`ledger` 来自 `rebuildFromLog` 重建的该轮请求。与线上候选的差别是不要求块此时仍是 full。`isError` 的块计入 `skipped.isError`，没有原文或塞不进长度上限的块计入 `skipped.unsendable`。每项带 `chunkId`、`tool`、`tokens`、进入的 `turn`、该轮视图提交起点 `decidedAt`、之后还有回复的轮数 `remainingTurns`、该轮 `request_header.pricing` 和请求本身。passthrough 会话没有申领单，`ledger` 恒为空串，Jev 的输入分布与 compiler 会话不同；重建不出请求的轮次同样是空串。
+
+同一处还导出 jev 打分器自己用的几块，离线校准不另写一份：`requestBody(request, model)` 是 POST 的 JSON 字符串，`estimateRequestTokens(request)` 是 state 加全部问题的保守 token 估算，`readJudgment`、`decideTier`、`DEFAULT_JEV_THRESHOLDS`、常量 `JEV_MODEL_ID`（`jev-latest`），以及编译器阶段决策用的 `ratesFor`。
+
+`postMany(bodies, endpoint, hooks?)`（`src/scorer/jev/http.ts`）是 jev 打分器与离线校准共用的发送池：同时最多 4 个在途，每个请求各自按 429 / 529 的 `retry-after` 重试，结果按输入顺序一格一个。单个请求失败只占自己那一格，其余照发；某个请求重试用尽 429 / 529（`rateLimited`）后熔断，还没开始的请求不打网络，记为该请求的原因；`endpoint.signal` 中止后还没开始的记为 `aborted`。`hooks.shouldStop` 在每个请求开始前检查，返回 true 时剩下的格子是 `undefined`（离线校准用它卡预算）；`hooks.onPosted` 在每个真正发出的请求结束时按完成顺序调用。`endpoint.baseUrl` 缺省 `https://api.typesafe.ai`。
 
 ## 第一方申领单
 
