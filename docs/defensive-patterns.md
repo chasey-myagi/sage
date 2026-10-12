@@ -8,7 +8,7 @@
 
 ## 公开契约两侧都要守：归一化时保留分类
 
-`ProviderAdapter.stream()` 不抛错，所有失败都以 `finish{kind:"error"}` 结束。把异常归一成 finish 的那一层，必须把消费者要用的分类（HTTP 状态码、是否传输错误、原始错误）一路带过去。曾经 `http.ts` 标了 `transport: true`，`drive.ts` 生成 finish 时只复制了 message 和 status，内核只好退回去匹配错误文案。新增一种分类，就把它写进 contract 的类型，而不是挂在对象上等下游去 `as` 出来。
+`ProviderAdapter.stream()` 不抛错，所有失败都以 `finish{kind:"error"}` 结束。把异常归一成 finish 的那一层，必须把消费者要用的分类（HTTP 状态码、是否传输错误、原始错误）一路带过去。曾经 `http.ts` 标了传输错误，`drive.ts` 生成 finish 时只复制了 message 和 status，内核只好退回去匹配错误文案。现在分类是 `FinishError.cause` 判别联合。新增一种分类，就把它写进 contract 的类型，而不是挂在对象上等下游去 `as` 出来。
 
 ## 重试按副作用分层
 

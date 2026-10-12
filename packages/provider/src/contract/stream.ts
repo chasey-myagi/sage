@@ -61,7 +61,9 @@ export type StreamChunk =
 /**
  * Finish error message when a call ends without a stop: the body closed
  * early, there was no body, or a thrown value carried no message. The first
- * two are transport failures; see the invariant above.
+ * two are transport failures. `collect` also uses it when a chunk stream has
+ * no finish at all; that error has cause `other`, so the message alone does
+ * not tell the cause.
  */
 export const INCOMPLETE_STREAM = "stream ended before completion";
 
