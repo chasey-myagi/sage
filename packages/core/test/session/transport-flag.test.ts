@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { AgentSession, MemoryLogStore } from "../../src/index.ts";
 import {
   createFaux,
+  type SseFetchStep,
   FAUX_SYSTEM as SYSTEM,
+  scriptedSseFetch,
   stopScript,
 } from "../../src/testing/index.ts";
 
@@ -27,47 +29,9 @@ const OK = [
   "",
 ].join("\n");
 
-type Step =
-  | { action: "throw"; message: string }
-  | { action: "cut"; body: string; message: string; status?: number }
-  | { action: "sse"; body: string };
-
-function scriptedFetch(steps: Step[]): { fetchImpl: typeof fetch } {
-  let call = 0;
-  const fetchImpl: typeof fetch = async () => {
-    const step = steps[call];
-    call += 1;
-    if (!step) throw new Error(`unexpected fetch call ${call}`);
-    if (step.action === "throw") throw new TypeError(step.message);
-    if (step.action === "sse") {
-      return new Response(step.body, {
-        status: 200,
-        headers: { "content-type": "text/event-stream" },
-      });
-    }
-    const bytes = new TextEncoder().encode(step.body);
-    let sent = false;
-    const body = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        if (!sent) {
-          sent = true;
-          controller.enqueue(bytes);
-          return;
-        }
-        controller.error(new TypeError(step.message));
-      },
-    });
-    return new Response(body, {
-      status: step.status ?? 200,
-      headers: { "content-type": "text/event-stream" },
-    });
-  };
-  return { fetchImpl };
-}
-
-async function runWith(sessionId: string, steps: Step[]) {
+async function runWith(sessionId: string, steps: SseFetchStep[]) {
   const store = new MemoryLogStore();
-  const { fetchImpl } = scriptedFetch(steps);
+  const { fetchImpl, calls } = scriptedSseFetch(steps);
   const adapter = new OpenAIAdapter({
     apiKey: "k",
     fetchImpl,
@@ -83,16 +47,17 @@ async function runWith(sessionId: string, steps: Step[]) {
     sleep: async () => undefined,
   });
   const summary = await session.run("go");
-  return { summary, path: store.path(sessionId) };
+  return { summary, path: store.path(sessionId), calls: calls() };
 }
 
 describe("transport flag through the real adapter pipeline", () => {
   it("retries the turn when the body read fails mid-stream with an unlisted message", async () => {
-    const { path } = await runWith("mid-stream", [
-      { action: "cut", body: PARTIAL, message: "other side closed" },
-      { action: "sse", body: OK },
+    const { path, calls } = await runWith("mid-stream", [
+      { kind: "cut", body: PARTIAL, message: "other side closed" },
+      OK,
     ]);
 
+    expect(calls).toBe(2);
     expect(
       path
         .filter((entry) => entry.kind === "turn_retry")
@@ -106,13 +71,14 @@ describe("transport flag through the real adapter pipeline", () => {
   });
 
   it("retries the turn when fetch keeps throwing past the provider budget", async () => {
-    const { path } = await runWith("pre-body", [
-      { action: "throw", message: "getaddrinfo EAI_AGAIN api.example" },
-      { action: "throw", message: "getaddrinfo EAI_AGAIN api.example" },
-      { action: "throw", message: "getaddrinfo EAI_AGAIN api.example" },
-      { action: "sse", body: OK },
+    const { path, calls } = await runWith("pre-body", [
+      { kind: "throw", message: "getaddrinfo EAI_AGAIN api.example" },
+      { kind: "throw", message: "getaddrinfo EAI_AGAIN api.example" },
+      { kind: "throw", message: "getaddrinfo EAI_AGAIN api.example" },
+      OK,
     ]);
 
+    expect(calls).toBe(4);
     expect(
       path
         .filter((entry) => entry.kind === "turn_retry")
@@ -127,11 +93,12 @@ describe("transport flag through the real adapter pipeline", () => {
   });
 
   it("retries when the connection drops while reading an error response body", async () => {
-    const { path } = await runWith("error-body", [
-      { action: "cut", body: "upstream", message: "terminated", status: 502 },
-      { action: "sse", body: OK },
+    const { path, calls } = await runWith("error-body", [
+      { kind: "cut", body: "upstream", message: "terminated", status: 502 },
+      OK,
     ]);
 
+    expect(calls).toBe(2);
     expect(path.at(-1)?.payload).toMatchObject({ outcome: "done" });
   });
 
@@ -141,7 +108,11 @@ describe("transport flag through the real adapter pipeline", () => {
       [
         { type: "block_start", index: 0, blockType: "text" },
         { type: "text_delta", index: 0, text: "cut" },
-        { type: "finish", kind: "error", error: { message: "terminated" } },
+        {
+          type: "finish",
+          kind: "error",
+          error: { message: "terminated", cause: "other" },
+        },
       ],
       stopScript("unused"),
     ]);

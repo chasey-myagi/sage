@@ -168,7 +168,7 @@ describe("classifying an in-stream error event", () => {
           throw new Error("expected an error finish");
         }
         expect(finish.error.event).toEqual(item.event);
-        expect(finish.error).not.toHaveProperty("transport");
+        expect(finish.error.cause).toBe("event");
         expect(finish.error).not.toHaveProperty("status");
         expectStreamInvariants(chunks);
       });

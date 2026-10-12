@@ -203,6 +203,7 @@ it("finishes with error after two retries of HTTP 503", async () => {
       kind: "error",
       error: {
         message: "unavailable",
+        cause: "http",
         status: 503,
         raw: JSON.parse(body),
       },
@@ -229,6 +230,7 @@ it("does not retry HTTP 400", async () => {
       kind: "error",
       error: {
         message: "bad request",
+        cause: "http",
         status: 400,
         raw: JSON.parse(body),
       },

@@ -23,7 +23,7 @@ type FakeRun = {
 
 const UNAUTHORIZED = {
   kind: "error",
-  error: { message: "invalid api key", status: 401 },
+  error: { message: "invalid api key", cause: "http", status: 401 },
 };
 
 it("grades a run whose first provider call failed as a session error, not an empty patch", async () => {
@@ -35,7 +35,7 @@ it("grades a run whose first provider call failed as a session error, not an emp
       id: "auth-failed",
       status: "error",
       reason: "session-error",
-      providerError: { status: 401, transport: false, event: null },
+      providerError: { cause: "http", status: 401 },
       health: expect.any(Object),
       stoppedEarly: null,
     },
@@ -49,14 +49,14 @@ it("carries a transport failure's classification without a status", async () => 
       outcome: "error",
       finish: {
         kind: "error",
-        error: { message: "fetch failed", transport: true },
+        error: { message: "fetch failed", cause: "transport" },
       },
       edited: false,
     },
   });
   expect(rows[0]).toMatchObject({
     reason: "session-error",
-    providerError: { status: null, transport: true, event: null },
+    providerError: { cause: "transport" },
   });
 });
 
@@ -68,6 +68,7 @@ it("carries an in-stream error event's classification without its message", asyn
         kind: "error",
         error: {
           message: "Upstream response stream stalled",
+          cause: "event",
           raw: { error: { message: "Upstream response stream stalled" } },
           event: { transient: true, type: "upstream_error", code: 529 },
         },
@@ -78,15 +79,14 @@ it("carries an in-stream error event's classification without its message", asyn
       outcome: "error",
       finish: {
         kind: "error",
-        error: { message: "x", event: { transient: false } },
+        error: { message: "x", cause: "event", event: { transient: false } },
       },
       edited: false,
     },
   });
   expect(rows.map((row) => row.providerError)).toEqual([
     {
-      status: null,
-      transport: false,
+      cause: "event",
       event: {
         transient: true,
         type: "upstream_error",
@@ -95,12 +95,32 @@ it("carries an in-stream error event's classification without its message", asyn
       },
     },
     {
-      status: null,
-      transport: false,
+      cause: "event",
       event: { transient: false, type: null, code: null, status: null },
     },
   ]);
   expect(JSON.stringify(rows)).not.toContain("stalled");
+});
+
+it("classifies a logged error with a missing, unknown, or malformed cause as other", async () => {
+  const errors: Record<string, unknown>[] = [
+    { message: "decode failed", cause: "other" },
+    { message: "no cause" },
+    { message: "unknown cause", cause: "teleport" },
+    { message: "http without status", cause: "http" },
+    { message: "event without class", cause: "event" },
+  ];
+  const { rows } = await runBench(
+    Object.fromEntries(
+      errors.map((error, index) => [
+        `malformed-${index}`,
+        { outcome: "error", finish: { kind: "error", error }, edited: false },
+      ]),
+    ),
+  );
+  expect(rows.map((row) => row.providerError)).toEqual(
+    errors.map(() => ({ cause: "other" })),
+  );
 });
 
 it("records a harness error with no provider failure as a session error with a null provider error", async () => {

@@ -8,7 +8,7 @@
  * tool_use replays its `input`, or `{}` when that is not a JSON object
  * (`replayToolInput`, a pure function of the logged block). Messages and
  * tools are otherwise sent unchanged. An `error` event ends the call
- * as a non-transport error finish carrying the server's message and
+ * as a `cause: "event"` error finish carrying the server's message and
  * `error.event`; its `error.type` is permanent when it names a request the
  * API will reject again.
  *

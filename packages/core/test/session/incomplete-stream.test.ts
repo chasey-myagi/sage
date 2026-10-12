@@ -2,7 +2,10 @@ import { AnthropicAdapter, OpenAIAdapter } from "@sage/provider";
 import type { ProviderAdapter } from "@sage/provider/contract";
 import { describe, expect, it } from "vitest";
 import { AgentSession, MemoryLogStore } from "../../src/index.ts";
-import { FAUX_SYSTEM as SYSTEM } from "../../src/testing/index.ts";
+import {
+  FAUX_SYSTEM as SYSTEM,
+  scriptedSseFetch,
+} from "../../src/testing/index.ts";
 
 const OPENAI_PARTIAL = [
   'data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5","choices":[{"index":0,"delta":{"content":"half-"},"finish_reason":null}]}',
@@ -63,22 +66,6 @@ const ANTHROPIC_OK = [
   "",
 ].join("\n");
 
-/** Each step is one fetch: an SSE body that closes normally, or no body. */
-type Step = { body: string | null };
-
-function scriptedFetch(steps: Step[]): typeof fetch {
-  let call = 0;
-  return async () => {
-    const step = steps[call];
-    call += 1;
-    if (!step) throw new Error(`unexpected fetch call ${call}`);
-    return new Response(step.body, {
-      status: 200,
-      headers: { "content-type": "text/event-stream" },
-    });
-  };
-}
-
 async function runWith(
   sessionId: string,
   model: { provider: string; model: string },
@@ -112,16 +99,14 @@ const CUT_RETRY = {
 
 describe("a body that closes before the stream completes", () => {
   it("retries the turn when an OpenAI body closes without [DONE]", async () => {
-    const fetchImpl = scriptedFetch([
-      { body: OPENAI_PARTIAL },
-      { body: OPENAI_OK },
-    ]);
+    const { fetchImpl, calls } = scriptedSseFetch([OPENAI_PARTIAL, OPENAI_OK]);
     const path = await runWith(
       "openai-cut",
       { provider: "openai", model: "gpt-5" },
       new OpenAIAdapter({ apiKey: "k", fetchImpl, sleep: async () => {} }),
     );
 
+    expect(calls()).toBe(2);
     expect(turnRetries(path)).toEqual([CUT_RETRY]);
     expect(path.at(-1)?.payload).toMatchObject({
       outcome: "done",
@@ -131,9 +116,9 @@ describe("a body that closes before the stream completes", () => {
   });
 
   it("retries the turn when an Anthropic body closes before message_stop", async () => {
-    const fetchImpl = scriptedFetch([
-      { body: ANTHROPIC_PARTIAL },
-      { body: ANTHROPIC_OK },
+    const { fetchImpl, calls } = scriptedSseFetch([
+      ANTHROPIC_PARTIAL,
+      ANTHROPIC_OK,
     ]);
     const path = await runWith(
       "anthropic-cut",
@@ -141,6 +126,7 @@ describe("a body that closes before the stream completes", () => {
       new AnthropicAdapter({ apiKey: "k", fetchImpl, sleep: async () => {} }),
     );
 
+    expect(calls()).toBe(2);
     expect(turnRetries(path)).toEqual([CUT_RETRY]);
     expect(path.at(-1)?.payload).toMatchObject({
       outcome: "done",
@@ -150,13 +136,17 @@ describe("a body that closes before the stream completes", () => {
   });
 
   it("retries before the stream when a 2xx response has no body", async () => {
-    const fetchImpl = scriptedFetch([{ body: null }, { body: OPENAI_OK }]);
+    const { fetchImpl, calls } = scriptedSseFetch([
+      { kind: "no-body" },
+      OPENAI_OK,
+    ]);
     const path = await runWith(
       "no-body",
       { provider: "openai", model: "gpt-5" },
       new OpenAIAdapter({ apiKey: "k", fetchImpl, sleep: async () => {} }),
     );
 
+    expect(calls()).toBe(2);
     expect(turnRetries(path)).toEqual([]);
     expect(path.at(-1)?.payload).toMatchObject({ outcome: "done" });
   });

@@ -192,6 +192,7 @@ describe("a transient error event inside a 200 stream", () => {
           error: {
             message: STALLED.message,
             raw: expect.any(Object),
+            cause: "event",
             event: { transient: true },
           },
         },

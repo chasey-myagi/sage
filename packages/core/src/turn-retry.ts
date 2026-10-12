@@ -16,6 +16,7 @@
 
 import {
   type AssistantMessage,
+  assertNever,
   backoffMs,
   collect,
   isRecord,
@@ -35,17 +36,27 @@ const TURN_RETRY_BASE_MS = 2000;
 
 /**
  * The failure message when the finish is worth resending, else undefined:
- * a transport error (`error.transport`), or an in-stream error event the
- * provider classified as transient (`error.event.transient`). The message
- * text is never inspected.
+ * a `transport` error, or an in-stream `event` the provider classified as
+ * transient. `http` was already retried by the provider when a resend could
+ * help; `other` (a decode failure, a stream with no finish) is no network
+ * failure, so it is not resent either. The message text is never inspected.
  */
 function turnRetryReason(
   finish: AssistantMessage["finish"],
 ): string | undefined {
   if (finish.kind !== "error" || !finish.error) return undefined;
-  const { transport, event, message } = finish.error;
-  if (transport === true || event?.transient === true) return message;
-  return undefined;
+  const error = finish.error;
+  switch (error.cause) {
+    case "transport":
+      return error.message;
+    case "event":
+      return error.event.transient ? error.message : undefined;
+    case "http":
+    case "other":
+      return undefined;
+    default:
+      return assertNever(error);
+  }
 }
 
 function assistantAfterLatestHeader(path: readonly StoredEntry[]): boolean {

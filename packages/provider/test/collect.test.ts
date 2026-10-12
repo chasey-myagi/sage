@@ -125,7 +125,11 @@ describe("collect folds a chunk stream into one assistant message", () => {
     const message = await collect(
       from([
         { type: "usage", usage },
-        { type: "finish", kind: "error", error: { message: "HTTP 500" } },
+        {
+          type: "finish",
+          kind: "error",
+          error: { message: "HTTP 500", cause: "http", status: 500 },
+        },
       ]),
       { api: "openai-chat" },
     );

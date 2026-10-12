@@ -58,11 +58,20 @@ usage 按三种形状映射，`raw` 原样保留，`inputCacheCreation` 恒为 0
 - 调用方 abort
 - 响应体已经开始之后的断开、截断、解析失败
 
-响应体一开始就不再重试。前面可能已经吐出一段文本，再请求一次会把同一段输出生成两遍，调用方对不上。半截输出留在这一轮的 finish error 里。流开始之后的传输断开不在本包重试，同一请求的整轮重发由 `@sage/core` 负责。流开始之前的传输失败在这里重试耗尽后，finish 仍带 `transport: true`，core 还会整轮重发，两层叠加最多 9 次请求。
+响应体一开始就不再重试。前面可能已经吐出一段文本，再请求一次会把同一段输出生成两遍，调用方对不上。半截输出留在这一轮的 finish error 里。流开始之后的传输断开不在本包重试，同一请求的整轮重发由 `@sage/core` 负责。流开始之前的传输失败在这里重试耗尽后，finish 仍是 `cause: "transport"`，core 还会整轮重发，两层叠加最多 9 次请求。
 
-finish error 上的 `transport: true` 标出传输失败：`fetch` 抛错、读响应体抛错（SSE 体或非 2xx 的错误体）、响应在完成前结束（2xx 没有 body，或 SSE 体在收到结束信号前正常关闭，消息为 `stream ended before completion`）。读完错误体的 HTTP 状态和流内 error 事件不打标。
+finish error（`FinishError`）以 `cause` 区分失败来源，四种恰取其一，各自只带自己的字段：
 
-流内 error 事件是服务端在 200 响应里报错：Anthropic 的 `event: error`，OpenAI 兼容接口里带 `error` 对象的帧。adapter 把它解码成 `finish{kind:"error"}`，`error.message` 取服务端文本（例如 `Overloaded`），`error.raw` 是整个事件对象，不打 `transport`、不带 `status`，之后的帧不再产出块。它另带 `error.event`，只在这种结局出现：
+| `cause` | 何时 | 专属字段 |
+| --- | --- | --- |
+| `transport` | 传输失败：`fetch` 抛错、读响应体抛错（SSE 体或非 2xx 的错误体）、响应在完成前结束（2xx 没有 body，或 SSE 体在收到结束信号前正常关闭，消息为 `stream ended before completion`） | 无 |
+| `http` | 非 2xx 响应，错误体已读完 | `status`：HTTP 状态码；`raw` 是解析后的错误体（解析不了就是原文） |
+| `event` | 服务端在 200 的流里发来 error 事件，见下文 | `event`：事件分类；`raw` 是整个事件对象 |
+| `other` | 以上都不是：adapter 解码某个事件时抛错，或 chunk 流没有 finish 就结束（`collect` 补的默认值） | 无 |
+
+所有成员都有 `message`，`raw` 可选。调用方只按 `cause` 分类，不读 message 文本。`isFinishErrorCause` 给读 Log 这类不可信 JSON 的调用方收窄 `cause` 用。
+
+流内 error 事件是服务端在 200 响应里报错：Anthropic 的 `event: error`，OpenAI 兼容接口里带 `error` 对象的帧。adapter 把它解码成 `finish{kind:"error"}`，`error.cause` 为 `event`，`error.message` 取服务端文本（例如 `Overloaded`），`error.raw` 是整个事件对象，之后的帧不再产出块。`error.event` 的字段：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -76,7 +85,7 @@ finish error 上的 `transport: true` 标出传输失败：`fetch` 抛错、读�
 - Anthropic（它的事件只带 `type`）：`invalid_request_error`、`authentication_error`、`permission_error`、`not_found_error`、`request_too_large`、`billing_error`
 - OpenAI 兼容：`invalid_request_error`、`authentication_error`、`permission_error`、`invalid_api_key`、`insufficient_quota`、`model_not_found`、`context_length_exceeded`、`content_filter`
 
-core 凭 `transport: true` 或 `event.transient: true` 决定是否整轮重发，见 `@sage/core` README 的「整轮重试」。本包自己不重试流内 error 事件：它到达时响应体早已开始。
+core 凭 `cause: "transport"`，或 `cause: "event"` 且 `event.transient: true`，决定是否整轮重发，见 `@sage/core` README 的「整轮重试」。本包自己不重试流内 error 事件：它到达时响应体早已开始。
 
 重试次数和最后一次失败原因写在这一轮的 usage 上：`details: { retries, reason }`。没重试就不写这个字段。会话本来会把 usage 和 finish 抄进 assistant 条目的 `details`，Log 因此能看见，不新增条目种类。中间几次失败的响应体不进 Log。成功那次如果前面失败过，`reason` 是最后一次失败的消息，不是成功本身。
 

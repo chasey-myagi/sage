@@ -5,7 +5,8 @@
  * concatenation of partial JSON, parsed once at the end; blank text parses
  * as `{}` (a call with no arguments), and a parse failure keeps rawInput
  * and sets input to null. A stream that ends without a
- * finish chunk yields `finish {kind:"error"}` with `INCOMPLETE_STREAM`.
+ * finish chunk yields `finish {kind:"error"}` with `INCOMPLETE_STREAM` and
+ * `cause: "other"`: the producer broke the stream contract.
  *
  * Intentionally not in the Log: collect does not append. The caller decides
  * whether the resulting message becomes an assistant entry.
@@ -42,7 +43,7 @@ export async function collect(
   let finish: Extract<StreamChunk, { type: "finish" }> = {
     type: "finish",
     kind: "error",
-    error: { message: INCOMPLETE_STREAM },
+    error: { message: INCOMPLETE_STREAM, cause: "other" },
   };
 
   for await (const chunk of chunks) {

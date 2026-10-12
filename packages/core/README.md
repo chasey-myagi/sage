@@ -71,12 +71,12 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 
 流还没开始时的重试在 provider：`fetch` 抛错、读非 2xx 错误体时抛错、2xx 没有响应体、HTTP 429、HTTP 5xx，最多 2 次。响应体一开始，provider 就不再重试。
 
-如果 finish 是可重发的错误，并且这一轮还没有把 assistant 消息写进 Log，core 重发同一条请求。可重发只看两个结构化字段，不看错误文案：
+如果 finish 是可重发的错误，并且这一轮还没有把 assistant 消息写进 Log，core 重发同一条请求。可重发只看 `error.cause` 与它带的结构化字段，不看错误文案：
 
-- `error.transport: true`，传输失败，不管发生在流开始之前还是之后。provider 在这些情况打标记：`fetch` 抛错、读响应体抛错（SSE 体或非 2xx 的错误体）、2xx 没有响应体、SSE 体在收到结束信号前正常关闭。
-- `error.event.transient: true`，服务端在 200 的流里发来 error 事件，而事件的 `type` / `code` / `status` 不属于 provider 的不可重试类（请求非法、鉴权、内容过滤、上下文超长、额度耗尽、429 以外的 4xx）。分类规则见 `@sage/provider` README。
+- `cause: "transport"`，传输失败，不管发生在流开始之前还是之后：`fetch` 抛错、读响应体抛错（SSE 体或非 2xx 的错误体）、2xx 没有响应体、SSE 体在收到结束信号前正常关闭。
+- `cause: "event"` 且 `event.transient: true`，服务端在 200 的流里发来 error 事件，而事件的 `type` / `code` / `status` 不属于 provider 的不可重试类（请求非法、鉴权、内容过滤、上下文超长、额度耗尽、429 以外的 4xx）。分类规则见 `@sage/provider` README。
 
-HTTP 状态错误不在这层重发，provider 已经在流开始前重试过 429 与 5xx。`event.transient: false` 的事件也不重发。最多再发 2 次，先等 2 秒，再等 8 秒。构造参数 `sleep` 可注入，测试不真等。第 3 次仍失败，才把这次的 assistant 写入，并追加 terminal，outcome 为 `error`。
+`cause: "http"` 不在这层重发，provider 已经在流开始前重试过 429 与 5xx。`event.transient: false` 的事件和 `cause: "other"` 也不重发。最多再发 2 次，先等 2 秒，再等 8 秒。构造参数 `sleep` 可注入，测试不真等。第 3 次仍失败，才把这次的 assistant 写入，并追加 terminal，outcome 为 `error`。
 
 error 事件到达之前流里可能已经吐出半截文本或半截工具调用。它们只在这一次 `collect` 的结果里，重发时整条丢掉：assistant 没落 Log，工具也就没执行。
 

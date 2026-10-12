@@ -10,6 +10,8 @@
  */
 
 import {
+  assertNever,
+  isFinishErrorCause,
   isFiniteNumber,
   isMessage,
   isRecord,
@@ -72,11 +74,22 @@ function providerError(
   const finish = lastAssistant(path)?.details?.finish;
   if (!isRecord(finish) || finish.kind !== "error") return null;
   const error = isRecord(finish.error) ? finish.error : {};
-  return {
-    status: isFiniteNumber(error.status) ? error.status : null,
-    transport: error.transport === true,
-    event: streamErrorEvent(error.event),
-  };
+  const cause = isFinishErrorCause(error.cause) ? error.cause : "other";
+  switch (cause) {
+    case "transport":
+    case "other":
+      return { cause };
+    case "http":
+      return isFiniteNumber(error.status)
+        ? { cause, status: error.status }
+        : { cause: "other" };
+    case "event": {
+      const event = streamErrorEvent(error.event);
+      return event ? { cause, event } : { cause: "other" };
+    }
+    default:
+      return assertNever(cause);
+  }
 }
 
 /** `FinishError.event` with absent fields as null, or null when absent. */

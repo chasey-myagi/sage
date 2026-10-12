@@ -3,15 +3,16 @@
  *
  * Guarantees: nothing here throws for a failed call. Non-2xx responses and
  * transport failures come back as data (`PostFail`). A fetch throw, a
- * throw while reading a non-2xx body, and a 2xx without a body are marked
- * `transport: true`; callers turn them into finish chunks.
+ * throw while reading a non-2xx body, and a 2xx without a body are
+ * `cause: "transport"`; a non-2xx whose body was read is `cause: "http"`.
+ * Callers turn them into finish chunks.
  *
  * Intentionally not in the Log: the API key, the abort signal, and the
  * response bytes never leave this module as a fact to append.
  */
 
 import type { Sleeper } from "./contract/backoff.js";
-import { INCOMPLETE_STREAM } from "./contract/stream.js";
+import { type FinishError, INCOMPLETE_STREAM } from "./contract/stream.js";
 import { asRecord } from "./record.js";
 import type { RetryPolicy } from "./retry.js";
 
@@ -49,19 +50,16 @@ export function joinUrl(base: string, path: string): string {
 /** The call reached a 2xx with a body; the caller now owns `body`. */
 export type PostOk = { ok: true; body: ReadableStream<Uint8Array> };
 
-/** A failed call. `raw` is the parsed error body (or its text), if any. */
-export type PostFail = {
-  ok: false;
-  aborted: boolean;
-  message: string;
-  status?: number;
-  raw?: unknown;
-  /**
-   * True when fetch threw, reading a non-2xx body threw, or a 2xx came
-   * without a body. A response whose error body was read leaves it unset.
-   */
-  transport?: boolean;
-};
+/**
+ * The failures a POST can report before a body begins: below HTTP, or a
+ * non-2xx whose body was read (`raw` is that body, parsed or as text).
+ */
+export type PostError = Extract<FinishError, { cause: "transport" | "http" }>;
+
+/** A failed call: the caller's abort, or a `PostError`. */
+export type PostFail =
+  | { ok: false; aborted: true }
+  | { ok: false; aborted: false; error: PostError };
 
 /**
  * One POST. The error message comes from the body's `error.message` or
@@ -75,7 +73,7 @@ export async function postJson(args: {
   fetchImpl?: typeof fetch;
 }): Promise<PostOk | PostFail> {
   if (args.signal?.aborted) {
-    return { ok: false, aborted: true, message: "aborted" };
+    return { ok: false, aborted: true };
   }
   const fetchImpl = args.fetchImpl ?? fetch;
   let response: Response;
@@ -98,8 +96,7 @@ export async function postJson(args: {
     return {
       ok: false,
       aborted: false,
-      message: INCOMPLETE_STREAM,
-      transport: true,
+      error: { message: INCOMPLETE_STREAM, cause: "transport" },
     };
   }
   return { ok: true, body: response.body };
@@ -111,13 +108,12 @@ export async function postJson(args: {
  */
 function thrownFailure(error: unknown, signal?: AbortSignal): PostFail {
   if (signal?.aborted || isAbortError(error)) {
-    return { ok: false, aborted: true, message: "aborted" };
+    return { ok: false, aborted: true };
   }
   return {
     ok: false,
     aborted: false,
-    message: messageOf(error),
-    transport: true,
+    error: { message: messageOf(error), cause: "transport" },
   };
 }
 
@@ -144,13 +140,9 @@ async function readFailure(
       message = text;
     }
   }
-  return {
-    ok: false,
-    aborted: false,
-    message,
-    status: response.status,
-    raw,
-  };
+  const error: PostError = { message, cause: "http", status: response.status };
+  if (raw !== undefined) error.raw = raw;
+  return { ok: false, aborted: false, error };
 }
 
 /**

@@ -4,16 +4,17 @@
  * Guarantees: transport failures (fetch throws, error-body read throws, a
  * 2xx without a body), HTTP 429, and HTTP 5xx wait and try again; any
  * other 4xx does not. This module never sees a body that has already
- * begun. The final failure keeps postJson's `transport` flag for the
- * finish chunk.
+ * begun. The final failure keeps postJson's `PostError`, cause included,
+ * for the finish chunk.
  *
  * Intentionally not in the Log: failed response bodies, the sleep, and the
  * API key. The retry count and the last failure reason ride on the usage
  * object the caller already logs. No new entry kind.
  */
 
+import { assertNever } from "./contract/assert-never.js";
 import { backoffMs, type Sleeper, sleep } from "./contract/backoff.js";
-import type { PostFail, PostOk } from "./http.js";
+import type { PostError, PostOk } from "./http.js";
 import { postJson } from "./http.js";
 
 /** Retries after the first attempt, and the first delay in milliseconds. */
@@ -37,10 +38,7 @@ export type OpenedCall =
   | {
       ok: false;
       aborted: false;
-      message: string;
-      status?: number;
-      raw?: unknown;
-      transport?: boolean;
+      error: PostError;
       retries: number;
       reason: string;
     };
@@ -53,10 +51,15 @@ export function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
-function isRetryable(fail: PostFail): boolean {
-  if (fail.aborted) return false;
-  if (fail.transport) return true;
-  return fail.status !== undefined && isRetryableStatus(fail.status);
+function isRetryable(error: PostError): boolean {
+  switch (error.cause) {
+    case "transport":
+      return true;
+    case "http":
+      return isRetryableStatus(error.status);
+    default:
+      return assertNever(error);
+  }
 }
 
 /**
@@ -92,11 +95,18 @@ export async function openWithRetry(args: {
     });
     if (opened.ok) return succeed(opened, retries, reason);
     if (opened.aborted) return { ok: false, aborted: true, retries, reason };
-    if (!isRetryable(opened) || retries >= attempts) {
-      return fail(opened, retries);
+    const { error } = opened;
+    if (!isRetryable(error) || retries >= attempts) {
+      return {
+        ok: false,
+        aborted: false,
+        error,
+        retries,
+        reason: error.message,
+      };
     }
     retries += 1;
-    reason = opened.message;
+    reason = error.message;
     await wait(backoffMs(retries, baseMs), args.signal);
   }
 }
@@ -110,18 +120,4 @@ function succeed(
     return { ok: true, body: opened.body, retries, reason };
   }
   return { ok: true, body: opened.body, retries };
-}
-
-function fail(opened: PostFail, retries: number): OpenedCall {
-  const result: Extract<OpenedCall, { ok: false; aborted: false }> = {
-    ok: false,
-    aborted: false,
-    message: opened.message,
-    retries,
-    reason: opened.message,
-  };
-  if (opened.status !== undefined) result.status = opened.status;
-  if (opened.raw !== undefined) result.raw = opened.raw;
-  if (opened.transport) result.transport = true;
-  return result;
 }

@@ -13,12 +13,12 @@
 ## 重试按副作用分层
 
 - 响应体开始之前的失败由 provider 重试：fetch 抛错、读非 2xx 错误体时抛错、2xx 没有 body、429、5xx。1 秒、4 秒，共 3 次请求，次数记在 usage 上。见 [传输层重试](./notes/implemented/2026-09-23-provider-retry.md)。
-- core 按 finish error 上的 `transport: true` 或 `event.transient: true` 整轮重发，不管失败发生在流开始之前还是之后，前提是这一轮的 assistant 还没落 Log、工具还没执行：2 秒、8 秒，每次写 `turn_retry`。见 [整轮重试](./notes/implemented/2026-09-23-turn-retry.md)。
-- 两层会叠加。流开始之前的传输失败（fetch 抛错、2xx 没有 body、读错误体抛错）先在 provider 耗尽 3 次请求，finish 带着 `transport: true`，core 再整轮重发 2 次，每次又是 provider 的 3 次。最坏 9 次请求，退避合计约 25 秒（provider 3 × 5 秒，core 10 秒）。429 和 5xx 读完了错误体、不打标，只在 provider 重试。
-- 「传输失败」按连接是否在响应完成前结束来判，不按有没有抛错：读 body 抛错和 body 没收到结束信号就正常关闭是同一类，都打 `transport: true`。代理超时截断连接时两种表现都会出现。见 [未完成的流按传输失败重试](./notes/implemented/2026-09-24-incomplete-stream.md)。服务端在流里明确发来的 error 事件不是传输失败，不打 `transport`，见 [流内 error 事件](./notes/implemented/2026-09-24-stream-error-event.md)；它带 `event` 分类，adapter 只凭事件的 `type` / `code` / `status` 判断是否瞬时，瞬时的由 core 整轮重发，见 [流内 error 事件按分类整轮重发](./notes/implemented/2026-10-12-retry-in-stream-error.md)。
+- core 按 finish error 的 `cause` 整轮重发：`transport`，或 `event` 且 `event.transient: true`，不管失败发生在流开始之前还是之后，前提是这一轮的 assistant 还没落 Log、工具还没执行：2 秒、8 秒，每次写 `turn_retry`。见 [整轮重试](./notes/implemented/2026-09-23-turn-retry.md)。
+- 两层会叠加。流开始之前的传输失败（fetch 抛错、2xx 没有 body、读错误体抛错）先在 provider 耗尽 3 次请求，finish 的 `cause` 是 `transport`，core 再整轮重发 2 次，每次又是 provider 的 3 次。最坏 9 次请求，退避合计约 25 秒（provider 3 × 5 秒，core 10 秒）。429 和 5xx 读完了错误体，`cause` 是 `http`，只在 provider 重试。
+- 「传输失败」按连接是否在响应完成前结束来判，不按有没有抛错：读 body 抛错和 body 没收到结束信号就正常关闭是同一类，`cause` 都是 `transport`。代理超时截断连接时两种表现都会出现。见 [未完成的流按传输失败重试](./notes/implemented/2026-09-24-incomplete-stream.md)。服务端在流里明确发来的 error 事件不是传输失败，`cause` 是 `event`，见 [流内 error 事件](./notes/implemented/2026-09-24-stream-error-event.md)；它带 `event` 分类，adapter 只凭事件的 `type` / `code` / `status` 判断是否瞬时，瞬时的由 core 整轮重发，见 [流内 error 事件按分类整轮重发](./notes/implemented/2026-10-12-retry-in-stream-error.md)。
 - provider 不重开已经开始的流：半截 delta 已经交给调用方，再 POST 一次，两份输出对不上。
 - 已经执行过的工具永远不重放。
-- 4xx 不重试。例外：4xx 响应的错误体读到一半断开属于传输失败。连接断了，状态码不可信，finish 不带状态码、打 `transport: true`，provider 与 core 都会重试。
+- 4xx 不重试。例外：4xx 响应的错误体读到一半断开属于传输失败。连接断了，状态码不可信，finish 不带状态码、`cause` 是 `transport`，provider 与 core 都会重试。
 
 ## 同一个 session 的 append 串行
 

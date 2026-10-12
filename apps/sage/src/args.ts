@@ -11,10 +11,10 @@
  * Intentionally not in the Log: argv and the parsed options.
  */
 
+import { assertNever } from "@sage/core";
 import type { ModelRef } from "@sage/provider/contract";
 import type { ToolNetwork } from "@sage/tools";
 import { benchReportUsage, benchRunUsage } from "./bench/args.js";
-import { assertNever } from "./guards.js";
 import {
   type CommandFlags,
   checkChoice,

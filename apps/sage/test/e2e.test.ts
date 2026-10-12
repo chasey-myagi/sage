@@ -286,7 +286,11 @@ describe("one-shot sage -p run", () => {
             output: 2,
           },
         },
-        { type: "finish", kind: "error", error: { message: "nope" } },
+        {
+          type: "finish",
+          kind: "error",
+          error: { message: "nope", cause: "other" },
+        },
       ],
     ]);
     const io = capture();

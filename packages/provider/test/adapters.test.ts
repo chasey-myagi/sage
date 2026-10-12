@@ -499,7 +499,12 @@ describe("finish reasons and transport errors", () => {
       expect(chunks.at(-1)).toEqual({
         type: "finish",
         kind: "error",
-        error: { message: "nope", status: 500, raw: JSON.parse(body) },
+        error: {
+          message: "nope",
+          cause: "http",
+          status: 500,
+          raw: JSON.parse(body),
+        },
       });
       expectStreamInvariants(chunks);
     }

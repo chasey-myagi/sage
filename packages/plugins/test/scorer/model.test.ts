@@ -265,7 +265,11 @@ it("falls back when the model returns invalid JSON", async () => {
 it("falls back when the adapter finishes with an error", async () => {
   const adapter = scripted([
     { type: "usage", usage: USAGE },
-    { type: "finish", kind: "error", error: { message: "nope" } },
+    {
+      type: "finish",
+      kind: "error",
+      error: { message: "nope", cause: "other" },
+    },
   ]);
   const result = await modelScorer({
     adapters: { anthropic: adapter },
