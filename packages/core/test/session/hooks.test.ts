@@ -222,6 +222,42 @@ describe("the tool pipeline applies hooks around execute", () => {
     });
   });
 
+  it("runs a call with unparsable arguments once a tool_pre hook supplies an object", async () => {
+    const store = new MemoryLogStore();
+    const sessionId = "rescued-arguments";
+    let seen: unknown;
+    const { adapter } = createFaux([
+      toolScript("a1", "echo", '{"n":'),
+      toolScript("a2", "echo", '{"n":'),
+      stopScript("stop"),
+    ]);
+    const session = new AgentSession({
+      store,
+      sessionId,
+      adapters: { anthropic: adapter },
+      model: MODEL,
+      system: SYSTEM,
+      tools: [
+        harness("echo", (input) => {
+          seen = input;
+        }),
+      ],
+    });
+    session.hooks.on("tool_pre", ({ call }) =>
+      call.id === "a2" ? { updatedInput: { n: 3 } } : undefined,
+    );
+
+    await session.run("go");
+    expect(seen).toEqual({ n: 3 });
+    const blocks = toolResultContent(store, sessionId);
+    expect(blocks[0]).toMatchObject({
+      toolUseId: "a1",
+      content: expect.stringContaining("arguments are not a JSON object"),
+      isError: true,
+    });
+    expect(blocks[1]).toMatchObject({ toolUseId: "a2", content: "ran:echo" });
+  });
+
   it("packs every tool result from one assistant turn into a single user message", async () => {
     const store = new MemoryLogStore();
     const sessionId = "batch";

@@ -29,8 +29,9 @@ export type ThinkingBlock = {
 };
 
 /**
- * A tool call. `rawInput` is the JSON text as streamed; `input` is its parse,
- * or null when it did not parse.
+ * A tool call. `rawInput` is the JSON text as streamed; `input` is its parse
+ * (`{}` for blank text), or null when it did not parse. Adapters replay a
+ * call whose `input` is not an object through `replayToolInput`.
  */
 export type ToolUseBlock = {
   type: "tool_use";

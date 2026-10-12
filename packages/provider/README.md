@@ -10,7 +10,7 @@
 
 ### Token effect
 
-规整会少发思考块：OpenAI 丢掉全部，Anthropic 丢掉没有 signature 的。tool id 重写不改正文。其余块的字节不变。
+规整会少发思考块：OpenAI 丢掉全部，Anthropic 丢掉没有 signature 的。tool id 重写不改正文。参数不是 JSON 对象的工具调用回放成 `{}`。其余块的字节不变。
 
 ### KV cache effect
 
@@ -88,3 +88,7 @@ core 凭 `transport: true` 或 `event.transient: true` 决定是否整轮重发�
 
 - `openai-chat`：丢掉全部 thinking 块。`toolu_` 开头的 tool id 改写成 `call_` 加上该 id 的 sha256 前 24 位十六进制，配对的 tool_result id 一起改。已经是别的形状的 id 不动。
 - `anthropic-messages`：丢掉没有 signature 的 thinking 块。有 signature 的 thinking、文本和 tool id 原样保留。
+
+## 无法解析的工具参数
+
+`collect` 把流出的参数文本解析一次：空白文本解析为 `{}`，解析失败时 `input` 为 null，`rawInput` 保留原文。回放时两个适配器都经 `replayToolInput`（`@sage/provider/contract`）取参数：`input` 是 JSON 对象就原样发（openai-chat 发 `rawInput` 原文，anthropic-messages 发 `input`）；不是对象就发占位 `{}`。否则一次坏参数会让之后每个请求都被服务端以 400 拒收。占位是对 Log 里那条 assistant 消息的纯函数，所以发出去的请求仍能只凭 Log 重建；Log 里的 `rawInput` 不改。模型从 core 返回的工具错误里看到自己发的原文，见 `@sage/core` README 的「工具错误」。

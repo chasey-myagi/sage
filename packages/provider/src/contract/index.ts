@@ -1,7 +1,8 @@
 /**
  * Contract barrel. Types, the pure `collect` fold, and the dependency-free
  * helpers every layer above shares (`isRecord`, `isFiniteNumber`,
- * `errorText`, `ModelRef` readers, usage arithmetic, backoff).
+ * `errorText`, `ModelRef` readers, usage arithmetic, backoff, the
+ * tool-argument replay rule).
  *
  * Guarantees: nothing under this path performs I/O or imports anything
  * outside it; the only side effect is the timer inside `sleep`. core may
@@ -39,6 +40,7 @@ export type {
 export { isModelRef, parseModelRef } from "./model-ref.js";
 export { finiteOr, isFiniteNumber, isRecord } from "./record.js";
 export type { FinishKind, StreamChunk } from "./stream.js";
+export { replayToolInput } from "./tool-input.js";
 export {
   addUsage,
   emptyUsage,

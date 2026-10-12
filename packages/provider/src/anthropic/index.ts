@@ -4,8 +4,10 @@
  * Guarantees: cache breakpoints become `cache_control` marks (the head mark
  * goes on the system block and the last tool). `message_start` becomes the
  * response chunk (message.id, message.model). `toolChoice` becomes
- * `tool_choice: { type }`; an absent toolChoice omits the field. Messages
- * and tools are otherwise sent unchanged. An `error` event ends the call
+ * `tool_choice: { type }`; an absent toolChoice omits the field. A
+ * tool_use replays its `input`, or `{}` when that is not a JSON object
+ * (`replayToolInput`, a pure function of the logged block). Messages and
+ * tools are otherwise sent unchanged. An `error` event ends the call
  * as a non-transport error finish carrying the server's message and
  * `error.event`; its `error.type` is permanent when it names a request the
  * API will reject again.
@@ -31,6 +33,7 @@ import type {
 } from "../contract/message.js";
 import { finiteOr } from "../contract/record.js";
 import type { StreamChunk } from "../contract/stream.js";
+import { replayToolInput } from "../contract/tool-input.js";
 import type { Usage } from "../contract/usage.js";
 import type { Driver, WireStop } from "../drive.js";
 import { blockStart, driveStream } from "../drive.js";
@@ -190,7 +193,7 @@ function encodeBlock(
         type: "tool_use",
         id: block.id,
         name: block.name,
-        input: block.input,
+        input: replayToolInput(block).input,
         ...mark,
       };
     case "tool_result":

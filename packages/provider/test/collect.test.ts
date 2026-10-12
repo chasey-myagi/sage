@@ -93,6 +93,34 @@ describe("collect folds a chunk stream into one assistant message", () => {
     ]);
   });
 
+  it("parses a tool call that streamed no arguments as an empty object", async () => {
+    const message = await collect(
+      from([
+        {
+          type: "block_start",
+          index: 0,
+          blockType: "tool_use",
+          id: "toolu_1",
+          name: "lookup",
+        },
+        { type: "tool_input_delta", index: 0, partialJson: " " },
+        { type: "block_end", index: 0 },
+        { type: "usage", usage },
+        finish,
+      ]),
+      { api: "anthropic-messages" },
+    );
+    expect(message.content).toEqual([
+      {
+        type: "tool_use",
+        id: "toolu_1",
+        name: "lookup",
+        input: {},
+        rawInput: " ",
+      },
+    ]);
+  });
+
   it("leaves response identity empty when no response chunk arrives", async () => {
     const message = await collect(
       from([

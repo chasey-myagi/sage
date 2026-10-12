@@ -7,7 +7,7 @@
  * A guard may only add a deny. Neither denial executes the tool. A throw from
  * execute, synchronous or rejected, or from around, becomes a tool_result
  * `{ isError: true, content: "<name>: <message>" }` and does not escape
- * runTool.
+ * runTool. A known tool whose input is not a JSON object does not execute.
  *
  * Intentionally not in the Log: the callback lists. This object never sees
  * the store.
@@ -15,6 +15,7 @@
 
 import {
   errorText,
+  isRecord,
   type ToolResultBlock,
   type ToolUseBlock,
 } from "@sage/provider/contract";
@@ -49,6 +50,29 @@ function denied(id: string, reason: string): ToolResultBlock {
     type: "tool_result",
     toolUseId: id,
     content: `Denied: ${reason}`,
+    isError: true,
+  };
+}
+
+/** Characters of unusable argument text quoted back to the model. */
+const ARGUMENTS_PREVIEW_CHARS = 500;
+
+/**
+ * The error for a call whose arguments are not a JSON object. It quotes
+ * the streamed text because the adapter replays the call with `{}`, so the
+ * model would otherwise never see what it sent.
+ */
+function unusableArguments(call: ToolUseBlock): ToolResultBlock {
+  // Cut by code point so the preview never ends in a lone surrogate.
+  const chars = Array.from(call.rawInput);
+  const preview =
+    chars.length > ARGUMENTS_PREVIEW_CHARS
+      ? `${chars.slice(0, ARGUMENTS_PREVIEW_CHARS).join("")}...`
+      : call.rawInput;
+  return {
+    type: "tool_result",
+    toolUseId: call.id,
+    content: `${call.name}: arguments are not a JSON object, so the tool did not run. Resend the call with arguments that match its input schema. Received: ${preview}`,
     isError: true,
   };
 }
@@ -128,8 +152,10 @@ export class HookDispatcher implements Hooks {
   /**
    * Runs one call through the fixed pipeline and returns its tool_result;
    * never throws for a tool failure. An unknown `tool` yields an error
-   * result after the pre hooks and guards ran. `tool_post` hooks may replace
-   * the result; observers then see the final one as `tool_result`.
+   * result after the pre hooks and guards ran, and so does an input that is
+   * not a JSON object (after any pre-hook `updatedInput`); neither executes.
+   * `tool_post` hooks may replace the result; observers then see the final
+   * one as `tool_result`.
    */
   async runTool(
     call: ToolUseBlock,
@@ -159,6 +185,7 @@ export class HookDispatcher implements Hooks {
         isError: true,
       });
     }
+    if (!isRecord(input)) return this.finishTool(call, unusableArguments(call));
 
     const execute = async (): Promise<ToolResultBlock> => {
       try {

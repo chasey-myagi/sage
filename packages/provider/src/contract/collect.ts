@@ -2,8 +2,9 @@
  * Folds a chunk stream into one assistant message. Pure: no I/O.
  *
  * Guarantees: blocks come out in index order. Tool input is the
- * concatenation of partial JSON, parsed once at the end; a parse failure
- * keeps rawInput and sets input to null. A stream that ends without a
+ * concatenation of partial JSON, parsed once at the end; blank text parses
+ * as `{}` (a call with no arguments), and a parse failure keeps rawInput
+ * and sets input to null. A stream that ends without a
  * finish chunk yields `finish {kind:"error"}` with `INCOMPLETE_STREAM`.
  *
  * Intentionally not in the Log: collect does not append. The caller decides
@@ -142,9 +143,12 @@ function toBlock(acc: Acc): ContentBlock {
 }
 
 function parseInput(rawInput: string): unknown {
+  if (rawInput.trim() === "") return {};
   try {
     return JSON.parse(rawInput) as unknown;
   } catch {
+    // Malformed arguments are a normal model output, not a fault: null
+    // marks them for the dispatcher and the replay rule.
     return null;
   }
 }
