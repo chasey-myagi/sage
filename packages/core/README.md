@@ -61,6 +61,8 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 
 工具永远不能杀会话。`execute` 抛出的同步异常和被拒绝的 Promise，以及包住它的 `around` 抛错，都变成一条 `tool_result`：`isError` 为 true，正文是 `<工具名>: <message>`。这条结果写进下一条用户消息，模型下一轮看得到。连续多次也一样，默认看 5 次也不会追加 `outcome: "error"` 的 terminal。`runHealth.toolErrors` 只计数。
 
+参数不是 JSON 对象的调用（流出的参数解析失败，或解析出数组、字符串这类非对象值）不执行工具，在 tool_pre 钩子与 guard 之后直接得到一条 `isError: true` 的 `tool_result`：`<工具名>: arguments are not a JSON object, so the tool did not run. ... Received: <原文>`，原文最多引 500 个字符。provider 回放这次调用时发的是占位 `{}`，模型只能从这条结果里看到自己发了什么。tool_pre 用 `updatedInput` 换成对象时照常执行。
+
 会终止的是内核自己的失败和 provider 的失败：视图断言、没有适配器、整轮重试不重发的适配器 finish error、可重发的错误在整轮重试耗尽之后，以及工具管线以外的抛错。
 
 构造传 `adapters`（provider 到适配器）。起始型号的 provider 不在里面时构造抛错。

@@ -7,7 +7,10 @@
  * opens its own thinking block. The first SSE object with a non-empty
  * `id` or a choice supplies the response chunk's `id` and `model`.
  * `toolChoice` is sent as `tool_choice` unchanged; an absent toolChoice
- * omits the field. Messages and tools are otherwise sent unchanged. A
+ * omits the field. A tool call replays its `rawInput` as `arguments`, or
+ * `{}` when its input is not a JSON object (`replayToolInput`, a pure
+ * function of the logged block). Messages and tools are otherwise sent
+ * unchanged. A
  * frame with an `error` object ends the call as a non-transport error
  * finish carrying its message and `error.event`; its `error.type` or
  * `error.code` is permanent when it names a request the API will reject
@@ -29,6 +32,7 @@ import type { PreparedCall, ProviderAdapter } from "../contract/adapter.js";
 import type { Message, ModelRef, Request } from "../contract/message.js";
 import { finiteOr } from "../contract/record.js";
 import type { StreamChunk } from "../contract/stream.js";
+import { replayToolInput } from "../contract/tool-input.js";
 import type { Usage } from "../contract/usage.js";
 import type { Driver, WireStop } from "../drive.js";
 import { blockStart, driveStream } from "../drive.js";
@@ -158,7 +162,7 @@ function pushAssistant(
       toolCalls.push({
         id: block.id,
         type: "function",
-        function: { name: block.name, arguments: block.rawInput },
+        function: { name: block.name, arguments: replayToolInput(block).text },
       });
     }
   }
