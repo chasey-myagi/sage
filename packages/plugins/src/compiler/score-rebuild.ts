@@ -4,9 +4,8 @@
  *
  * Contract: it runs only on a rebuild, and only when at least one tool
  * chunk still has reason `kept`; recent, superseded, retry, and budget
- * decisions always win. A scorer with `isNoop` (the rule scorer) leaves
- * every tier and reason untouched. A scorer failure keeps the eliminate tiers and is reported,
- * never thrown.
+ * decisions always win. A scorer failure keeps the eliminate tiers and is
+ * reported, never thrown.
  *
  * Intentionally not in the Log: the scorer function and its request. The
  * re-tiered rows and `manifest.scorer` are the record.
@@ -64,16 +63,17 @@ export type ScoredView = {
 /**
  * Scores the kept tool chunks of the chosen view and applies the result.
  *
- * A scorer without `isNoop` may set each candidate to none, summary, or full. The
- * chunk reason becomes the decision's non-empty `reason`, else
- * `scorer:model`, keeping the previous suffixes. A summary's tool_result is
- * the stub, a newline, and `summary (model notes, not evidence): ` plus the
- * note, which is also stored on the row. A throw or fallback keeps the
- * input unchanged and returns `fallback` for the caller to append as
- * `;scorer:fallback:<reason>`. `report` is set when the call reported
- * usage or a fallback; a positive `failedRequests` is copied onto it, and
- * those chunks keep their eliminate tiers. `prevRequest` is the previous turn's request
- * rebuilt from the Log.
+ * The scorer may set each candidate to none, summary, or full. The chunk
+ * reason becomes the decision's non-empty `reason`, else `scorer:model`,
+ * keeping the previous suffixes. A summary's tool_result is the stub, a
+ * newline, and `summary (model notes, not evidence): ` plus the note, which
+ * is also stored on the row; a `stubOnly` or noteless summary is the stub
+ * alone. A throw or fallback keeps the input unchanged and returns
+ * `fallback` for the caller to append as `;scorer:fallback:<reason>`.
+ * `report` is set when the call reported usage or a fallback; a positive
+ * `failedRequests` is copied onto it, and those chunks keep their
+ * eliminate tiers. `prevRequest` is the previous turn's request rebuilt
+ * from the Log.
  */
 export async function runRebuildScorer(input: {
   scorer: Scorer;
@@ -98,10 +98,10 @@ export async function runRebuildScorer(input: {
     result = { decisions: [], fallback: "error" };
   }
   const report = reportOf(result);
-  if (result.fallback !== undefined || input.scorer.isNoop) {
+  if (result.fallback !== undefined) {
     return {
       ...view,
-      ...(result.fallback !== undefined ? { fallback: result.fallback } : {}),
+      fallback: result.fallback,
       ...(report ? { report } : {}),
     };
   }
@@ -161,12 +161,8 @@ function mergeScore(
       usedDelta -= chunk.tokens;
       return stubRow(chunk, reason, count);
     }
-    const summarized = summaryRow(
-      chunk,
-      reason,
-      clampSummary(scored.summary ?? ""),
-      count,
-    );
+    const note = scored.stubOnly ? "" : clampSummary(scored.summary ?? "");
+    const summarized = summaryRow(chunk, reason, note, count);
     usedDelta += summarized.tokens - chunk.tokens;
     return summarized;
   });

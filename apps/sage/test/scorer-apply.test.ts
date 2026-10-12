@@ -13,7 +13,7 @@ afterEach(() => {
   dir = "";
 });
 
-it("exits 2 when --scorer-apply entry has no model or jev scorer", async () => {
+it("exits 2 when --scorer-apply entry has no scorer and accepts the rule scorer", async () => {
   dir = mkdtempSync(path.join(tmpdir(), "sage-scorer-apply-"));
   const { adapter } = createFaux([stopScript("done")]);
   const missing = capture();
@@ -28,7 +28,7 @@ it("exits 2 when --scorer-apply entry has no model or jev scorer", async () => {
     },
   );
   expect(missingCode).toBe(2);
-  expect(missing.text().stderr).toContain("--scorer model|jev");
+  expect(missing.text().stderr).toContain("--scorer rule|model|jev");
 
   const rule = capture();
   const ruleCode = await runCli(
@@ -41,8 +41,8 @@ it("exits 2 when --scorer-apply entry has no model or jev scorer", async () => {
       adapters: { anthropic: adapter as ProviderAdapter },
     },
   );
-  expect(ruleCode).toBe(2);
-  expect(rule.text().stderr).toContain("--scorer model|jev");
+  expect(ruleCode).toBe(0);
+  expect(rule.text().stderr).not.toContain("entry scoring needs");
 });
 
 it("bench run forwards --scorer-apply and records it", async () => {

@@ -20,7 +20,7 @@
 [#<chunkId> · <toolName> · <摘要> · <n>k tokens · omitted · expand("<chunkId>") to retrieve]
 ```
 
-摘要是这条 tool_use 输入的紧凑单行，最长 80 个字符，更长就截断并加上 `…`。`<n>k` 是该块原文 token 数除以 1000，保留一位小数。打分器把块判为 `summary` 时，模型看到的是这一行桩，换行，然后 `summary (model notes, not evidence): ` 和打分器写下的笔记。笔记不是工具当时的完整输出：模型打分器的笔记是它自己写的；jev 打分器的笔记是从原文里摘出的至多 3 行，用 `; ` 连接，每行可能已被截短。模型要当时的原文时调用 `expand`，参数 `id` 就是桩里的 chunkId。这个工具按块 id 从 Log 取回当时的 tool_result 或文本消息，不重新执行原来的工具。
+摘要是这条 tool_use 输入的紧凑单行，最长 80 个字符，更长就截断并加上 `…`。`<n>k` 是该块原文 token 数除以 1000，保留一位小数。打分器把块判为 `summary` 时，模型看到的是这一行桩，换行，然后 `summary (model notes, not evidence): ` 和打分器写下的笔记。笔记不是工具当时的完整输出：模型打分器的笔记是它自己写的；jev 打分器的笔记是从原文里摘出的至多 3 行，用 `; ` 连接，每行可能已被截短。规则打分器的 `summary` 没有笔记，模型只看到那一行桩。模型要当时的原文时调用 `expand`，参数 `id` 就是桩里的 chunkId。这个工具按块 id 从 Log 取回当时的 tool_result 或文本消息，不重新执行原来的工具。
 
 expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本轮、路径上名字为 `expand` 的 tool_use 次数；`omitted` 是本轮档位为 none 的块数。
 
@@ -109,15 +109,41 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 块的档位先由四条确定性规则决定：被后来的访问盖掉、失败重试的中间输出、最近的工具块、预算从最旧开始淘汰。这四条不经过打分器。打分器只看淘汰之后仍然是 `kept` 的工具块，而且只在本轮 `decideEpoch` 判定重开阶段时调用一次。阶段内不调用，前缀不用为了打分重写。
 
-默认是 `ruleScorer`：这些块保持 full，reason 仍是 `kept`。没装打分器时，视图和清单与只跑淘汰时逐字节相同。
+`contextCompiler` 默认不装打分器：这些块保持 full，reason 仍是 `kept`，视图和清单与只跑淘汰时逐字节相同。
+
+### 规则打分器
+
+`ruleScorer({ tiers? })` 只看工具名和 bash 命令文本就定档，不发请求，结果带 `requested: false`，所以 `scorer` / `entryScored` / `shadow` 的 `calls` 都是 0，也不写 usage。每个候选先归一类，再查档位表 `DEFAULT_RULE_TIERS`；`tiers` 按类覆盖。档位是 `keep` 的类不给判定，块留在编译器原有规则给的档位和 reason 上。给了判定的块，reason 是 `scorer:rule:<类别>`：重建打分时它就是 reason 本身（后面照旧接上一轮的后缀），入口打分时接在 `scorer:entry:<tier>;` 之后。
+
+| 类别 | 归入的块 | 缺省档位 | 为什么 |
+| --- | --- | --- | --- |
+| `echo` | `edit`、`write`、`update_ledger` | `keep` | 真实结果只有一行（`Edited <path>`、`Wrote <path>`、`Ledger updated.`）。`none` 只替换 tool_result，桩行要印出调用参数和 token 数，比原结果更长，还会让模型以为省掉了内容 |
+| `reader` | `read`、`grep` | `keep` | 文件内容和搜索命中常被后面引用 |
+| `bash-reader` | `bash`，命令判为读取类 | `keep` | 与 `read` / `grep` 同类证据 |
+| `bash-runner` | `bash`，命令判为运行类，结果不是 `isError` | `summary` | 测试、构建、脚本以退出码 0 结束后，输出多半用不到 |
+| `bash-runner-error` | `bash`，运行类，结果是 `isError`（退出码非 0） | `keep` | 报错正是下一步要看的东西 |
+| `bash-mixed` | `bash`，读取与运行混在一条命令里；运行类接着管道（没有 `pipefail`）；循环与条件 | `keep` | `isError` 反映不了管道首级的失败，输出里也可能有读到的内容 |
+| `other` | 其他工具，或 `bash` 的 `command` 不是字符串 | `keep` | 没有依据 |
+
+`ruleCategory(chunk)` 从包入口导出，按工具名、输入和 `isError` 返回上表的类别，供需要同一份工具名映射的调用方复用。`edit`、`write`、`read`、`grep`、`bash` 按 `@sage/tools` 的 `TOOL_NAMES` 在插件里写成字面量（插件不 import 工具包），`update_ledger` 取自 `progressLedger` 的 `LEDGER_TOOL_NAME`。`apps/sage` 的 e2e 用真实工具跑一遍 `--scorer rule --scorer-apply entry`，工具改名时那条测试会变红。规则打分的 `summary` 不生成文本：判定带 `stubOnly`，视图里只有那一行桩，清单行的 `summary` 是空串，入口打分不对它做可定位检查。任何打分器给出空笔记的 `summary`，视图都只显示桩行，不再接 `summary (model notes, not evidence): `。
+
+`classifyBashCommand(command)` 从包入口导出，返回 `"reader" | "runner" | "mixed"`，是纯函数，不执行也不完整解析命令。规范化：先丢掉 heredoc 正文（`<<EOF` 到结束词那一行）；然后一次扫描，记着引号状态切分。只有引号之外的字符才算运算符：词首的 `#` 注释掉到行尾，`&&`、`||`、`;`、换行切成若干部分，`|` 切成管道各级，空白切词，`>` 才算重定向；引号里或反斜杠转义的字符一律当字面量，所以 `grep -rn 'x >= 3' src`、`awk '$1 > 3' f`、`rg "a > b"` 都是读取类。每级去掉开头的 `(` / `{` 和 `NAME=value`，跳过复合命令的续接词（`do`、`then`、`else`、`elif`、`done`、`fi`、`esac`、`!`），再跳过前缀包装命令 `sudo`、`env`、`time`、`nice`、`xargs`、`command`、`exec` 及其选项（`-n 5` 这类带值的选项连值一起跳过），按其后的第一个词判断：`xargs grep x` 是读取类，`sudo make` 是运行类。以 `for`、`if`、`while`、`until`、`case`、`select`、`function` 开头的级判为混合，循环体跑几次、走哪个分支，文本看不出来。其余按第一个词：
+
+- 读取类：输出文件内容、列表或搜索命中的命令，`cat`、`head`、`tail`、`nl`、`sed`、`awk`、`cut`、`tac`、`strings`、`xxd`、`od`、`hexdump`、`jq`、`grep`、`egrep`、`fgrep`、`rg`、`ag`、`ack`、`ls`、`tree`、`find`、`fd`、`stat`、`file`、`du`、`wc`、`realpath`、`readlink`、`basename`、`dirname`、`pwd`、`which`、`diff`、`cmp`、`sort`、`uniq`、`comm`、`tr`、`column`。`sed` 带 `-i` / `--in-place`、`sort` 带 `-o` / `--output`、`find` 带 `-exec`、`-execdir`、`-ok`、`-okdir`、`-delete` 时改判运行类。`git` 的读取类子命令：`show`、`diff`、`log`、`status`、`blame`、`grep`、`ls-files`、`ls-tree`、`rev-parse`、`cat-file`、`shortlog`、`describe` 总是；`branch`、`tag`、`remote` 只在后面没有位置参数时（`git branch -a`、`git remote -v`；带名字就是新建或删除）；`worktree list`、`config --get` / `--get-all` / `--get-regexp` / `--list` / `-l`、`stash list` / `stash show`。`-C`、`-c` 及其参数和其他全局选项跳过，其余子命令是运行类。`less`、`more` 需要终端，不算。
+- 中性：`cd`、`pushd`、`popd`、`echo`、`printf`、`true`、`export`、`set`、`unset`。它们只挪目录或打印自己的参数，整级丢掉，所以 `cd repo && pnpm test` 按 `pnpm test` 判，`pnpm test; echo $?` 仍是运行类。
+- 运行类：其余一切，包括测试、构建、包管理器、解释器和脚本。不认识的命令按运行类，免得把执行当成读取。任何一级带引号外的写文件输出重定向（`>`、`>>`、`&>`、`echo hi>out`）也是运行类，例如 `cat > a.ts <<'EOF'`。`2>`（诊断输出）、描述符复制（`2>&1`、`>&2`）和 `/dev/null` 不算写文件。
+
+一条管道按第一级判，后面的读取类各级只是过滤：`cat a | grep x | head` 是读取类。后面出现运行类时两者合并：`grep -l x | xargs rm` 是混合。bash 工具用 `sh -c` 执行，不开 `pipefail`，管道的退出码是最后一级的：`pnpm test 2>&1 | tail -50` 失败了 `isError` 也是 false。所以第一级是运行类、后面还有级时判为混合；命令里出现 `pipefail`（例如 `set -o pipefail; …`）时仍按运行类。各部分合起来全是读取类（或只剩中性部分）为 `reader`，全是运行类为 `runner`，否则 `mixed`。
+
+判断只看文本，已知的偏差：不认识的命令（包括 `python -c` 读文件）按运行类，跑通时会被摘成桩行，模型要原文得 `expand`；`git tag -l 'v*'` 这类带位置参数的列举按运行类；`[[ a > b ]]`、`(( x > 3 ))` 里引号外的比较符 `>` 会被当成写文件，判成运行类。包装命令的选项按同一张带值表跳过，`sudo -n`、`sudo -E` 后面的读取命令会被判成运行类。下面几种会多留原文：`$(…)` 和反引号里的运行命令看不到；单个 `&` 不切分；`f() { … }` 按 `f()` 判；`>& file` 一律当描述符复制；`exit` 不算中性；引号里出现的 `<<EOF` 也会被当成 heredoc 开头，后面的行被当正文丢掉。
 
 `modelScorer` 用调用方注入的 adapter 打一次分。请求的 `head`（system 和 tools）以及此前的 messages 与上一轮主请求逐字节相同，`toolChoice` 为 `"none"`，只在末尾多一条 user 消息：固定指令、当前问题、以及候选清单 `[{id, tool, summary, tokens}]`。用不到的 tools 也照带。少一个 tool 或换掉 system，缓存前缀会从第一个 token 断开，辅助调用就变成把整段历史再付一遍。`tool_choice` 不改这些字节。候选超过 60 个时丢掉最旧的。`timeoutMs` 默认 20000。
 
 指令说明这是旁路判定，不是继续任务。每个候选是早先某次工具调用的结果。模型只返回 JSON 数组，每项 `{"id","tier":"none"|"summary"|"full","summary"?}`，summary 最长 200 字符。摘要必须让后面的轮次不用重读就能定位：文件读取写路径、关键符号或导出、以及行号范围；grep 或 ls 写命中路径与行号；命令输出写命令和结论性数字或状态，例如 `tests 23 passed 1 failed: name`。不要只写判断（已看过、不再需要、和之前一样），那种情况改判 `none` 或 `full`。示例里的 summary 是路径、符号和行号。正文可以包在一层 json 代码围栏里。围栏去掉之后，从第一个 `[` 或 `{` 起按括号配对取出一个 JSON 值，字符串内部的括号不计入配对，这个值前后的文字都忽略。取不到值，或取出的文本不是 JSON，整次解析失败。这样解析成功时，即使原文前后还有解释，也不算 fallback，不写 `raw`。顶层如果是带 `id` 的单个对象，会包成一项。`id` 不在这份候选清单里的项丢掉并计数，其余照用。空数组 `[]` 表示全部保留，不是失败。某一项缺 `id` 或 tier 非法，整次解析失败。`summary` 档在视图里是桩行，换行，然后 `summary (model notes, not evidence): ` 加上那段笔记。`none` 仍是原来的桩。`full` 保持原文。返回里没有的块保持 `kept`。打分器若把 `recent` 块判成 none，以 recent 为准。
 
-非法 JSON、超时、adapter 的 finish error，或者还没有上一轮请求，全部退回规则打分，本轮照常发出。清单 `epochDecision.reason` 追加 `;scorer:fallback:<原因>`。这次调用写在清单字段 `scorer: { calls, usage, fallback, raw?, failedRequests? }` 里。`failedRequests` 只在打分器部分请求失败时出现（见 jev 一节），这些块保留淘汰阶段的档位，不追加 fallback。`calls` 只数真正发出的打分请求：打分器在发请求前就放弃（没有上一轮请求、没有 adapter、jev 没有 key）时记 0，其余记 1。`raw` 只在 fallback 且已经拿到模型回复时出现：`text` 是原文前 300 字，`finish` 是结束种类。成功不写 `raw`。
+非法 JSON、超时、adapter 的 finish error，或者还没有上一轮请求，全部退回淘汰阶段的档位，本轮照常发出。清单 `epochDecision.reason` 追加 `;scorer:fallback:<原因>`。这次调用写在清单字段 `scorer: { calls, usage, fallback, raw?, failedRequests? }` 里。`failedRequests` 只在打分器部分请求失败时出现（见 jev 一节），这些块保留淘汰阶段的档位，不追加 fallback。`calls` 只数真正发出的打分请求：打分器在发请求前就放弃（没有上一轮请求、没有 adapter、jev 没有 key）时记 0，其余记 1。`raw` 只在 fallback 且已经拿到模型回复时出现：`text` 是原文前 300 字，`finish` 是结束种类。成功不写 `raw`。
 
-CLI `--scorer model` 给根编译器装上模型打分，沿用已装配的 adapter 和当前模型。不写这个参数就是规则打分。
+CLI `--scorer model` 给根编译器装上模型打分，沿用已装配的 adapter 和当前模型。`--scorer rule` 装上缺省档位的 `ruleScorer()`。不写这个参数就不装打分器。
 
 `jevScorer` 调用 TypeSafe System One，每个候选块单独一个请求，同时最多 4 个在途（API 的上限是每个 key 每秒 10 万 token、80 个请求）。工具已标 `isError` 的块不发请求，直接判 full，reason 为 `scorer:jev:full:is_error`。`model` 缺省 `jev-latest`；传入 `model` 就改用那个名字，用来对准 LLM2Jev 的 `--served-model-name`。`POST <baseUrl>/v1/systemone`（默认 `https://api.typesafe.ai`），header 为 `Authorization: Bearer <key>` 和 `Content-Type: application/json`。
 
@@ -159,7 +185,7 @@ CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https:
 
 `replayOffline` / `compareOffline` 在 `src/replay/offline.ts`，不从包入口导出，只有本包的回放测试在用。
 
-离线重编译拿不到模型对新视图的反应，所以这一路不打模型。`policy.scorer` 没有 `isNoop`（只有 `ruleScorer` 设了它）时，`replayOffline` 换成 `ruleScorer`，并记住这次返回的数组。`compareOffline` 收到这个数组，就在 Markdown 和 JSON 里写上 `scorer:offline-rule`；数组的拷贝不带这个标记。
+离线重编译拿不到模型对新视图的反应，所以这一路不打模型。`policy.scorer` 没有 `isLocal`（不发请求的打分器才设它，例如 `ruleScorer`）时，`replayOffline` 换成缺省档位的 `ruleScorer()`，并记住这次返回的数组。带 `isLocal` 的打分器原样保留，包括它的 `tiers` 覆盖。`compareOffline` 收到这个数组，就在 Markdown 和 JSON 里写上 `scorer:offline-rule`；数组的拷贝不带这个标记。
 
 ```ts
 replayOffline(store, sessionId, policy, { tools, system })

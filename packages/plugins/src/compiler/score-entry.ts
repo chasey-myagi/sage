@@ -5,9 +5,8 @@
  * Contract: a chunk's tier is fixed when it first enters the view and the
  * cumulative freeze keeps it, so the bytes before it never change inside
  * an epoch. Every failure leaves the candidates full. `calls` counts only
- * a request actually sent: a fallback with `requested: false` records 0,
- * as rebuild scoring does; a throw still counts 1. A scorer with `isNoop` (the rule scorer) is never called in entry
- * mode.
+ * a request actually sent: a result with `requested: false` records 0, as
+ * rebuild scoring does; a throw still counts 1.
  *
  * Intentionally not in the Log: the scorer function and its request. The
  * re-tiered rows and `manifest.entryScored` are the record.
@@ -62,7 +61,8 @@ export function resolveMinScoreTokens(value: number | undefined): number {
  * Candidates are tool chunks absent from the previous manifest, still at
  * tier full, at least `minScoreTokens`, and not `expand` results. `none`
  * becomes a stub. `summary` keeps the note cut to 200 characters; a missing
- * note leaves the chunk as it was. A note shorter than 20 characters, or
+ * note leaves the chunk as it was. A `stubOnly` summary shows the stub
+ * alone and is not checked for a note. A note shorter than 20 characters, or
  * with no path, symbol, or number, stays full with reason
  * `scorer:entry:full;summary-rejected` and counts in both `full` and
  * `summaryRejected`. `full` keeps the text. The reason is
@@ -70,8 +70,7 @@ export function resolveMinScoreTokens(value: number | undefined): number {
  * gave one (jev's probabilities). A throw, a fallback, or an id the reply
  * omits leaves that chunk full; the scorer's `failedRequests` is copied
  * onto the report when positive. `report` is set whenever the scorer was
- * invoked; its `calls` is 0 when the scorer fell back with `requested:
- * false`.
+ * invoked; its `calls` is 0 when the result has `requested: false`.
  * `prevRequest` is this turn's compiled view.
  */
 export async function runEntryScorer(input: {
@@ -85,7 +84,6 @@ export async function runEntryScorer(input: {
   query: string;
 }): Promise<ScoredView & { report?: EntryScoredReport }> {
   const unchanged = { ...input.view };
-  if (input.scorer.isNoop) return unchanged;
   const candidates = entryCandidates(input);
   if (candidates.length === 0) return unchanged;
   let result: ScoreResult;
@@ -115,7 +113,7 @@ export async function runEntryScorer(input: {
       rowsToDecisions(applied.rows),
     ),
     used: input.view.used + applied.usedDelta,
-    report: entryReport(1, applied, result),
+    report: entryReport(requestCount(result), applied, result),
   };
 }
 
@@ -180,6 +178,12 @@ function applyEntryDecisions(
       tally.none += 1;
       tally.usedDelta -= chunk.tokens;
       return stubRow(chunk, reason, input.count);
+    }
+    if (scored.stubOnly) {
+      tally.summary += 1;
+      const stubbed = summaryRow(chunk, reason, "", input.count);
+      tally.usedDelta += stubbed.tokens - chunk.tokens;
+      return stubbed;
     }
     if (scored.summary === undefined) return row;
     const note = clampSummary(scored.summary);

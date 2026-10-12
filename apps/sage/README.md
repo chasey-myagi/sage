@@ -68,13 +68,13 @@ usage: sage [-p | --print] <task> [--provider <preset>] [--model <id>] [--base-u
 
 ## 打分
 
-`--scorer rule|model|jev` 选根编译器的打分器，默认 `rule`（确定性的规则打分）。`model` 复用已装好的适配器和本次会话的型号。`--passthrough` 不编译上下文，两个打分旗标都不会调用打分器。
+`--scorer rule|model|jev` 选根编译器的打分器，不写就不装，档位只由淘汰规则决定。`rule` 是缺省档位的规则打分器，不发请求：只有 `bash` 跑测试、构建、脚本这类命令、退出码为 0、且没有接着管道（或开了 `pipefail`）时判 summary，视图里只剩桩行；其余块（`edit`、`write`、`update_ledger` 的一行回显，`read`、`grep`、读取类 bash、报错或接管道的运行类 bash，其他工具）都不改档。分类表与 bash 命令的判定规则见 `packages/plugins/README.md` 的「规则打分器」。`model` 复用已装好的适配器和本次会话的型号。`--passthrough` 不编译上下文，两个打分旗标都不会调用打分器。
 
 `--shadow-scorer rule|model|jev` 给根编译器装上影子打分，默认不装。它每轮只给新进入视图的工具块打分，结果写在清单的 `shadow` 上，`shadow.calls` 是这一轮真正发出的请求数（0 或 1）。影子只记不生效：不改档次、冻结和预算，也不改模型看到的消息。
 
 `--scorer jev` 和 `--shadow-scorer jev` 把打分请求发到 `JEV_BASE_URL`（缺省 `https://api.typesafe.ai`）的 `/v1/systemone`。密钥读 `JEV_API_KEY`，没有则用 `TYPESAFE_API_KEY`。两个都没有时退出 2，stderr 写出这两个变量名。请求体里的 `model` 读 `JEV_MODEL`，缺省 `jev-latest`。接到本地 LLM2Jev（github.com/Yinsongxu/LLM2Jev）时，用它的 `--served-model-name` 作为 `JEV_MODEL`，例如 `JEV_BASE_URL=http://127.0.0.1:30000 JEV_API_KEY=local JEV_MODEL=那个名字 sage -p "任务" --scorer jev`。
 
-`--scorer-apply entry|rebuild` 默认 `rebuild`：打分只在阶段重开时生效。`entry` 改为工具结果进入视图时就定档，前缀从第一次出现就是最终形态。DeepSeek 的缓存是前缀缓存，出窗口时再改档会把后面的近期内容每轮重新全价编码，按写入价和缓存读价要很多轮才回本。`entry` 必须同时写 `--scorer model` 或 `--scorer jev`，否则退出 2，stderr 点名 `--scorer model|jev`。规则打分不改档，入口生效没有意义。`entry` 不再另跑影子。`runHealth.entryScored` 汇总这次调用的次数、none / summary / full 和 usage。
+`--scorer-apply entry|rebuild` 默认 `rebuild`：打分只在阶段重开时生效。`entry` 改为工具结果进入视图时就定档，前缀从第一次出现就是最终形态。DeepSeek 的缓存是前缀缓存，出窗口时再改档会把后面的近期内容每轮重新全价编码，按写入价和缓存读价要很多轮才回本。`entry` 必须同时写 `--scorer`（`rule`、`model`、`jev` 都可以），否则退出 2，stderr 点名 `--scorer rule|model|jev`。`entry` 不再另跑影子。`runHealth.entryScored` 汇总这次调用的次数、none / summary / full 和 usage。
 
 ## `sage stats`
 

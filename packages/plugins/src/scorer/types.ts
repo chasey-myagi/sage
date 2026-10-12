@@ -38,6 +38,12 @@ export type ScoreDecision = {
   summary?: string;
   /** Chunk reason to store; empty or absent means `scorer:model`. */
   reason?: string;
+  /**
+   * Tier `summary` only: the view shows the stub line alone, with no note.
+   * `summary` is ignored and entry scoring skips the locatability check.
+   * Set by a scorer that summarizes without writing text (the rule scorer).
+   */
+  stubOnly?: true;
 };
 
 /** The start of a model reply that fell back. */
@@ -56,9 +62,10 @@ export type ScoreResult = {
   /** Why the caller must keep the deterministic tiers; written to the Log. */
   fallback?: string;
   /**
-   * `false` when the scorer fell back before sending any request; rebuild,
-   * entry, and shadow reports then count 0 calls. Absent counts as one call.
-   * Not written to the Log.
+   * `false` when the scorer sent no request: it fell back before sending,
+   * or it decides without one (the rule scorer). Rebuild, entry, and shadow
+   * reports then count 0 calls. Absent counts as one call. Not written to
+   * the Log.
    */
   requested?: false;
   /** Present only when the call fell back after a model reply. */
@@ -79,11 +86,11 @@ export interface Scorer {
   /** Name recorded in the Log (`manifest.shadow.scorer`). */
   readonly name: string;
   /**
-   * `true` only for a scorer that makes no call and returns every candidate
-   * full. The compiler then leaves tiers and reasons untouched instead of
-   * rewriting them, and offline replay keeps it instead of swapping it out.
+   * `true` only for a scorer that decides from the candidates alone and
+   * never sends a request. Offline replay keeps it instead of swapping it
+   * for `ruleScorer`.
    */
-  readonly isNoop?: true;
+  readonly isLocal?: true;
   /** Judges the candidates. Implementations resolve failures as `fallback`. */
   score(input: ScoreInput): Promise<ScoreResult>;
 }

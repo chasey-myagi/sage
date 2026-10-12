@@ -55,7 +55,7 @@ type Policy = {
   budget?: number;
   /** Defaults to `DEFAULT_KEEP_RECENT`. */
   keepRecent?: number;
-  /** Without `isNoop`, replaced by `ruleScorer`. */
+  /** Without `isLocal`, replaced by a default `ruleScorer()`. */
   scorer?: Scorer;
   /** Defaults to `DEFAULT_EXPECTED_TURNS`. */
   expectedTurns?: number;
@@ -154,8 +154,11 @@ export async function replayOffline(
   let copiedThrough = 0;
   const views: CompiledView[] = [];
   const diffs: TurnDiff[] = [];
-  const swapped = policy.scorer !== undefined && !policy.scorer.isNoop;
-  const provider = replayProvider(policy, swapped ? ruleScorer : policy.scorer);
+  const swapped = policy.scorer !== undefined && !policy.scorer.isLocal;
+  const provider = replayProvider(
+    policy,
+    swapped ? ruleScorer() : policy.scorer,
+  );
 
   for (const slice of slices) {
     if (!policy.passthrough) {

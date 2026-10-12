@@ -535,6 +535,62 @@ describe("one-shot sage -p run", () => {
   });
 });
 
+describe("rule scorer on the real tools", () => {
+  // Drives the shipped bash and edit tools, so a renamed tool or a changed
+  // result line breaks the rule scorer's name table here.
+  it("summarizes a passing bash runner at entry and leaves the edit echo full", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-rule-"));
+    writeFileSync(path.join(dir, "a.txt"), "hello\n");
+    const command = `node -e "process.stdout.write('ok '.repeat(800))"`;
+    const { adapter } = createFaux([
+      toolScript("bash1", "bash", JSON.stringify({ command })),
+      toolScript(
+        "edit1",
+        "edit",
+        JSON.stringify({
+          path: "a.txt",
+          old_string: "hello",
+          new_string: "bye",
+        }),
+      ),
+      stopScript("done"),
+    ]);
+    const io = capture();
+    const code = await runCli(
+      ["-p", "run it", "--scorer", "rule", "--scorer-apply", "entry"],
+      {
+        cwd: dir,
+        env: { ANTHROPIC_API_KEY: "test-key" },
+        stdout: io.stdout,
+        stderr: io.stderr,
+        adapters: { anthropic: adapter as ProviderAdapter },
+      },
+    );
+    expect(code).toBe(0);
+    expect(readFileSync(path.join(dir, "a.txt"), "utf8")).toBe("bye\n");
+
+    const sessions = readdirSync(path.join(dir, ".sage", "sessions"));
+    const logName = sessions.find((name) => name.endsWith(".jsonl"));
+    const entries = readFileSync(
+      path.join(dir, ".sage", "sessions", logName ?? ""),
+      "utf8",
+    )
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as { kind?: string; payload?: unknown });
+    const last = entries.filter((entry) => entry.kind === "manifest").at(-1)
+      ?.payload as { chunks: { id: string; tier: string; reason: string }[] };
+    const bash = last.chunks.find((chunk) => chunk.id.endsWith("#bash1"));
+    const edit = last.chunks.find((chunk) => chunk.id.endsWith("#edit1"));
+    expect(bash).toMatchObject({
+      tier: "summary",
+      reason: "scorer:entry:summary;scorer:rule:bash-runner",
+    });
+    expect(edit?.tier).toBe("full");
+    expect(edit?.reason).not.toContain("scorer:");
+  });
+});
+
 describe("read-then-edit run against a faux model", () => {
   it("edits the workspace and logs passthrough manifests", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "sage-e2e-"));
