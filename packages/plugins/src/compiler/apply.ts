@@ -5,8 +5,8 @@
  * with `renderStub(chunk)` and leaves isError and the tool_use block in
  * place. A tool chunk at tier summary replaces that content with
  * `renderStub(chunk)`, a newline, and
- * `summary (model notes, not evidence): ` plus the decision's summary.
- * Every block is copied. The input messages are not mutated.
+ * `summary (model notes, not evidence): ` plus the decision's summary, or
+ * with the stub alone when the summary is empty. Every block is copied. The input messages are not mutated.
  *
  * Intentionally not in the Log: this function. The stub is what the request
  * contains; the manifest records the decision, and rebuild reads it back
@@ -18,9 +18,14 @@ import type { Chunk } from "./chunks.js";
 import type { ChunkDecision } from "./eliminate.js";
 import { renderStub } from "./stub.js";
 
-/** Tool_result text for a tier-summary chunk: stub, newline, labelled note. */
+/**
+ * Tool_result text for a tier-summary chunk: stub, newline, labelled note.
+ * An empty note (a `stubOnly` decision) renders as the stub line alone.
+ */
 export function renderSummary(chunk: Chunk, summary: string): string {
-  return `${renderStub(chunk)}\nsummary (model notes, not evidence): ${summary}`;
+  const stub = renderStub(chunk);
+  if (summary.length === 0) return stub;
+  return `${stub}\nsummary (model notes, not evidence): ${summary}`;
 }
 
 /**

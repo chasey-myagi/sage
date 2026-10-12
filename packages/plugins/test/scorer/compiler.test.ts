@@ -222,7 +222,7 @@ it("calls the scorer once when the epoch rebuilds and keeps recent over a none s
   expect(view.manifest.epochDecision?.reason).not.toContain("scorer:fallback");
 });
 
-it("leaves kept reasons unchanged when the default rule scorer rebuilds", async () => {
+it("leaves kept reasons unchanged when no scorer is installed and the epoch rebuilds", async () => {
   const store = new MemoryLogStore();
   seed(store);
   const view = await contextCompiler({

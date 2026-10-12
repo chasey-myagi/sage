@@ -25,7 +25,6 @@
 import type { CompiledView, EntryScoredReport, ViewContext } from "@sage/core";
 import { passthroughView } from "@sage/core";
 import type { RoutePolicy } from "../routing/types.js";
-import { ruleScorer } from "../scorer/rule.js";
 import type { Scorer } from "../scorer/types.js";
 import { type Assembly, assembleView, collectClaims } from "./assemble.js";
 import { cacheBreakpointsFor } from "./breakpoints.js";
@@ -110,7 +109,10 @@ type ContextCompilerOptions = {
    * are `listModels` of the current provider.
    */
   route?: RoutePolicy;
-  /** Defaults to `ruleScorer`, which changes no tier or reason. */
+  /**
+   * Re-tiers kept tool chunks. Without one no scorer runs, and every tier
+   * and reason is the eliminate one.
+   */
   scorer?: Scorer;
   /** Records what this scorer would decide; never applied. */
   shadowScorer?: Scorer;
@@ -139,7 +141,7 @@ type Settings = {
   alpha: number;
   minSavingsRatio: number;
   route: RoutePolicy | undefined;
-  scorer: Scorer;
+  scorer: Scorer | undefined;
   shadowScorer: Scorer | undefined;
   applyEntry: boolean;
   minScoreTokens: number;
@@ -164,7 +166,7 @@ export function contextCompiler(opts: ContextCompilerOptions): {
     alpha: opts.alpha ?? DEFAULT_ALPHA,
     minSavingsRatio: opts.minSavingsRatio ?? DEFAULT_MIN_SAVINGS_RATIO,
     route: opts.route,
-    scorer: opts.scorer ?? ruleScorer,
+    scorer: opts.scorer,
     shadowScorer: opts.shadowScorer,
     applyEntry: opts.scorerApply === "entry",
     minScoreTokens: resolveMinScoreTokens(opts.minScoreTokens),
@@ -413,11 +415,12 @@ async function scoreOnRebuild(
     choice.decision.rebuild && candidates.frozen
       ? candidates.recompiledView
       : candidates.frozenView;
-  if (!choice.decision.rebuild || settings.applyEntry) {
+  const { scorer } = settings;
+  if (!choice.decision.rebuild || settings.applyEntry || !scorer) {
     return { chosen, choice };
   }
   const scored = await runRebuildScorer({
-    scorer: settings.scorer,
+    scorer,
     chunks: candidates.chunks,
     view: scoredViewOf(chosen),
     count: settings.count,
@@ -447,9 +450,10 @@ async function scoreOnEntry(
   },
 ): Promise<{ chosen: Assembly; report?: EntryScoredReport }> {
   const { chosen } = input;
-  if (!settings.applyEntry) return { chosen };
+  const { scorer } = settings;
+  if (!settings.applyEntry || !scorer) return { chosen };
   const entered = await runEntryScorer({
-    scorer: settings.scorer,
+    scorer,
     chunks: input.chunks,
     view: scoredViewOf(chosen),
     count: settings.count,

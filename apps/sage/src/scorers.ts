@@ -1,8 +1,8 @@
 /**
  * Builds the scorer a `--scorer` or `--shadow-scorer` name selects.
  *
- * Contract: `rule` is the deterministic rule scorer; `model` reuses the
- * session's adapters and model; `jev` calls TypeSafe Jev at `JEV_BASE_URL`
+ * Contract: `rule` is the rule scorer with its default tiers; `model`
+ * reuses the session's adapters and model; `jev` calls TypeSafe Jev at `JEV_BASE_URL`
  * (default `https://api.typesafe.ai`) with `JEV_API_KEY`, falling back to
  * `TYPESAFE_API_KEY`, and model `JEV_MODEL` (default `jev-latest`). The
  * caller checks {@link jevApiKey} before building a `jev` scorer.
@@ -44,6 +44,6 @@ export function namedScorer(
       ...(jevFetch ? { fetchImpl: jevFetch } : {}),
     });
   }
-  if (name === "rule") return ruleScorer;
+  if (name === "rule") return ruleScorer();
   return undefined;
 }

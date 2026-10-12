@@ -33,6 +33,7 @@ export {
   withSensitiveFilter,
 } from "./routing/policy.js";
 export type { RoutePolicy } from "./routing/types.js";
+export { type BashKind, classifyBashCommand } from "./scorer/bash-kind.js";
 export {
   type JevEndpoint,
   type Posted,
@@ -52,6 +53,11 @@ export {
 } from "./scorer/jev/tiers.js";
 export { JEV_MODEL_ID, jevScorer } from "./scorer/jev.js";
 export { modelScorer } from "./scorer/model.js";
-export { ruleScorer } from "./scorer/rule.js";
+export {
+  DEFAULT_RULE_TIERS,
+  type RuleCategory,
+  type RuleTier,
+  ruleScorer,
+} from "./scorer/rule.js";
 export type { Scorer } from "./scorer/types.js";
 export { subtaskTools } from "./subtask/spawn.js";

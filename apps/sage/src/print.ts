@@ -2,8 +2,7 @@
  * `sage [-p] <task>`: one run of the coding agent in the current directory.
  *
  * Contract: every check that can fail runs before the session is built, in
- * this order: argv, `--scorer-apply entry` without a model or jev scorer
- * (exit 2), sandbox support on this platform (exit 2), the Jev key when a
+ * this order: argv, `--scorer-apply entry` without `--scorer` (exit 2), sandbox support on this platform (exit 2), the Jev key when a
  * jev scorer is named (exit 2), the user providers file (exit 2), then
  * provider auth (exit 1 or 2). stdout
  * is one JSON RunSummary line, including `health`; exit 0 when the outcome
@@ -107,12 +106,8 @@ export async function runPrint(argv: string[], io: CliIo): Promise<number> {
  * Returns the stderr line for an exit-2 failure, else the sandbox plan.
  */
 function preflight(parsed: PrintOptions, io: CliIo): string | SandboxPlan {
-  if (
-    parsed.scorerApply === "entry" &&
-    parsed.scorer !== "model" &&
-    parsed.scorer !== "jev"
-  ) {
-    return "entry scoring needs --scorer model|jev";
+  if (parsed.scorerApply === "entry" && parsed.scorer === undefined) {
+    return "entry scoring needs --scorer rule|model|jev";
   }
   const plan = planSandbox(parsed, io);
   if (typeof plan === "string") return plan;
