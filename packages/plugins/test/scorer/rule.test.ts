@@ -24,13 +24,28 @@ const TOOLS: HarnessTool[] = [
   pathlessTool("update_ledger"),
 ];
 
-type Call = { id: string; name: string; input: unknown; isError?: boolean };
+type Call = {
+  id: string;
+  name: string;
+  input: unknown;
+  isError?: boolean;
+  /** The tool_result text; defaults to `BODY`. */
+  result?: string;
+};
 
-/** One call per rule category, each with a result large enough to score. */
+/**
+ * One call per rule category. Echo tools carry the one-line results the
+ * real tools return; the others carry a result large enough to score.
+ */
 const CALLS: Call[] = [
-  { id: "edit", name: "edit", input: { path: "e.ts" } },
-  { id: "write", name: "write", input: { path: "w.ts" } },
-  { id: "ledger", name: "update_ledger", input: { goal: "fix" } },
+  { id: "edit", name: "edit", input: { path: "e.ts" }, result: "Edited e.ts" },
+  { id: "write", name: "write", input: { path: "w.ts" }, result: "Wrote w.ts" },
+  {
+    id: "ledger",
+    name: "update_ledger",
+    input: { goal: "fix" },
+    result: "Ledger updated.",
+  },
   { id: "read", name: "read", input: { path: "r.ts" } },
   { id: "grep", name: "grep", input: { pattern: "foo" } },
   { id: "cat", name: "bash", input: { command: "cd /repo && cat a.ts" } },
@@ -42,37 +57,44 @@ const CALLS: Call[] = [
     isError: true,
   },
   { id: "mixed", name: "bash", input: { command: "cat a.ts && make" } },
+  {
+    id: "piped",
+    name: "bash",
+    input: { command: "pnpm test 2>&1 | tail -50" },
+  },
   { id: "find", name: "find", input: { glob: "**/*.ts" } },
 ];
 
-it("tiers each new tool chunk by its tool kind in entry mode", async () => {
+const KEPT_IDS = [
+  "edit",
+  "write",
+  "ledger",
+  "read",
+  "grep",
+  "cat",
+  "failed",
+  "mixed",
+  "piped",
+  "find",
+];
+
+it("summarizes only a successful runner and keeps every other tool kind in entry mode", async () => {
   const store = seeded(CALLS);
   const scored = await compileEntry(store, ruleScorer());
   const baseline = await compileEntry(store, undefined);
 
-  expect(row(scored, "edit")).toMatchObject({
-    tier: "none",
-    reason: "scorer:entry:none;scorer:rule:echo",
-  });
-  expect(row(scored, "write")).toMatchObject({
-    tier: "none",
-    reason: "scorer:entry:none;scorer:rule:echo",
-  });
-  expect(row(scored, "ledger")).toMatchObject({
-    tier: "none",
-    reason: "scorer:entry:none;scorer:rule:echo",
-  });
   expect(row(scored, "test")).toMatchObject({
     tier: "summary",
     reason: "scorer:entry:summary;scorer:rule:bash-runner",
   });
-  for (const kept of ["read", "grep", "cat", "failed", "mixed", "find"]) {
+  for (const kept of KEPT_IDS) {
     expect(row(scored, kept)).toEqual(row(baseline, kept));
-    expect(result(scored, kept)).toBe(BODY);
+    expect(result(scored, kept)).toBe(result(baseline, kept));
   }
+  expect(result(scored, "edit")).toBe("Edited e.ts");
   expect(scored.manifest.entryScored).toEqual({
     calls: 0,
-    none: 3,
+    none: 0,
     summary: 1,
     full: 0,
     summaryRejected: 0,
@@ -115,9 +137,9 @@ it("lets options override the tier of each category", async () => {
   const baseline = await compileEntry(store, undefined);
   const view = await compileEntry(
     store,
-    ruleScorer({ tiers: { echo: "keep", "bash-mixed": "none" } }),
+    ruleScorer({ tiers: { "bash-runner": "keep", "bash-mixed": "none" } }),
   );
-  expect(row(view, "edit")).toEqual(row(baseline, "edit"));
+  expect(row(view, "test")).toEqual(row(baseline, "test"));
   expect(row(view, "mixed")).toMatchObject({
     tier: "none",
     reason: "scorer:entry:none;scorer:rule:bash-mixed",
@@ -126,7 +148,12 @@ it("lets options override the tier of each category", async () => {
 
 it("applies the same tiers when an epoch rebuilds", async () => {
   const store = seeded([
-    { id: "edit", name: "edit", input: { path: "e.ts" } },
+    {
+      id: "edit",
+      name: "edit",
+      input: { path: "e.ts" },
+      result: "Edited e.ts",
+    },
     { id: "test", name: "bash", input: { command: "pnpm test" } },
     { id: "read", name: "read", input: { path: "r.ts" } },
   ]);
@@ -139,10 +166,8 @@ it("applies the same tiers when an epoch rebuilds", async () => {
   }).view(context(store, 1, 1));
 
   expect(view.manifest.epochDecision?.rebuild).toBe(true);
-  expect(row(view, "edit")).toMatchObject({
-    tier: "none",
-    reason: "scorer:rule:echo",
-  });
+  expect(row(view, "edit")).toMatchObject({ tier: "full", reason: "kept" });
+  expect(result(view, "edit")).toBe("Edited e.ts");
   expect(row(view, "test")).toMatchObject({
     tier: "summary",
     reason: "scorer:rule:bash-runner",
@@ -182,7 +207,7 @@ function seeded(calls: readonly Call[]): MemoryLogStore {
           {
             type: "tool_result",
             toolUseId: call.id,
-            content: BODY,
+            content: call.result ?? BODY,
             isError: call.isError ?? false,
           },
         ],

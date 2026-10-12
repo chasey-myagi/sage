@@ -14,6 +14,7 @@
  */
 
 import { isRecord } from "@sage/core";
+import { LEDGER_TOOL_NAME } from "../claims/progress-ledger.js";
 import type { Chunk } from "../compiler/chunks.js";
 import { classifyBashCommand } from "./bash-kind.js";
 import type { ScoreDecision, Scorer } from "./types.js";
@@ -22,8 +23,8 @@ import type { ScoreDecision, Scorer } from "./types.js";
  * What the rule scorer judges a candidate by. `echo`: the result repeats
  * what the call already says (an edit, a write, a ledger update). `reader`:
  * `read` or `grep` output. `bash-*`: a `bash` call by `classifyBashCommand`,
- * with a failed runner split out as `bash-runner-error`. `other`: any other
- * tool, or a `bash` call without a string `command`.
+ * with a runner whose result is `isError` split out as `bash-runner-error`.
+ * `other`: any other tool, or a `bash` call without a string `command`.
  */
 export type RuleCategory =
   | "echo"
@@ -34,20 +35,29 @@ export type RuleCategory =
   | "bash-mixed"
   | "other";
 
-/** A category's tier; `keep` gives no decision, so the compiler's own rules stand. */
+/**
+ * A category's tier; `keep` gives no decision, so the compiler's own rules
+ * stand.
+ */
 export type RuleTier = "none" | "summary" | "full" | "keep";
 
 /**
- * Default tier per category. Echoes are rarely needed again, since the
- * call's own input already holds the change, so they drop to the stub.
- * Reads, searches, and read-only bash are often cited later and keep. A
- * runner's output (tests, builds, scripts) is rarely needed once it
- * succeeded, so it becomes a stub-only summary; a failed one keeps, since
- * the error is what the next step works from. Mixed commands and other
- * tools keep.
+ * Default tier per category. Only `bash-runner` changes a tier: a test,
+ * build, or script that exited 0 is rarely needed again, so it becomes a
+ * stub-only summary. Everything else keeps:
+ * - `echo`: the real results are one line (`Edited <path>`, `Wrote <path>`,
+ *   `Ledger updated.`). The stub prints the call's input and token count,
+ *   so it would be longer than the result and suggest omitted content.
+ * - `reader`, `bash-reader`: file content and search hits are often cited
+ *   later.
+ * - `bash-runner-error`: the error is what the next step works from.
+ * - `bash-mixed`: covers runners piped onward without `pipefail`, whose
+ *   `isError` cannot reflect the runner's own failure, and commands whose
+ *   output may hold what was read.
+ * - `other`: no basis for a decision.
  */
 export const DEFAULT_RULE_TIERS: Readonly<Record<RuleCategory, RuleTier>> = {
-  echo: "none",
+  echo: "keep",
   reader: "keep",
   "bash-reader": "keep",
   "bash-runner": "summary",
@@ -57,9 +67,10 @@ export const DEFAULT_RULE_TIERS: Readonly<Record<RuleCategory, RuleTier>> = {
 };
 
 /**
- * Category by tool name for tools judged by name alone. The names match
- * `TOOL_NAMES` in `@sage/tools` and the `progressLedger` tool, spelled here
- * because plugins do not import the tools package.
+ * Category by tool name for tools judged by name alone. `edit`, `write`,
+ * `read`, and `grep` match `TOOL_NAMES` in `@sage/tools`, spelled here
+ * because plugins do not import the tools package; the ledger name comes
+ * from `progressLedger`.
  */
 const RULE_TOOL_CATEGORIES: ReadonlyMap<string, RuleCategory> = new Map<
   string,
@@ -67,13 +78,16 @@ const RULE_TOOL_CATEGORIES: ReadonlyMap<string, RuleCategory> = new Map<
 >([
   ["edit", "echo"],
   ["write", "echo"],
-  ["update_ledger", "echo"],
+  [LEDGER_TOOL_NAME, "echo"],
   ["read", "reader"],
   ["grep", "reader"],
 ]);
 
-/** The tool whose calls `classifyBashCommand` judges. */
-const BASH_TOOL_NAME = "bash";
+/**
+ * The tool whose calls `classifyBashCommand` judges. Not named
+ * `*_TOOL_NAME`: check-layers collects those as plugin tool names.
+ */
+const BASH_TOOL = "bash";
 
 /** Prefix of the reason a rule decision records. */
 const RULE_REASON_PREFIX = "scorer:rule:";
@@ -108,10 +122,16 @@ export function ruleScorer(opts: RuleScorerOptions = {}): Scorer {
   };
 }
 
-/** The category `ruleScorer` judges `chunk` by. */
-function ruleCategory(chunk: Chunk): RuleCategory {
+/**
+ * The category `ruleScorer` judges a tool chunk by, from its tool name,
+ * input, and `isError`. Callers outside the scorer reuse it so the tool
+ * name table has one definition. A prose chunk (no `toolName`) is `other`.
+ */
+export function ruleCategory(
+  chunk: Pick<Chunk, "toolName" | "input" | "isError">,
+): RuleCategory {
   const name = chunk.toolName ?? "";
-  if (name !== BASH_TOOL_NAME) return RULE_TOOL_CATEGORIES.get(name) ?? "other";
+  if (name !== BASH_TOOL) return RULE_TOOL_CATEGORIES.get(name) ?? "other";
   const command = isRecord(chunk.input) ? chunk.input.command : undefined;
   if (typeof command !== "string") return "other";
   const kind = classifyBashCommand(command);

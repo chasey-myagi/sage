@@ -2,10 +2,11 @@
  * Builds the scorer a `--scorer` or `--shadow-scorer` name selects.
  *
  * Contract: `rule` is the rule scorer with its default tiers; `model`
- * reuses the session's adapters and model; `jev` calls TypeSafe Jev at `JEV_BASE_URL`
- * (default `https://api.typesafe.ai`) with `JEV_API_KEY`, falling back to
- * `TYPESAFE_API_KEY`, and model `JEV_MODEL` (default `jev-latest`). The
- * caller checks {@link jevApiKey} before building a `jev` scorer.
+ * reuses the session's adapters and model; `jev` calls TypeSafe Jev at
+ * `JEV_BASE_URL` (default `https://api.typesafe.ai`) with `JEV_API_KEY`,
+ * falling back to `TYPESAFE_API_KEY`, and model `JEV_MODEL` (default
+ * `jev-latest`). The caller checks {@link jevApiKey} before building a
+ * `jev` scorer.
  *
  * Intentionally not in the Log: the Jev key, base URL, and model name.
  * Scores reach the Log only through the manifest the kernel appends.

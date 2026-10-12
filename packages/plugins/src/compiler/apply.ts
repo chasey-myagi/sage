@@ -4,9 +4,10 @@
  * Contract: a tool chunk at tier none replaces that tool_result's content
  * with `renderStub(chunk)` and leaves isError and the tool_use block in
  * place. A tool chunk at tier summary replaces that content with
- * `renderStub(chunk)`, a newline, and
- * `summary (model notes, not evidence): ` plus the decision's summary, or
- * with the stub alone when the summary is empty. Every block is copied. The input messages are not mutated.
+ * `renderStub(chunk)`, a newline, and `summary (model notes, not
+ * evidence): ` plus the decision's summary, or with the stub alone when
+ * the summary is empty. Every block is copied. The input messages are not
+ * mutated.
  *
  * Intentionally not in the Log: this function. The stub is what the request
  * contains; the manifest records the decision, and rebuild reads it back

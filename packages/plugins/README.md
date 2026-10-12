@@ -117,23 +117,25 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 | 类别 | 归入的块 | 缺省档位 | 为什么 |
 | --- | --- | --- | --- |
-| `echo` | `edit`、`write`、`update_ledger` | `none` | 回显只复述调用参数里已有的改动，之后几乎不再用到 |
+| `echo` | `edit`、`write`、`update_ledger` | `keep` | 真实结果只有一行（`Edited <path>`、`Wrote <path>`、`Ledger updated.`）。`none` 只替换 tool_result，桩行要印出调用参数和 token 数，比原结果更长，还会让模型以为省掉了内容 |
 | `reader` | `read`、`grep` | `keep` | 文件内容和搜索命中常被后面引用 |
 | `bash-reader` | `bash`，命令判为读取类 | `keep` | 与 `read` / `grep` 同类证据 |
-| `bash-runner` | `bash`，命令判为运行类，结果不是 `isError` | `summary` | 测试、构建、脚本跑通后输出多半用不到 |
-| `bash-runner-error` | `bash`，运行类，结果是 `isError` | `keep` | 报错正是下一步要看的东西 |
-| `bash-mixed` | `bash`，读取与运行混在一条命令里 | `keep` | 输出里可能有读到的内容，宁可多留 |
+| `bash-runner` | `bash`，命令判为运行类，结果不是 `isError` | `summary` | 测试、构建、脚本以退出码 0 结束后，输出多半用不到 |
+| `bash-runner-error` | `bash`，运行类，结果是 `isError`（退出码非 0） | `keep` | 报错正是下一步要看的东西 |
+| `bash-mixed` | `bash`，读取与运行混在一条命令里；运行类接着管道（没有 `pipefail`）；循环与条件 | `keep` | `isError` 反映不了管道首级的失败，输出里也可能有读到的内容 |
 | `other` | 其他工具，或 `bash` 的 `command` 不是字符串 | `keep` | 没有依据 |
 
-工具名按 `@sage/tools` 的 `TOOL_NAMES` 与 `progressLedger` 的工具名在插件里写成字面量，插件不 import 工具包。规则打分的 `summary` 不生成文本：判定带 `stubOnly`，视图里只有那一行桩，清单行的 `summary` 是空串，入口打分不对它做可定位检查。任何打分器给出空笔记的 `summary`，视图都只显示桩行，不再接 `summary (model notes, not evidence): `。
+`ruleCategory(chunk)` 从包入口导出，按工具名、输入和 `isError` 返回上表的类别，供需要同一份工具名映射的调用方复用。`edit`、`write`、`read`、`grep`、`bash` 按 `@sage/tools` 的 `TOOL_NAMES` 在插件里写成字面量（插件不 import 工具包），`update_ledger` 取自 `progressLedger` 的 `LEDGER_TOOL_NAME`。`apps/sage` 的 e2e 用真实工具跑一遍 `--scorer rule --scorer-apply entry`，工具改名时那条测试会变红。规则打分的 `summary` 不生成文本：判定带 `stubOnly`，视图里只有那一行桩，清单行的 `summary` 是空串，入口打分不对它做可定位检查。任何打分器给出空笔记的 `summary`，视图都只显示桩行，不再接 `summary (model notes, not evidence): `。
 
-`classifyBashCommand(command)` 从包入口导出，返回 `"reader" | "runner" | "mixed"`，是纯函数，不执行也不完整解析命令。规范化：先丢掉 heredoc 正文（`<<EOF` 到结束词那一行），在引号之外按 `&&`、`||`、`;`、换行切成若干部分，每部分再按 `|` 切成管道各级；每级压缩空白，去掉开头的 `(` / `{`，跳过开头的 `NAME=value`。每级看第一个词：
+`classifyBashCommand(command)` 从包入口导出，返回 `"reader" | "runner" | "mixed"`，是纯函数，不执行也不完整解析命令。规范化：先丢掉 heredoc 正文（`<<EOF` 到结束词那一行）；然后一次扫描，记着引号状态切分。只有引号之外的字符才算运算符：词首的 `#` 注释掉到行尾，`&&`、`||`、`;`、换行切成若干部分，`|` 切成管道各级，空白切词，`>` 才算重定向；引号里或反斜杠转义的字符一律当字面量，所以 `grep -rn 'x >= 3' src`、`awk '$1 > 3' f`、`rg "a > b"` 都是读取类。每级去掉开头的 `(` / `{` 和 `NAME=value`，跳过复合命令的续接词（`do`、`then`、`else`、`elif`、`done`、`fi`、`esac`、`!`），再跳过前缀包装命令 `sudo`、`env`、`time`、`nice`、`xargs`、`command`、`exec` 及其选项（`-n 5` 这类带值的选项连值一起跳过），按其后的第一个词判断：`xargs grep x` 是读取类，`sudo make` 是运行类。以 `for`、`if`、`while`、`until`、`case`、`select`、`function` 开头的级判为混合，循环体跑几次、走哪个分支，文本看不出来。其余按第一个词：
 
-- 读取类：输出文件内容、列表或搜索命中的命令，`cat`、`head`、`tail`、`nl`、`sed`、`awk`、`cut`、`tac`、`strings`、`xxd`、`od`、`hexdump`、`jq`、`grep`、`egrep`、`fgrep`、`rg`、`ag`、`ack`、`ls`、`tree`、`find`、`fd`、`stat`、`file`、`du`、`wc`、`realpath`、`readlink`、`basename`、`dirname`、`pwd`、`which`、`diff`、`cmp`、`sort`、`uniq`、`comm`、`tr`、`column`。`sed` 带 `-i` / `--in-place`、`find` 带 `-exec`、`-execdir`、`-ok`、`-okdir`、`-delete` 时改判运行类。`git` 只有 `show`、`diff`、`log`、`status`、`blame`、`grep`、`ls-files`、`ls-tree`、`rev-parse`、`cat-file`、`shortlog`、`describe` 是读取类（`-C`、`-c` 及其参数和其他全局选项跳过），其余子命令是运行类。`less`、`more` 需要终端，不算。
+- 读取类：输出文件内容、列表或搜索命中的命令，`cat`、`head`、`tail`、`nl`、`sed`、`awk`、`cut`、`tac`、`strings`、`xxd`、`od`、`hexdump`、`jq`、`grep`、`egrep`、`fgrep`、`rg`、`ag`、`ack`、`ls`、`tree`、`find`、`fd`、`stat`、`file`、`du`、`wc`、`realpath`、`readlink`、`basename`、`dirname`、`pwd`、`which`、`diff`、`cmp`、`sort`、`uniq`、`comm`、`tr`、`column`。`sed` 带 `-i` / `--in-place`、`sort` 带 `-o` / `--output`、`find` 带 `-exec`、`-execdir`、`-ok`、`-okdir`、`-delete` 时改判运行类。`git` 的读取类子命令：`show`、`diff`、`log`、`status`、`blame`、`grep`、`ls-files`、`ls-tree`、`rev-parse`、`cat-file`、`shortlog`、`describe` 总是；`branch`、`tag`、`remote` 只在后面没有位置参数时（`git branch -a`、`git remote -v`；带名字就是新建或删除）；`worktree list`、`config --get` / `--get-all` / `--get-regexp` / `--list` / `-l`、`stash list` / `stash show`。`-C`、`-c` 及其参数和其他全局选项跳过，其余子命令是运行类。`less`、`more` 需要终端，不算。
 - 中性：`cd`、`pushd`、`popd`、`echo`、`printf`、`true`、`export`、`set`、`unset`。它们只挪目录或打印自己的参数，整级丢掉，所以 `cd repo && pnpm test` 按 `pnpm test` 判，`pnpm test; echo $?` 仍是运行类。
-- 运行类：其余一切，包括测试、构建、包管理器、解释器和脚本。不认识的命令按运行类，免得把执行当成读取。任何一级带写文件的输出重定向（`>`、`>>`、`&>`，目标不是 `/dev/null` 也不是 `&1` 这类）也是运行类，例如 `cat > a.ts <<'EOF'`。
+- 运行类：其余一切，包括测试、构建、包管理器、解释器和脚本。不认识的命令按运行类，免得把执行当成读取。任何一级带引号外的写文件输出重定向（`>`、`>>`、`&>`、`echo hi>out`）也是运行类，例如 `cat > a.ts <<'EOF'`。`2>`（诊断输出）、描述符复制（`2>&1`、`>&2`）和 `/dev/null` 不算写文件。
 
-一条管道按第一级判，后面的读取类各级只是过滤：`pnpm test 2>&1 | tail -50` 是运行类。后面出现运行类时两者合并：`grep -l x | xargs rm` 是混合。各部分合起来全是读取类（或只剩中性部分）为 `reader`，全是运行类为 `runner`，否则 `mixed`。判断只看文本，引号外的 `>=` 这类写法会被当成重定向。
+一条管道按第一级判，后面的读取类各级只是过滤：`cat a | grep x | head` 是读取类。后面出现运行类时两者合并：`grep -l x | xargs rm` 是混合。bash 工具用 `sh -c` 执行，不开 `pipefail`，管道的退出码是最后一级的：`pnpm test 2>&1 | tail -50` 失败了 `isError` 也是 false。所以第一级是运行类、后面还有级时判为混合；命令里出现 `pipefail`（例如 `set -o pipefail; …`）时仍按运行类。各部分合起来全是读取类（或只剩中性部分）为 `reader`，全是运行类为 `runner`，否则 `mixed`。
+
+判断只看文本，已知的偏差：不认识的命令（包括 `python -c` 读文件）按运行类，跑通时会被摘成桩行，模型要原文得 `expand`；`git tag -l 'v*'` 这类带位置参数的列举按运行类；`[[ a > b ]]`、`(( x > 3 ))` 里引号外的比较符 `>` 会被当成写文件，判成运行类。
 
 `modelScorer` 用调用方注入的 adapter 打一次分。请求的 `head`（system 和 tools）以及此前的 messages 与上一轮主请求逐字节相同，`toolChoice` 为 `"none"`，只在末尾多一条 user 消息：固定指令、当前问题、以及候选清单 `[{id, tool, summary, tokens}]`。用不到的 tools 也照带。少一个 tool 或换掉 system，缓存前缀会从第一个 token 断开，辅助调用就变成把整段历史再付一遍。`tool_choice` 不改这些字节。候选超过 60 个时丢掉最旧的。`timeoutMs` 默认 20000。
 

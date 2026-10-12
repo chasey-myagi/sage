@@ -57,6 +57,7 @@ export {
   DEFAULT_RULE_TIERS,
   type RuleCategory,
   type RuleTier,
+  ruleCategory,
   ruleScorer,
 } from "./scorer/rule.js";
 export type { Scorer } from "./scorer/types.js";

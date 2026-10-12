@@ -2,11 +2,12 @@
  * `sage [-p] <task>`: one run of the coding agent in the current directory.
  *
  * Contract: every check that can fail runs before the session is built, in
- * this order: argv, `--scorer-apply entry` without `--scorer` (exit 2), sandbox support on this platform (exit 2), the Jev key when a
- * jev scorer is named (exit 2), the user providers file (exit 2), then
- * provider auth (exit 1 or 2). stdout
- * is one JSON RunSummary line, including `health`; exit 0 when the outcome
- * is `done`, otherwise 1. stderr gets one progress line per model call.
+ * this order: argv, `--scorer-apply entry` without `--scorer` (exit 2),
+ * sandbox support on this platform (exit 2), the Jev key when a jev scorer
+ * is named (exit 2), the user providers file (exit 2), then provider auth
+ * (exit 1 or 2). stdout is one JSON RunSummary line, including `health`;
+ * exit 0 when the outcome is `done`, otherwise 1. stderr gets one progress
+ * line per model call.
  * Flag semantics are in `apps/sage/README.md`.
  *
  * Intentionally not in the Log: argv, API keys, the stderr progress lines,

@@ -68,12 +68,12 @@ export type ScoredView = {
  * keeping the previous suffixes. A summary's tool_result is the stub, a
  * newline, and `summary (model notes, not evidence): ` plus the note, which
  * is also stored on the row; a `stubOnly` or noteless summary is the stub
- * alone. A throw or fallback keeps the
- * input unchanged and returns `fallback` for the caller to append as
- * `;scorer:fallback:<reason>`. `report` is set when the call reported
- * usage or a fallback; a positive `failedRequests` is copied onto it, and
- * those chunks keep their eliminate tiers. `prevRequest` is the previous turn's request
- * rebuilt from the Log.
+ * alone. A throw or fallback keeps the input unchanged and returns
+ * `fallback` for the caller to append as `;scorer:fallback:<reason>`.
+ * `report` is set when the call reported usage or a fallback; a positive
+ * `failedRequests` is copied onto it, and those chunks keep their
+ * eliminate tiers. `prevRequest` is the previous turn's request rebuilt
+ * from the Log.
  */
 export async function runRebuildScorer(input: {
   scorer: Scorer;

@@ -12,9 +12,16 @@ describe("classifyBashCommand", () => {
     "ls -la",
     "find . -name '*.ts'",
     "wc -l src/a.ts",
+    "sort a.txt",
     "git diff HEAD~1",
     "git -C repo log --oneline -5",
     "git status",
+    "git branch -a",
+    "git tag",
+    "git remote -v",
+    "git worktree list",
+    "git config --get user.name",
+    "git stash list",
   ])("treats %s as a reader", (command) => {
     expect(classifyBashCommand(command)).toBe("reader");
   });
@@ -26,12 +33,31 @@ describe("classifyBashCommand", () => {
     "make build",
     "cargo test",
     "sed -i 's/a/b/' src/a.ts",
+    "sort -o out.txt a.txt",
     "find . -name '*.tmp' -delete",
     "git commit -m 'wip'",
+    "git branch -D old",
+    "git stash pop",
     "cat > src/new.ts <<'EOF'\nexport const a = 1;\nEOF",
     "echo hi > out.txt",
+    "echo hi>out.txt",
   ])("treats %s as a runner", (command) => {
     expect(classifyBashCommand(command)).toBe("runner");
+  });
+
+  it.each([
+    "grep -rn 'x >= 3' src",
+    "awk '$1 > 3' f",
+    'rg "a > b"',
+    "grep -n \\> src/a.ts",
+  ])("does not read a quoted or escaped > in %s as a redirect", (command) => {
+    expect(classifyBashCommand(command)).toBe("reader");
+  });
+
+  it("does not count stderr or descriptor redirects as file writes", () => {
+    expect(classifyBashCommand("grep -rn foo src 2>/dev/null")).toBe("reader");
+    expect(classifyBashCommand("cat a.ts 2>err.log")).toBe("reader");
+    expect(classifyBashCommand("cat a.ts >&2")).toBe("reader");
   });
 
   it("drops a leading cd before judging the command", () => {
@@ -45,11 +71,20 @@ describe("classifyBashCommand", () => {
     );
   });
 
-  it("judges a pipeline by its first stage when later stages only filter", () => {
-    expect(classifyBashCommand("pnpm test 2>&1 | tail -50")).toBe("runner");
+  it("lets later reader stages filter a reader pipeline", () => {
     expect(classifyBashCommand("cat a.ts | grep -n export | head")).toBe(
       "reader",
     );
+  });
+
+  it("calls a runner piped onward mixed because its exit status is hidden", () => {
+    expect(classifyBashCommand("pnpm test 2>&1 | tail -50")).toBe("mixed");
+  });
+
+  it("keeps a piped runner a runner when the command sets pipefail", () => {
+    expect(
+      classifyBashCommand("set -o pipefail; pnpm test 2>&1 | tail -50"),
+    ).toBe("runner");
   });
 
   it("calls a pipeline mixed when a reader feeds a runner", () => {
@@ -75,5 +110,30 @@ describe("classifyBashCommand", () => {
   it("skips leading environment assignments", () => {
     expect(classifyBashCommand("LC_ALL=C sort a.txt")).toBe("reader");
     expect(classifyBashCommand("CI=1 pnpm test")).toBe("runner");
+  });
+
+  it("judges a wrapper command by the command it runs", () => {
+    expect(classifyBashCommand("sudo make install")).toBe("runner");
+    expect(classifyBashCommand("env FOO=1 cat a.ts")).toBe("reader");
+    expect(classifyBashCommand("time pnpm test")).toBe("runner");
+    expect(classifyBashCommand("nice -n 5 cat a.ts")).toBe("reader");
+    expect(classifyBashCommand("find . -name '*.ts' | xargs grep -n foo")).toBe(
+      "reader",
+    );
+    expect(classifyBashCommand("command ls")).toBe("reader");
+    expect(classifyBashCommand("exec pnpm test")).toBe("runner");
+  });
+
+  it("calls a loop or conditional mixed", () => {
+    expect(classifyBashCommand("for f in *.ts; do cat $f; done")).toBe("mixed");
+    expect(classifyBashCommand("if [ -f a ]; then cat a; fi")).toBe("mixed");
+    expect(classifyBashCommand("while true; do sleep 1; done")).toBe("mixed");
+    expect(classifyBashCommand("case $x in a) ls;; esac")).toBe("mixed");
+  });
+
+  it("drops comments outside quotes", () => {
+    expect(classifyBashCommand("cat a.ts # then pnpm test")).toBe("reader");
+    expect(classifyBashCommand("# just a note\npnpm test")).toBe("runner");
+    expect(classifyBashCommand("grep -n '# pnpm test' a.ts")).toBe("reader");
   });
 });

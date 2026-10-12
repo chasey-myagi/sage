@@ -46,9 +46,9 @@ const inputSchema = {
 
 /**
  * Model-visible name of the ledger tool; the claim reads its calls back
- * from the Log by this name.
+ * from the Log by this name, and the rule scorer tiers its results by it.
  */
-const LEDGER_TOOL_NAME = "update_ledger";
+export const LEDGER_TOOL_NAME = "update_ledger";
 /** Default priority of the ledger claim. */
 const DEFAULT_LEDGER_PRIORITY = 100;
 

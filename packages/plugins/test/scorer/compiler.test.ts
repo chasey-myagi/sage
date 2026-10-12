@@ -222,6 +222,37 @@ it("calls the scorer once when the epoch rebuilds and keeps recent over a none s
   expect(view.manifest.epochDecision?.reason).not.toContain("scorer:fallback");
 });
 
+it("shows only the stub line for a rebuild summary without a note", async () => {
+  const scorer: Scorer = {
+    name: "model",
+    async score() {
+      return { decisions: [{ id: "seq:1#t1", tier: "summary" }] };
+    },
+  };
+  const store = new MemoryLogStore();
+  seed(store);
+  const view = await contextCompiler({
+    budget: 100_000,
+    claims: [],
+    keepRecent: 1,
+    scorer,
+  }).view(context(store, 1, 1));
+
+  expect(view.manifest.epochDecision?.rebuild).toBe(true);
+  expect(view.manifest.chunks).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: "seq:1#t1",
+        tier: "summary",
+        reason: "scorer:model",
+      }),
+    ]),
+  );
+  expect(resultContent(view.messages, "t1")).toBe(
+    '[#seq:1#t1 · read · {"path":"a.ts"} · 0.0k tokens · omitted · expand("seq:1#t1") to retrieve]',
+  );
+});
+
 it("leaves kept reasons unchanged when no scorer is installed and the epoch rebuilds", async () => {
   const store = new MemoryLogStore();
   seed(store);
