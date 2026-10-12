@@ -114,3 +114,9 @@ it("records the stub's token count on the manifest and keeps originalTokens", as
     }),
   ]);
 });
+
+it("never cuts a stub input summary inside an emoji", () => {
+  // 78 ASCII characters put the emoji's surrogate pair across the cut at 79.
+  const summary = summarizeInput(`${"a".repeat(78)}😀tail`);
+  expect(summary).toBe(`${"a".repeat(78)}…`);
+});

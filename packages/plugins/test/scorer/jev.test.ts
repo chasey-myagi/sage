@@ -114,7 +114,6 @@ describe("request", () => {
         id: "seq:1#t1",
         tool: "read",
         input: '{"path":"src/config.ts"}',
-        is_error: false,
         tokens: 400,
         head: CONFIG_READ.output.split("\n"),
         tail: [],
@@ -130,7 +129,9 @@ describe("request", () => {
       .map(sentBody)
       .find((body) => body.state.chunk.id === "seq:3#t2");
     expect(bash?.state.recent_assistant).toBe("");
-    expect(bash?.state.chunk.head).toEqual(TEST_RUN.output.split("\n"));
+    // Every line of this output is a candidate, so no head or tail is sent.
+    expect(bash?.state.chunk.head).toEqual([]);
+    expect(bash?.state.chunk.candidates).toHaveLength(5);
   });
 
   it("asks four fixed Nouls plus one keep Noul per candidate line, each with true and false criteria", async () => {
@@ -155,19 +156,19 @@ describe("request", () => {
       instructions:
         "Does the tool output in `chunk` report that something failed?",
       criteria: {
-        true: "The output reports a failure: an error message, an exception or stack trace, a non-zero exit code, a failing test or assertion, a failed build, lint, or type check, or `chunk.is_error` is true.",
+        true: "The output reports an error, an exception, a non-zero exit code, a failing test, or a failed build or check.",
         false:
-          "The output reports success or only shows data such as file contents, a listing, or search hits. Error words that appear inside file contents or source code being read do not count.",
+          "The output reports success or only shows data; error words inside file contents being read do not count.",
       },
     });
     expect(questions.is_edit_target).toEqual({
       type: "noul",
       instructions:
-        "Is the file in `chunk` a file that `recent_assistant` or `ledger` says will be edited?",
+        "Is the file at the path in `chunk.input` a file that `recent_assistant` or `ledger` says will be edited?",
       criteria: {
-        true: "`chunk` shows one file, and `recent_assistant` or `ledger` says that file will be changed, fixed, or written.",
+        true: "`recent_assistant` or `ledger` says the file at that path will be changed, fixed, or written.",
         false:
-          "No edit to this file is mentioned, the file is read only for reference, or `chunk` is a listing, a search across files, or command output rather than one file.",
+          "No edit to that file is mentioned, or `chunk.input` names no single file path.",
       },
     });
     expect(questions.answers_lookup).toEqual({
@@ -183,26 +184,32 @@ describe("request", () => {
     expect(questions.is_broad_listing).toEqual({
       type: "noul",
       instructions:
-        "Is the tool output in `chunk` only a directory listing or a broad search result?",
+        "Is the tool output in `chunk` a directory listing or a broad search result?",
       criteria: {
-        true: "The output is a list of file or directory names, or search hits spread over many files, and no single entry is singled out by `task`, `ledger`, or `recent_assistant`.",
+        true: "The output is a list of file or directory names, or search hits spread over many files.",
         false:
-          "The output is file contents, command or test output, a diff, or a narrow search whose hits are the code that `task` or `recent_assistant` is about.",
+          "The output is file contents, command or test output, a diff, or a few search hits.",
       },
     });
+    const statement =
+      "`line` names a location or result `task` or `recent_assistant` needs.";
     expect(questions.keep_1).toEqual({
       type: "noul",
       instructions: {
         line: "L7: export class ConfigError extends Error {}",
-        question:
-          "If the tool output in `chunk` were replaced by `line` alone, would `line` tell a reader where the important result is without rereading the output?",
+        statement,
       },
       criteria: {
-        true: "`line` names a concrete location or result that matters for `task`: a file path with a line number, an error or failing test, a function, class, or export signature, a test summary, or a diff hunk header.",
-        false:
-          "`line` is generic, boilerplate, or unrelated to `task`, or it carries no path, name, or result a reader could look up.",
+        true: statement,
+        false: "`line` is boilerplate or unrelated to `task`.",
       },
     });
+    const keepBytes = JSON.stringify({
+      ...questions.keep_1,
+      instructions: { line: "", statement },
+    }).length;
+    expect(keepBytes).toBeLessThanOrEqual(280);
+    expect(statement.length).toBeLessThanOrEqual(80);
   });
 
   it("posts to baseUrl without a trailing slash and sends opts.model", async () => {
@@ -338,6 +345,54 @@ describe("tiers", () => {
       { none: 0.5, low: 0.35 },
     );
     expect(lenient.map((decision) => decision.tier)).toEqual(["none"]);
+  });
+
+  it("keeps a chunk full when it holds what the assistant is looking for, instead of cutting it to a summary", async () => {
+    const decisions = await decide(CONFIG_READ, {
+      answers_lookup: 0.4,
+      keep: [0.9, 0.9],
+    });
+    expect(decisions).toEqual([
+      {
+        id: "seq:1#t1",
+        tier: "full",
+        reason:
+          "scorer:jev:full:failure=0.00,edit=0.00,lookup=0.40,broad=0.00,keep=0.90",
+      },
+    ]);
+  });
+
+  it("keeps an isError chunk full without asking Jev", async () => {
+    const failed: FixtureCall = { ...TEST_RUN, isError: true };
+    const { fake, scorer } = scorerWith(answerNouls({}));
+    const result = await scorer.score({
+      candidates: [chunkOf(failed, 1), chunkOf(LISTING, 3)],
+      prevRequest: requestWith([failed, LISTING]),
+      query: "q",
+    });
+    expect(fake.requests().map((r) => sentBody(r).state.chunk.id)).toEqual([
+      "seq:3#t3",
+    ]);
+    expect(result.decisions).toContainEqual({
+      id: "seq:1#t2",
+      tier: "full",
+      reason: "scorer:jev:full:is_error",
+    });
+    expect(result.decisions).toHaveLength(2);
+
+    const alone = scorerWith(answerNouls({}));
+    const only = await alone.scorer.score({
+      candidates: [chunkOf(failed, 1)],
+      prevRequest: requestWith([failed]),
+      query: "q",
+    });
+    expect(alone.fake.requests()).toHaveLength(0);
+    expect(only).toEqual({
+      decisions: [
+        { id: "seq:1#t2", tier: "full", reason: "scorer:jev:full:is_error" },
+      ],
+      requested: false,
+    });
   });
 });
 

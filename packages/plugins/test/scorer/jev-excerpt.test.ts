@@ -74,6 +74,8 @@ it("offers bash failures, stack frames, path:line refs, test summaries, and diff
       '  File "tool.py", line 3, in main',
       "src/util.ts:8:1 - warning: unused import",
       "just some log output",
+      " ✓ test/a.test.ts (3 tests) 4ms",
+      " Test Files  1 failed | 4 passed (5)",
       "Tests  2 failed | 21 passed (23)",
       "@@ -10,6 +10,8 @@ export function parse",
       "diff --git a/src/config.ts b/src/config.ts",
@@ -85,6 +87,7 @@ it("offers bash failures, stack frames, path:line refs, test summaries, and diff
     "at parse (src/config.ts:4:10)",
     'File "tool.py", line 3, in main',
     "src/util.ts:8:1 - warning: unused import",
+    "Test Files 1 failed | 4 passed (5)",
     "Tests 2 failed | 21 passed (23)",
     "@@ -10,6 +10,8 @@ export function parse",
     "diff --git a/src/config.ts b/src/config.ts",
@@ -122,18 +125,39 @@ it("offers failure, location, signature, and summary lines for a tool it does no
   ]);
 });
 
-it("keeps the first and last 30 candidates, each cut to 200 characters", async () => {
+it("keeps the first 8 and last 16 candidates, each cut to 200 characters", async () => {
   const lines = Array.from(
     { length: 100 },
     (_, i) => `src/f${i}.ts:${i + 1}: ${"x".repeat(300)}`,
   );
   const chunk = await sentChunk(call("grep", { pattern: "x" }, lines));
-  expect(chunk.candidates).toHaveLength(60);
+  expect(chunk.candidates).toHaveLength(24);
   expect(chunk.candidates[0]?.startsWith("src/f0.ts:1: ")).toBe(true);
-  expect(chunk.candidates[29]?.startsWith("src/f29.ts:30: ")).toBe(true);
-  expect(chunk.candidates[30]?.startsWith("src/f70.ts:71: ")).toBe(true);
-  expect(chunk.candidates[59]?.startsWith("src/f99.ts:100: ")).toBe(true);
+  expect(chunk.candidates[7]?.startsWith("src/f7.ts:8: ")).toBe(true);
+  expect(chunk.candidates[8]?.startsWith("src/f84.ts:85: ")).toBe(true);
+  expect(chunk.candidates[23]?.startsWith("src/f99.ts:100: ")).toBe(true);
   expect(chunk.candidates.every((line) => line.length <= 200)).toBe(true);
+  expect(chunk.head.length).toBeGreaterThan(0);
+});
+
+it("sends no head or tail when the candidates already hold the whole output", async () => {
+  const hits = ["src/a.ts:1: alpha", "src/b.ts:2:   beta"];
+  const covered = await sentChunk(call("grep", { pattern: "a" }, hits));
+  expect(covered.candidates).toEqual(["src/a.ts:1: alpha", "src/b.ts:2: beta"]);
+  expect(covered).toMatchObject({ head: [], tail: [], omitted_lines: 0 });
+
+  const cut = await sentChunk(
+    call("ls", { path: "." }, [
+      "a.ts",
+      "b.ts",
+      "[truncated: showing 2 of 9 entries]",
+    ]),
+  );
+  expect(cut.head).toEqual([
+    "a.ts",
+    "b.ts",
+    "[truncated: showing 2 of 9 entries]",
+  ]);
 });
 
 it("sends the first 40 and last 20 lines and counts the lines in between", async () => {
@@ -155,7 +179,7 @@ it("cuts head and tail until the state plus the longest question fits 32k estima
   expect(chunk.head.length).toBeLessThan(40);
   expect(chunk.tail.length).toBeLessThan(20);
   expect(chunk.omitted_lines).toBe(300 - chunk.head.length - chunk.tail.length);
-  expect(chunk.candidates).toHaveLength(60);
+  expect(chunk.candidates).toHaveLength(24);
   // Jev counts the state plus the longest question against 32k tokens and
   // the state plus every question against 64k. 2.5 UTF-8 bytes per token
   // is the scorer's conservative estimate.

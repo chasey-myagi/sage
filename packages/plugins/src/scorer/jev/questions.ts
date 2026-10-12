@@ -5,9 +5,9 @@
  * Guarantees: every question is a Noul whose `true` and `false` criteria
  * draw the boundary in words, refers to state by backticked paths
  * (`chunk`, `task`, `ledger`, `recent_assistant`), and asks about what the
- * output shows, never about intent, counts, or arithmetic. A `keep_<i>`
- * question quotes its line in the instructions, so Jev need not resolve
- * an index. The text is model-visible to Jev; tests pin it verbatim.
+ * output shows, never about intent, counts, or arithmetic. Each Noul
+ * judges one condition. A `keep_<i>` statement quotes its line in the
+ * instructions, so Jev need not resolve an index. The text is model-visible to Jev; tests pin it verbatim.
  *
  * Intentionally not in the Log: the questions and the answers. Tiers and
  * the probabilities in the reason are the record.
@@ -18,7 +18,7 @@ import { isFiniteNumber, isRecord } from "@sage/core";
 /** One Noul question as the System One API takes it. */
 export type NoulQuestion = {
   type: "noul";
-  instructions: string | { line: string; question: string };
+  instructions: string | { line: string; statement: string };
   criteria: { true: string; false: string };
 };
 
@@ -26,13 +26,13 @@ export type NoulQuestion = {
 const FIXED_QUESTIONS = {
   reports_failure: noul(
     "Does the tool output in `chunk` report that something failed?",
-    "The output reports a failure: an error message, an exception or stack trace, a non-zero exit code, a failing test or assertion, a failed build, lint, or type check, or `chunk.is_error` is true.",
-    "The output reports success or only shows data such as file contents, a listing, or search hits. Error words that appear inside file contents or source code being read do not count.",
+    "The output reports an error, an exception, a non-zero exit code, a failing test, or a failed build or check.",
+    "The output reports success or only shows data; error words inside file contents being read do not count.",
   ),
   is_edit_target: noul(
-    "Is the file in `chunk` a file that `recent_assistant` or `ledger` says will be edited?",
-    "`chunk` shows one file, and `recent_assistant` or `ledger` says that file will be changed, fixed, or written.",
-    "No edit to this file is mentioned, the file is read only for reference, or `chunk` is a listing, a search across files, or command output rather than one file.",
+    "Is the file at the path in `chunk.input` a file that `recent_assistant` or `ledger` says will be edited?",
+    "`recent_assistant` or `ledger` says the file at that path will be changed, fixed, or written.",
+    "No edit to that file is mentioned, or `chunk.input` names no single file path.",
   ),
   answers_lookup: noul(
     "Does the tool output in `chunk` contain the specific symbol, line, or value that `recent_assistant` says it is looking for?",
@@ -40,18 +40,20 @@ const FIXED_QUESTIONS = {
     "`recent_assistant` does not name a specific thing to find, or the output in `chunk` does not show it.",
   ),
   is_broad_listing: noul(
-    "Is the tool output in `chunk` only a directory listing or a broad search result?",
-    "The output is a list of file or directory names, or search hits spread over many files, and no single entry is singled out by `task`, `ledger`, or `recent_assistant`.",
-    "The output is file contents, command or test output, a diff, or a narrow search whose hits are the code that `task` or `recent_assistant` is about.",
+    "Is the tool output in `chunk` a directory listing or a broad search result?",
+    "The output is a list of file or directory names, or search hits spread over many files.",
+    "The output is file contents, command or test output, a diff, or a few search hits.",
   ),
 } as const;
 
-const KEEP_QUESTION =
-  "If the tool output in `chunk` were replaced by `line` alone, would `line` tell a reader where the important result is without rereading the output?";
-const KEEP_TRUE =
-  "`line` names a concrete location or result that matters for `task`: a file path with a line number, an error or failing test, a function, class, or export signature, a test summary, or a diff hunk header.";
-const KEEP_FALSE =
-  "`line` is generic, boilerplate, or unrelated to `task`, or it carries no path, name, or result a reader could look up.";
+/**
+ * The `keep_<i>` statement, also its `true` criterion: one direct claim
+ * about the quoted line, no counterfactual. Criteria stay under 80
+ * characters so the repeated boilerplate is about 270 bytes per line.
+ */
+const KEEP_STATEMENT =
+  "`line` names a location or result `task` or `recent_assistant` needs.";
+const KEEP_FALSE = "`line` is boilerplate or unrelated to `task`.";
 
 /** The probability of yes for each judgment of one chunk. */
 export type Judgment = {
@@ -71,8 +73,8 @@ export function questionsFor(
   candidates.forEach((line, index) => {
     questions[`keep_${index}`] = {
       type: "noul",
-      instructions: { line, question: KEEP_QUESTION },
-      criteria: { true: KEEP_TRUE, false: KEEP_FALSE },
+      instructions: { line, statement: KEEP_STATEMENT },
+      criteria: { true: KEEP_STATEMENT, false: KEEP_FALSE },
     };
   });
   return questions;

@@ -22,10 +22,11 @@ export type JsonFetchRequest = {
 /**
  * How the double answers one call: `json` is serialized as a JSON body
  * with status `status` (200 when omitted); `text` is sent verbatim.
+ * `headers` are added to the response, such as `retry-after`.
  */
 export type JsonFetchReply =
-  | { status?: number; json: unknown }
-  | { status: number; text: string };
+  | { status?: number; json: unknown; headers?: Record<string, string> }
+  | { status: number; text: string; headers?: Record<string, string> };
 
 /**
  * A `fetch` that records each call and answers with `respond(request,
@@ -78,10 +79,13 @@ function parseBody(body: string | undefined): unknown {
 
 function toResponse(reply: JsonFetchReply): Response {
   if ("text" in reply) {
-    return new Response(reply.text, { status: reply.status });
+    return new Response(reply.text, {
+      status: reply.status,
+      headers: { ...reply.headers },
+    });
   }
   return new Response(JSON.stringify(reply.json), {
     status: reply.status ?? 200,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...reply.headers },
   });
 }

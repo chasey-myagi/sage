@@ -1,11 +1,13 @@
 /**
- * Character limits for text the jev scorer puts into its state.
+ * The one `…` truncation the plugins use: stub input summaries and the
+ * text the jev scorer puts into its state.
  *
  * Guarantees: a clipped string is at most `limit` UTF-16 code units long
  * and ends (or starts) with `…` when anything was cut. A surrogate pair is
- * never split.
+ * never split, so a cut never leaves half an emoji.
  *
- * Intentionally not in the Log: these helpers.
+ * Intentionally not in the Log: these helpers. Stubs they shape are
+ * model-visible and rebuilt from the Log by the same function.
  */
 
 const ELLIPSIS = "…";

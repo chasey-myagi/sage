@@ -2,6 +2,7 @@ import { MemoryLogStore, runHealth, type ViewContext } from "@sage/core";
 import { FAUX_CONTEXT_WINDOW, jsonFetch } from "@sage/core/testing";
 import type { Usage } from "@sage/provider/contract";
 import { describe, expect, it } from "vitest";
+import { progressLedger } from "../../src/claims/progress-ledger.ts";
 import { contextCompiler } from "../../src/compiler/compiler.ts";
 import { jevScorer } from "../../src/scorer/jev.ts";
 import {
@@ -100,6 +101,26 @@ describe("http", () => {
     expect(waits[0]?.aborted).toBe(true);
     expect(fake.requests()).toHaveLength(1);
     expect(result).toEqual({ decisions: [], fallback: "aborted" });
+  });
+
+  it("waits for retry-after when the response gives one, capped at 30 seconds", async () => {
+    const ok = answerNouls({});
+    const replies = [
+      { status: 429, text: "busy", headers: { "retry-after": "2" } },
+      { status: 429, text: "busy", headers: { "retry-after": "120" } },
+      { status: 429, text: "busy" },
+    ];
+    const fake = jsonFetch((request, index) => replies[index] ?? ok(request));
+    const sleeps: number[] = [];
+    const result = await jevScorer({
+      apiKey: "k",
+      fetchImpl: fake.fetchImpl,
+      sleepImpl: async (ms) => {
+        sleeps.push(ms);
+      },
+    }).score(input());
+    expect(sleeps).toEqual([2000, 30_000, 2000]);
+    expect(result.fallback).toBeUndefined();
   });
 
   it("falls back on timeout and does not retry", async () => {
@@ -305,6 +326,55 @@ function appendHeaderAndManifest(
 type ScorerReport = { calls: number; usage: Usage; fallback: boolean };
 
 describe("compiler", () => {
+  it("sends the progress ledger exactly as the progressLedger claim renders it", async () => {
+    const store = new MemoryLogStore();
+    seed(store);
+    const ledger = progressLedger();
+    store.append("s", {
+      kind: "message",
+      payload: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "u1",
+            name: ledger.tool.def.name,
+            input: { goal: "fix the parser", plan: ["read src/parser.ts"] },
+            rawInput: "{}",
+          },
+        ],
+      },
+    });
+    store.append("s", {
+      kind: "message",
+      payload: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            toolUseId: "u1",
+            content: "Ledger updated.",
+            isError: false,
+          },
+        ],
+      },
+    });
+    const fake = jsonFetch(answerNouls({}));
+    await contextCompiler({
+      budget: 100_000,
+      claims: [ledger.provider],
+      scorerApply: "entry",
+      minScoreTokens: 0,
+      scorer: jevScorer({ apiKey: "k", fetchImpl: fake.fetchImpl }),
+    }).view(context(store, 1, 1_000_000));
+
+    const ledgers = fake.requests().map((r) => sentBody(r).state.ledger);
+    expect(ledgers.length).toBeGreaterThan(0);
+    for (const sent of ledgers) {
+      expect(sent).toBe("Goal: fix the parser\nPlan:\n- read src/parser.ts");
+    }
+  });
+
   it("re-tiers kept chunks on a rebuild from the previous request's original text", async () => {
     const store = new MemoryLogStore();
     seed(store);

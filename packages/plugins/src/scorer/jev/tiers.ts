@@ -2,8 +2,9 @@
  * Turns one chunk's Noul answers into a tier. Jev judges; this code owns
  * the policy.
  *
- * Guarantees: full when a failure report or an edit target reaches
- * `full`; none when the output is a broad listing at `none` or above and
+ * Guarantees: full for an `isError` chunk without asking; full when a
+ * failure report, an edit target, or the looked-up value reaches `full`
+ * (a fresh hit is kept whole, not cut to three lines); none when the output is a broad listing at `none` or above and
  * every other fixed judgment is below `low`; otherwise summary from the
  * quoted candidate lines, or full when no locatable summary can be built.
  * The reason carries the probabilities for audit; no code reads them back.
@@ -21,7 +22,8 @@ import type { Judgment } from "./questions.js";
 
 /**
  * Noul cut-offs for the tier policy, each a probability in [0, 1].
- * `full`: a failure report or edit target at or above it keeps the text.
+ * `full`: a failure report, edit target, or lookup hit at or above it
+ * keeps the text.
  * `none`: a broad listing at or above it may be dropped. `low`: every
  * other fixed judgment must be below it for none. `keep`: a candidate
  * line at or above it may be quoted in a summary.
@@ -48,6 +50,15 @@ export const DEFAULT_JEV_THRESHOLDS: Readonly<JevThresholds> = {
   keep: 0.5,
 };
 
+/**
+ * The decision for a chunk whose result the tool already marked
+ * `isError`: full, reason `scorer:jev:full:is_error`. No request is sent;
+ * a failure is evidence the next step needs.
+ */
+export function errorDecision(id: string): ScoreDecision {
+  return { id, tier: "full", reason: "scorer:jev:full:is_error" };
+}
+
 /** Most candidate lines one summary quotes. */
 const SUMMARY_LINES = 3;
 /** Joins quoted lines in a summary note. */
@@ -69,7 +80,11 @@ export function decideTier(
   thresholds: JevThresholds,
 ): ScoreDecision {
   const reasonFor = (tier: string) => `scorer:jev:${tier}:${audit(judgment)}`;
-  if (judgment.failure >= thresholds.full || judgment.edit >= thresholds.full) {
+  if (
+    judgment.failure >= thresholds.full ||
+    judgment.edit >= thresholds.full ||
+    judgment.lookup >= thresholds.full
+  ) {
     return { id, tier: "full", reason: reasonFor("full") };
   }
   if (isDroppableListing(judgment, thresholds)) {

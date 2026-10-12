@@ -26,6 +26,7 @@ import { type ChunkRequest, chunkRequest } from "./jev/state.js";
 import {
   DEFAULT_JEV_THRESHOLDS,
   decideTier,
+  errorDecision,
   type JevThresholds,
 } from "./jev/tiers.js";
 import type {
@@ -38,26 +39,33 @@ import type {
 const DEFAULT_BASE_URL = "https://api.typesafe.ai";
 const MODEL_ID = "jev-latest";
 const DEFAULT_TIMEOUT_MS = 10_000;
-/** Requests in flight at once; well under the API's per-second request limit. */
-const MAX_PARALLEL_REQUESTS = 8;
+/**
+ * Requests in flight at once. The API limits each key to 100K tokens and
+ * 80 requests per second; four requests of at most ~20KB stay well under
+ * both, and a 429 still backs off per `retry-after`.
+ */
+const MAX_PARALLEL_REQUESTS = 4;
 
 /**
  * Creates the jev scorer. Its `name` is `jev`.
  *
  * `score` POSTs one `{ state, model, questions }` per candidate to
  * `<baseUrl>/v1/systemone` (default `https://api.typesafe.ai`) with
- * `Authorization: Bearer <apiKey>`; at most 8 are in flight. `model` is
+ * `Authorization: Bearer <apiKey>`; at most 4 are in flight. `model` is
  * `opts.model` when non-empty, else `jev-latest`. `state` is `{ task,
  * ledger, recent_assistant, chunk }`: the query, the newest
  * `progress-ledger` claim body, and the text of the assistant message that
- * made the call, each clipped; `chunk` is `{ id, tool, input, is_error,
- * tokens, head, tail, omitted_lines, candidates }` with the first 40 and
- * last 20 output lines and up to 60 candidate lines picked by tool name.
+ * made the call, each clipped; `chunk` is `{ id, tool, input, tokens,
+ * head, tail, omitted_lines, candidates }` with the first 40 and last 20
+ * output lines (none when the candidates hold the whole output) and up to
+ * 24 candidate lines picked by tool name.
  * Questions are the Nouls `reports_failure`, `is_edit_target`,
  * `answers_lookup`, `is_broad_listing`, and `keep_<i>` per candidate.
  *
- * Tiers come from `opts.thresholds` over `DEFAULT_JEV_THRESHOLDS`: full
- * when a failure report or edit target reaches `full`; none when a broad
+ * A chunk whose result is `isError` is not sent; it is full with reason
+ * `scorer:jev:full:is_error`. Other tiers come from `opts.thresholds`
+ * over `DEFAULT_JEV_THRESHOLDS`: full when a failure report, edit target,
+ * or lookup hit reaches `full`; none when a broad
  * listing reaches `none` and the other three fixed judgments are below
  * `low`; else summary quoting up to three candidates at or above `keep`,
  * or full when no locatable note results. The reason is
@@ -77,8 +85,9 @@ const MAX_PARALLEL_REQUESTS = 8;
  * false`. Any failed request (status, timeout `timeoutMs` default 10000,
  * abort, or a body without answers) resolves its fallback with no
  * decisions and the usage of requests that finished. 429 and 529 retry
- * at most 3 times, sleeping `500 × 2^n` ms; a caller abort ends the wait
- * with `aborted`. A chunk whose answers lack a fixed judgment gets no
+ * at most 3 times, sleeping for the response's `retry-after` when it
+ * has one, else `500 × 2^n` ms; a caller abort ends the wait with
+ * `aborted`. A chunk whose answers lack a fixed judgment gets no
  * decision.
  */
 export function jevScorer(opts: {
@@ -113,20 +122,27 @@ export function jevScorer(opts: {
       }
       if (input.candidates.length === 0) return { decisions: [] };
       try {
-        const requests = buildRequests(input);
-        if (requests === undefined) {
+        const built = buildRequests(input);
+        if (built === undefined) {
           return {
             decisions: [],
             fallback: "no-previous-request",
             requested: false,
           };
         }
-        if (requests.length === 0) return { decisions: [], requested: false };
-        return await postRequests(requests, {
+        if (built.requests.length === 0) {
+          return { decisions: built.decided, requested: false };
+        }
+        const posted = await postRequests(built.requests, {
           target: target(input.signal),
           model,
           thresholds,
         });
+        if (posted.fallback !== undefined) return posted;
+        return {
+          ...posted,
+          decisions: [...built.decided, ...posted.decisions],
+        };
       } catch {
         // Scorers never throw: a bug in building requests or reading
         // answers becomes a fallback, and the compiler keeps its tiers.
@@ -136,12 +152,22 @@ export function jevScorer(opts: {
   };
 }
 
-/** One request per candidate with original output; undefined without `prevRequest`. */
-function buildRequests(input: ScoreInput): ChunkRequest[] | undefined {
+/**
+ * One request per candidate with original output, and the decisions made
+ * without asking (`isError` chunks); undefined without `prevRequest`.
+ */
+function buildRequests(
+  input: ScoreInput,
+): { requests: ChunkRequest[]; decided: ScoreDecision[] } | undefined {
   if (!input.prevRequest) return undefined;
   const sources = readSources(input.prevRequest.messages);
   const requests: ChunkRequest[] = [];
+  const decided: ScoreDecision[] = [];
   for (const chunk of input.candidates) {
+    if (chunk.isError) {
+      decided.push(errorDecision(chunk.id));
+      continue;
+    }
     const text = sources.resultText(chunk);
     if (text === undefined) continue;
     const request = chunkRequest(chunk, text, {
@@ -151,7 +177,7 @@ function buildRequests(input: ScoreInput): ChunkRequest[] | undefined {
     });
     if (request) requests.push(request);
   }
-  return requests;
+  return { requests, decided };
 }
 
 /**

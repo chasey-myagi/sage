@@ -17,8 +17,17 @@ import { startDeadline } from "../deadline.js";
 
 /** Retries after a 429 or 529 before the call falls back. */
 const MAX_RETRIES = 3;
-/** First backoff in milliseconds; retry n waits `RETRY_BASE_MS × 2^n`. */
+/**
+ * First backoff in milliseconds when the response has no usable
+ * `retry-after`; retry n waits `RETRY_BASE_MS × 2^n`.
+ */
 const RETRY_BASE_MS = 500;
+/**
+ * Longest `retry-after` honoured, in milliseconds. A longer server hint is
+ * cut to this so one scorer call cannot stall a turn indefinitely; the
+ * caller's signal still ends the wait earlier.
+ */
+const MAX_RETRY_AFTER_MS = 30_000;
 
 /** The subset of `fetch` the jev scorer calls. */
 export type JevFetch = (
@@ -58,7 +67,9 @@ export type PostTarget = {
 /**
  * POSTs `body` and resolves the answers or a fallback. Fallbacks:
  * `http:<status>` for a non-2xx status (429 and 529 only after
- * `MAX_RETRIES` retries), `timeout` when one attempt outlives `timeoutMs`,
+ * `MAX_RETRIES` retries; each wait is the response's `retry-after`, in
+ * seconds or as an HTTP date and capped at `MAX_RETRY_AFTER_MS`, else
+ * exponential), `timeout` when one attempt outlives `timeoutMs`,
  * `aborted` when the caller's signal fires (including during a backoff
  * wait), `invalid-json` for a body without an `answers` object, and
  * `error` when fetch rejects for any other reason.
@@ -76,7 +87,8 @@ export async function postSystemOne(
       if (attempt === MAX_RETRIES) {
         return { ok: false, fallback: `http:${result.status}` };
       }
-      await target.sleepImpl(RETRY_BASE_MS * 2 ** attempt, target.signal);
+      const wait = result.retryAfterMs ?? RETRY_BASE_MS * 2 ** attempt;
+      await target.sleepImpl(wait, target.signal);
       if (target.signal?.aborted) return { ok: false, fallback: "aborted" };
       continue;
     }
@@ -94,7 +106,12 @@ async function attemptOnce(
   target: PostTarget,
   body: string,
 ): Promise<
-  | { kind: "http"; status: number; text: string }
+  | {
+      kind: "http";
+      status: number;
+      text: string;
+      retryAfterMs: number | undefined;
+    }
   | { kind: "fallback"; fallback: string }
 > {
   const deadline = startDeadline(target.timeoutMs, target.signal);
@@ -114,12 +131,28 @@ async function attemptOnce(
       kind: "http",
       status: response.status,
       text: await response.text(),
+      retryAfterMs: retryAfterMs(response.headers.get("retry-after")),
     };
   } catch {
     // fetch and body reads reject on abort and on network faults alike;
     // the deadline tells the two apart.
     return { kind: "fallback", fallback: deadline.cause() ?? "error" };
   }
+}
+
+/**
+ * The `retry-after` header as a wait in milliseconds: delay-seconds or an
+ * HTTP date, clamped to [0, `MAX_RETRY_AFTER_MS`]; undefined when absent
+ * or unparseable.
+ */
+function retryAfterMs(header: string | null): number | undefined {
+  if (header === null || header.trim() === "") return undefined;
+  const text = header.trim();
+  const ms = /^\d+(?:\.\d+)?$/.test(text)
+    ? Number(text) * 1000
+    : Date.parse(text) - Date.now();
+  if (!Number.isFinite(ms)) return undefined;
+  return Math.min(Math.max(ms, 0), MAX_RETRY_AFTER_MS);
 }
 
 function parseBody(text: string):

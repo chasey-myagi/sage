@@ -104,7 +104,6 @@ export type SentBody = {
       id: string;
       tool: string;
       input: string;
-      is_error: boolean;
       tokens: number;
       head: string[];
       tail: string[];
@@ -116,7 +115,7 @@ export type SentBody = {
     string,
     {
       type: string;
-      instructions: unknown;
+      instructions: string | { line: string; statement: string };
       criteria: { true: string; false: string };
     }
   >;

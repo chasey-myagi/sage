@@ -15,10 +15,10 @@
 
 import { Buffer } from "node:buffer";
 import type { Chunk } from "../../compiler/chunks.js";
+import { clipEnd, clipStart } from "../../compiler/clip.js";
 import { summarizeInput } from "../../compiler/stub.js";
 import { candidateLines } from "./candidates.js";
 import { type NoulQuestion, questionsFor } from "./questions.js";
-import { clipEnd, clipStart } from "./text.js";
 
 /** Jev's limit on the state plus the single longest question, in tokens. */
 const PAIR_TOKEN_LIMIT = 32_000;
@@ -48,9 +48,9 @@ export type ChunkState = {
   tool: string;
   /** Compact JSON of the tool input, at most `INPUT_CHAR_LIMIT` characters. */
   input: string;
-  is_error: boolean;
   /** The compiler's token estimate of the whole chunk. */
   tokens: number;
+  /** Empty, as is `tail`, when `candidates` already hold the whole output. */
   head: string[];
   tail: string[];
   /** Output lines between head and tail that were not sent. */
@@ -84,7 +84,8 @@ export type ChunkContext = {
  * Builds the request for `chunk` whose original output is `text`, or
  * undefined when no cut fits the limits. Head and tail halve together
  * until both are empty; only then do the candidates halve, and head and
- * tail start over at full size.
+ * tail start over at full size. When every output line is a candidate
+ * (`coversOutput`), head and tail are empty and `omitted_lines` is 0.
  */
 export function chunkRequest(
   chunk: Chunk,
@@ -99,18 +100,23 @@ export function chunkRequest(
     recent_assistant: clipStart(context.prose, PROSE_CHAR_LIMIT),
   };
   const all = candidateLines(tool, chunk.input, lines);
-  for (const candidates of halvings(all)) {
+  for (const candidates of halvings(all.lines)) {
     const questions = questionsFor(candidates);
-    for (const [headCount, tailCount] of excerptSizes()) {
+    const covered = all.coversOutput && candidates.length === all.lines.length;
+    const sizes: Iterable<[number, number]> = covered
+      ? [[0, 0]]
+      : excerptSizes();
+    for (const [headCount, tailCount] of sizes) {
       const state: JevState = {
         ...base,
         chunk: {
           id: chunk.id,
           tool,
           input: summarizeInput(chunk.input, INPUT_CHAR_LIMIT),
-          is_error: chunk.isError ?? false,
           tokens: chunk.tokens,
-          ...excerpt(lines, headCount, tailCount),
+          ...(covered
+            ? { head: [], tail: [], omitted_lines: 0 }
+            : excerpt(lines, headCount, tailCount)),
           candidates,
         },
       };

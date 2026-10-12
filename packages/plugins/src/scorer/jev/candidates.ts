@@ -4,19 +4,22 @@
  *
  * Guarantees: at most `MAX_CANDIDATES` lines, each trimmed, with runs of
  * whitespace collapsed, at most `CANDIDATE_CHAR_LIMIT` characters, and
- * unique. Past the cap the first and last halves survive, since failures
- * and summaries tend to sit at the end of command output. The extractor
- * is chosen by tool name alone; this module does not import the tools.
+ * unique. Past the cap the first `HEAD_CANDIDATES` and the rest from the
+ * end survive, since failures and summaries tend to sit at the end of
+ * command output. The extractor is chosen by tool name alone; this module
+ * does not import the tools.
  *
  * Intentionally not in the Log: the lines. They reach the Log only inside
  * a tier-summary note.
  */
 
 import { isFiniteNumber, isRecord } from "@sage/core";
-import { clipEnd } from "./text.js";
+import { clipEnd } from "../../compiler/clip.js";
 
 /** Most candidate lines one chunk offers, so `keep_<i>` questions stay bounded. */
-const MAX_CANDIDATES = 60;
+const MAX_CANDIDATES = 24;
+/** Candidates kept from the start past the cap; the rest come from the end. */
+const HEAD_CANDIDATES = 8;
 /** Longest candidate line in characters; longer lines are cut with `…`. */
 const CANDIDATE_CHAR_LIMIT = 200;
 
@@ -32,9 +35,12 @@ const SIGNATURE =
   /^\s*(?:export\s+)?(?:pub(?:\([\w:]+\))?\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?|class|interface|type|enum|def|fn|struct|trait|impl|module|namespace)\s+\w/;
 /** An export statement. */
 const EXPORT = /^\s*export\b|^\s*module\.exports\b|^\s*__all__\s*=/;
-/** A test-runner tally such as `3 passed` or `test result:`. */
-const TEST_SUMMARY =
-  /\b\d+\s+(?:passed|failed|skipped|pending|todo|tests?)\b|^\s*test result:/i;
+/**
+ * A test-runner tally: a vitest or jest `Tests` / `Test Files` line, or
+ * `<n> passed` / `<n> failed`. A per-file `✓ a.test.ts (3 tests)` line is
+ * not a tally.
+ */
+const TEST_SUMMARY = /^\s*(?:Tests|Test Files)\b|\b\d+ (?:passed|failed)\b/;
 /** A unified-diff hunk header or a `diff --git` line. */
 const DIFF_HEADER = /^@@ .+ @@|^diff --git /;
 /** The status line the bash tool puts first. */
@@ -55,6 +61,17 @@ const EXTRACTORS: Readonly<Record<string, Extractor>> = {
     lines.filter((line) => BASH_STATUS.test(line) || isNotable(line)),
 };
 
+/** One output's candidates, and whether they already carry all of it. */
+export type Candidates = {
+  lines: string[];
+  /**
+   * True when every non-empty output line is a candidate, verbatim apart
+   * from whitespace, none cut, merged, or capped away. The output then
+   * needs no separate head or tail.
+   */
+  coversOutput: boolean;
+};
+
 /**
  * The candidate lines of one tool output. `read` offers declarations and
  * exports as `L<n>: <line>`, numbered from `input.offset` (1 when absent);
@@ -67,9 +84,20 @@ export function candidateLines(
   tool: string,
   input: unknown,
   lines: readonly string[],
-): string[] {
+): Candidates {
   const extract = EXTRACTORS[tool] ?? notableCandidates;
-  return capCandidates(normalize(extract(lines, input)));
+  const picked = extract(lines, input);
+  const normalized = normalize(picked);
+  const capped = capCandidates(normalized.lines);
+  const nonEmpty = lines.filter((line) => line.trim().length > 0);
+  return {
+    lines: capped,
+    coversOutput:
+      normalized.lossless &&
+      capped.length === normalized.lines.length &&
+      picked.length === nonEmpty.length &&
+      picked.every((line, index) => line === nonEmpty[index]),
+  };
 }
 
 function readCandidates(lines: readonly string[], input: unknown): string[] {
@@ -114,23 +142,34 @@ function isNotable(line: string): boolean {
   );
 }
 
-function normalize(lines: readonly string[]): string[] {
+/** Trimmed, collapsed, clipped, deduplicated; `lossless` when nothing was cut or merged. */
+function normalize(lines: readonly string[]): {
+  lines: string[];
+  lossless: boolean;
+} {
   const seen = new Set<string>();
   const out: string[] = [];
+  let lossless = true;
   for (const line of lines) {
-    const text = clipEnd(
-      line.replace(/\s+/g, " ").trim(),
-      CANDIDATE_CHAR_LIMIT,
-    );
-    if (text.length === 0 || seen.has(text)) continue;
+    const collapsed = line.replace(/\s+/g, " ").trim();
+    const text = clipEnd(collapsed, CANDIDATE_CHAR_LIMIT);
+    if (text !== collapsed) lossless = false;
+    if (text.length === 0) continue;
+    if (seen.has(text)) {
+      lossless = false;
+      continue;
+    }
     seen.add(text);
     out.push(text);
   }
-  return out;
+  return { lines: out, lossless };
 }
 
 function capCandidates(lines: string[]): string[] {
   if (lines.length <= MAX_CANDIDATES) return lines;
-  const half = Math.floor(MAX_CANDIDATES / 2);
-  return [...lines.slice(0, half), ...lines.slice(lines.length - half)];
+  const tail = MAX_CANDIDATES - HEAD_CANDIDATES;
+  return [
+    ...lines.slice(0, HEAD_CANDIDATES),
+    ...lines.slice(lines.length - tail),
+  ];
 }

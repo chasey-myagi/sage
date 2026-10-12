@@ -5,13 +5,14 @@
  * `[#<id> · <toolName> · <summary> · <n>k tokens · omitted · expand("<id>") to retrieve]`.
  * `<n>k` is `chunk.tokens / 1000` with one decimal. `summary` is
  * `summarizeInput(chunk.input)`: one line, at most `INPUT_LINE_LIMIT`
- * characters, cut with `…`.
+ * characters, cut with `…` by `clipEnd` (never inside a surrogate pair).
  *
  * Intentionally not in the Log: this function. The stub is model-visible.
  * Rebuild reproduces it from `originalTokens` and the logged tool_use.
  */
 
 import type { Chunk } from "./chunks.js";
+import { clipEnd } from "./clip.js";
 
 /** Maximum characters of the one-line tool input shown in a stub. */
 const INPUT_LINE_LIMIT = 80;
@@ -19,15 +20,13 @@ const INPUT_LINE_LIMIT = 80;
 /**
  * One-line summary of a tool input: a string with whitespace collapsed, or
  * compact JSON, at most `limit` characters (default `INPUT_LINE_LIMIT`),
- * cut with `…`.
+ * cut with `…` by `clipEnd`.
  */
 export function summarizeInput(
   input: unknown,
   limit = INPUT_LINE_LIMIT,
 ): string {
-  const line = compact(input);
-  if (line.length <= limit) return line;
-  return `${line.slice(0, limit - 1)}…`;
+  return clipEnd(compact(input), limit);
 }
 
 /**
