@@ -57,7 +57,7 @@ export const FAUX_UNIT_USAGE: TokenCounts = {
  * stream itself (for delays, aborts, or request-dependent replies). `index`
  * is the 0-based call number.
  */
-export type FauxScript =
+type FauxScript =
   | StreamChunk[]
   | ((ctx: {
       request: Request;

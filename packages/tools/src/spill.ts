@@ -16,9 +16,9 @@ import path from "node:path";
 /** Output up to this many UTF-8 bytes is returned as is. */
 export const SPILL_LIMIT_BYTES = 30_000;
 /** Head bytes a spilled preview keeps before the notice line. */
-export const SPILL_HEAD_BYTES = 20_000;
+const SPILL_HEAD_BYTES = 20_000;
 /** Tail bytes a spilled preview keeps after the notice line. */
-export const SPILL_TAIL_BYTES = 5_000;
+const SPILL_TAIL_BYTES = 5_000;
 /** Shrink rounds `fit` tries before returning its last attempt. */
 const FIT_MAX_ATTEMPTS = 8;
 

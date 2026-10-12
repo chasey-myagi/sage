@@ -16,7 +16,7 @@ import type { StoredEntry } from "./types.js";
  * `reduce`, when present, must be pure. `doc` is copied into
  * docs/log-manifest.md.
  */
-export type EntryKindDef<P, S = unknown> = {
+type EntryKindDef<P, S = unknown> = {
   kind: string;
   persisted: true;
   validate: (payload: unknown) => payload is P;

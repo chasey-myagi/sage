@@ -54,13 +54,13 @@ export type RequestHeaderPayload = {
  * first message of the view that opened it: the message in the frozen
  * prefix that carries the epoch's claims.
  */
-export type ViewEpochPayload = {
+type ViewEpochPayload = {
   epoch: number;
   reason: string;
 };
 
 /** A model switch. History is not rewritten. */
-export type ModelChangePayload = {
+type ModelChangePayload = {
   from: ModelRef;
   to: ModelRef;
   reason: string;
@@ -81,7 +81,7 @@ export type ModelChangePayload = {
  * `shadow` or `scorer` is `{text, finish}` strings or absent. Other fields
  * are unchecked. The kernel reads none of this.
  */
-export type ManifestPayload = {
+type ManifestPayload = {
   epoch: number;
   turn: number;
   budget?:
@@ -104,7 +104,7 @@ export type ManifestPayload = {
 };
 
 /** Payload of `undo` and `leaf`: the id of an earlier entry. */
-export type TargetPayload = {
+type TargetPayload = {
   target: string;
 };
 
@@ -112,7 +112,7 @@ export type TargetPayload = {
  * One whole-turn resend after a transport error. Persisted, not
  * model-visible: the kernel never puts it on a request.
  */
-export type TurnRetryPayload = {
+type TurnRetryPayload = {
   turn: number;
   attempt: number;
   reason: string;
@@ -122,7 +122,7 @@ export type TurnRetryPayload = {
  * How a run ended. `usage` and `error` stay opaque. `health`, when present,
  * must be an object; the kernel does not read its fields.
  */
-export type TerminalPayload = {
+type TerminalPayload = {
   outcome: string;
   usage?: unknown;
   error?: unknown;
@@ -343,7 +343,7 @@ function isTerminal(payload: unknown): payload is TerminalPayload {
  * A child session recompiling a parent leaf. The kernel does not copy the
  * parent path onto the child.
  */
-export type SubtaskPayload = {
+type SubtaskPayload = {
   parentSessionId: string;
   parentLeaf: string;
   query: string;

@@ -6,13 +6,11 @@
  * turn. Replay reads the user text, model, adapter defaults, context window,
  * and pricing back out of that log (the first request_header), plays the
  * script through the faux adapter, and returns the new requests, log,
- * per-turn compiled views, and their manifests.
- * `SAGE_RECORD=1` selects the record lane, which has no live network
- * recorder yet, so replay refuses it. This module never opens a network
- * connection.
+ * per-turn compiled views, and their manifests. This module never opens a
+ * network connection.
  *
- * Intentionally not in the Log: the script, the switch, and the view and
- * manifest lists collected at runtime. The session log is the recorded fact.
+ * Intentionally not in the Log: the script and the view and manifest lists
+ * collected at runtime. The session log is the recorded fact.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -36,8 +34,6 @@ import { passthroughView } from "../view/passthrough.js";
 import type { CompiledView, Manifest, ViewProvider } from "../view/types.js";
 import { fauxAdapter } from "./faux.js";
 import { recordViews } from "./views.js";
-
-const RECORD_SWITCH = "SAGE_RECORD";
 
 /**
  * Reads a recorded case directory. Throws when `session.jsonl` is missing or
@@ -68,8 +64,8 @@ export function loadCase(dir: string): {
 /**
  * Replays a recorded case keylessly through a fresh in-memory session.
  * Returns the requests sent, the resulting log, every compiled view in turn
- * order, and the manifests derived from those views. Throws when `SAGE_RECORD=1`, and when the recording lacks a user message
- * or a request_header.
+ * order, and the manifests derived from those views. Throws when the
+ * recording lacks a user message or a request_header.
  */
 export async function replaySession(
   dir: string,
@@ -84,11 +80,6 @@ export async function replaySession(
   views: CompiledView[];
   manifests: Manifest[];
 }> {
-  if (process.env[RECORD_SWITCH] === "1") {
-    throw new Error(
-      "SAGE_RECORD=1 selects the record lane, which replaySession does not implement: it only replays session.jsonl plus responses.json from disk and never calls the network. Unset SAGE_RECORD to replay.",
-    );
-  }
   const { log, responses } = loadCase(dir);
   const adapter = fauxAdapter(responses, {
     api: recordedApi(log),

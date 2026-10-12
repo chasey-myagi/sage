@@ -50,7 +50,7 @@ type OptionSpec = {
 };
 
 /** Every flag either command accepts. */
-export const OPTIONS = {
+const OPTIONS = {
   print: {
     type: "boolean",
     short: "p",
@@ -91,7 +91,7 @@ export type CommandFlags<N extends OptionName> = readonly {
  * value; `value` is a string flag, or a `takesInline` boolean written as
  * `--name=value`; `invalid` is anything the command must reject with usage.
  */
-export type FlagToken<N extends OptionName> =
+type FlagToken<N extends OptionName> =
   | { kind: "switch"; name: N; index: number }
   | { kind: "value"; name: N; value: string; index: number }
   | { kind: "positional"; value: string; index: number }

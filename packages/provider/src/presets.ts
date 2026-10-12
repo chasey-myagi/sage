@@ -9,7 +9,7 @@
 import type { ProviderAdapter } from "./contract/adapter.js";
 
 /** One named endpoint. `envKey` names the variable that holds its API key. */
-export type ProviderPreset = {
+type ProviderPreset = {
   name: string;
   baseUrl: string;
   envKey: string;

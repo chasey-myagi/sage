@@ -34,7 +34,7 @@ import {
 import { turnReport } from "./stats-turns.js";
 
 /** How often shadow `none` decisions were later contradicted. */
-export type ShadowAudit = {
+type ShadowAudit = {
   /** Distinct chunk ids a shadow decision marked `none`. */
   shadowNone: number;
   /** Of those, ids the model needed on a later turn. */
@@ -116,7 +116,7 @@ function parseStatsArgs(
  * after the decision, or it is a `read` result whose `path` is read again
  * on a strictly later turn. A re-read on the deciding turn does not count.
  */
-export function shadowAudit(entries: readonly StoredEntry[]): ShadowAudit {
+function shadowAudit(entries: readonly StoredEntry[]): ShadowAudit {
   const judgedTurn = new Map<string, number>();
   const judgedAt = new Map<string, number>();
   const calls: ToolCall[] = [];

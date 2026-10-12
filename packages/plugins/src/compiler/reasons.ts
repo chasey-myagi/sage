@@ -19,7 +19,7 @@ import type { Tier } from "./claim.js";
 import type { Rates } from "./decide.js";
 
 /** The rule a chunk reason's root names. */
-export type ReasonKind =
+type ReasonKind =
   | "recent"
   | "kept"
   | "superseded"

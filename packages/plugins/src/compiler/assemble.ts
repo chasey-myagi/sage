@@ -44,7 +44,7 @@ import {
 const FIRST_TURN_EPOCH_START = "compiler:first-turn";
 
 /** Claims from every provider, plus one error row per provider that threw. */
-export type CollectedClaims = { claims: Claim[]; errors: ManifestClaim[] };
+type CollectedClaims = { claims: Claim[]; errors: ManifestClaim[] };
 
 /** One candidate view and the manifest facts that describe it. */
 export type Assembly = {
@@ -63,7 +63,7 @@ export type Assembly = {
 };
 
 /** Everything `assembleView` reads; shared by both candidate views. */
-export type AssembleInput = {
+type AssembleInput = {
   path: SessionPath;
   /** Passthrough projection of the history. Not mutated. */
   history: readonly Message[];
@@ -82,7 +82,7 @@ export type AssembleInput = {
  * (`view_epoch.details.prefixMessage`); `frozen` holds the epoch's frozen
  * chunk decisions, if any.
  */
-export type AssembleMode = {
+type AssembleMode = {
   freezeHead: boolean;
   frozen: FrozenMap | undefined;
 };

@@ -19,7 +19,6 @@ export {
   FAUX_SYSTEM,
   FAUX_UNIT_USAGE,
   FAUX_USAGE,
-  type FauxScript,
   fauxAdapter,
   stopScript,
   toolScript,

@@ -62,14 +62,14 @@ export const SESSION_LOG_SUBDIR = path.join(SAGE_DIR_NAME, "sessions");
 const SENSITIVE = /(^|\/)\.env$|\/secrets\//;
 
 /** A session plus the store it writes and its id. The caller owns all three. */
-export type CodingSession = {
+type CodingSession = {
   session: AgentSession;
   store: LogStore;
   sessionId: string;
 };
 
 /** Inputs to {@link createCodingSession}. One of `adapter` / `adapters` is required. */
-export type CodingSessionOptions = {
+type CodingSessionOptions = {
   cwd: string;
   /** Adapter for `model.provider` alone. Ignored when `adapters` is set. */
   adapter?: ProviderAdapter;
@@ -203,7 +203,7 @@ export function defaultRoutePolicy(
 }
 
 /** The root system prompt. Model-visible; changing it changes every request. */
-export function systemPrompt(cwd: string): string {
+function systemPrompt(cwd: string): string {
   return [
     "You are sage, a coding agent.",
     "Complete the task in the workspace using the provided tools.",

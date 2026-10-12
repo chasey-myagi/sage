@@ -50,7 +50,7 @@ const SUBTASK_QUERY_CLAIM_ID = "subtask-query";
 const SUBTASK_QUERY_PRIORITY = 100;
 
 /** Settings the subtask compile inherits from `contextCompiler`. */
-export type SubtaskCompileOptions = {
+type SubtaskCompileOptions = {
   budget: number;
   query: string;
   count: TokenCounter;

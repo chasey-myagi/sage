@@ -83,7 +83,7 @@ export function ratesFor(pricing: Pricing | null): Rates {
 }
 
 /** Input to the epoch cost check. Token counts are projected input tokens. */
-export type EpochInput = {
+type EpochInput = {
   oldTokens: number;
   newTokens: number;
   remainingTurns: number;

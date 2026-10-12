@@ -27,7 +27,7 @@ export type RouteInput = {
 };
 
 /** The next model and why, or undefined to keep the current model. */
-export type RouteResult = { model: ModelRef; reason: string } | undefined;
+type RouteResult = { model: ModelRef; reason: string } | undefined;
 
 /** Chooses the model for a rebuilt epoch. */
 export type RoutePolicy = (input: RouteInput) => RouteResult;

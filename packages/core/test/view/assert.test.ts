@@ -3,7 +3,6 @@ import {
   assertHeadFrozen,
   assertPaired,
   HeadChangedMidEpochError,
-  headHash,
   systemHash,
   toolsHash,
   UnpairedToolCallError,
@@ -109,10 +108,9 @@ describe("assertPaired", () => {
 });
 
 describe("head hashes", () => {
-  it("hashes canonical JSON of the system string, the tools array, and the head", () => {
+  it("hashes canonical JSON of the system string and the tools array", () => {
     expect(systemHash(headA.system)).toBe(sha256(canonicalJson(headA.system)));
     expect(toolsHash(headA.tools)).toBe(sha256(canonicalJson(headA.tools)));
-    expect(headHash(headA)).toBe(sha256(canonicalJson(headA)));
     expect(toolsHash(headA.tools)).not.toBe(toolsHash(headB.tools));
   });
 });

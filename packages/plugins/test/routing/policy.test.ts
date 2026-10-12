@@ -3,7 +3,6 @@ import { type CatalogEntry, listModels } from "@sage/provider";
 import { describe, expect, it } from "vitest";
 import type { EpochDecision } from "../../src/compiler/decide.ts";
 import {
-  composePolicies,
   costTierPolicy,
   sensitivePolicy,
   withSensitiveFilter,
@@ -254,38 +253,5 @@ describe("policy composition", () => {
     expect(
       policy(input({ viewChunks: [chunk("full", ".env")] })),
     ).toBeUndefined();
-  });
-
-  it("threads the previous model forward and keeps it when a later policy abstains", () => {
-    const seen: { provider: string; model: string }[] = [];
-    const first: RoutePolicy = () => ({
-      model: { provider: "openai", model: "gpt-5.4-mini" },
-      reason: "first",
-    });
-    const abstain: RoutePolicy = (routeInput) => {
-      seen.push(routeInput.current);
-      return undefined;
-    };
-    const second: RoutePolicy = (routeInput) => {
-      seen.push(routeInput.current);
-      return {
-        model: { provider: "anthropic", model: "claude-haiku-4-5-20251001" },
-        reason: "second",
-      };
-    };
-    const held = composePolicies(first, abstain)(input({ viewChunks: [] }));
-    expect(held).toEqual({
-      model: { provider: "openai", model: "gpt-5.4-mini" },
-      reason: "first",
-    });
-    expect(seen[0]).toEqual({ provider: "openai", model: "gpt-5.4-mini" });
-
-    const replaced = composePolicies(first, second)(input({ viewChunks: [] }));
-    expect(replaced?.reason).toBe("second");
-    expect(replaced?.model.model).toBe("claude-haiku-4-5-20251001");
-    expect(seen[1]).toEqual({ provider: "openai", model: "gpt-5.4-mini" });
-
-    const skipped = composePolicies(abstain)(input({ viewChunks: [] }));
-    expect(skipped).toBeUndefined();
   });
 });

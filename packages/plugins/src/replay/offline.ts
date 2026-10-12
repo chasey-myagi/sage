@@ -46,7 +46,7 @@ import { ruleScorer } from "../scorer/rule.js";
 import type { Scorer } from "../scorer/types.js";
 
 /** The policy a replay recompiles under. */
-export type Policy = {
+type Policy = {
   /** Defaults to `DEFAULT_COMPILER_BUDGET`. */
   budget?: number;
   /** Defaults to `DEFAULT_KEEP_RECENT`. */
@@ -62,7 +62,7 @@ export type Policy = {
 };
 
 /** One replayed turn: the recorded cost next to the policy's estimate. */
-export type TurnDiff = {
+type TurnDiff = {
   turn: number;
   /**
    * That turn's assistant `details.usage` input total
@@ -107,7 +107,7 @@ const SCORER_NOTE = "scorer:offline-rule";
 const scorerSwappedRuns = new WeakSet<readonly TurnDiff[]>();
 
 /** One recorded turn: a request_header followed by its assistant reply. */
-export type TurnSlice = {
+type TurnSlice = {
   /** The turn's recorded manifest `turn`, else its 1-based slice position. */
   turn: number;
   /**

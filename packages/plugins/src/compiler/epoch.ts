@@ -34,7 +34,7 @@ import type { ChunkRow } from "./rows.js";
  * Fraction of the model's context window a projected view may fill before
  * the context-window guard forces a rebuild.
  */
-export const CONTEXT_WINDOW_GUARD_RATIO = 0.9;
+const CONTEXT_WINDOW_GUARD_RATIO = 0.9;
 /** Default `expectedTurns`: assumed length of a task in turns. */
 export const DEFAULT_EXPECTED_TURNS = 20;
 /**
@@ -157,7 +157,7 @@ export function chooseEpoch(input: {
  * `view_epoch` reason for an epoch this turn opens: `context-window-guard`,
  * `cost:immediate`, or `cost:<paybackTurns>`.
  */
-export function openReason(choice: EpochChoice): string {
+function openReason(choice: EpochChoice): string {
   if (choice.trigger === "context-window-guard") {
     return CONTEXT_WINDOW_GUARD_REASON;
   }

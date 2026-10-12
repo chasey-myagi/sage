@@ -25,7 +25,6 @@ import {
   type ToolNetwork,
   ToolNetworkError,
   type ToolSandbox,
-  toolNetworkSupport,
   toolSandboxSupport,
 } from "./bash.js";
 import { createEdit } from "./edit.js";
@@ -36,16 +35,11 @@ import { TOOL_NAMES } from "./names.js";
 import { createRead } from "./read.js";
 import { createWrite } from "./write.js";
 
-/** The package name. */
-export const PACKAGE = "@sage/tools" as const;
-
 export type { BashExec, ToolNetwork, ToolSandbox };
 export {
   resolveToolSandbox,
   SANDBOX_ALLOW_ROOT_ENV,
   TOOL_NAMES,
-  ToolNetworkError,
-  toolNetworkSupport,
   toolSandboxSupport,
 };
 
