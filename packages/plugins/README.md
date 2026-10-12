@@ -69,7 +69,7 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 #### 费率
 
-两个倍率取自这次调用的定价，也就是本轮 `request_header.pricing` 记下的那一份。读价是 `cacheRead / input`。写价是 `max(cacheWrite, input) / input`：写价低于输入价时按输入价算，新前缀第一次总要按未命中价付一遍。内置目录里价格页写明「未命中按输入价、无创建费」的型号（OpenAI、DeepSeek、Kimi 自动缓存、百炼），`cacheWritePerMTok` 就写成输入价，写价倍率 1.0；Anthropic 是 1.25。只有定价缺失（或输入价为 0）时才用默认值 0.1 与 1.25，清单 `epochDecision.rateSource` 记 `default`，原因追加 `;pricing:fallback`；否则记 `pricing`。
+两个倍率取自这次调用的定价，也就是本轮 `request_header.pricing` 记下的那一份。读价是 `cacheRead / input`。写价是 `max(cacheWrite, input) / input`：写价低于输入价时按输入价算，新前缀第一次总要按未命中价付一遍。内置目录里价格页写明「未命中按输入价、无创建费」的型号（OpenAI、DeepSeek、Kimi 自动缓存、百炼隐式缓存；sage 不发 `cache_control`，百炼走的是隐式缓存），`cacheWritePerMTok` 就写成输入价，写价倍率 1.0；Anthropic 是 1.25。只有定价缺失（或输入价为 0）时才用默认值 0.1 与 1.25，清单 `epochDecision.rateSource` 记 `default`，原因追加 `;pricing:fallback`；否则记 `pricing`。
 
 #### 估算与校准
 

@@ -6,7 +6,7 @@
 
 - 视界远大于阶段寿命。`remainingTurnsFor` 给的是整个任务的剩余轮数，回本要 15、20 轮的重开也会被批准；几轮后同一道不等式又批准下一次重开，上一次的写还没赚回来就被作废。这是重开过多的根因。
 - 没算重建后代价。压缩之后模型用 `expand` 把原文拿回来，这部分没进账。
-- 费率来源看不出来。清单只有一个 `;pricing:fallback` 后缀；目录里自动前缀缓存的型号把写价记成 0，靠 `ratesFor` 的 `max(cacheWrite, input)` 才变成 1.0，目录和价格页的口径不一致。
+- 费率来源看不出来。清单只有一个 `;pricing:fallback` 后缀；目录里自动前缀缓存的型号把写价记成 0，靠 `ratesFor` 的 `max(cacheWrite, input)` 才变成 1.0，目录和价格页的口径不一致。这是 [deepseek-tuning](./2026-09-23-deepseek-tuning.md) 当时的决定：用 `max` 兜底；本次改为在目录里写真值。
 
 ## Decision
 
@@ -18,7 +18,7 @@
 
 - **阶段承诺的回本。**按回本批准的重开，承诺新阶段至少活过它自己的 `paybackTurns`。承诺值就是阶段第一份清单（批准重开的那一份）的 `epochDecision.paybackTurns`。`freeze.ts` 的 `epochCommitment` 从那份清单读出 `turnsSinceEpochOpen` 与 `committedPaybackTurns`。已过轮数小于承诺值时，按回本批准的重开改成不重开，原因 `payback-pending:<已过><<承诺>`，trigger 是 `no-rebuild`。阶段 0、立即回本开的阶段（回本 0）、安全阀开的阶段（`chooseEpoch` 按 `view_epoch` 原因置 0）没有承诺。立即回本与上下文窗口安全阀不受限。判据全部来自 Log，重放结果相同。没有新的魔数。
 - **重建后代价。**`postRebuildCost = 预计取回 × 写价`，计入 `extraCost`，预计取回不超过 旧 − 新。`log-read.ts` 的 `expandResultTokens` 从 path 读出每次成功 `expand` 的结果 token。有观测时 `{source: "observed", expandsPerEpoch, tokensPerExpand}`，预计取回 = 每阶段次数 × 平均 token；这是上界，阶段 0 因预算省略触发的 `expand` 也被算进去，而且全按写价计。没有观测时用先验 `{source: "prior", share: PRIOR_EXPAND_SHARE}`，预计取回 = 0.1 × (旧 − 新)，让回本轮数多出 `0.1 × 写价 ÷ 读价` 轮。
-- **费率回到目录真值。**价格页写明「未命中按输入价、无创建费」的内置条目（OpenAI 三款、DeepSeek 两款、Kimi k2.6 与 k2.7-code、百炼四款）把 `cacheWritePerMTok` 改成等于 `inputPerMTok`。`ratesFor` 只在定价缺失（或输入价为 0）时用 `DEFAULT_READ_RATE` 0.1 与 `DEFAULT_WRITE_RATE` 1.25；`max(cacheWrite, input)` 保留，兜住用户在 providers.json 里写的 0。`Rates.source` 与清单 `epochDecision.rateSource` 取 `pricing` 或 `default`。
+- **费率回到目录真值。**价格页写明「未命中按输入价、无创建费」的内置条目（OpenAI 三款、DeepSeek 两款、Kimi k2.6 与 k2.7-code、百炼四款按隐式缓存口径）把 `cacheWritePerMTok` 改成等于 `inputPerMTok`。`ratesFor` 只在定价缺失（或输入价为 0）时用 `DEFAULT_READ_RATE` 0.1 与 `DEFAULT_WRITE_RATE` 1.25；`max(cacheWrite, input)` 保留，兜住用户在 providers.json 里写的 0。`Rates.source` 与清单 `epochDecision.rateSource` 取 `pricing` 或 `default`。
 - 清单 `epochDecision` 新增 `rateSource`、`postRebuildCost`、`expandEstimate`、`turnsSinceEpochOpen`、`committedPaybackTurns`，core 的 `EpochDecisionReport` 同步。`kinds.ts` 的校验与 entry kind 文档不变，`docs/log-manifest.md` 不需要重生成。
 - `replayOffline` 的 policy 新增 `claims`，回放可以带上录制时的申领单，从而逐字段复现录制的清单数字。
 

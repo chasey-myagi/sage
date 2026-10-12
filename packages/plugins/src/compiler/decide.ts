@@ -82,7 +82,9 @@ export type EpochDecision = {
   /**
    * Payback the current epoch was opened on: its first manifest's
    * `paybackTurns` when a cost rebuild opened it, else 0. A payback rebuild
-   * waits until `turnsSinceEpochOpen` reaches it.
+   * waits until `turnsSinceEpochOpen` reaches it. Reaching it counts the
+   * decision turn itself, the same inclusive convention as the horizon rule
+   * `paybackTurns <= remainingTurns`; keep the two symmetric.
    */
   committedPaybackTurns: number;
   /** Turns until a rebuild pays for itself; null without savings. */
