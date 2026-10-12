@@ -17,7 +17,8 @@ export default defineConfig({
     setupFiles: ["packages/core/src/testing/setup.ts"],
     coverage: {
       provider: "v8",
-      // Thresholds stay unset until the M2 compiler lands (M2 编译器落地后设).
+      // No thresholds: `pnpm test:coverage` is a report; `pnpm check` does
+      // not run it.
       include: ["packages/core/src/view/**", "packages/core/src/session.ts"],
     },
   },

@@ -6,7 +6,7 @@
 
 | 用途 | 工具 | 入口 |
 |---|---|---|
-| 运行时 | Node.js ≥ 22.18 | 根 `package.json` 的 `engines`；`scripts/gen-log-manifest.mjs` 依赖 22.18 起默认开启的类型擦除 |
+| 运行时 | Node.js ≥ 22.18 | 根与 `apps/sage` 的 `package.json` 的 `engines`；CLI 由 esbuild 以 `--target=node22.18` 打包。仓内脚本只跑 `.mjs` 和 `dist/`，测试由 vitest 转译，都不依赖 Node 的类型擦除 |
 | 包管理与工作区 | pnpm workspace | `pnpm-workspace.yaml`；包之间用 `workspace:*` 互引 |
 | 类型检查 | TypeScript 7，`tsc -b` 按 project references 逐包检查 | `tsconfig.json`（solution 根）、`tsconfig.base.json`（共享选项） |
 | 测试 | vitest | `vitest.config.ts` |
@@ -41,7 +41,8 @@ packages/<name>/
   package.json     name、private、exports（`source` 指 src，`default` 指 dist）、workspace 依赖
   tsconfig.json    extends base；references 列出它依赖的兄弟包
   README.md        必须有 ## Model Experience 三小节（check:readme 检查）
-  src/index.ts     桶文件：只 re-export，不写逻辑；没在这里导出的东西，别的包用不到
+  src/index.ts     桶文件：re-export 公开符号和 `PACKAGE` 常量，不写逻辑；没在这里导出的东西，别的包用不到。
+                   例外：`@sage/tools` 的 `createTools` 在这里把七个工具装配到同一个 cwd 与沙箱上
   src/...          一个文件一个职责
   test/            *.test.ts；回归放 test/regressions/
 ```
