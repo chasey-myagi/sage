@@ -21,6 +21,7 @@ import type { ScoreDecision, ScoreResult, Scorer } from "../scorer/types.js";
 import type { Chunk } from "./chunks.js";
 import { listedChunkIds } from "./log-read.js";
 import {
+  failedRequestsField,
   requestCount,
   requestFromCompiled,
   SCORE_TIERS,
@@ -35,7 +36,8 @@ export type ShadowBody = NonNullable<CompiledView["manifest"]["shadow"]>;
  * `prevRequest` is this turn's compiled view (head, messages, cache
  * breakpoints), not the previous turn's request. Returns undefined, and
  * makes no call, when there is no new tool chunk. `raw` is copied only
- * when the score fell back and supplied it. `calls` is 0 when the scorer
+ * when the score fell back and supplied it; `failedRequests` only when
+ * positive. `calls` is 0 when the scorer
  * gave up before sending (`requested: false`) or the request could not be
  * built, and 1 otherwise, including when the scorer throws.
  */
@@ -82,6 +84,7 @@ export async function runShadowScorer(input: {
       ...(typeof result.fallback === "string" && result.raw
         ? { raw: result.raw }
         : {}),
+      ...failedRequestsField(result),
     };
   } catch (error) {
     // Building the request or reading the Log failed; shadow data is

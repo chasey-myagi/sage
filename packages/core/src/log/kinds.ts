@@ -79,7 +79,9 @@ type ModelChangePayload = {
  * `entryScored` needs finite `calls`, `none`, `summary`, and `full`, and an optional
  * finite `summaryRejected`. A `usage` on `shadow` or `entryScored` is an
  * object whose four token fields are finite when present. A `raw` on
- * `shadow` or `scorer` is `{text, finish}` strings or absent. Other fields
+ * `shadow` or `scorer` is `{text, finish}` strings or absent. A
+ * `failedRequests` on `shadow`, `scorer`, or `entryScored` is finite when
+ * present. Other fields
  * are unchecked. The kernel reads none of this.
  */
 type ManifestPayload = {
@@ -201,7 +203,7 @@ function isManifest(payload: unknown): payload is ManifestPayload {
   }
   if (payload.cache !== undefined && !isRecord(payload.cache)) return false;
   if (payload.shadow !== undefined && !isShadow(payload.shadow)) return false;
-  if (payload.scorer !== undefined && !rawFieldOk(payload.scorer)) return false;
+  if (payload.scorer !== undefined && !isScorer(payload.scorer)) return false;
   if (
     payload.entryScored !== undefined &&
     !isEntryScored(payload.entryScored)
@@ -225,7 +227,13 @@ function isShadow(value: unknown): boolean {
   if (!isFiniteNumber(value.calls)) return false;
   if (value.usage !== undefined && !isShadowUsage(value.usage)) return false;
   if (!rawFieldOk(value)) return false;
+  if (!isOptionalFinite(value.failedRequests)) return false;
   return value.decisions.every(isShadowDecision);
+}
+
+function isScorer(value: unknown): boolean {
+  if (!rawFieldOk(value)) return false;
+  return !isRecord(value) || isOptionalFinite(value.failedRequests);
 }
 
 function rawFieldOk(value: unknown): boolean {
@@ -255,6 +263,7 @@ function isEntryScored(value: unknown): boolean {
   if (!isFiniteNumber(value.summary)) return false;
   if (!isFiniteNumber(value.full)) return false;
   if (!isOptionalFinite(value.summaryRejected)) return false;
+  if (!isOptionalFinite(value.failedRequests)) return false;
   if (value.usage !== undefined && !isShadowUsage(value.usage)) return false;
   return true;
 }

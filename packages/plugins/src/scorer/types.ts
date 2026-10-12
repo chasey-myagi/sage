@@ -7,8 +7,8 @@
  * deterministic tiers. Field meanings live on the types below.
  *
  * Intentionally not in the Log: the Scorer object, `requested`, and
- * `dropped`. The compiler copies decisions, usage, fallback, and `raw` onto
- * the manifest.
+ * `dropped`. The compiler copies decisions, usage, fallback, `raw`, and
+ * `failedRequests` onto the manifest.
  */
 
 import type { Request, Usage } from "@sage/provider/contract";
@@ -65,6 +65,13 @@ export type ScoreResult = {
   raw?: ScoreRaw;
   /** Items the parser discarded, including ids that were not candidates. */
   dropped?: number;
+  /**
+   * Requests that failed while others were answered, for a scorer that
+   * sends several. Their chunks have no decision, so the compiler leaves
+   * them as they were. Present only when positive and never with
+   * `fallback`: a fallback means no request was answered.
+   */
+  failedRequests?: number;
 };
 
 /** A replaceable chunk scorer the compiler calls on kept tool chunks. */

@@ -136,7 +136,7 @@ bench 的网络默认 `none`，并总是写进子进程的 `--tool-network`。�
 
 故障格是与 agent 无关、因基础设施或上游丢掉的任务：`status` 为 `error` 且 `reason` 是 `clone-failed`、`clone-unclean`、`setup-failed`、`sage-failed`、`session-error`、`session-aborted`、`diff-failed` 之一。`timeout`、`test-patch-failed`（agent 自己的改动可能让测试补丁打不上）和 `tests-failed` 算 agent 的结果，不是故障；其他 `reason` 字符串也不算。分类只在 `src/bench/fault.ts` 定义一处。`faultRate` 是故障格数除以任务数；`errorRate` 含故障格，`errorRate - faultRate` 是 agent 自己失败的占比。故障格不计入 `emptyPatchRate` 和 `resolvedRate`。
 
-不写 `--exclude-faults` 时每个任务都参与比较，`excluded` 为空数组。写了之后按任务 id 对称剔除：任一侧是故障格的任务，两侧都去掉再算全部比率，`excluded` 列出被剔除的 id，每个只出现一次，先按 A 的顺序、再补 B 独有的。剔除后两侧的 `faultRate` 都是 0。`tokensPerResolved` 是 `health.tokens.total` 之和除以 resolved 数，没有 resolved 时为 null。`cacheHitRatio` 和 `expandRate` 是各任务非 null 值的均值。`delta` 是 B 减 A，任一侧为 null 时该项为 null。
+不写 `--exclude-faults` 时每个任务都参与比较，`excluded` 为空数组。写了之后按任务 id 对称剔除：任一侧是故障格的任务，两侧都去掉再算全部比率，`excluded` 列出被剔除的 id，每个只出现一次，先按 A 的顺序、再补 B 独有的。剔除后两侧的 `faultRate` 都是 0。`tokensPerResolved` 是 `health.tokens.total` 之和除以 resolved 数，没有 resolved 时为 null。`cacheHitRatio` 和 `expandRate` 是各任务非 null 值的均值。`scorerFailedRequests` 不是比率而是计数：各任务 health 里 `scorerFailedRequests`、`entryScored.failedRequests`、`shadow.failedRequests` 的总和，即同一次打分里其他请求答上了、自己却失败的打分请求数；没有任何任务带 health 时为 null。`delta` 是 B 减 A，任一侧为 null 时该项为 null。
 
 ## Model Experience
 

@@ -35,7 +35,12 @@ import {
   stubRow,
   summaryRow,
 } from "./rows.js";
-import { clampSummary, requestCount, SCORE_TIERS } from "./score-common.js";
+import {
+  clampSummary,
+  failedRequestsField,
+  requestCount,
+  SCORE_TIERS,
+} from "./score-common.js";
 
 /** `manifest.scorer`: one rebuild scorer call. */
 export type RebuildScorerReport = {
@@ -45,6 +50,8 @@ export type RebuildScorerReport = {
   fallback: boolean;
   /** The model's reply prefix; present only on a fallback that supplied it. */
   raw?: ScoreRaw;
+  /** The scorer's `failedRequests`; present only when positive. */
+  failedRequests?: number;
 };
 
 /** Rows, messages, and token total of the chosen view. */
@@ -64,7 +71,8 @@ export type ScoredView = {
  * note, which is also stored on the row. A throw or fallback keeps the
  * input unchanged and returns `fallback` for the caller to append as
  * `;scorer:fallback:<reason>`. `report` is set when the call reported
- * usage or a fallback. `prevRequest` is the previous turn's request
+ * usage or a fallback; a positive `failedRequests` is copied onto it, and
+ * those chunks keep their eliminate tiers. `prevRequest` is the previous turn's request
  * rebuilt from the Log.
  */
 export async function runRebuildScorer(input: {
@@ -175,5 +183,6 @@ function reportOf(result: ScoreResult): RebuildScorerReport | undefined {
     usage: result.usage ?? emptyUsage(),
     fallback,
     ...(fallback && result.raw ? { raw: result.raw } : {}),
+    ...failedRequestsField(result),
   };
 }

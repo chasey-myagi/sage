@@ -120,6 +120,7 @@ it("stubs a new block of at least 300 tokens on entry and keeps the prefix", asy
     summary: 0,
     full: 0,
     summaryRejected: 0,
+    failedRequests: 0,
     usage: {
       input: 0,
       cacheRead: 0,

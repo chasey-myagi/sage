@@ -202,6 +202,11 @@ type ShadowReport = {
   usage?: TokenCounts;
   fallback?: string;
   raw?: ScorerRaw;
+  /**
+   * Requests that failed while others were answered; those chunks got no
+   * decision. Present only when positive, never with a fallback.
+   */
+  failedRequests?: number;
 };
 
 /** Scorer calls made while rebuilding an epoch. `raw` only on fallback. */
@@ -211,6 +216,11 @@ type ScorerReport = {
   usage: TokenCounts;
   fallback: boolean;
   raw?: ScorerRaw;
+  /**
+   * Requests that failed while others were answered; those chunks got no
+   * decision. Present only when positive, never with a fallback.
+   */
+  failedRequests?: number;
 };
 
 /**
@@ -232,6 +242,11 @@ export type EntryScoredReport = {
   full: number;
   summaryRejected: number;
   usage?: TokenCounts;
+  /**
+   * Requests that failed while others were answered; those chunks got no
+   * decision. Present only when positive, never with a fallback.
+   */
+  failedRequests?: number;
 };
 
 /**

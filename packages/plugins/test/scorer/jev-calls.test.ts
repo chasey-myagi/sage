@@ -178,8 +178,11 @@ describe("http", () => {
     expect(failed).toEqual({ decisions: [], fallback: "http:500" });
   });
 
-  it("drops every decision when one chunk's request fails but keeps the usage already spent", async () => {
-    const ok = answerNouls({}, { input_tokens: 30, output_tokens: 4 });
+  it("keeps the answered chunk's decision and usage when another chunk's request fails, and counts the failure", async () => {
+    const ok = answerNouls(
+      { "seq:1#t1": { reports_failure: 0.9 } },
+      { input_tokens: 30, output_tokens: 4 },
+    );
     const fake = jsonFetch((request) =>
       sentBody(request).state.chunk.id === "seq:3#t2"
         ? { status: 500, text: "no" }
@@ -189,16 +192,34 @@ describe("http", () => {
       apiKey: "k",
       fetchImpl: fake.fetchImpl,
     }).score(input([BUILD, LINT]));
-    expect(result).toEqual({
-      decisions: [],
-      fallback: "http:500",
-      usage: {
-        inputOther: 30,
-        inputCacheRead: 0,
-        inputCacheCreation: 0,
-        output: 4,
-      },
+    expect(fake.requests()).toHaveLength(2);
+    expect(result.fallback).toBeUndefined();
+    expect(result.failedRequests).toBe(1);
+    expect(result.decisions.map(({ id, tier }) => ({ id, tier }))).toEqual([
+      { id: "seq:1#t1", tier: "full" },
+    ]);
+    expect(result.usage).toEqual({
+      inputOther: 30,
+      inputCacheRead: 0,
+      inputCacheCreation: 0,
+      output: 4,
     });
+  });
+
+  it("sends no further request once signal aborts and falls back with aborted", async () => {
+    const controller = new AbortController();
+    const ok = answerNouls({});
+    const fake = jsonFetch((request) => {
+      controller.abort();
+      return ok(request);
+    });
+    const calls = ["a", "b", "c", "d", "e"].map((id) => ({ ...LINT, id }));
+    const result = await jevScorer({
+      apiKey: "k",
+      fetchImpl: fake.fetchImpl,
+    }).score({ ...input(calls), signal: controller.signal });
+    expect(fake.requests()).toHaveLength(1);
+    expect(result).toEqual({ decisions: [], fallback: "aborted" });
   });
 
   it("sums input_tokens into usage.inputOther and output_tokens into usage.output", async () => {

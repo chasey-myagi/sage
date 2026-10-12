@@ -454,6 +454,40 @@ describe("entry kinds", () => {
     expect(store.path("raw-ok")).toHaveLength(1);
   });
 
+  it("accepts a finite failedRequests on each scorer report and rejects any other value", () => {
+    const store = new MemoryLogStore();
+    const reports = (failedRequests: unknown) => ({
+      scorer: { calls: 1, fallback: false, failedRequests },
+      shadow: { scorer: "jev", calls: 1, decisions: [], failedRequests },
+      entryScored: {
+        calls: 1,
+        none: 0,
+        summary: 0,
+        full: 0,
+        summaryRejected: 0,
+        failedRequests,
+      },
+    });
+    const manifest = (report: Record<string, unknown>) => ({
+      kind: "manifest" as const,
+      payload: {
+        epoch: 0,
+        turn: 1,
+        claims: [],
+        chunks: [],
+        anomalies: [],
+        ...report,
+      },
+    });
+    store.append("failed-ok", manifest(reports(2)));
+    expect(store.path("failed-ok")).toHaveLength(1);
+    for (const [field, report] of Object.entries(reports("2"))) {
+      expect(() =>
+        store.append(`failed-bad-${field}`, manifest({ [field]: report })),
+      ).toThrow(InvalidEntryError);
+    }
+  });
+
   it("throws when the same kind is registered twice", () => {
     expect(() =>
       registerEntryKind({

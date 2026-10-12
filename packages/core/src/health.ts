@@ -65,16 +65,23 @@ export type RunHealth = {
   /** Sum of numeric manifest `scorer.fallback`; `true` counts as 1. */
   scorerFallbacks: number;
   /**
-   * Sum of manifest `shadow.calls` (shadow requests actually sent), and
-   * the sum of shadow usage.
+   * Sum of manifest `scorer.failedRequests`: rebuild requests that failed
+   * while others in the same call were answered. A missing field adds 0.
+   */
+  scorerFailedRequests: number;
+  /**
+   * Sum of manifest `shadow.calls` (shadow requests actually sent), of
+   * `shadow.failedRequests`, and of shadow usage.
    */
   shadow: {
     calls: number;
+    failedRequests: number;
     usage: HealthTokens;
   };
   /**
    * Sums of each manifest's `entryScored` counts and usage. A manifest
-   * without the object, or a missing `summaryRejected`, adds nothing.
+   * without the object, or a missing `summaryRejected` or
+   * `failedRequests`, adds nothing.
    */
   entryScored: {
     calls: number;
@@ -82,6 +89,7 @@ export type RunHealth = {
     summary: number;
     full: number;
     summaryRejected: number;
+    failedRequests: number;
     usage: HealthTokens;
   };
   /**
@@ -111,6 +119,7 @@ export function runHealth(path: readonly StoredEntry[]): RunHealth {
   let modelChanges = 0;
   let scorerCalls = 0;
   let scorerFallbacks = 0;
+  let scorerFailedRequests = 0;
 
   for (const entry of path) {
     if (entry.kind === "message" && isAssistant(entry)) {
@@ -128,6 +137,7 @@ export function runHealth(path: readonly StoredEntry[]): RunHealth {
       const scorer = scorerOf(entry);
       scorerCalls += scorer.calls;
       scorerFallbacks += scorer.fallbacks;
+      scorerFailedRequests += scorer.failedRequests;
       continue;
     }
     if (entry.kind === "model_change") modelChanges += 1;
@@ -147,6 +157,7 @@ export function runHealth(path: readonly StoredEntry[]): RunHealth {
     modelChanges,
     scorerCalls,
     scorerFallbacks,
+    scorerFailedRequests,
     shadow: shadowHealth(path),
     entryScored: entryHealth(path),
     subtasks: subtaskHealth(path),
@@ -180,13 +191,15 @@ function toolErrorCount(path: readonly StoredEntry[]): number {
 function shadowHealth(path: readonly StoredEntry[]): RunHealth["shadow"] {
   let tokens: TokenCounts = emptyUsage();
   let calls = 0;
+  let failedRequests = 0;
   for (const entry of path) {
     if (entry.kind !== "manifest" || !isRecord(entry.payload)) continue;
     if (!isRecord(entry.payload.shadow)) continue;
     calls += finiteOr(entry.payload.shadow.calls, 0);
+    failedRequests += finiteOr(entry.payload.shadow.failedRequests, 0);
     tokens = addLogged(tokens, entry.payload.shadow.usage);
   }
-  return { calls, usage: toHealthTokens(tokens) };
+  return { calls, failedRequests, usage: toHealthTokens(tokens) };
 }
 
 function entryHealth(path: readonly StoredEntry[]): RunHealth["entryScored"] {
@@ -196,6 +209,7 @@ function entryHealth(path: readonly StoredEntry[]): RunHealth["entryScored"] {
   let summary = 0;
   let full = 0;
   let summaryRejected = 0;
+  let failedRequests = 0;
   for (const entry of path) {
     if (entry.kind !== "manifest" || !isRecord(entry.payload)) continue;
     const body = entry.payload.entryScored;
@@ -205,6 +219,7 @@ function entryHealth(path: readonly StoredEntry[]): RunHealth["entryScored"] {
     summary += finiteOr(body.summary, 0);
     full += finiteOr(body.full, 0);
     summaryRejected += finiteOr(body.summaryRejected, 0);
+    failedRequests += finiteOr(body.failedRequests, 0);
     tokens = addLogged(tokens, body.usage);
   }
   return {
@@ -213,6 +228,7 @@ function entryHealth(path: readonly StoredEntry[]): RunHealth["entryScored"] {
     summary,
     full,
     summaryRejected,
+    failedRequests,
     usage: toHealthTokens(tokens),
   };
 }
@@ -270,14 +286,19 @@ function budgetOf(
   };
 }
 
-function scorerOf(entry: StoredEntry): { calls: number; fallbacks: number } {
+function scorerOf(entry: StoredEntry): {
+  calls: number;
+  fallbacks: number;
+  failedRequests: number;
+} {
   if (!isRecord(entry.payload) || !isRecord(entry.payload.scorer)) {
-    return { calls: 0, fallbacks: 0 };
+    return { calls: 0, fallbacks: 0, failedRequests: 0 };
   }
   const scorer = entry.payload.scorer;
   return {
     calls: finiteOr(scorer.calls, 0),
     fallbacks: fallbackCount(scorer.fallback),
+    failedRequests: finiteOr(scorer.failedRequests, 0),
   };
 }
 
