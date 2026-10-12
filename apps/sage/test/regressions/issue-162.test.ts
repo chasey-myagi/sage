@@ -35,7 +35,7 @@ it("grades a run whose first provider call failed as a session error, not an emp
       id: "auth-failed",
       status: "error",
       reason: "session-error",
-      providerError: { status: 401, transport: false },
+      providerError: { status: 401, transport: false, event: null },
       health: expect.any(Object),
       stoppedEarly: null,
     },
@@ -56,8 +56,51 @@ it("carries a transport failure's classification without a status", async () => 
   });
   expect(rows[0]).toMatchObject({
     reason: "session-error",
-    providerError: { status: null, transport: true },
+    providerError: { status: null, transport: true, event: null },
   });
+});
+
+it("carries an in-stream error event's classification without its message", async () => {
+  const { rows } = await runBench({
+    "stream-error": {
+      outcome: "error",
+      finish: {
+        kind: "error",
+        error: {
+          message: "Upstream response stream stalled",
+          raw: { error: { message: "Upstream response stream stalled" } },
+          event: { transient: true, type: "upstream_error", code: 529 },
+        },
+      },
+      edited: false,
+    },
+    "bare-event": {
+      outcome: "error",
+      finish: {
+        kind: "error",
+        error: { message: "x", event: { transient: false } },
+      },
+      edited: false,
+    },
+  });
+  expect(rows.map((row) => row.providerError)).toEqual([
+    {
+      status: null,
+      transport: false,
+      event: {
+        transient: true,
+        type: "upstream_error",
+        code: 529,
+        status: null,
+      },
+    },
+    {
+      status: null,
+      transport: false,
+      event: { transient: false, type: null, code: null, status: null },
+    },
+  ]);
+  expect(JSON.stringify(rows)).not.toContain("stalled");
 });
 
 it("records a harness error with no provider failure as a session error with a null provider error", async () => {

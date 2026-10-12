@@ -61,7 +61,7 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 
 工具永远不能杀会话。`execute` 抛出的同步异常和被拒绝的 Promise，以及包住它的 `around` 抛错，都变成一条 `tool_result`：`isError` 为 true，正文是 `<工具名>: <message>`。这条结果写进下一条用户消息，模型下一轮看得到。连续多次也一样，默认看 5 次也不会追加 `outcome: "error"` 的 terminal。`runHealth.toolErrors` 只计数。
 
-会终止的是内核自己的失败和 provider 的失败：视图断言、没有适配器、非传输类的适配器 finish error、传输类错误在整轮重试耗尽之后，以及工具管线以外的抛错。
+会终止的是内核自己的失败和 provider 的失败：视图断言、没有适配器、整轮重试不重发的适配器 finish error、可重发的错误在整轮重试耗尽之后，以及工具管线以外的抛错。
 
 构造传 `adapters`（provider 到适配器）。起始型号的 provider 不在里面时构造抛错。
 
@@ -69,11 +69,18 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 
 流还没开始时的重试在 provider：`fetch` 抛错、读非 2xx 错误体时抛错、2xx 没有响应体、HTTP 429、HTTP 5xx，最多 2 次。响应体一开始，provider 就不再重试。
 
-如果 finish 是传输类错误，并且这一轮还没有把 assistant 消息写进 Log，core 重发同一条请求。只认 finish error 上的 `transport: true`，不看错误文案，也不管失败发生在流开始之前还是之后。provider 在这些情况打标记：`fetch` 抛错、读响应体抛错（SSE 体或非 2xx 的错误体）、2xx 没有响应体、SSE 体在收到结束信号前正常关闭。HTTP 状态错误和流内 error 事件不打标，不在这层重发。最多再发 2 次，先等 2 秒，再等 8 秒。构造参数 `sleep` 可注入，测试不真等。第 3 次仍失败，才把这次的 assistant 写入，并追加 terminal，outcome 为 `error`。
+如果 finish 是可重发的错误，并且这一轮还没有把 assistant 消息写进 Log，core 重发同一条请求。可重发只看两个结构化字段，不看错误文案：
+
+- `error.transport: true`，传输失败，不管发生在流开始之前还是之后。provider 在这些情况打标记：`fetch` 抛错、读响应体抛错（SSE 体或非 2xx 的错误体）、2xx 没有响应体、SSE 体在收到结束信号前正常关闭。
+- `error.event.transient: true`，服务端在 200 的流里发来 error 事件，而事件的 `type` / `code` / `status` 不属于 provider 的不可重试类（请求非法、鉴权、内容过滤、上下文超长、额度耗尽、429 以外的 4xx）。分类规则见 `@sage/provider` README。
+
+HTTP 状态错误不在这层重发，provider 已经在流开始前重试过 429 与 5xx。`event.transient: false` 的事件也不重发。最多再发 2 次，先等 2 秒，再等 8 秒。构造参数 `sleep` 可注入，测试不真等。第 3 次仍失败，才把这次的 assistant 写入，并追加 terminal，outcome 为 `error`。
+
+error 事件到达之前流里可能已经吐出半截文本或半截工具调用。它们只在这一次 `collect` 的结果里，重发时整条丢掉：assistant 没落 Log，工具也就没执行。
 
 两层会叠加：流开始之前的传输失败先在 provider 用掉 3 次请求，core 再整轮重发 2 次，每次又是 3 次，最坏 9 次请求，退避合计约 25 秒。4xx 通常不重试；例外是 4xx 的错误体读到一半断开，连接断了、状态码不可信，按传输失败处理，两层都会重试。
 
-每次重发之前追加 `turn_retry`，payload 是 `{ turn, attempt, reason }`。这条持久化，不进模型请求。被重发丢掉的半截文本不进 Log。
+每次重发之前追加 `turn_retry`，payload 是 `{ turn, attempt, reason }`，`reason` 是这次失败的 message。这条持久化，不进模型请求。被重发丢掉的半截文本与工具调用不进 Log。
 
 ## 运行时目录
 

@@ -128,6 +128,7 @@ runContractSuite(
     happy: readFixture("anthropic-text-tool.sse"),
     truncated: readFixture("anthropic-truncated.sse"),
     errorEvent: readFixture("anthropic-error-event.sse"),
+    errorEventClass: { transient: true, type: "overloaded_error" },
     response: { type: "response", id: "msg_01", model: "claude-sonnet-4-5" },
   },
 );
@@ -140,6 +141,7 @@ runContractSuite(
     happy: readFixture("openai-text-tool.sse"),
     truncated: readFixture("openai-truncated.sse"),
     errorEvent: readFixture("openai-error-event.sse"),
+    errorEventClass: { transient: true, type: "server_error" },
     response: { type: "response", id: "chatcmpl-abc", model: "gpt-5" },
   },
 );

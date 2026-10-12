@@ -45,11 +45,18 @@ export type OpenedCall =
       reason: string;
     };
 
+/**
+ * True for the statuses a resend may fix: 429 and 5xx. Shared with the
+ * in-stream error event classification so both read a status the same way.
+ */
+export function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
 function isRetryable(fail: PostFail): boolean {
   if (fail.aborted) return false;
   if (fail.transport) return true;
-  if (fail.status === 429) return true;
-  return fail.status !== undefined && fail.status >= 500;
+  return fail.status !== undefined && isRetryableStatus(fail.status);
 }
 
 /**

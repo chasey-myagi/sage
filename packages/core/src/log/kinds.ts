@@ -110,8 +110,9 @@ type TargetPayload = {
 };
 
 /**
- * One whole-turn resend after a transport error. Persisted, not
- * model-visible: the kernel never puts it on a request.
+ * One whole-turn resend after a transport error or a transient in-stream
+ * error event. Persisted, not model-visible: the kernel never puts it on a
+ * request.
  */
 type TurnRetryPayload = {
   turn: number;
@@ -392,7 +393,7 @@ registerEntryKind<TargetPayload>({
 
 registerEntryKind<TurnRetryPayload>({
   kind: "turn_retry",
-  doc: "Whole-turn resend after a transport error. Not model-visible. Payload is { turn, attempt, reason }.",
+  doc: "Whole-turn resend after a transport error or a transient in-stream error event. Not model-visible. Payload is { turn, attempt, reason }.",
   validate: isTurnRetry,
 });
 

@@ -197,6 +197,8 @@ export function runContractSuite(
     truncated: string;
     /** Streams `Hi`, then a server error event "Overloaded", then more text. */
     errorEvent: string;
+    /** `finish.error.event` decoded from `errorEvent`. */
+    errorEventClass: Record<string, unknown>;
     response: Extract<StreamChunk, { type: "response" }>;
   },
 ): void {
@@ -268,6 +270,7 @@ export function runContractSuite(
         expect(finish.error?.raw).toMatchObject({
           error: { message: "Overloaded" },
         });
+        expect(finish.error?.event).toEqual(fixtures.errorEventClass);
       }
       expectStreamInvariants(chunks);
     });

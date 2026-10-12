@@ -4,11 +4,12 @@ import { describe, expect, it } from "vitest";
 import { AgentSession, MemoryLogStore } from "../../src/index.ts";
 import { FAUX_SYSTEM as SYSTEM } from "../../src/testing/index.ts";
 
-// The server reports an error inside a 200 response, then closes.
+// The server rejects the request inside a 200 response, then closes. The
+// event's `type` names a permanent class, so a resend cannot help.
 const OPENAI_ERROR = [
   'data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5","choices":[{"index":0,"delta":{"content":"half-"},"finish_reason":null}]}',
   "",
-  'data: {"error":{"message":"Overloaded","type":"server_error","code":null}}',
+  'data: {"error":{"message":"Rejected","type":"invalid_request_error","code":null}}',
   "",
   "",
 ].join("\n");
@@ -24,7 +25,7 @@ const ANTHROPIC_ERROR = [
   'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"half-"}}',
   "",
   "event: error",
-  'data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+  'data: {"type":"error","error":{"type":"invalid_request_error","message":"Rejected"}}',
   "",
   "",
 ].join("\n");
@@ -101,7 +102,7 @@ const CASES: {
   },
 ];
 
-describe("an error event inside the stream", () => {
+describe("a permanent error event inside the stream", () => {
   for (const item of CASES) {
     it(`ends the run with the server's message and no turn retry (${item.name})`, async () => {
       const { fetchImpl, calls } = repeatingFetch(item.body);
@@ -121,7 +122,10 @@ describe("an error event inside the stream", () => {
       expect(finishes).toHaveLength(1);
       expect(finishes[0]).toMatchObject({
         kind: "error",
-        error: { message: "Overloaded" },
+        error: {
+          message: "Rejected",
+          event: { transient: false, type: "invalid_request_error" },
+        },
       });
       expect(finishes[0]).not.toHaveProperty("error.transport");
     });

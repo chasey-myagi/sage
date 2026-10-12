@@ -186,8 +186,8 @@ export class AgentSession {
    *
    * Ends with a terminal entry and `session_end`: `done`; `aborted` (checked
    * before each turn and inside it); `error` (no adapter for a routed
-   * provider, a non-transport finish error, or a transport error that
-   * outlasted the whole-turn retries); or `max_turns` once `maxTurns` turns ran
+   * provider, a finish error the whole-turn retry does not resend, or one
+   * that outlasted the whole-turn retries); or `max_turns` once `maxTurns` turns ran
    * (default 80). A throw that is not a tool failure, such as a seam
    * assertion or a store error, writes a terminal `error` entry and is
    * rethrown.
@@ -229,7 +229,8 @@ export class AgentSession {
    * One turn, in order: `turn_start`; `compileView`; `applyRoute` (a
    * missing adapter ends the turn as `error` before any request entry);
    * `recordRequest`; `collectWithTurnRetry`, which streams the request and
-   * may resend it after a transport error; `recordAssistant`; then
+   * may resend it after a transport error or a transient in-stream error
+   * event; `recordAssistant`; then
    * `settleAssistant` picks the outcome. `turn_end` carries that outcome.
    * The result's `prepared` is the call the next turn uses.
    */
