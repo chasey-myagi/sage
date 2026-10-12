@@ -42,7 +42,7 @@ describe("the request envelope is logged and the request rebuilds from the Log",
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [tool()],
@@ -160,7 +160,7 @@ describe("request headers store system and tools text only when it changes", () 
     const session = new AgentSession({
       store,
       sessionId: "priced",
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [],
@@ -182,7 +182,7 @@ describe("request headers store system and tools text only when it changes", () 
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [tool()],
@@ -218,7 +218,7 @@ describe("request headers store system and tools text only when it changes", () 
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [tool()],

@@ -196,7 +196,7 @@ it("reads SAGE_SANDBOX_ALLOW_ROOT into the bash allow rule", async () => {
         },
         stdout: io.stdout,
         stderr: io.stderr,
-        adapter: adapter as ProviderAdapter,
+        adapters: { anthropic: adapter as ProviderAdapter },
         platform: "darwin",
         exec: async (_command, opts) => {
           seen.push(String(opts.argv[2] ?? ""));

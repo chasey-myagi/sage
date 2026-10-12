@@ -24,7 +24,7 @@ it("exits 2 when --scorer-apply entry has no model or jev scorer", async () => {
       env: { ANTHROPIC_API_KEY: "test-key" },
       stdout: missing.stdout,
       stderr: missing.stderr,
-      adapter: adapter as ProviderAdapter,
+      adapters: { anthropic: adapter as ProviderAdapter },
     },
   );
   expect(missingCode).toBe(2);
@@ -38,7 +38,7 @@ it("exits 2 when --scorer-apply entry has no model or jev scorer", async () => {
       env: { ANTHROPIC_API_KEY: "test-key" },
       stdout: rule.stdout,
       stderr: rule.stderr,
-      adapter: adapter as ProviderAdapter,
+      adapters: { anthropic: adapter as ProviderAdapter },
     },
   );
   expect(ruleCode).toBe(2);

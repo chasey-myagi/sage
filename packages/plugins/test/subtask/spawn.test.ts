@@ -150,7 +150,7 @@ async function spawnFrozen(query = "find the needle") {
   const session = new AgentSession({
     store,
     sessionId: parentId,
-    adapter,
+    adapters: { anthropic: adapter },
     model: MODEL,
     system: SYSTEM,
     tools,
@@ -242,7 +242,7 @@ it("keeps the parent tool list and denies writes in a read-only subtask", async 
   const session = new AgentSession({
     store,
     sessionId: "parent",
-    adapter,
+    adapters: { anthropic: adapter },
     model: MODEL,
     system: SYSTEM,
     tools,
@@ -384,7 +384,7 @@ it("puts the child prefix breakpoint on the last parent message on every child t
   const session = new AgentSession({
     store,
     sessionId: "parent",
-    adapter,
+    adapters: { anthropic: adapter },
     model: MODEL,
     system: SYSTEM,
     tools,

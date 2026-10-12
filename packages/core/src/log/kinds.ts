@@ -2,15 +2,14 @@
  * Kernel entry kinds, registered when this module is imported.
  *
  * Guarantees: each validator checks shape only and rejects anything else.
- * None of these kinds ships a reducer yet. `leaf` is kernel semantics (it
- * moves the pointer); the other kinds are recorded for later folds. The
- * kernel never interprets manifest reports, `terminal.health`, or the
- * `subtask` payload beyond their shape. Only `@sage/provider/contract` is
+ * `leaf` is kernel semantics (it moves the pointer); readers interpret the
+ * other kinds. The kernel never interprets manifest reports,
+ * `terminal.health`, or the `subtask` payload beyond their shape. Only `@sage/provider/contract` is
  * imported, never the adapters.
  *
  * Per-kind rules are on each payload type below.
  *
- * Intentionally not in the Log: reducer functions and the registry.
+ * Intentionally not in the Log: the registry.
  */
 
 import {
@@ -365,70 +364,60 @@ function isSubtask(payload: unknown): payload is SubtaskPayload {
 
 registerEntryKind<Message>({
   kind: "message",
-  persisted: true,
   doc: "Conversation message. Payload is { role, content }.",
   validate: isMessage,
 });
 
 registerEntryKind<RequestHeaderPayload>({
   kind: "request_header",
-  persisted: true,
   doc: "Request envelope, including the call's contextWindow and pricing (null when uncatalogued). system and tools are stored in full only when their hash differs from the previous request_header, or there is none.",
   validate: isRequestHeader,
 });
 
 registerEntryKind<ViewEpochPayload>({
   kind: "view_epoch",
-  persisted: true,
   doc: "A new view epoch. The previous prefix is left intact.",
   validate: isViewEpoch,
 });
 
 registerEntryKind<ModelChangePayload>({
   kind: "model_change",
-  persisted: true,
   doc: "Model switch recorded as an entry. History is not rewritten.",
   validate: isModelChange,
 });
 
 registerEntryKind<ManifestPayload>({
   kind: "manifest",
-  persisted: true,
   doc: "Compile manifest snapshot. The kernel does not interpret claims, chunks, or entryScored.",
   validate: isManifest,
 });
 
 registerEntryKind<TargetPayload>({
   kind: "undo",
-  persisted: true,
   doc: "Undo recorded as an entry pointing at an earlier id. History is not rewritten.",
   validate: isTarget,
 });
 
 registerEntryKind<TargetPayload>({
   kind: "leaf",
-  persisted: true,
   doc: "Moves the leaf pointer to an existing entry. Does not copy history.",
   validate: isTarget,
 });
 
 registerEntryKind<TurnRetryPayload>({
   kind: "turn_retry",
-  persisted: true,
   doc: "Whole-turn resend after a transport error. Not model-visible. Payload is { turn, attempt, reason }.",
   validate: isTurnRetry,
 });
 
 registerEntryKind<TerminalPayload>({
   kind: "terminal",
-  persisted: true,
   doc: "Terminal outcome of a run. Optional usage and error stay opaque.",
   validate: isTerminal,
 });
 
 registerEntryKind<SubtaskPayload>({
   kind: "subtask",
-  persisted: true,
   doc: "Child session pointer. Names the parent leaf it recompiles. History is not copied.",
   validate: isSubtask,
 });

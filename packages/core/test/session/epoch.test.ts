@@ -25,7 +25,7 @@ describe("view_epoch is appended when the epoch advances", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [],
@@ -73,7 +73,7 @@ describe("view_epoch is appended when the epoch advances", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [

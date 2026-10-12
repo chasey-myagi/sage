@@ -67,7 +67,7 @@ it("rebuilds each turn's head and messages from the log, including content addre
   const session = new AgentSession({
     store,
     sessionId,
-    adapter,
+    adapters: { anthropic: adapter },
     model: FAUX_MODEL,
     system: FAUX_SYSTEM,
     tools: [echoTool()],

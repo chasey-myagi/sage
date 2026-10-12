@@ -84,7 +84,7 @@ describe("response identity in the Log", () => {
       const session = new AgentSession({
         store,
         sessionId: item.name,
-        adapter: item.adapter,
+        adapters: { [item.model.provider]: item.adapter },
         model: item.model,
         system: SYSTEM,
         tools: [],

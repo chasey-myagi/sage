@@ -36,7 +36,7 @@ it("stops after 3 turns when --max-turns 3, including under passthrough", async 
       env: { ANTHROPIC_API_KEY: "test-key" },
       stdout: io.stdout,
       stderr: io.stderr,
-      adapter: adapter as ProviderAdapter,
+      adapters: { anthropic: adapter as ProviderAdapter },
     });
     expect(code).toBe(1);
     expect(JSON.parse(io.text().stdout)).toMatchObject({

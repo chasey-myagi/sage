@@ -83,7 +83,7 @@ describe("passthrough projection", () => {
       },
       {
         role: "user",
-        content: [synthesizeToolResult("call_9", "TOOL_OUTCOME_UNKNOWN")],
+        content: [synthesizeToolResult("call_9")],
       },
     ]);
     expect(view.manifest.anomalies).toEqual([

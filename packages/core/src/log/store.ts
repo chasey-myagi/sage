@@ -7,14 +7,10 @@
  * appends on the same session can reuse `seq` and fork the chain by accident.
  * Different sessionIds have no such constraint.
  *
- * `replay` folds entries with the pure reducers registered for their kinds.
- * Kinds without a reducer are skipped. The reducer does not receive the store.
- *
  * Intentionally not in the Log: the store object and open descriptors. The
  * next `seq` is the count of entries already accepted.
  */
 
-import { kindDef } from "./registry.js";
 import type { EntryId, EntryInput, StoredEntry } from "./types.js";
 
 /** Append-only entry tree per session. Implemented in memory and as JSONL. */
@@ -32,19 +28,4 @@ export interface LogStore {
   path(sessionId: string, leafId?: EntryId): StoredEntry[];
   /** Every entry in the session, in `seq` order. */
   all(sessionId: string): readonly StoredEntry[];
-}
-
-/**
- * Folds `entries` in `seq` order with each kind's registered reducer,
- * starting from `init`. Kinds without a reducer are skipped.
- */
-export function replay<S>(entries: readonly StoredEntry[], init: S): S {
-  const ordered = [...entries].sort((a, b) => a.seq - b.seq);
-  let state = init;
-  for (const entry of ordered) {
-    const reduce = kindDef(entry.kind)?.reduce;
-    if (!reduce) continue;
-    state = reduce(state, entry) as S;
-  }
-  return state;
 }

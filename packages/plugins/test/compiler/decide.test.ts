@@ -284,7 +284,7 @@ it("opens the next epoch when the inequality pays back", async () => {
   const session = new AgentSession({
     store,
     sessionId: "seed",
-    adapter,
+    adapters: { anthropic: adapter },
     model: { provider: "anthropic", model: "claude-sonnet-5" },
     system: "You are sage.",
     tools: [],

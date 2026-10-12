@@ -32,7 +32,7 @@ export async function runSession(opts: {
   const session = new AgentSession({
     store,
     sessionId,
-    adapter,
+    adapters: { anthropic: adapter },
     model: FAUX_MODEL,
     system: FAUX_SYSTEM,
     tools: opts.tools ?? [],

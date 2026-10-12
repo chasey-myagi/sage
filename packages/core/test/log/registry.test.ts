@@ -458,7 +458,6 @@ describe("entry kinds", () => {
     expect(() =>
       registerEntryKind({
         kind: "message",
-        persisted: true,
         doc: "duplicate",
         validate: (payload): payload is { role: string; content: unknown } =>
           typeof payload === "object" && payload !== null,

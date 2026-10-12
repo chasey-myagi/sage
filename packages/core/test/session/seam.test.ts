@@ -36,7 +36,7 @@ describe("a view with a tool call that has no result is rejected before sending"
     const session = new AgentSession({
       store,
       sessionId: "s1",
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [],
@@ -100,7 +100,7 @@ describe("the head stays frozen inside an epoch", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [tool()],
@@ -151,7 +151,7 @@ describe("the head stays frozen inside an epoch", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [tool()],
@@ -194,7 +194,7 @@ describe("hooks receive a copy of the view", () => {
     const session = new AgentSession({
       store,
       sessionId: "s7",
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [tool()],

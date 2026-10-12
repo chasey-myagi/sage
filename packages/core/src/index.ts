@@ -31,8 +31,8 @@ export {
   requestHeaderOf,
 } from "./log/path.js";
 export { entryKinds, registerEntryKind } from "./log/registry.js";
-export { DANGLING, synthesizeToolResult } from "./log/repair.js";
-export { type LogStore, replay } from "./log/store.js";
+export { synthesizeToolResult, TOOL_OUTCOME_UNKNOWN } from "./log/repair.js";
+export type { LogStore } from "./log/store.js";
 export type { StoredEntry } from "./log/types.js";
 export { asEntryId } from "./log/types.js";
 export { AgentSession, DEFAULT_MAX_TURNS } from "./session.js";

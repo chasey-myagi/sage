@@ -19,7 +19,7 @@
 
 ### Log
 - **L1 · Log 是只追加的树，先落盘再进内存**（P5, K1）：entry 带 `id / parentId / seq`，leaf 也是一条 entry；append 先写 JSONL 再进内存，磁盘永远是内存的超集；读入时尾部撕裂的最后一行丢弃、其余位置损坏抛错。不再有 HWM 计数器。→ #4
-- **L2 · entry 是带类型的记录，reducer 在内核外**（K1, C7）：内核只会 append / replay / leaf；每种 entry 类型在 import 期注册自己的纯 reducer；读到未注册类型**拒绝重建**（fail-closed 词表），不跳过。类型清单由脚本生成并有新鲜度检查（K7）。→ #4, #2
+- **L2 · entry 是带类型的记录，reducer 在内核外**（K1, C7）：内核只会 append / 重开 / leaf；每种 entry 类型在 import 期注册自己的校验器，折叠由内核外的读者各自做（2026-10-12 删掉了没有任何 kind 用过的内核 `replay` 与 `reduce` 注册位，见 `docs/notes/implemented/2026-10-12-log-kernel-slim.md`）；读到未注册类型**拒绝重建**（fail-closed 词表），不跳过。类型清单由脚本生成并有新鲜度检查（K7）。→ #4, #2
 - **L3 · 改写也是追加**（K1）：撤销、压缩、换模型、开新阶段都是新 entry（`view_epoch` / `model_change` / `undo`），原记录永远在。→ #4
 - **L4 · model-visible ⟺ logged**（C4）：任何进入模型请求的内容都必须能从 Log 重建；新增一种模型可见输入 = 新增一种 entry。请求信封（provider / model / 采样参数 / `systemPromptHash` / `toolsHash` / adapter 补的默认值，以及决定视图的 `contextWindow` 与定价快照）作为 `request_header` entry 落 Log，**内容寻址**：system prompt 与 tool schema 都按 hash 存，只有首见或与上一条 `request_header` 不同时才存全文（K5；原稿写「system prompt 只在偏离默认时存全文」，实现时没有「默认 prompt」这个概念，2026-09-24 按实现改写）。→ #4, #8
 - **L5 · 三域边界**（C5）：可重放的事实进 Log（纯 JSON，无活对象）；活的拦截与瞬时信号是运行时事件；同一事实不许两个来源。→ #5, AGENTS.md
@@ -30,7 +30,7 @@
 ### View seam
 - **V1 · 头随阶段冻结**（C1）：请求 = 头（system + tools schema）+ 消息；头在所有 provider 线格式里都排在消息前。阶段冻结的是**头 + 前缀消息**；工具激活、persona、常驻片段进头，只在阶段边界生效。→ #5, #12, #11
 - **V2 · 缓存断点由 View 给出，provider 只翻译**（P1）：`CompiledView.cacheBreakpoints` 标在冻结前缀末尾；Anthropic 适配翻成 `cache_control`，OpenAI 兼容侧无操作。断点不许由 provider 自作主张。→ #3, #5
-- **V3 · seam 断言配对，投影层修复并留痕**（C6, K2, pi）：内核在 seam 上断言 toolCall/toolResult 成对，不成对当场抛（编译器的 bug 要暴露）；投影层对**崩溃留下的**半截记录做修复并把「修了什么」写进清单 reason；悬空 toolCall 合成结果分两种语义——`TOOL_NOT_STARTED`（可重试）/ `TOOL_OUTCOME_UNKNOWN`（先验外部状态，不盲重试），文本写给模型看。→ #5, #4
+- **V3 · seam 断言配对，投影层修复并留痕**（C6, K2, pi）：内核在 seam 上断言 toolCall/toolResult 成对，不成对当场抛（编译器的 bug 要暴露）；投影层对**崩溃留下的**半截记录做修复并把「修了什么」写进清单 reason；悬空 toolCall 合成结果，文本写给模型看。原稿分两种语义——`TOOL_NOT_STARTED`（可重试）/ `TOOL_OUTCOME_UNKNOWN`（先验外部状态，不盲重试）；Log 不记「已开始执行」，分不出前者，2026-10-12 只留 `TOOL_OUTCOME_UNKNOWN`，见 `docs/notes/implemented/2026-10-12-log-kernel-slim.md`。→ #5, #4
 - **V4 · View 交出前是拷贝**（P8）：插件永远改不到 Log。→ #5
 - **V5 · `observe()` 与 `on()` 分家**（P7）：观察者错误被吞、绝不影响执行；能改视图的只有编译器。→ #5
 - **V6 · 权限形状代替顺序**（C10）：工具管线固定为 pre-execute（可 allow/deny/ask）→ guard（只能否决，不能放行）→ execute（around）→ post-execute（可改结果）→ result（只读通知）；顺序不再是正确性问题。少数确需链的位置用「声明化顺序 + 目标缺失即抛」（K6）。→ #5, #6

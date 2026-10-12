@@ -32,7 +32,7 @@ describe("parent view context", () => {
     const session = new AgentSession({
       store,
       sessionId: "child",
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [],

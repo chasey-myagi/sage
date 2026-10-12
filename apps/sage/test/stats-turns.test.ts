@@ -155,7 +155,7 @@ async function recordSession(): Promise<string> {
   const session = new AgentSession({
     store,
     sessionId: "turns",
-    adapter,
+    adapters: { anthropic: adapter },
     model: FAUX_MODEL,
     system: FAUX_SYSTEM,
     tools: [pathlessTool("probe")],

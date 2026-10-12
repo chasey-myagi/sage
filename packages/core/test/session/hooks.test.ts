@@ -66,7 +66,7 @@ describe("the tool pipeline applies hooks around execute", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [
@@ -102,7 +102,7 @@ describe("the tool pipeline applies hooks around execute", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [
@@ -127,7 +127,7 @@ describe("the tool pipeline applies hooks around execute", () => {
     const session2 = new AgentSession({
       store: store2,
       sessionId: sessionId2,
-      adapter: faux2.adapter,
+      adapters: { anthropic: faux2.adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [
@@ -156,7 +156,7 @@ describe("the tool pipeline applies hooks around execute", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [harness("echo")],
@@ -193,7 +193,7 @@ describe("the tool pipeline applies hooks around execute", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [
@@ -261,7 +261,7 @@ describe("the tool pipeline applies hooks around execute", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [harness("echo")],
@@ -304,7 +304,7 @@ describe("the tool pipeline applies hooks around execute", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [
@@ -327,7 +327,7 @@ describe("a throwing observer does not stop the others", () => {
     const session = new AgentSession({
       store,
       sessionId: "s6",
-      adapter,
+      adapters: { anthropic: adapter },
       model: MODEL,
       system: SYSTEM,
       tools: [],

@@ -76,7 +76,7 @@ async function runWith(sessionId: string, steps: Step[]) {
   const session = new AgentSession({
     store,
     sessionId,
-    adapter,
+    adapters: { openai: adapter },
     model: MODEL,
     system: SYSTEM,
     tools: [],
@@ -148,7 +148,7 @@ describe("transport flag through the real adapter pipeline", () => {
     const session = new AgentSession({
       store,
       sessionId: "text-only",
-      adapter,
+      adapters: { anthropic: adapter },
       model: { provider: "anthropic", model: "claude-test" },
       system: SYSTEM,
       tools: [],

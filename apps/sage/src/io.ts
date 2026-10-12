@@ -18,9 +18,11 @@ import type { JevFetch } from "./scorers.js";
  */
 export type CliIo = CommandIo & {
   env: NodeJS.ProcessEnv;
-  /** Adapter for the selected provider. Test seam; production builds from env. */
-  adapter?: ProviderAdapter;
-  /** Adapters by provider. Test seam; production builds one per keyed preset. */
+  /**
+   * Adapters by provider. Test seam; production builds one per keyed preset.
+   * When set, it must serve the selected provider: the run throws rather
+   * than build a real adapter that would reach the network.
+   */
   adapters?: Record<string, ProviderAdapter>;
   /** Test seam. Production runs use git, the sage bin, and the test command. */
   benchDeps?: BenchDeps;

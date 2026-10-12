@@ -63,7 +63,7 @@ head + messages 全由 ViewProvider 决定，内核只断言与落盘。
 
 会终止的是内核自己的失败和 provider 的失败：视图断言、没有适配器、非传输类的适配器 finish error、传输类错误在整轮重试耗尽之后，以及工具管线以外的抛错。
 
-构造可以传 `adapters`（provider 到适配器），也可以继续传单个 `adapter`。单个适配器记在起始型号的 provider 名下。
+构造传 `adapters`（provider 到适配器）。起始型号的 provider 不在里面时构造抛错。
 
 ## 整轮重试
 

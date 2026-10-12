@@ -49,7 +49,7 @@ describe("health output", () => {
       env: { ANTHROPIC_API_KEY: "test-key" },
       stdout: io.stdout,
       stderr: io.stderr,
-      adapter: adapter as ProviderAdapter,
+      adapters: { anthropic: adapter as ProviderAdapter },
     });
     expect(code).toBe(0);
     const summary = JSON.parse(io.text().stdout.trim()) as {
@@ -234,7 +234,7 @@ describe("one-shot sage -p run", () => {
       env: { ANTHROPIC_API_KEY: "test-key" },
       stdout: io.stdout,
       stderr: io.stderr,
-      adapter: adapter as ProviderAdapter,
+      adapters: { anthropic: adapter as ProviderAdapter },
     });
     const text = io.text();
     expect(code).toBe(0);
@@ -248,6 +248,23 @@ describe("one-shot sage -p run", () => {
     const sessions = readdirSync(path.join(dir, ".sage", "sessions"));
     expect(sessions.some((name) => name.endsWith(".jsonl"))).toBe(true);
   });
+
+  it("rejects injected adapters that do not serve the selected provider instead of reaching the network", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "sage-cli-"));
+    const { adapter } = createFaux([stopScript("done")]);
+    const io = capture();
+    await expect(
+      runCli(["--print", "rename greet"], {
+        cwd: dir,
+        env: { ANTHROPIC_API_KEY: "test-key" },
+        stdout: io.stdout,
+        stderr: io.stderr,
+        adapters: { openai: adapter as ProviderAdapter },
+      }),
+    ).rejects.toThrow(
+      "Injected adapters do not serve the selected provider: anthropic",
+    );
+  }, 1000);
 
   it("accepts -p and a positional task, and exits 1 when the run is not done", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "sage-cli-"));
@@ -274,7 +291,7 @@ describe("one-shot sage -p run", () => {
       env: { OPENAI_API_KEY: "test-key" },
       stdout: io.stdout,
       stderr: io.stderr,
-      adapter: adapter as ProviderAdapter,
+      adapters: { openai: adapter as ProviderAdapter },
     });
     expect(code).toBe(1);
     expect(JSON.parse(io.text().stdout.trim())).toMatchObject({
@@ -288,7 +305,7 @@ describe("one-shot sage -p run", () => {
       env: { ANTHROPIC_API_KEY: "test-key" },
       stdout: positional.stdout,
       stderr: positional.stderr,
-      adapter: positionalAdapter as ProviderAdapter,
+      adapters: { anthropic: positionalAdapter as ProviderAdapter },
     });
     expect(positionalCode).toBe(0);
   });
@@ -303,7 +320,7 @@ describe("one-shot sage -p run", () => {
       env: { ANTHROPIC_API_KEY: "test-key", OPENAI_API_KEY: "other" },
       stdout: io.stdout,
       stderr: io.stderr,
-      adapter: adapter as ProviderAdapter,
+      adapters: { openai: adapter as ProviderAdapter },
     });
     expect(requests[0]?.model).toEqual(defaultModel("openai"));
 
@@ -314,7 +331,7 @@ describe("one-shot sage -p run", () => {
       env: { OPENAI_API_KEY: "test-key" },
       stdout: open.stdout,
       stderr: open.stderr,
-      adapter: faux.adapter as ProviderAdapter,
+      adapters: { openai: faux.adapter as ProviderAdapter },
     });
     expect(faux.requests[0]?.model).toEqual({
       provider: "openai",
@@ -328,7 +345,7 @@ describe("one-shot sage -p run", () => {
       env: { OPENAI_API_KEY: "test-key" },
       stdout: fallback.stdout,
       stderr: fallback.stderr,
-      adapter: fallbackFaux.adapter as ProviderAdapter,
+      adapters: { openai: fallbackFaux.adapter as ProviderAdapter },
     });
     expect(fallbackFaux.requests[0]?.model).toEqual(defaultModel("openai"));
   });
@@ -422,7 +439,7 @@ describe("one-shot sage -p run", () => {
       env: { DEEPSEEK_API_KEY: "sk-deepseek" },
       stdout: io.stdout,
       stderr: io.stderr,
-      adapter: adapter as ProviderAdapter,
+      adapters: { deepseek: adapter as ProviderAdapter },
     });
     expect(code).toBe(0);
     expect(requests[0]?.model).toEqual({
@@ -440,7 +457,7 @@ describe("one-shot sage -p run", () => {
       },
       stdout: explicit.stdout,
       stderr: explicit.stderr,
-      adapter: explicitFaux.adapter as ProviderAdapter,
+      adapters: { anthropic: explicitFaux.adapter as ProviderAdapter },
     });
     expect(explicitCode).toBe(0);
     expect(explicitFaux.requests[0]?.model.provider).toBe("anthropic");
@@ -483,7 +500,7 @@ describe("one-shot sage -p run", () => {
     });
     const { session, store } = createCodingSession({
       cwd: dir,
-      adapter,
+      adapters: { deepseek: adapter },
       model: { provider: "deepseek", model: "deepseek-v4-pro" },
       sessionId: "reason",
       passthrough: true,
@@ -532,7 +549,7 @@ describe("read-then-edit run against a faux model", () => {
     ]);
     const { session, store } = createCodingSession({
       cwd: dir,
-      adapter: adapter as ProviderAdapter,
+      adapters: { anthropic: adapter as ProviderAdapter },
       model: { provider: "anthropic", model: "claude-test" },
       sessionId: "e2e",
       passthrough: true,
@@ -593,7 +610,7 @@ describe("first-party claims in the coding session", () => {
     ]);
     const { session } = createCodingSession({
       cwd: dir,
-      adapter: adapter as ProviderAdapter,
+      adapters: { anthropic: adapter as ProviderAdapter },
       model: { provider: "anthropic", model: "claude-test" },
       sessionId: "claims-e2e",
     });
@@ -636,7 +653,7 @@ describe("first-party claims in the coding session", () => {
       env: { ANTHROPIC_API_KEY: "test-key" },
       stdout: io.stdout,
       stderr: io.stderr,
-      adapter: adapter as ProviderAdapter,
+      adapters: { anthropic: adapter as ProviderAdapter },
     });
     expect(code).toBe(0);
     const first = JSON.stringify(requests[0]?.messages[0]);
@@ -711,7 +728,7 @@ describe("expanding an omitted chunk", () => {
     ]);
     const { session } = createCodingSession({
       cwd: dir,
-      adapter: adapter as ProviderAdapter,
+      adapters: { anthropic: adapter as ProviderAdapter },
       model: { provider: "anthropic", model: "claude-test" },
       sessionId: "expand-e2e",
     });
@@ -985,7 +1002,7 @@ describe("subtasks", () => {
     ]);
     const { session, store } = createCodingSession({
       cwd: dir,
-      adapter: adapter as ProviderAdapter,
+      adapters: { anthropic: adapter as ProviderAdapter },
       model: { provider: "anthropic", model: "claude-test" },
       sessionId: "sub-e2e",
     });

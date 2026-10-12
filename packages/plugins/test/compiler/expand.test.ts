@@ -128,7 +128,7 @@ it("keeps the expanded chunk omitted and shows the expand result in full next tu
   const session = new AgentSession({
     store,
     sessionId,
-    adapter,
+    adapters: { anthropic: adapter },
     model: MODEL,
     system: "You are sage.",
     tools: [fixed("read", "SECRET"), expandTool({ store, sessionId })],

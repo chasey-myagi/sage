@@ -15,7 +15,7 @@ const defaultManifest = path.join(repoRoot, "docs", "log-manifest.md");
 const distEntry = path.join(repoRoot, "packages", "core", "dist", "index.js");
 
 /**
- * @param {readonly { kind: string, persisted: boolean, reduce?: unknown, doc: string }[]} kinds
+ * @param {readonly { kind: string, doc: string }[]} kinds
  */
 export function renderLogManifest(kinds) {
   const rows = [...kinds].sort((a, b) => a.kind.localeCompare(b.kind));
@@ -24,15 +24,11 @@ export function renderLogManifest(kinds) {
     "",
     "由 `scripts/gen-log-manifest.mjs` 根据 `@sage/core` 的 `entryKinds()` 生成。手改会被 `pnpm check:log-manifest` 拒绝。",
     "",
-    "| kind | persisted | reduce | doc |",
-    "| --- | --- | --- | --- |",
+    "| kind | doc |",
+    "| --- | --- |",
   ];
   for (const kind of rows) {
-    const reduce = typeof kind.reduce === "function" ? "有" : "无";
-    const persisted = kind.persisted === true ? "true" : "false";
-    lines.push(
-      `| ${kind.kind} | ${persisted} | ${reduce} | ${escapeCell(kind.doc)} |`,
-    );
+    lines.push(`| ${kind.kind} | ${escapeCell(kind.doc)} |`);
   }
   lines.push("");
   return `${lines.join("\n")}`;

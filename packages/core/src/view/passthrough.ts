@@ -39,7 +39,7 @@ function project(path: readonly StoredEntry[]): {
     if (open.length === 0) return;
     const content = open.map((toolUseId) => {
       anomalies.push({ kind: "dangling_tool_use", id: toolUseId });
-      return synthesizeToolResult(toolUseId, "TOOL_OUTCOME_UNKNOWN");
+      return synthesizeToolResult(toolUseId);
     });
     open.length = 0;
     messages.push({ role: "user", content });

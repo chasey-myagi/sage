@@ -1,26 +1,21 @@
 /**
  * Import-time entry kind registry.
  *
- * Guarantees: the kernel only appends, replays, and reads the leaf. Each kind
- * registers its own validator and optional pure reducer. Registering the same
- * kind twice throws. Reading an unregistered kind refuses the log.
+ * Guarantees: the kernel only appends, reopens, and reads the leaf. Each kind
+ * registers its own validator. Registering the same kind twice throws. Reading
+ * an unregistered kind refuses the log.
  *
  * Intentionally not in the Log: the registry itself. It is process state, not
- * history. Reducers do not receive the store.
+ * history.
  */
-
-import type { StoredEntry } from "./types.js";
 
 /**
- * One entry kind. `validate` runs on every append and every reopen;
- * `reduce`, when present, must be pure. `doc` is copied into
- * docs/log-manifest.md.
+ * One entry kind. `validate` runs on every append and every reopen. `doc` is
+ * copied into docs/log-manifest.md.
  */
-type EntryKindDef<P, S = unknown> = {
+type EntryKindDef<P> = {
   kind: string;
-  persisted: true;
   validate: (payload: unknown) => payload is P;
-  reduce?: (state: S, entry: StoredEntry<string, P>) => S;
   doc: string;
 };
 
@@ -28,9 +23,7 @@ const kinds: EntryKindDef<unknown>[] = [];
 const byKind = new Map<string, EntryKindDef<unknown>>();
 
 /** Registers a kind at import time. Throws when the kind already exists. */
-export function registerEntryKind<P, S = unknown>(
-  def: EntryKindDef<P, S>,
-): void {
+export function registerEntryKind<P>(def: EntryKindDef<P>): void {
   if (byKind.has(def.kind)) {
     throw new Error(`Entry kind already registered: ${def.kind}`);
   }

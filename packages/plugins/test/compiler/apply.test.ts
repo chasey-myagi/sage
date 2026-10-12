@@ -129,7 +129,7 @@ it("omits a superseded tool result in the compiled view and keeps anomalies empt
   const session = new AgentSession({
     store,
     sessionId: "omit",
-    adapter,
+    adapters: { anthropic: adapter },
     model: MODEL,
     system: "You are sage.",
     tools: [read],

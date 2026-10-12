@@ -64,7 +64,7 @@ it("sums child usage from any tool's childRuns details and leaves parent rates a
   const session = new AgentSession({
     store,
     sessionId: "parent",
-    adapter,
+    adapters: { anthropic: adapter },
     model: MODEL,
     system: SYSTEM,
     tools: [

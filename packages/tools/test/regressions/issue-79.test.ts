@@ -64,7 +64,7 @@ it("returns an isError tool_result for an outside read and does not throw", asyn
   const session = new AgentSession({
     store,
     sessionId,
-    adapter,
+    adapters: { anthropic: adapter },
     model: MODEL,
     system: SYSTEM,
     tools,

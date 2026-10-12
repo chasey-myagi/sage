@@ -119,7 +119,6 @@ describe("model_change", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter: anthropic.adapter,
       adapters: {
         anthropic: anthropic.adapter,
         openai: openai.adapter,
@@ -207,7 +206,6 @@ describe("model_change", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter: anthropic.adapter,
       adapters: { anthropic: anthropic.adapter },
       model: START,
       system: SYSTEM,
@@ -272,7 +270,6 @@ describe("model_change", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter: anthropic.adapter,
       adapters: {
         anthropic: anthropic.adapter,
         openai: openai.adapter,
@@ -339,7 +336,6 @@ describe("model_change", () => {
     const session = new AgentSession({
       store,
       sessionId,
-      adapter: anthropic.adapter,
       adapters: { anthropic: anthropic.adapter },
       model: START,
       system: SYSTEM,

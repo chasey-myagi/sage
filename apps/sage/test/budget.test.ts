@@ -25,7 +25,7 @@ describe("budget flag", () => {
       env: { ANTHROPIC_API_KEY: "test-key" },
       stdout: io.stdout,
       stderr: io.stderr,
-      adapter: adapter as ProviderAdapter,
+      adapters: { anthropic: adapter as ProviderAdapter },
     });
     expect(code).toBe(0);
     const manifest = firstManifest(dir);
@@ -62,7 +62,7 @@ describe("budget flag", () => {
         env: { ANTHROPIC_API_KEY: "test-key" },
         stdout: io.stdout,
         stderr: io.stderr,
-        adapter: adapter as ProviderAdapter,
+        adapters: { anthropic: adapter as ProviderAdapter },
       },
     );
     expect(code).toBe(0);
