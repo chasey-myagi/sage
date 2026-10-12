@@ -39,6 +39,12 @@ const RL_2025 = "data_20250401_20250631";
 const NPM_CI = "PUPPETEER_SKIP_DOWNLOAD=1 npm ci --no-audit --no-fund";
 // No lockfile, or one out of sync. --no-package-lock keeps `git status` clean.
 const NPM_NO_LOCK = "npm install --no-audit --no-fund --no-package-lock";
+// Lockfile whose versions are right but which lists only the platform it was
+// generated on: npm 11's `npm ci` rejects it as out of sync. `npm install`
+// still installs the locked versions and adds this host's optional binaries
+// at the versions their parents pin; --no-save leaves the lockfile unwritten.
+const NPM_LOCKED_NO_SAVE =
+  "PUPPETEER_SKIP_DOWNLOAD=1 npm install --no-audit --no-fund --no-save";
 const PNPM_FROZEN =
   "PUPPETEER_SKIP_DOWNLOAD=1 corepack pnpm install --frozen-lockfile";
 const PNPM_9_9 = "corepack pnpm@9.9.0";
@@ -92,8 +98,9 @@ const REPOS = {
   "google/zx": {
     dataset: MULTI_SWE_RL,
     path: `${RL_2024}/js`,
-    // Tests import build/, so both setup and the test run build first.
-    setup: `${NPM_CI} && npm run build:js`,
+    // Tests import build/, so both setup and the test run build first. The
+    // lockfile has only darwin-arm64 entries for @swc/core and esbuild.
+    setup: `${NPM_LOCKED_NO_SAVE} && npm run build:js`,
     run: (files) =>
       `npm run build:js >/dev/null && node --experimental-strip-types --test ${files.join(" ")}`,
   },
