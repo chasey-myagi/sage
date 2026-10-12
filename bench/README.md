@@ -6,7 +6,7 @@
 
 ## 准备环境
 
-- Node.js 22。系统自带的 Node 25 没有 corepack。`ts-mini.json` 里 vuejs/core 的四条，`setupCommand` 和 `testCommand` 都调用 `corepack pnpm`，跑之前要把 Node 22 放到 `PATH` 前面，并确认 `corepack pnpm` 能用。`ts-mini-2.json` 还要 corepack 能取到 `yarn@1.22.22`（zod、react-router-11160）和 `pnpm@9.9.0`（react-hook-form-12505），命令里写死了这两个版本。两份任务集都是在 Node 22.20.0、npm 10.9.3、corepack 0.34.0 上验证的
+- Node.js 22。`corepack` 必须可用：Node 25 起不再自带 corepack，要么把 Node 22 放到 `PATH` 前面，要么先 `npm i -g corepack`，跑之前确认 `corepack pnpm` 能用。`ts-mini.json` 里 vuejs/core 的四条，`setupCommand` 和 `testCommand` 都调用 `corepack pnpm`。`ts-mini-2.json` 还要 corepack 能取到 `yarn@1.22.22`（zod、react-router-11160）和 `pnpm@9.9.0`（react-hook-form-12505），命令里写死了这两个版本。两份任务集都是在 Node 22.20.0、npm 10.9.3、corepack 0.34.0 上验证的。zx-1107 的锁文件只有 darwin-arm64 的 `@swc/core`、`esbuild` 平台条目，npm 11 的 `npm ci` 判它不同步，所以这条的 `setupCommand` 用 `npm install --no-save`：版本仍取锁文件，锁文件不改写；它另在 Node 25.9.0、npm 11.12.1 上验证过
 - `git`
 - 目标仓库能跑通的测试工具。Verified 任务的 `testCommand` 是 `python -m pytest …`，Python、依赖和被测仓库的构建由跑的人在执行测试的环境里准备好。`ts-mini.json` 和 `ts-mini-2.json` 的依赖由每条任务的 `setupCommand` 安装
 - 模型 key。`--api-key-env` 只替换读哪个变量，选哪家仍由 `--provider` 或下面的自动顺序决定。没写 `--provider` 时，`DEEPSEEK_API_KEY`、`DASHSCOPE_API_KEY`、`MOONSHOT_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 里有一把即可。指定了 `--provider` 就只认那一把。没有对应的 key 时 `bench run` 直接退出 2，不会去取仓库
