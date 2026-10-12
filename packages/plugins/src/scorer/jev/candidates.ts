@@ -15,6 +15,7 @@
 
 import { isFiniteNumber, isRecord } from "@sage/core";
 import { clipEnd } from "../../compiler/clip.js";
+import { BASH_TOOL, GREP_TOOL, READ_TOOL } from "../rule.js";
 
 /** Most candidate lines one chunk offers, so `keep_<i>` questions stay bounded. */
 const MAX_CANDIDATES = 24;
@@ -45,19 +46,16 @@ const TEST_SUMMARY = /^\s*(?:Tests|Test Files)\b|\b\d+ (?:passed|failed)\b/;
 const DIFF_HEADER = /^@@ .+ @@|^diff --git /;
 /** The status line the bash tool puts first. */
 const BASH_STATUS = /^\[bash exit code -?\d+\]$/;
-/** The footer a cut read, grep, ls, or find result ends with. */
-const TRUNCATION_FOOTER = /^\[truncated: /;
 /** A grep hit: `path:line: text`. */
 const GREP_HIT = /^[^:\s][^:]*:\d+:/;
 
 type Extractor = (lines: readonly string[], input: unknown) => string[];
 
+/** One extractor per tool `questionSetFor` asks about. */
 const EXTRACTORS: Readonly<Record<string, Extractor>> = {
-  read: readCandidates,
-  grep: (lines) => lines.filter((line) => GREP_HIT.test(line)),
-  ls: listingCandidates,
-  find: listingCandidates,
-  bash: (lines) =>
+  [READ_TOOL]: readCandidates,
+  [GREP_TOOL]: (lines) => lines.filter((line) => GREP_HIT.test(line)),
+  [BASH_TOOL]: (lines) =>
     lines.filter((line) => BASH_STATUS.test(line) || isNotable(line)),
 };
 
@@ -75,18 +73,17 @@ export type Candidates = {
 /**
  * The candidate lines of one tool output. `read` offers declarations and
  * exports as `L<n>: <line>`, numbered from `input.offset` (1 when absent);
- * `grep` offers every hit; `ls` and `find` offer every entry; `bash`
- * offers its status line and notable lines; any other tool offers notable
- * lines. Notable means failure wording, a stack frame, `path:line`, a
- * declaration or export, a test tally, or a diff header.
+ * `grep` offers every hit; `bash` offers its status line and notable
+ * lines; any other tool offers none. Notable means failure wording, a
+ * stack frame, `path:line`, a declaration or export, a test tally, or a
+ * diff header.
  */
 export function candidateLines(
   tool: string,
   input: unknown,
   lines: readonly string[],
 ): Candidates {
-  const extract = EXTRACTORS[tool] ?? notableCandidates;
-  const picked = extract(lines, input);
+  const picked = EXTRACTORS[tool]?.(lines, input) ?? [];
   const normalized = normalize(picked);
   const capped = capCandidates(normalized.lines);
   const nonEmpty = lines.filter((line) => line.trim().length > 0);
@@ -118,16 +115,6 @@ function readOffset(input: unknown): number {
   return isFiniteNumber(offset) && Number.isInteger(offset) && offset > 0
     ? offset
     : 1;
-}
-
-function listingCandidates(lines: readonly string[]): string[] {
-  return lines.filter(
-    (line) => line.trim().length > 0 && !TRUNCATION_FOOTER.test(line),
-  );
-}
-
-function notableCandidates(lines: readonly string[]): string[] {
-  return lines.filter(isNotable);
 }
 
 function isNotable(line: string): boolean {

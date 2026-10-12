@@ -1,16 +1,11 @@
 import { Buffer } from "node:buffer";
-import { jsonFetch } from "@sage/core/testing";
 import { expect, it } from "vitest";
-import { jevScorer } from "../../src/scorer/jev.ts";
-import {
-  answerNouls,
-  chunkOf,
-  type FixtureCall,
-  requestWith,
-} from "./jev-fixtures.ts";
+import { questionSetFor } from "../../src/scorer/jev/questions.ts";
+import { chunkRequest, requestBody } from "../../src/scorer/jev/state.ts";
+import { chunkOf, type FixtureCall } from "./jev-fixtures.ts";
 
-/** Most questions one request may carry: 4 fixed plus 24 `keep_<i>`. */
-const MAX_QUESTIONS = 28;
+/** Most questions one triage request may carry: 2 fixed plus 24 `keep_<i>`. */
+const MAX_QUESTIONS = 26;
 /** Byte budget of one request body for a typical chunk. */
 const MAX_BODY_BYTES = 20_000;
 
@@ -37,15 +32,6 @@ const READ: FixtureCall = {
     if (i % 25 === 24) return "}";
     return `  const value${i} = await ctx.lookup("key-${i}", request.headers);`;
   }).join("\n"),
-};
-
-const LS: FixtureCall = {
-  id: "l1",
-  tool: "ls",
-  input: { path: "src/components" },
-  output: Array.from({ length: 150 }, (_, i) =>
-    i % 5 === 0 ? `group-${i}/` : `component-${i}.tsx`,
-  ).join("\n"),
 };
 
 const VITEST: FixtureCall = {
@@ -82,37 +68,40 @@ const VITEST: FixtureCall = {
   ].join("\n"),
 };
 
-/** One captured request body for `call`, as bytes and question count. */
-async function measure(call: FixtureCall) {
-  const fake = jsonFetch(answerNouls({}));
-  await jevScorer({ apiKey: "k", fetchImpl: fake.fetchImpl }).score({
-    candidates: [chunkOf(call, 1, 4000)],
-    prevRequest: requestWith(
-      [{ ...call, prose: "Find where handlers are registered." }],
-      {
-        task: "fix the failing parser test",
-        ledger:
-          "Goal: fix the parser\nPlan:\n- read src/parser.ts\n- fix empty input",
-      },
-    ),
-    query: "fix the failing parser test",
-  });
-  const body = fake.requests()[0]?.body;
-  const questions =
-    typeof body === "object" && body !== null && "questions" in body
-      ? Object.keys(body.questions as object).length
-      : 0;
+/** One request body for `call` as the scorer would build it, as bytes and question count. */
+function measure(call: FixtureCall) {
+  const chunk = chunkOf(call, 1, 4000);
+  const set = questionSetFor(chunk);
+  if (set === undefined) throw new Error(`${call.tool} is not asked`);
+  const request = chunkRequest(
+    chunk,
+    call.output,
+    {
+      task: "fix the failing parser test",
+      ledger:
+        "Goal: fix the parser\nPlan:\n- read src/parser.ts\n- fix empty input",
+      prose: "Find where handlers are registered.",
+    },
+    set,
+  );
+  if (!request) throw new Error(`${call.tool} request does not fit`);
+  const body = requestBody(request, "jev-latest");
   return {
-    bytes: Buffer.byteLength(JSON.stringify(body), "utf8"),
-    questions,
+    bytes: Buffer.byteLength(body, "utf8"),
+    questions: Object.keys(request.questions).length,
   };
 }
 
-it("keeps typical grep, read, ls, and vitest requests within 28 questions and 20KB", async () => {
-  for (const call of [GREP, READ, LS, VITEST]) {
-    const size = await measure(call);
-    expect(size.questions).toBeGreaterThan(4);
+it("keeps typical grep and vitest triage requests within 26 questions and 20KB", () => {
+  for (const call of [GREP, VITEST]) {
+    const size = measure(call);
+    expect(size.questions).toBeGreaterThan(2);
     expect(size.questions).toBeLessThanOrEqual(MAX_QUESTIONS);
     expect(size.bytes).toBeLessThanOrEqual(MAX_BODY_BYTES);
   }
+});
+
+it("keeps a typical read probe to one question within 20KB", () => {
+  expect(measure(READ).questions).toBe(1);
+  expect(measure(READ).bytes).toBeLessThanOrEqual(MAX_BODY_BYTES);
 });

@@ -1,7 +1,8 @@
 /**
  * Offline jev requests: rebuilds, from a recorded session path, the
  * request the entry-mode jev scorer sends for each tool chunk on the turn
- * it first enters the view, without calling any model.
+ * it first enters the view, without calling any model. Read chunks also
+ * get the read probe the online scorer never sends.
  *
  * Guarantees: each request comes from `chunkRequest` with the inputs the
  * online entry scorer reads: the chunk as `indexChunks` builds it from the
@@ -22,7 +23,9 @@ import { EXPAND_TOOL_NAME } from "../compiler/expand.js";
 import { latestQuery, projectedSeqs } from "../compiler/log-read.js";
 import { rebuildFromLog } from "../compiler/rebuild.js";
 import { DEFAULT_MIN_SCORE_TOKENS } from "../compiler/score-entry.js";
-import { readSources } from "../scorer/jev/sources.js";
+import type { BashKind } from "../scorer/bash-kind.js";
+import { bashKindOf, questionSetFor } from "../scorer/jev/questions.js";
+import { type RequestSources, readSources } from "../scorer/jev/sources.js";
 import { type ChunkRequest, chunkRequest } from "../scorer/jev/state.js";
 import { buildViewContext, sliceTurns, type TurnSlice } from "./offline.js";
 
@@ -30,6 +33,8 @@ import { buildViewContext, sliceTurns, type TurnSlice } from "./offline.js";
 export type EntryJevRequest = {
   chunkId: string;
   tool: string;
+  /** `classifyBashCommand`'s verdict for a bash chunk; null otherwise. */
+  bashKind: BashKind | null;
   /** The compiler's token estimate of the whole chunk. */
   tokens: number;
   /** Turn on which the chunk first entered the view. */
@@ -47,13 +52,15 @@ export type EntryJevRequest = {
 };
 
 /**
- * Requests for every new tool chunk, plus what was left out: `isError`
- * chunks (the scorer decides them full without asking) and chunks with no
- * result or no request that fits Jev's limits.
+ * Requests for every new tool chunk, plus what was left out: chunks no
+ * question set covers (`unasked`: ls, find, reader bash, other tools),
+ * asked chunks whose result is `isError` (the scorer decides a triaged
+ * one full without asking), and chunks with no result or no request that
+ * fits Jev's limits.
  */
 export type EntryJevScan = {
   requests: EntryJevRequest[];
-  skipped: { isError: number; unsendable: number };
+  skipped: { isError: number; unasked: number; unsendable: number };
 };
 
 /**
@@ -66,6 +73,9 @@ export type EntryJevScan = {
  * has no claims, so its ledger is always "" and Jev sees a different
  * input distribution than in a compiler session; a turn whose request
  * cannot be rebuilt also gets "".
+ *
+ * The question set comes from `questionSetFor`, as in the scorer.
+ * Unlike the online scorer, read chunks are included as read probes.
  */
 export async function entryJevRequests(
   path: readonly StoredEntry[],
@@ -76,7 +86,7 @@ export async function entryJevRequests(
   const seen = new Set<string>();
   const scan: EntryJevScan = {
     requests: [],
-    skipped: { isError: 0, unsendable: 0 },
+    skipped: { isError: 0, unasked: 0, unsendable: 0 },
   };
   for (const [position, slice] of slices.entries()) {
     const prefix = path.slice(0, slice.prefixEnd);
@@ -97,24 +107,15 @@ export async function entryJevRequests(
       pricing: slice.header.pricing,
     };
     for (const chunk of candidates) {
-      if (chunk.isError) {
-        scan.skipped.isError += 1;
+      const request = buildRequest(chunk, history, context);
+      if (typeof request === "string") {
+        scan.skipped[request] += 1;
         continue;
       }
-      const text = history.resultText(chunk);
-      const prose = history.assistantProse(chunk);
-      const request =
-        text === undefined
-          ? undefined
-          : chunkRequest(chunk, text, { ...context, prose });
-      if (!request) {
-        scan.skipped.unsendable += 1;
-        continue;
-      }
-      const tool = chunk.toolName ?? "";
       scan.requests.push({
         chunkId: chunk.id,
-        tool,
+        tool: chunk.toolName ?? "",
+        bashKind: bashKindOf(chunk),
         tokens: chunk.tokens,
         ...facts,
         request,
@@ -122,6 +123,21 @@ export async function entryJevRequests(
     }
   }
   return scan;
+}
+
+/** The request for `chunk`, or the `skipped` counter it is left out under. */
+function buildRequest(
+  chunk: Chunk,
+  history: RequestSources,
+  context: { task: string; ledger: string },
+): ChunkRequest | keyof EntryJevScan["skipped"] {
+  const set = questionSetFor(chunk);
+  if (set === undefined) return "unasked";
+  if (chunk.isError) return "isError";
+  const text = history.resultText(chunk);
+  if (text === undefined) return "unsendable";
+  const prose = history.assistantProse(chunk);
+  return chunkRequest(chunk, text, { ...context, prose }, set) ?? "unsendable";
 }
 
 /** A turn prefix's passthrough messages and their chunks, indexed as the compiler does. */

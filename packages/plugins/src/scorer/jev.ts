@@ -1,7 +1,8 @@
 /**
- * Jev scorer: one TypeSafe System One request per candidate chunk. Jev
- * answers Noul questions about an excerpt of the chunk's original output;
- * code turns the answers into tiers.
+ * Jev scorer: one TypeSafe System One request per grep or bash-runner
+ * candidate chunk, the chunks the rules would drop. Jev answers Noul
+ * questions about an excerpt of the chunk's original output; code turns
+ * the answers into tiers. Other chunks get no decision.
  *
  * Guarantees: the scorer never throws. A failed request costs only its
  * own chunk, which gets no decision; only when no request is answered
@@ -17,7 +18,7 @@
 
 import { emptyUsage, type Sleeper, type Usage } from "@sage/provider/contract";
 import { type JevEndpoint, type JevFetch, postMany } from "./jev/http.js";
-import { readJudgment } from "./jev/questions.js";
+import { questionSetFor, readJudgment } from "./jev/questions.js";
 import { readSources } from "./jev/sources.js";
 import { type ChunkRequest, chunkRequest, requestBody } from "./jev/state.js";
 import {
@@ -50,17 +51,21 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  * head, tail, omitted_lines, candidates }` with the first 40 and last 20
  * output lines (none when the candidates hold the whole output) and up to
  * 24 candidate lines picked by tool name.
- * Questions are the Nouls `reports_failure`, `is_edit_target`,
- * `answers_lookup`, `is_broad_listing`, and `keep_<i>` per candidate.
  *
- * A chunk whose result is `isError` is not sent; it is full with reason
- * `scorer:jev:full:is_error`. Other tiers come from `opts.thresholds`
- * over `DEFAULT_JEV_THRESHOLDS`: full when a failure report, edit target,
- * or lookup hit reaches `full`; none when a broad
- * listing reaches `none` and the other three fixed judgments are below
- * `low`; else summary quoting up to three candidates at or above `keep`,
- * or full when no locatable note results. The reason is
- * `scorer:jev:<tier>:failure=…,edit=…,lookup=…,broad=…[,keep=…]`.
+ * Only grep chunks and bash chunks `classifyBashCommand` calls a runner or
+ * mixed are triaged (`questionSetFor`). Their questions are the Nouls
+ * `reports_failure`, `locates_next_step`, and `keep_<i>` per candidate.
+ * Every other chunk, read included, is not sent and gets no decision, so
+ * the compiler's rules decide it; the read probe (`shows_target_code`) is
+ * asked only by offline calibration.
+ *
+ * A triaged chunk whose result is `isError` is not sent; it is full with
+ * reason `scorer:jev:full:is_error`. Other tiers come from `opts.thresholds`
+ * over `DEFAULT_JEV_THRESHOLDS`: full when a failure report or a new
+ * location reaches `full`; none when the failure, the location, and every
+ * keep answer are below `low`; else summary quoting up to three
+ * candidates at or above `keep`, or full when no locatable note results.
+ * The reason is `scorer:jev:<tier>:failure=…,locate=…[,keep=…]`.
  *
  * Sources: the original output is the chunk's tool_result in
  * `prevRequest.messages`. Entry and shadow scoring pass this turn's view,
@@ -147,8 +152,9 @@ export function jevScorer(opts: {
 }
 
 /**
- * One request per candidate with original output, and the decisions made
- * without asking (`isError` chunks); undefined without `prevRequest`.
+ * One request per triaged candidate with original output, and the
+ * decisions made without asking (triaged `isError` chunks); undefined
+ * without `prevRequest`.
  */
 function buildRequests(
   input: ScoreInput,
@@ -158,17 +164,25 @@ function buildRequests(
   const requests: ChunkRequest[] = [];
   const decided: ScoreDecision[] = [];
   for (const chunk of input.candidates) {
+    const set = questionSetFor(chunk);
+    // A read probe decides nothing, so online it would only cost tokens.
+    if (set !== "triage") continue;
     if (chunk.isError) {
       decided.push(errorDecision(chunk.id));
       continue;
     }
     const text = sources.resultText(chunk);
     if (text === undefined) continue;
-    const request = chunkRequest(chunk, text, {
-      task: input.query,
-      ledger: sources.ledger,
-      prose: sources.assistantProse(chunk),
-    });
+    const request = chunkRequest(
+      chunk,
+      text,
+      {
+        task: input.query,
+        ledger: sources.ledger,
+        prose: sources.assistantProse(chunk),
+      },
+      set,
+    );
     if (request) requests.push(request);
   }
   return { requests, decided };
@@ -221,8 +235,12 @@ function decisionFor(
   thresholds: JevThresholds,
 ): ScoreDecision[] {
   if (!answers) return [];
-  const judgment = readJudgment(answers, request.candidates.length);
-  if (!judgment) return [];
+  const judgment = readJudgment(
+    answers,
+    request.set,
+    request.candidates.length,
+  );
+  if (judgment?.set !== "triage") return [];
   return [
     decideTier(
       request.state.chunk.id,

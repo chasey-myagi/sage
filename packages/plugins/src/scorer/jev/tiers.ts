@@ -1,13 +1,13 @@
 /**
- * Turns one chunk's Noul answers into a tier. Jev judges; this code owns
- * the policy.
+ * Turns one chunk's triage answers into a tier. Jev judges; this code
+ * owns the policy.
  *
  * Guarantees: full for an `isError` chunk without asking; full when a
- * failure report, an edit target, or the looked-up value reaches `full`
- * (a fresh hit is kept whole, not cut to three lines); none when the output is a broad listing at `none` or above and
- * every other fixed judgment is below `low`; otherwise summary from the
- * quoted candidate lines, or full when no locatable summary can be built.
- * The reason carries the probabilities for audit; no code reads them back.
+ * failure report or a new location reaches `full`; none when the failure,
+ * the location, and every `keep_<i>` answer are below `low`; otherwise
+ * summary from the quoted candidate lines, or full when no locatable
+ * summary can be built. Read probes never reach this policy. The reason
+ * carries the probabilities for audit; no code reads them back.
  *
  * Intentionally not in the Log: the thresholds. The tier and the reason
  * are the record.
@@ -18,19 +18,17 @@ import {
   isLocatableSummary,
 } from "../../compiler/score-common.js";
 import type { ScoreDecision } from "../types.js";
-import type { Judgment } from "./questions.js";
+import type { TriageJudgment } from "./questions.js";
 
 /**
  * Noul cut-offs for the tier policy, each a probability in [0, 1].
- * `full`: a failure report, edit target, or lookup hit at or above it
- * keeps the text.
- * `none`: a broad listing at or above it may be dropped. `low`: every
- * other fixed judgment must be below it for none. `keep`: a candidate
- * line at or above it may be quoted in a summary.
+ * `full`: a failure report or new location at or above it keeps the text.
+ * `low`: the failure, location, and every keep answer must be below it
+ * for none. `keep`: a candidate line at or above it may be quoted in a
+ * summary.
  */
 export type JevThresholds = {
   full: number;
-  none: number;
   low: number;
   keep: number;
 };
@@ -39,13 +37,11 @@ export type JevThresholds = {
  * Default cut-offs. Dropping evidence the agent later needs costs a
  * re-read or a wrong step, while keeping text costs only tokens, so the
  * bar to keep is low and the bar to drop is high: `full` sits below an
- * even call, `none` needs a confident listing, `low` needs the other
- * judgments to be clear noes, and `keep` needs a line to be more likely
- * useful than not.
+ * even call, `low` needs every judgment to be a clear no, and `keep`
+ * needs a line to be more likely useful than not.
  */
 export const DEFAULT_JEV_THRESHOLDS: Readonly<JevThresholds> = {
   full: 0.4,
-  none: 0.8,
   low: 0.2,
   keep: 0.5,
 };
@@ -69,25 +65,23 @@ const SUMMARY_SEPARATOR = "; ";
  * candidates with the highest `keep` at or above the threshold, in output
  * order, joined with `; ` and cut to the summary limit; a note that fails
  * `isLocatableSummary` turns the tier into full. The reason is
- * `scorer:jev:<tier>:failure=<p>,edit=<p>,lookup=<p>,broad=<p>` plus
- * `,keep=<max p>` when the chunk had candidates, each rounded to two
- * decimals.
+ * `scorer:jev:<tier>:failure=<p>,locate=<p>` plus `,keep=<max p>` when
+ * the chunk had candidates, each rounded to two decimals.
  */
 export function decideTier(
   id: string,
-  judgment: Judgment,
+  judgment: TriageJudgment,
   candidates: readonly string[],
   thresholds: JevThresholds,
 ): ScoreDecision {
   const reasonFor = (tier: string) => `scorer:jev:${tier}:${audit(judgment)}`;
   if (
     judgment.failure >= thresholds.full ||
-    judgment.edit >= thresholds.full ||
-    judgment.lookup >= thresholds.full
+    judgment.locate >= thresholds.full
   ) {
     return { id, tier: "full", reason: reasonFor("full") };
   }
-  if (isDroppableListing(judgment, thresholds)) {
+  if (isEveryAnswerLow(judgment, thresholds.low)) {
     return { id, tier: "none", reason: reasonFor("none") };
   }
   const note = summaryNote(judgment.keep, candidates, thresholds.keep);
@@ -97,15 +91,11 @@ export function decideTier(
   return { id, tier: "summary", summary: note, reason: reasonFor("summary") };
 }
 
-function isDroppableListing(
-  judgment: Judgment,
-  thresholds: JevThresholds,
-): boolean {
+function isEveryAnswerLow(judgment: TriageJudgment, low: number): boolean {
   return (
-    judgment.broad >= thresholds.none &&
-    judgment.failure < thresholds.low &&
-    judgment.edit < thresholds.low &&
-    judgment.lookup < thresholds.low
+    judgment.failure < low &&
+    judgment.locate < low &&
+    judgment.keep.every((p) => p < low)
   );
 }
 
@@ -128,12 +118,10 @@ function summaryNote(
   return isLocatableSummary(note) ? note : undefined;
 }
 
-function audit(judgment: Judgment): string {
+function audit(judgment: TriageJudgment): string {
   const parts = [
     `failure=${judgment.failure.toFixed(2)}`,
-    `edit=${judgment.edit.toFixed(2)}`,
-    `lookup=${judgment.lookup.toFixed(2)}`,
-    `broad=${judgment.broad.toFixed(2)}`,
+    `locate=${judgment.locate.toFixed(2)}`,
   ];
   if (judgment.keep.length > 0) {
     parts.push(`keep=${Math.max(...judgment.keep).toFixed(2)}`);

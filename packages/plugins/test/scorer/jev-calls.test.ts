@@ -272,8 +272,8 @@ function seed(store: MemoryLogStore): void {
     store.append("s", { kind: "message", payload });
   append({ role: "user", content: [{ type: "text", text: "find the bug" }] });
   for (const [id, file, body] of [
-    ["t1", "a.ts", `export function alpha() {}\n${BIG}`],
-    ["t2", "b.ts", `export function beta() {}\n${BIG}`],
+    ["t1", "a.ts", `a.ts:1:export function alpha() {}\n${BIG}`],
+    ["t2", "b.ts", `b.ts:1:export function beta() {}\n${BIG}`],
     ["t3", "c.ts", "CCC"],
   ] as const) {
     append({
@@ -282,9 +282,9 @@ function seed(store: MemoryLogStore): void {
         {
           type: "tool_use",
           id,
-          name: "read",
-          input: { path: file },
-          rawInput: JSON.stringify({ path: file }),
+          name: "grep",
+          input: { pattern: "function", path: file },
+          rawInput: JSON.stringify({ pattern: "function", path: file }),
         },
       ],
     });
@@ -426,8 +426,8 @@ describe("compiler", () => {
         .requests()
         .map((request) => sentBody(request).state.chunk.candidates),
     ).toEqual([
-      ["L1: export function alpha() {}"],
-      ["L1: export function beta() {}"],
+      ["a.ts:1:export function alpha() {}"],
+      ["b.ts:1:export function beta() {}"],
     ]);
     const manifest = second.manifest as typeof second.manifest & {
       scorer?: ScorerReport;
@@ -447,9 +447,8 @@ describe("compiler", () => {
         expect.objectContaining({
           id: "seq:1#t1",
           tier: "summary",
-          summary: "L1: export function alpha() {}",
-          reason:
-            "scorer:jev:summary:failure=0.00,edit=0.00,lookup=0.00,broad=0.00,keep=0.90",
+          summary: "a.ts:1:export function alpha() {}",
+          reason: "scorer:jev:summary:failure=0.00,locate=0.00,keep=0.90",
         }),
         expect.objectContaining({ id: "seq:3#t2", tier: "full" }),
         expect.objectContaining({
@@ -464,9 +463,7 @@ describe("compiler", () => {
   it("records jev's probabilities after the entry reason in entry mode", async () => {
     const store = new MemoryLogStore();
     seed(store);
-    const fake = jsonFetch(
-      answerNouls({ "seq:5#t3": { is_broad_listing: 0.9 } }),
-    );
+    const fake = jsonFetch(answerNouls({}));
     const view = await contextCompiler({
       budget: 100_000,
       claims: [],
@@ -481,8 +478,7 @@ describe("compiler", () => {
         expect.objectContaining({
           id: "seq:5#t3",
           tier: "none",
-          reason:
-            "scorer:entry:none;scorer:jev:none:failure=0.00,edit=0.00,lookup=0.00,broad=0.90",
+          reason: "scorer:entry:none;scorer:jev:none:failure=0.00,locate=0.00",
         }),
       ]),
     );

@@ -42,8 +42,28 @@ const CACHE_WRITE_PER_MTOK = 1;
 /** The Jev input price the budget gate converts with, per million tokens. */
 const JEV_USD_PER_MTOK = 0.042;
 
-/** Files the recorded session reads, in call order; `a.ts` is read twice. */
-const READS = ["a.ts", "b.txt", "c.txt", "d.txt", "e.txt", "a.ts"];
+/** The recorded session's tool calls, in order; `a.ts` is read twice. */
+const CALLS = [
+  { id: "read0", tool: "read", input: { path: "a.ts" } },
+  { id: "grep1", tool: "grep", input: { pattern: "helper", path: "a.ts" } },
+  { id: "read2", tool: "read", input: { path: "b.txt" } },
+  {
+    id: "grep3",
+    tool: "grep",
+    input: { pattern: "plain notes", path: "c.txt" },
+  },
+  { id: "read4", tool: "read", input: { path: "d.txt" } },
+  { id: "read5", tool: "read", input: { path: "a.ts" } },
+  { id: "bash6", tool: "bash", input: { command: "seq 1 1000" } },
+] as const;
+/** Calls Jev triages (grep and a runner bash); the reads get a probe that decides nothing. */
+const TRIAGED = CALLS.filter((call) => call.tool !== "read").length;
+/**
+ * The chunk id of `grep1` in a compiler session: the Log seq of the
+ * assistant message that made the call. The session expands it, so it
+ * is the triaged chunk labeled needed.
+ */
+const EXPANDED = "seq:11#grep1";
 
 function sourceFile(): string {
   const lines: string[] = [];
@@ -59,17 +79,26 @@ function proseFile(name: string): string {
   return `${Array.from({ length: 60 }, (_, index) => `${name} line ${index} of plain notes`).join("\n")}\n`;
 }
 
-/** One model call that says `prose`, then calls `read` on `file`. */
-function readWithProse(id: string, file: string, prose: string): StreamChunk[] {
+/** One model call that says `prose`, then calls `tool` with `input`. */
+function callWithProse(
+  call: (typeof CALLS)[number],
+  prose: string,
+): StreamChunk[] {
   return [
     { type: "block_start", index: 0, blockType: "text" },
     { type: "text_delta", index: 0, text: prose },
     { type: "block_end", index: 0 },
-    { type: "block_start", index: 1, blockType: "tool_use", id, name: "read" },
+    {
+      type: "block_start",
+      index: 1,
+      blockType: "tool_use",
+      id: call.id,
+      name: call.tool,
+    },
     {
       type: "tool_input_delta",
       index: 1,
-      partialJson: JSON.stringify({ path: file }),
+      partialJson: JSON.stringify(call.input),
     },
     { type: "block_end", index: 1 },
     {
@@ -87,9 +116,8 @@ function readWithProse(id: string, file: string, prose: string): StreamChunk[] {
 
 type Answers = {
   failure: number;
-  edit: number;
-  lookup: number;
-  broad: number;
+  locate: number;
+  target: number;
   keep: number;
 };
 
@@ -106,9 +134,8 @@ function reply(
       : [];
   const fixed: Record<string, number> = {
     reports_failure: answers.failure,
-    is_edit_target: answers.edit,
-    answers_lookup: answers.lookup,
-    is_broad_listing: answers.broad,
+    locates_next_step: answers.locate,
+    shows_target_code: answers.target,
   };
   const out: Record<string, { noul: number }> = {};
   for (const key of questions) {
@@ -124,16 +151,14 @@ function reply(
 
 const KEEP_ALL: Answers = {
   failure: 0.9,
-  edit: 0.1,
-  lookup: 0.1,
-  broad: 0.1,
+  locate: 0.1,
+  target: 0.9,
   keep: 0.1,
 };
 const DROP_ALL: Answers = {
   failure: 0.05,
-  edit: 0.05,
-  lookup: 0.05,
-  broad: 0.95,
+  locate: 0.05,
+  target: 0.1,
   keep: 0.1,
 };
 
@@ -141,8 +166,9 @@ const DROP_ALL: Answers = {
  * Runs a real `sage -p` session, by default with entry-mode jev scoring,
  * so the Log and the online request bodies both come from the production
  * path. Reuses the current temp directory, so two calls leave two
- * sessions side by side. `passthrough` records a passthrough session
- * without jev; `editAfter` adds an `edit` of `b.txt` after the reads.
+ * sessions side by side. A compiler session expands `EXPANDED` after
+ * the calls. `passthrough` records a passthrough session without jev or
+ * expand; `editAfter` adds an `edit` of `b.txt` after the calls.
  */
 async function recordSession(
   opts: { passthrough?: boolean; editAfter?: boolean } = {},
@@ -157,12 +183,13 @@ async function recordSession(
       writeFileSync(path.join(dir, name), proseFile(name));
     }
   }
-  const scripts = READS.map((file, index) =>
-    readWithProse(
-      `read${index}`,
-      file,
-      `Next I read ${file} to find helper${index}.`,
-    ),
+  const scripts = CALLS.map((call, index) =>
+    callWithProse(call, `Next I look for helper${index}.`),
+  );
+  const expand = toolScript(
+    "expand0",
+    "expand",
+    JSON.stringify({ id: EXPANDED }),
   );
   // Ledger updates before the first read and midway, so requests carry
   // both a first ledger and a changed one.
@@ -186,6 +213,7 @@ async function recordSession(
     ...scripts.slice(0, 3),
     ledger("ledger1", "compare the notes"),
     ...scripts.slice(3),
+    ...(opts.passthrough ? [] : [expand]),
     ...(opts.editAfter ? [edit] : []),
     stopScript("done"),
   ]);
@@ -293,7 +321,7 @@ function rowsOf(sweep: Record<string, unknown>): Record<string, unknown>[] {
 }
 
 describe("sage calibrate-jev", () => {
-  it("sends Jev the same request bodies the online entry scorer sent", async () => {
+  it("sends Jev the online entry scorer's bodies for triaged chunks and a shows_target_code probe for each read", async () => {
     const session = await recordSession();
     const out = path.join(dir, "calibration");
     const run = await calibrate([session.file, "--out", out], (request) =>
@@ -302,15 +330,31 @@ describe("sage calibrate-jev", () => {
     expect(run.stderr).not.toContain("Error");
     expect(run.code).toBe(0);
     const online = bodiesByChunk(session.online);
-    expect(online.size).toBe(READS.length);
-    expect(bodiesByChunk(run.requests)).toEqual(online);
+    expect([...online.keys()].map((id) => id.split("#")[1])).toEqual([
+      "grep1",
+      "grep3",
+      "bash6",
+    ]);
+    expect([...online.keys()]).toContain(EXPANDED);
+    const offline = bodiesByChunk(run.requests);
+    expect(offline.size).toBe(CALLS.length);
+    for (const [id, body] of online) expect(offline.get(id)).toEqual(body);
+    const probes = [...offline]
+      .filter(([id]) => !online.has(id))
+      .map(([, body]) => (isRecord(body) ? body.questions : undefined));
+    expect(probes).toHaveLength(CALLS.length - TRIAGED);
+    for (const questions of probes) {
+      expect(Object.keys(isRecord(questions) ? questions : {})).toEqual([
+        "shows_target_code",
+      ]);
+    }
     for (const request of run.requests) {
       expect(request.url).toBe("https://api.typesafe.ai/v1/systemone");
       expect(request.headers.Authorization).toBe("Bearer x");
     }
   });
 
-  it("labels a chunk needed when its file is read again on a later turn", async () => {
+  it("labels a read needed when its file is read again on a later turn, and a grep when it is expanded", async () => {
     const session = await recordSession();
     const out = path.join(dir, "calibration");
     const run = await calibrate([session.file, "--out", out], (request) =>
@@ -322,12 +366,48 @@ describe("sage calibrate-jev", () => {
     );
     expect(needed).toEqual([
       ["read0", true],
-      ["read1", false],
+      ["grep1", true],
       ["read2", false],
-      ["read3", false],
+      ["grep3", false],
       ["read4", false],
       ["read5", false],
+      ["bash6", false],
     ]);
+  });
+
+  it("lists every answered chunk in sweep.json with its tool, bash kind, question set, and answer probabilities", async () => {
+    const session = await recordSession();
+    const out = path.join(dir, "calibration");
+    const run = await calibrate([session.file, "--out", out], (request) =>
+      reply(request, KEEP_ALL),
+    );
+    expect(run.code).toBe(0);
+    const rows = chunkRows(readJson(path.join(out, "sweep.json")));
+    const grep = rows.find((row) => row.chunkId === EXPANDED);
+    expect(grep).toMatchObject({
+      tool: "grep",
+      bashKind: null,
+      questions: "triage",
+    });
+    expect(rows.find((row) => row.tool === "bash")).toMatchObject({
+      bashKind: "runner",
+      questions: "triage",
+    });
+    if (!isRecord(grep?.answers)) throw new Error("grep row has no answers");
+    expect(grep.answers.reports_failure).toBe(0.9);
+    expect(grep.answers.locates_next_step).toBe(0.1);
+    expect(Array.isArray(grep.answers.keep)).toBe(true);
+    expect(grep.answers.keep).not.toHaveLength(0);
+    for (const p of grep.answers.keep as unknown[]) expect(p).toBe(0.1);
+    const reads = rows.filter((row) => row.tool === "read");
+    expect(reads).toHaveLength(CALLS.length - TRIAGED);
+    for (const row of reads) {
+      expect(row).toMatchObject({
+        bashKind: null,
+        questions: "read-probe",
+        answers: { shows_target_code: 0.9 },
+      });
+    }
   });
 
   it("answers a rerun from the cache without sending or billing", async () => {
@@ -337,9 +417,9 @@ describe("sage calibrate-jev", () => {
       reply(request, KEEP_ALL),
     );
     expect(first.code).toBe(0);
-    expect(readdirSync(path.join(out, "cache"))).toHaveLength(READS.length);
+    expect(readdirSync(path.join(out, "cache"))).toHaveLength(CALLS.length);
     const spent = readJson(path.join(out, "spend.json"));
-    expect(spent.inputTokens).toBe(100 * READS.length);
+    expect(spent.inputTokens).toBe(100 * CALLS.length);
 
     const second = await calibrate([session.file, "--out", out], () => {
       throw new Error("a cached request was sent");
@@ -349,8 +429,8 @@ describe("sage calibrate-jev", () => {
     expect(readJson(path.join(out, "spend.json"))).toEqual(spent);
     const summary: unknown = JSON.parse(second.stdout);
     expect(summary).toMatchObject({
-      chunks: READS.length,
-      cached: READS.length,
+      chunks: CALLS.length,
+      cached: CALLS.length,
       sent: 0,
     });
   });
@@ -373,7 +453,7 @@ describe("sage calibrate-jev", () => {
       throw new Error("dry run printed no estimate");
     }
     expect(summary.dryRun).toBe(true);
-    expect(summary.pending).toBe(READS.length);
+    expect(summary.pending).toBe(CALLS.length);
     const tokens = Number(summary.estimate.inputTokens);
     expect(tokens).toBeGreaterThan(0);
     expect(summary.estimate.usd).toBeCloseTo(
@@ -452,7 +532,7 @@ describe("sage calibrate-jev", () => {
     expect(chunkRows(sweep)).toHaveLength(4);
   });
 
-  it("writes one sweep row per threshold combination with tiers, labels, and input-equivalent cost", async () => {
+  it("writes one sweep row per threshold combination over the triaged chunks with tiers, labels, and input-equivalent cost", async () => {
     const session = await recordSession();
     const out = path.join(dir, "calibration");
     const run = await calibrate(
@@ -462,10 +542,8 @@ describe("sage calibrate-jev", () => {
         out,
         "--t-full",
         "0.4",
-        "--t-none",
-        "0.5,0.99",
         "--t-low",
-        "0.2",
+        "0.05,0.2",
         "--t-keep",
         "0.3,0.5",
       ],
@@ -477,30 +555,33 @@ describe("sage calibrate-jev", () => {
     expect(new Set(chunks.map((row) => row.session))).toEqual(
       new Set([path.basename(session.file)]),
     );
-    const needed = chunks.find((row) => row.needed === true);
-    if (!needed) throw new Error("no needed chunk");
+    const triaged = chunks.filter((row) => row.questions === "triage");
+    expect(triaged).toHaveLength(TRIAGED);
+    const needed = triaged.find((row) => row.needed === true);
+    if (!needed) throw new Error("no needed triaged chunk");
     const rows = rowsOf(sweep);
     expect(rows.map((row) => row.thresholds)).toEqual([
-      { full: 0.4, none: 0.5, low: 0.2, keep: 0.3 },
-      { full: 0.4, none: 0.5, low: 0.2, keep: 0.5 },
-      { full: 0.4, none: 0.99, low: 0.2, keep: 0.3 },
-      { full: 0.4, none: 0.99, low: 0.2, keep: 0.5 },
+      { full: 0.4, low: 0.05, keep: 0.3 },
+      { full: 0.4, low: 0.05, keep: 0.5 },
+      { full: 0.4, low: 0.2, keep: 0.3 },
+      { full: 0.4, low: 0.2, keep: 0.5 },
     ]);
-    const [dropping, , keeping] = rows;
+    const [keeping, , dropping] = rows;
     expect(dropping).toMatchObject({
-      tiers: { full: 0, summary: 0, none: READS.length },
-      omitted: READS.length,
+      tiers: { full: 0, summary: 0, none: TRIAGED },
+      omitted: TRIAGED,
       needed: 1,
       omittedNeeded: 1,
       missRate: 1,
-      precision: 5 / 6,
+      precision: 2 / 3,
       recall: 1,
     });
     // An expand pays the write rate: max(cacheWrite, input) / input = 1.
     expect(dropping?.cost).toBeCloseTo(Number(needed.tokens), 9);
-    // No candidate line reaches keep 0.5, so nothing summarizes: every chunk stays full.
+    // Every answer clears low 0.05 and no keep line reaches keep 0.3, so
+    // nothing drops or summarizes: every triaged chunk stays full.
     expect(keeping).toMatchObject({
-      tiers: { full: READS.length, summary: 0, none: 0 },
+      tiers: { full: TRIAGED, summary: 0, none: 0 },
       omitted: 0,
       needed: 1,
       omittedNeeded: 0,
@@ -509,7 +590,7 @@ describe("sage calibrate-jev", () => {
       recall: 0,
     });
     const readRate = CACHE_READ_PER_MTOK / INPUT_PER_MTOK;
-    const keptCost = chunks
+    const keptCost = triaged
       .filter((row) => row.needed === false)
       .reduce(
         (total, row) =>
@@ -517,15 +598,14 @@ describe("sage calibrate-jev", () => {
         0,
       );
     expect(keeping?.cost).toBeCloseTo(keptCost, 9);
+    expect(Number(dropping?.cost)).toBeLessThan(keptCost);
     expect(run.stdout.trim().split("\n")).toHaveLength(1);
     const summary: unknown = JSON.parse(run.stdout);
     // The two dropping rows tie on cost; the one nearer the defaults wins,
-    // not the grid's first (most aggressive) corner.
+    // not the grid's first such row.
     expect(summary).toMatchObject({
       unpriced: 0,
-      recommended: {
-        thresholds: { full: 0.4, none: 0.5, low: 0.2, keep: 0.5 },
-      },
+      recommended: { thresholds: { full: 0.4, low: 0.2, keep: 0.5 } },
     });
   });
 
@@ -553,8 +633,6 @@ describe("sage calibrate-jev", () => {
         out,
         "--t-full",
         "0.4",
-        "--t-none",
-        "0.5",
         "--t-low",
         "0.2",
         "--t-keep",
@@ -564,11 +642,13 @@ describe("sage calibrate-jev", () => {
     );
     expect(run.code).toBe(0);
     const sweep = readJson(path.join(out, "sweep.json"));
-    const needed = chunkRows(sweep).find((row) => row.needed === true);
+    const needed = chunkRows(sweep).find(
+      (row) => row.questions === "triage" && row.needed === true,
+    );
     const [row] = rowsOf(sweep);
     // Without pricing an expand pays the default write rate, 1.25.
     expect(row?.cost).toBeCloseTo(Number(needed?.tokens) * 1.25, 9);
-    expect(JSON.parse(run.stdout)).toMatchObject({ unpriced: READS.length });
+    expect(JSON.parse(run.stdout)).toMatchObject({ unpriced: TRIAGED });
   });
 
   it("labels re-read and later-edited chunks needed in a passthrough session", async () => {
@@ -583,18 +663,19 @@ describe("sage calibrate-jev", () => {
     );
     expect(needed).toEqual([
       ["read0", true],
-      ["read1", true],
-      ["read2", false],
-      ["read3", false],
+      ["grep1", false],
+      ["read2", true],
+      ["grep3", false],
       ["read4", false],
       ["read5", false],
+      ["bash6", false],
     ]);
     // Passthrough renders no claims, so no request carries a ledger.
     const ledgers = run.requests.map((request) => {
       const body = request.body;
       return isRecord(body) && isRecord(body.state) ? body.state.ledger : null;
     });
-    expect(ledgers).toEqual(READS.map(() => ""));
+    expect(ledgers).toEqual(CALLS.map(() => ""));
   });
 
   it("calibrates several sessions at once, tagging each chunk with its session and sending a shared body once", async () => {
@@ -608,15 +689,15 @@ describe("sage calibrate-jev", () => {
     expect(run.code).toBe(0);
     const chunks = chunkRows(readJson(path.join(out, "sweep.json")));
     expect(chunks.map((row) => row.session)).toEqual([
-      ...READS.map(() => path.basename(first.file)),
-      ...READS.map(() => path.basename(second.file)),
+      ...CALLS.map(() => path.basename(first.file)),
+      ...CALLS.map(() => path.basename(second.file)),
     ]);
     // Same files, same task: the two sessions ask byte-identical questions.
-    expect(run.requests).toHaveLength(READS.length);
+    expect(run.requests).toHaveLength(CALLS.length);
     expect(JSON.parse(run.stdout)).toMatchObject({
       sessions: 2,
-      chunks: 2 * READS.length,
-      sent: READS.length,
+      chunks: 2 * CALLS.length,
+      sent: CALLS.length,
     });
   });
 
@@ -631,16 +712,16 @@ describe("sage calibrate-jev", () => {
         : reply(request, KEEP_ALL);
     });
     expect(run.code).toBe(1);
-    expect(run.requests).toHaveLength(READS.length);
-    expect(readdirSync(path.join(out, "cache"))).toHaveLength(READS.length - 1);
+    expect(run.requests).toHaveLength(CALLS.length);
+    expect(readdirSync(path.join(out, "cache"))).toHaveLength(CALLS.length - 1);
     expect(JSON.parse(run.stdout)).toMatchObject({
-      sent: READS.length,
+      sent: CALLS.length,
       failed: 1,
       unsent: 0,
       stopped: null,
     });
     expect(chunkRows(readJson(path.join(out, "sweep.json")))).toHaveLength(
-      READS.length - 1,
+      CALLS.length - 1,
     );
   });
 
@@ -662,7 +743,7 @@ describe("sage calibrate-jev", () => {
     expect(run.requests).toHaveLength(16);
     expect(JSON.parse(run.stdout)).toMatchObject({
       failed: 4,
-      unsent: READS.length - 4,
+      unsent: CALLS.length - 4,
       stopped: { kind: "rate-limited", fallback: "http:429" },
     });
   });

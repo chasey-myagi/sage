@@ -33,8 +33,7 @@ const BIG = Array.from({ length: 80 }, (_, i) => `const v${i} = ${i};`).join(
 const CALL_IDS = ["t1", "t2", "t3", "t4", "t5", "t6"] as const;
 /** The chunk whose jev request fails in every test. */
 const FAILING = "seq:1#t1";
-const NONE_BY_JEV =
-  "scorer:jev:none:failure=0.00,edit=0.00,lookup=0.00,broad=0.90,keep=0.00";
+const NONE_BY_JEV = "scorer:jev:none:failure=0.00,locate=0.00,keep=0.00";
 
 function seed(store: MemoryLogStore): void {
   const append = (payload: unknown) =>
@@ -47,9 +46,9 @@ function seed(store: MemoryLogStore): void {
         {
           type: "tool_use",
           id,
-          name: "read",
-          input: { path: `${id}.ts` },
-          rawInput: JSON.stringify({ path: `${id}.ts` }),
+          name: "grep",
+          input: { pattern: id, path: `${id}.ts` },
+          rawInput: JSON.stringify({ pattern: id, path: `${id}.ts` }),
         },
       ],
     });
@@ -59,7 +58,7 @@ function seed(store: MemoryLogStore): void {
         {
           type: "tool_result",
           toolUseId: id,
-          content: `export function ${id}() {}\n${BIG}`,
+          content: `${id}.ts:1:export function ${id}() {}\n${BIG}`,
           isError: false,
         },
       ],
@@ -111,7 +110,7 @@ function logManifest(store: MemoryLogStore, view: CompiledView): void {
   store.append("s", { kind: "manifest", payload: view.manifest });
 }
 
-/** Every chunk is a broad listing (tier none) unless `failing` says its request fails. */
+/** Every chunk answers all noes (tier none) unless `failing` says its request fails. */
 function jevFetch(failing: (chunkId: string) => JsonFetchReply | undefined) {
   return jsonFetch(
     (request: JsonFetchRequest) =>
@@ -127,15 +126,8 @@ function scorer(fake: ReturnType<typeof jsonFetch>) {
   });
 }
 
-/** The broad-listing answer `jevFetch` gives a chunk that does not fail. */
-const answerFor = answerNouls(
-  Object.fromEntries(
-    CALL_IDS.map((id, index) => [
-      `seq:${index * 2 + 1}#${id}`,
-      { is_broad_listing: 0.9 },
-    ]),
-  ),
-);
+/** The all-noes answer `jevFetch` gives a chunk that does not fail. */
+const answerFor = answerNouls({});
 
 /** A seeded store whose first view is logged, so the next tight view rebuilds. */
 async function rebuildReady(): Promise<MemoryLogStore> {

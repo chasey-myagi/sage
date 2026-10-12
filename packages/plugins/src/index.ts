@@ -40,7 +40,11 @@ export {
   type PostHooks,
   postMany,
 } from "./scorer/jev/http.js";
-export { type Judgment, readJudgment } from "./scorer/jev/questions.js";
+export {
+  type Judgment,
+  readJudgment,
+  type TriageJudgment,
+} from "./scorer/jev/questions.js";
 export {
   type ChunkRequest,
   estimateRequestTokens,
