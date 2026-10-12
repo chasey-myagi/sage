@@ -34,6 +34,18 @@ import type { HarnessTool } from "../tools.js";
  */
 export type Tier = "none" | "line" | "summary" | "full";
 
+const TIERS: ReadonlySet<unknown> = new Set<Tier>([
+  "none",
+  "line",
+  "summary",
+  "full",
+]);
+
+/** Whether `value` is one of the four tier names; for tiers read off the Log. */
+export function isTier(value: unknown): value is Tier {
+  return TIERS.has(value);
+}
+
 /**
  * One manifest line: the tier chosen for one chunk or claim and why.
  * `reason` is for people and the Log, never for branching. `tokens` is the

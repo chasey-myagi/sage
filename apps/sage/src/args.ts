@@ -1,5 +1,6 @@
 /**
- * argv parsing for the one-shot `sage [-p] <task>` command.
+ * argv parsing for the one-shot `sage [-p] <task>` command, and the usage
+ * text of every subcommand.
  *
  * Contract: returns either the parsed options or the first error in argv
  * order. The task is the value after `-p`/`--print` (or `--print=task`), or
@@ -30,6 +31,7 @@ import {
   type ScorerName,
   usageError,
 } from "./options.js";
+import { statsUsage } from "./stats.js";
 
 const SAGE_FLAGS = [
   { name: "print", usage: "required" },
@@ -119,7 +121,7 @@ export function parseArgs(argv: string[]): Parsed {
 export function usage(): string {
   return [
     renderUsage("usage: sage", SAGE_FLAGS),
-    "       sage stats <session.jsonl>",
+    `       ${statsUsage()}`,
     `       ${benchRunUsage()}`,
     "       sage bench report <runA> <runB>",
   ].join("\n");

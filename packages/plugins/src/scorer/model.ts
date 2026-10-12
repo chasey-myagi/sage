@@ -12,7 +12,7 @@
  * that manifest.
  */
 
-import { isRecord } from "@sage/core";
+import { isRecord, isTier } from "@sage/core";
 import {
   type AssistantMessage,
   collect,
@@ -27,7 +27,6 @@ import {
   SUMMARY_LIMIT,
 } from "../compiler/score-common.js";
 import { summarizeInput } from "../compiler/stub.js";
-import { isTier } from "../guards.js";
 import type { ScoreDecision, ScoreRaw, ScoreResult, Scorer } from "./types.js";
 
 const RAW_LIMIT = 300;
