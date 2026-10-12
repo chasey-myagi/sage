@@ -12,7 +12,7 @@
 export const LIST_MAX_ENTRIES = 500;
 
 /** A truncated text and what was cut from it. */
-export type Truncation = {
+type Truncation = {
   text: string;
   /** Whole lines and UTF-8 bytes dropped from the end; 0 when unchanged. */
   omitted: { lines: number; bytes: number };

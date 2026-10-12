@@ -65,7 +65,7 @@ export function runBenchReport(argv: string[], io: BenchIo): number {
 }
 
 /** Aggregate rates for one run. */
-export function benchMetrics(results: BenchResults): BenchMetrics {
+function benchMetrics(results: BenchResults): BenchMetrics {
   const tasks = results.tasks;
   const total = tasks.length;
   const resolved = tasks.filter((task) => task.status === "resolved").length;

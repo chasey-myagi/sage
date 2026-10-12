@@ -12,7 +12,7 @@
 import { spawn } from "node:child_process";
 
 /** Exit status and captured stdout of one child process. */
-export type ExecResult = { code: number; timedOut: boolean; stdout: string };
+type ExecResult = { code: number; timedOut: boolean; stdout: string };
 
 /** Runs `command args` without a shell. `env` defaults to `process.env`. */
 export function exec(

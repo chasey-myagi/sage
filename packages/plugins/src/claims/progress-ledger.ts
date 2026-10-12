@@ -48,7 +48,7 @@ const inputSchema = {
  * Model-visible name of the ledger tool; the claim reads its calls back
  * from the Log by this name.
  */
-export const LEDGER_TOOL_NAME = "update_ledger";
+const LEDGER_TOOL_NAME = "update_ledger";
 /** Default priority of the ledger claim. */
 const DEFAULT_LEDGER_PRIORITY = 100;
 

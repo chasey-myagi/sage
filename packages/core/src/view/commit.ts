@@ -21,7 +21,7 @@ import { systemHash, toolsHash } from "./assert.js";
 import type { CompiledView } from "./types.js";
 
 /** What one call's request entries are built from. */
-export type RequestEntriesInput = {
+type RequestEntriesInput = {
   view: CompiledView;
   /** The model the request goes to: the header's `provider` and `model`. */
   model: ModelRef;

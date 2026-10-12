@@ -90,7 +90,7 @@ export const DEFAULT_KEEP_RECENT = 6;
 export const DEFAULT_COMPILER_BUDGET = 40_000;
 
 /** Options of `contextCompiler`. Token counts are estimates from `count`. */
-export type ContextCompilerOptions = {
+type ContextCompilerOptions = {
   /** Token budget for claims plus history chunks. */
   budget: number;
   claims: ClaimProvider[];

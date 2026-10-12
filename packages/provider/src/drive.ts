@@ -79,7 +79,7 @@ export function blockStart(
 }
 
 /** One streamed POST: what differs between adapters. */
-export type SseCall = {
+type SseCall = {
   /** Appended to the client's base URL. */
   path: string;
   headers: Record<string, string>;

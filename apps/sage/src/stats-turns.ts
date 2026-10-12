@@ -21,13 +21,13 @@ import {
   isRecord,
   isTier,
   type Manifest,
-  type ModelRef,
   type RunHealth,
   requestHeaderOf,
   runHealth,
   type StoredEntry,
   type Tier,
 } from "@sage/core";
+import type { ModelRef } from "@sage/provider/contract";
 import { isFiniteNumber } from "./guards.js";
 
 /** A chunk whose tier changed between two turns of the same epoch. */

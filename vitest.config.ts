@@ -11,8 +11,6 @@ export default defineConfig({
       "scripts/**/*.test.ts",
       "packages/**/test/**/*.test.ts",
       "apps/**/test/**/*.test.ts",
-      // Regression files are named test/regressions/issue-<n>.test.ts.
-      "packages/**/test/regressions/**/*.test.ts",
     ],
     setupFiles: ["packages/core/src/testing/setup.ts"],
     coverage: {

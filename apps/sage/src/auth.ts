@@ -22,7 +22,7 @@ import {
 } from "@sage/provider";
 
 /** Auto-selection order when `--provider` is absent. */
-export const AUTO_PROVIDERS = [
+const AUTO_PROVIDERS = [
   "deepseek",
   "dashscope",
   "moonshot",
@@ -31,7 +31,7 @@ export const AUTO_PROVIDERS = [
 ] as const;
 
 /** A resolved chat provider, or why none could be used. */
-export type Auth =
+type Auth =
   | {
       ok: true;
       provider: string;
@@ -42,7 +42,7 @@ export type Auth =
   | { ok: false; message: string; exitCode: 1 | 2 };
 
 /** Provider flags as written on argv; all optional. */
-export type AuthFlags = {
+type AuthFlags = {
   provider?: string;
   model?: string;
   baseUrl?: string;

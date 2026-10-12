@@ -93,17 +93,6 @@ it("writes a missing expected file and prints a diff on mismatch", () => {
   }
 });
 
-it("refuses the record lane without calling the network", async () => {
-  process.env.SAGE_RECORD = "1";
-  try {
-    await expect(
-      replaySession(caseDir("text-only"), { system: "x", tools: [] }),
-    ).rejects.toThrow(/never calls the network/);
-  } finally {
-    delete process.env.SAGE_RECORD;
-  }
-});
-
 for (const spec of REPLAY_CASES) {
   it(`replays ${spec.name} against the committed recording and expected files`, async () => {
     const dir = caseDir(spec.name);

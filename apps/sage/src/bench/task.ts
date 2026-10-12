@@ -71,7 +71,7 @@ export async function runTask(
  * `--max-turns` and `--tool-network` are always present; `--budget` and
  * the scorer flags only when set.
  */
-export function sageArgv(task: BenchTask, opts: SageRunOptions): string[] {
+function sageArgv(task: BenchTask, opts: SageRunOptions): string[] {
   const args = [sageBin(), "-p", task.problem, "--model", opts.model];
   if (opts.provider) args.push("--provider", opts.provider);
   if (opts.budget !== null) args.push("--budget", String(opts.budget));

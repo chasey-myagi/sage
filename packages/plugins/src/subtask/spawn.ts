@@ -46,13 +46,13 @@ import {
  * Default child compile budget in tokens, used when neither the task nor
  * its preset sets one.
  */
-export const DEFAULT_SUBTASK_BUDGET = 8000;
+const DEFAULT_SUBTASK_BUDGET = 8000;
 /** Default `maxDepth`: how many levels of nested subtasks may exist. */
-export const DEFAULT_MAX_DEPTH = 2;
+const DEFAULT_MAX_DEPTH = 2;
 /** Default `maxSubtasks`: children one session may spawn in total. */
-export const DEFAULT_MAX_SUBTASKS = 8;
+const DEFAULT_MAX_SUBTASKS = 8;
 /** Default `maxConcurrent`: children of one call that run at once. */
-export const DEFAULT_MAX_CONCURRENT = 4;
+const DEFAULT_MAX_CONCURRENT = 4;
 
 /**
  * The child's first user message. The question itself is the tail claim
@@ -72,7 +72,7 @@ type TaskResult = {
 };
 
 /** Options of `subtaskTools`. */
-export type SubtaskToolsOptions = {
+type SubtaskToolsOptions = {
   store: LogStore;
   adapters: Record<string, ProviderAdapter>;
   /** Builds the child's view provider for one budget and question. */

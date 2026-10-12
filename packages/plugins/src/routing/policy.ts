@@ -1,39 +1,18 @@
 /**
  * First-party route policies. Pure functions over the compiler's input.
  *
- * Contract: `composePolicies` feeds the previous model forward as `current`.
- * Undefined keeps the previous result and the previous current.
- * `sensitivePolicy` drops providers when a chunk whose tier is not `none`
- * has an access key matching a rule. `costTierPolicy` picks the ladder
- * entry with the lowest catalog input price that is still in `candidates`.
- * Ladder entries the catalog cannot price are skipped. Models off the
- * ladder are not considered.
+ * Contract: `sensitivePolicy` drops providers when a chunk whose tier is
+ * not `none` has an access key matching a rule. `costTierPolicy` picks the
+ * ladder entry with the lowest catalog input price that is still in
+ * `candidates`. Ladder entries the catalog cannot price are skipped. Models
+ * off the ladder are not considered.
  *
  * Intentionally not in the Log: these functions. Reasons reach the manifest
  * only when the compiler appends them.
  */
 
 import { type CatalogEntry, listModels } from "@sage/provider";
-import type { RouteInput, RoutePolicy, RouteResult } from "./types.js";
-
-/**
- * Runs `policies` in order. Each sees the previous chosen model as
- * `current`; one returning undefined keeps the previous result and current.
- * Returns the last defined result, or undefined when none chose.
- */
-export function composePolicies(...policies: RoutePolicy[]): RoutePolicy {
-  return (input) => {
-    let current = input.current;
-    let chosen: RouteResult;
-    for (const policy of policies) {
-      const next = policy({ ...input, current });
-      if (!next) continue;
-      current = next.model;
-      chosen = next;
-    }
-    return chosen;
-  };
-}
+import type { RouteInput, RoutePolicy } from "./types.js";
 
 /**
  * Creates a candidate filter. Any view chunk whose tier is not `none` and

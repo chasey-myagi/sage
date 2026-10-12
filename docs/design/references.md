@@ -61,7 +61,7 @@
 - **R6 · `prepareCall` 两段式**（C11）：先解析模型拿到 `contextWindow` 与定价，再绑定 dispatch；解析结果参与成本不等式。→ #3, #12
 
 ### 可观测与测试
-- **O1 · 无 key 回放是默认测试档**（C12, P11）：录制的会话 JSONL 既是输入也是 oracle；测试前剥光凭据 + faux provider；`record` 才打真 API。→ #7
+- **O1 · 无 key 回放是默认测试档**（C12, P11）：录制的会话 JSONL 既是输入也是 oracle；测试前剥光凭据 + faux provider；`record` 才打真 API（`record` 档尚未实现）。→ #7
 - **O2 · 前缀感知的 LLM 输入快照**（K6）：把一次调用渲染成 `system: / tools: / messages:`；历史是上次的前缀时只打印 `<last>` + 增量。任何破坏前缀稳定的改动当场炸快照——「阶段冻结成立了吗」从指标降级为默认断言。→ #7
 - **O3 · 期望产物提交进仓库**（C12）：每个回放场景的 `expected/` 目录下有 `system-prompt.md` / `tool-schemas.json` / `turn-<n>.request.json` / `manifest-turn-<n>.json`，PR diff 逐行看。→ #7
 - **O4 · cacheRead 单调性探针**升级为常驻指标（P10）。→ #17

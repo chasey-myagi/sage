@@ -41,7 +41,7 @@ packages/<name>/
   package.json     name、private、exports（`source` 指 src，`default` 指 dist）、workspace 依赖
   tsconfig.json    extends base；references 列出它依赖的兄弟包
   README.md        必须有 ## Model Experience 三小节（check:readme 检查）
-  src/index.ts     桶文件：re-export 公开符号和 `PACKAGE` 常量，不写逻辑；没在这里导出的东西，别的包用不到。
+  src/index.ts     桶文件：只 re-export 仓内其他包确实用到的符号，不写逻辑；没在这里导出的东西，别的包用不到。
                    例外：`@sage/tools` 的 `createTools` 在这里把七个工具装配到同一个 cwd 与沙箱上
   src/...          一个文件一个职责
   test/            *.test.ts；回归放 test/regressions/

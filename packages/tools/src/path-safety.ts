@@ -24,7 +24,7 @@ export const SKIPPED_DIR_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /** A path cleared for use, or the isError result to return instead. */
-export type ResolvedPath =
+type ResolvedPath =
   | { ok: true; path: string }
   | { ok: false; result: ToolResult };
 

@@ -33,7 +33,7 @@ import { TOOL_NAMES } from "./names.js";
 import { spill } from "./spill.js";
 
 /** Default `timeout_ms` of a bash call, in milliseconds. */
-export const BASH_TIMEOUT_MS = 120_000;
+const BASH_TIMEOUT_MS = 120_000;
 
 /**
  * Exit code reported when the timeout killed the child, as GNU `timeout(1)`
@@ -81,7 +81,7 @@ export function resolveToolSandbox(sandbox?: {
 }
 
 /** What a `BashExec` receives besides the command string. */
-export type BashExecOpts = {
+type BashExecOpts = {
   /** The workspace realpath; the child runs there. */
   cwd: string;
   signal?: AbortSignal;
@@ -156,7 +156,7 @@ export function toolSandboxSupport(opts: {
  * works, probed on each call unless `unshareAvailable` is given; every
  * other platform cannot.
  */
-export function toolNetworkSupport(opts: {
+function toolNetworkSupport(opts: {
   platform: NodeJS.Platform;
   unshareAvailable?: boolean;
 }): { ok: true } | { ok: false; message: string } {

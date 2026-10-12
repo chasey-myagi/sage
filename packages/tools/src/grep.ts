@@ -38,7 +38,7 @@ import {
 /** Default `max_results` of a grep call. */
 export const GREP_MAX_RESULTS = 200;
 /** Longest hit line returned as is, in characters. */
-export const GREP_MAX_LINE_CHARS = 300;
+const GREP_MAX_LINE_CHARS = 300;
 const MATCH_CONTEXT = GREP_MAX_LINE_CHARS / 2;
 /** The in-process searcher skips files larger than this many bytes. */
 const MAX_FILE_BYTES = 1_000_000;

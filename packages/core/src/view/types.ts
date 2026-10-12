@@ -51,7 +51,7 @@ export function isTier(value: unknown): value is Tier {
  * `reason` is for people and the Log, never for branching. `tokens` is the
  * estimated size at that tier (for `none`, the stub's size).
  */
-export type TierRecord = {
+type TierRecord = {
   id: string;
   tier: Tier;
   reason: string;
@@ -80,7 +80,7 @@ export type Anomaly = {
 };
 
 /** The compiler's token budget for this view. Fields are tokens unless noted. */
-export type BudgetReport = {
+type BudgetReport = {
   total: number;
   used: number;
   overrun: number;
@@ -109,7 +109,7 @@ export type BudgetReport = {
  * `extraCost` is not positive, null when there are no savings. `rebuild`
  * is true when payback fits within `remainingTurns`, or for a guard reason.
  */
-export type EpochDecisionReport = {
+type EpochDecisionReport = {
   rebuild: boolean;
   oldTokens: number;
   newTokens: number;
@@ -130,7 +130,7 @@ export type EpochDecisionReport = {
 };
 
 /** Token estimate against the provider's measured input for the last request. */
-export type CalibrationReport = {
+type CalibrationReport = {
   measured: number;
   estimated: number;
   /**
@@ -142,20 +142,20 @@ export type CalibrationReport = {
 };
 
 /** Expected against measured cache-read tokens for the previous request. */
-export type CacheReport = {
+type CacheReport = {
   expectedReadTokens: number;
   measuredReadTokens: number;
 };
 
 /** One shadow decision: the tier a shadow scorer would have chosen. */
-export type ShadowDecisionRecord = {
+type ShadowDecisionRecord = {
   id: string;
   tier: Tier;
   reason?: string;
 };
 
 /** Model text prefix and finish kind. Written only when a score falls back. */
-export type ScorerRaw = {
+type ScorerRaw = {
   text: string;
   finish: string;
 };
@@ -166,7 +166,7 @@ export type ScorerRaw = {
  * are never applied, so the view and its prefix are unchanged; the record
  * exists to measure scorer accuracy afterwards.
  */
-export type ShadowReport = {
+type ShadowReport = {
   scorer: string;
   /**
    * Requests actually sent: 0 when the scorer gave up before sending (for
@@ -180,7 +180,7 @@ export type ShadowReport = {
 };
 
 /** Scorer calls made while rebuilding an epoch. `raw` only on fallback. */
-export type ScorerReport = {
+type ScorerReport = {
   /** Requests actually sent: 0 when the scorer gave up before sending. */
   calls: number;
   usage: TokenCounts;

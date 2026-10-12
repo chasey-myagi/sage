@@ -11,12 +11,7 @@
  */
 
 import { createHash } from "node:crypto";
-import {
-  type Head,
-  isRecord,
-  type Message,
-  type ToolDef,
-} from "@sage/provider/contract";
+import { isRecord, type Message, type ToolDef } from "@sage/provider/contract";
 import type { RequestHeaderPayload } from "../log/kinds.js";
 import {
   lastHeaderIndex,
@@ -55,11 +50,6 @@ export function systemHash(system: string): string {
 /** Hex sha256 of the tool schemas, as stored in `request_header.toolsHash`. */
 export function toolsHash(tools: readonly ToolDef[]): string {
   return sha256(canonicalJson(tools));
-}
-
-/** Hex sha256 of system and tools together. */
-export function headHash(head: Head): string {
-  return sha256(canonicalJson(head));
 }
 
 /**

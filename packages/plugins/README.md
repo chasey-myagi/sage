@@ -122,6 +122,8 @@ CLI `--scorer jev` 和 `--shadow-scorer jev` 读 `JEV_BASE_URL`（缺省 `https:
 
 ## 离线回放
 
+`replayOffline` / `compareOffline` 在 `src/replay/offline.ts`，不从包入口导出，只有本包的回放测试在用。
+
 离线重编译拿不到模型对新视图的反应，所以这一路不打模型。`policy.scorer` 没有 `isNoop`（只有 `ruleScorer` 设了它）时，`replayOffline` 换成 `ruleScorer`，并记住这次返回的数组。`compareOffline` 收到这个数组，就在 Markdown 和 JSON 里写上 `scorer:offline-rule`；数组的拷贝不带这个标记。
 
 ```ts

@@ -37,12 +37,7 @@ export type {
   ToolUseBlock,
 } from "./message.js";
 export { isRecord } from "./record.js";
-export {
-  type FinishError,
-  type FinishKind,
-  INCOMPLETE_STREAM,
-  type StreamChunk,
-} from "./stream.js";
+export type { FinishKind, StreamChunk } from "./stream.js";
 export {
   addUsage,
   emptyUsage,
@@ -51,4 +46,3 @@ export {
   totalTokens,
   type Usage,
 } from "./usage.js";
-export type { ContractVersion } from "./version.js";

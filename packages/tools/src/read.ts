@@ -17,7 +17,7 @@ import { resolveInside } from "./path-safety.js";
 import { splitLines, truncate } from "./truncate.js";
 
 /** Default page length of a read, in lines. */
-export const READ_MAX_LINES = 2000;
+const READ_MAX_LINES = 2000;
 /** Byte cap of one read page. */
 export const READ_MAX_BYTES = 256 * 1024;
 
