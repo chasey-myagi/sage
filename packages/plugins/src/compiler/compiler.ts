@@ -59,11 +59,10 @@ import {
   frozenSeqCeiling,
 } from "./freeze.js";
 import {
-  assertSeqsMatch,
   countExpands,
   latestQuery,
   previousRequest,
-  projectionSeqs,
+  projectedSeqs,
 } from "./log-read.js";
 import { firstById } from "./rows.js";
 import { requestFromCompiled } from "./score-common.js";
@@ -146,9 +145,8 @@ type Settings = {
 };
 
 /**
- * Creates the compiler. `view` rejects only on kernel defects: a seq map
- * that disagrees with the passthrough projection, a non-finite context
- * window, or, for a subtask, a parent path without a manifest. When
+ * Creates the compiler. `view` rejects only on kernel defects: a non-finite
+ * context window, or, for a subtask, a parent path without a manifest. When
  * `ctx.parentPath` is set, the call is a subtask recompile (see
  * `compileSubtask`).
  */
@@ -276,7 +274,7 @@ type Candidates = {
 
 /**
  * Projects the history, indexes chunks, and assembles both candidate
- * views. Throws when the seq map disagrees with the projection.
+ * views.
  */
 async function assembleCandidates(
   ctx: ViewContext,
@@ -284,8 +282,7 @@ async function assembleCandidates(
 ): Promise<Candidates> {
   const base = await passthroughView.view(ctx);
   const collected = await collectClaims(settings.claims, ctx);
-  const seqs = projectionSeqs(ctx.path);
-  assertSeqsMatch(seqs.length, base.messages.length);
+  const seqs = projectedSeqs(ctx.path, base.manifest.chunks);
   const chunks = indexChunks(base.messages, seqs, ctx.tools, settings.count);
   const frozen = frozenDecisions(ctx.path, base.epoch);
   const input = {

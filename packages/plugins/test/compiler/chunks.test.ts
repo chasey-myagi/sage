@@ -1,7 +1,11 @@
 import { assertPaired, type HarnessTool } from "@sage/core";
 import type { Message } from "@sage/provider/contract";
 import { expect, it } from "vitest";
-import { canSplitAfter, indexChunks } from "../../src/compiler/chunks.ts";
+import {
+  canSplitAfter,
+  indexChunks,
+  toolUseIdOfChunk,
+} from "../../src/compiler/chunks.ts";
 
 function countExact(table: Record<string, number>) {
   return (text: string) => {
@@ -228,4 +232,14 @@ it.each([
   },
 ])("canSplitAfter is $name → $expected", ({ messages, index, expected }) => {
   expect(canSplitAfter(messages, index)).toBe(expected);
+});
+
+it("reads the tool_use id of local and own tool chunk ids and rejects prose ids and child references", () => {
+  expect(toolUseIdOfChunk("seq:3#toolu_1")).toBe("toolu_1");
+  expect(toolUseIdOfChunk("seq:-1#call_2")).toBe("call_2");
+  expect(toolUseIdOfChunk("own:seq:4#toolu_3")).toBe("toolu_3");
+  expect(toolUseIdOfChunk("seq:3")).toBeUndefined();
+  expect(toolUseIdOfChunk("seq:3#")).toBeUndefined();
+  expect(toolUseIdOfChunk("#toolu_1")).toBeUndefined();
+  expect(toolUseIdOfChunk("child:s1#seq:3#toolu_1")).toBeUndefined();
 });

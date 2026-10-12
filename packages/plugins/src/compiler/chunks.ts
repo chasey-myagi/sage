@@ -29,6 +29,33 @@ import type { TokenCounter } from "./budget.js";
  */
 export const OWN_CHUNK_PREFIX = "own:";
 
+const TOOL_CHUNK_ID = /^seq:(-?\d+)#([\s\S]+)$/;
+
+/**
+ * Parses a tool chunk id `seq:<seq>#<toolUseId>`. Returns undefined for a
+ * prose chunk id, an id with `OWN_CHUNK_PREFIX`, or anything else.
+ */
+export function parseToolChunkId(
+  id: string,
+): { seq: number; toolUseId: string } | undefined {
+  const match = TOOL_CHUNK_ID.exec(id);
+  if (!match) return undefined;
+  return { seq: Number(match[1]), toolUseId: match[2] ?? "" };
+}
+
+/**
+ * Returns the toolUseId a manifest chunk id names: a tool chunk id with or
+ * without `OWN_CHUNK_PREFIX`. Returns undefined for a prose chunk id and for
+ * an `expand` reference such as `child:<sessionId>#<chunkId>`, which is not
+ * a chunk id.
+ */
+export function toolUseIdOfChunk(chunkId: string): string | undefined {
+  const local = chunkId.startsWith(OWN_CHUNK_PREFIX)
+    ? chunkId.slice(OWN_CHUNK_PREFIX.length)
+    : chunkId;
+  return parseToolChunkId(local)?.toolUseId;
+}
+
 /**
  * A chunk is the unit the compiler schedules: one tool call together with
  * its result, or one prose message. A chunk enters the view whole, at one

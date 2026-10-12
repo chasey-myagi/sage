@@ -95,6 +95,11 @@ type SubtaskToolsOptions = {
   fs?: PresetFs;
 };
 
+/** Tool name of the single-task spawn; also prefixes its error text. */
+const SPAWN_SUBTASK_TOOL_NAME = "spawn_subtask";
+/** Tool name of the batch spawn; also prefixes its error text. */
+const SPAWN_SUBTASKS_TOOL_NAME = "spawn_subtasks";
+
 /**
  * Creates `spawn_subtask` (one task) and `spawn_subtasks` (a parallel
  * batch). Both tools share one spawn tally per calling session.
@@ -145,7 +150,7 @@ type SpawnDeps = {
 function spawnTool(deps: SpawnDeps): HarnessTool {
   return {
     def: {
-      name: "spawn_subtask",
+      name: SPAWN_SUBTASK_TOOL_NAME,
       description:
         "Recompile this session on one question and budget. Pass query, or a preset name plus args. Explicit fields override the preset. The child shares the head and frozen prefix. readOnly denies tools that are not read-only without changing the tool list.",
       inputSchema: TASK_SCHEMA,
@@ -160,13 +165,16 @@ function spawnTool(deps: SpawnDeps): HarnessTool {
       const raw = readTask(input);
       if (!raw) {
         return {
-          content: "spawn_subtask: query is required",
+          content: `${SPAWN_SUBTASK_TOOL_NAME}: query is required`,
           isError: true,
         };
       }
       const task = applyPreset(raw, presetsOf(deps.opts));
       if (typeof task === "string") {
-        return { content: `spawn_subtask: ${task}`, isError: true };
+        return {
+          content: `${SPAWN_SUBTASK_TOOL_NAME}: ${task}`,
+          isError: true,
+        };
       }
       const refused = deps.admit(ctx.sessionId, 1);
       if (refused) return refused;
@@ -188,7 +196,7 @@ function spawnTool(deps: SpawnDeps): HarnessTool {
 function spawnManyTool(deps: SpawnDeps): HarnessTool {
   return {
     def: {
-      name: "spawn_subtasks",
+      name: SPAWN_SUBTASKS_TOOL_NAME,
       description:
         "Recompile several questions in parallel. The pool accepts the call when every task is read-only, or when no pair shares a write key. A conflict rejects the whole call and names the pair.",
       inputSchema: {
@@ -240,16 +248,16 @@ function resolveBatch(
 ): TaskInput[] | string {
   const rawTasks = readTasks(input);
   if (!rawTasks || rawTasks.length === 0) {
-    return "spawn_subtasks: tasks are required";
+    return `${SPAWN_SUBTASKS_TOOL_NAME}: tasks are required`;
   }
   const tasks: TaskInput[] = [];
   for (const raw of rawTasks) {
     const task = applyPreset(raw, presetsOf(opts));
-    if (typeof task === "string") return `spawn_subtasks: ${task}`;
+    if (typeof task === "string") return `${SPAWN_SUBTASKS_TOOL_NAME}: ${task}`;
     tasks.push(task);
   }
   if (tasks.some((task) => task.query.trim().length === 0)) {
-    return "spawn_subtasks: query is required";
+    return `${SPAWN_SUBTASKS_TOOL_NAME}: query is required`;
   }
   return admissionError(tasks) ?? tasks;
 }

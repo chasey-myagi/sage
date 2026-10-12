@@ -7,7 +7,7 @@
  * `manifest.details.claimContent`, walking backward to the manifest that
  * stored this content hash. System and tool text come from the latest
  * request_header that still carries them for the same hash. A manifest chunk
- * at tier none whose id contains `#` rebuilds that tool_result as the same
+ * at tier none with a tool chunk id rebuilds that tool_result as the same
  * stub, using `originalTokens` and the logged tool_use. A summary chunk
  * rebuilds that stub, a newline, and
  * `summary (model notes, not evidence): ` plus the logged summary string.
@@ -28,7 +28,7 @@ import type {
   ToolUseBlock,
 } from "@sage/provider/contract";
 import { renderSummary, replaceToolResults } from "./apply.js";
-import type { Chunk } from "./chunks.js";
+import { type Chunk, toolUseIdOfChunk } from "./chunks.js";
 import { renderStub } from "./stub.js";
 
 type LoggedClaim = {
@@ -266,10 +266,8 @@ function stubsFor(
   const stubs = new Map<string, string>();
   for (const chunk of loggedChunks(entry)) {
     if (chunk.tier !== "none" && chunk.tier !== "summary") continue;
-    const mark = chunk.id.indexOf("#");
-    if (mark < 0) continue;
-    const toolUseId = chunk.id.slice(mark + 1);
-    if (toolUseId.length === 0) continue;
+    const toolUseId = toolUseIdOfChunk(chunk.id);
+    if (!toolUseId) continue;
     const use = findToolUse(messages, toolUseId);
     if (!use) continue;
     const tokens =

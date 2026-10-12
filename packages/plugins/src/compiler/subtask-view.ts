@@ -28,12 +28,11 @@ import { eliminate } from "./eliminate.js";
 import { contentHash, renderClaim } from "./format.js";
 import { frozenDecisions } from "./freeze.js";
 import {
-  assertSeqsMatch,
   countExpands,
   latestManifest,
   manifestTurn,
   type PathEntry,
-  projectionSeqs,
+  projectedSeqs,
 } from "./log-read.js";
 import { rebuildFromLog } from "./rebuild.js";
 import {
@@ -207,8 +206,7 @@ function ownChunks(ctx: ViewContext, count: TokenCounter): OwnChunks {
   if (projected instanceof Promise) {
     throw new Error("passthrough projection must be synchronous");
   }
-  const seqs = projectionSeqs(ctx.path);
-  assertSeqsMatch(seqs.length, projected.messages.length);
+  const seqs = projectedSeqs(ctx.path, projected.manifest.chunks);
   const chunks = indexChunks(projected.messages, seqs, ctx.tools, count).map(
     (chunk) => ({ ...chunk, id: `${OWN_CHUNK_PREFIX}${chunk.id}` }),
   );

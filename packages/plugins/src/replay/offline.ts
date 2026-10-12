@@ -35,6 +35,7 @@ import {
   type StoredEntry,
 } from "@sage/core";
 import type { PreparedCall } from "@sage/provider/contract";
+import { toolUseIdOfChunk } from "../compiler/chunks.js";
 import {
   contextCompiler,
   DEFAULT_COMPILER_BUDGET,
@@ -85,7 +86,7 @@ type TurnDiff = {
   /** Manifest chunk ids at tier `none`. */
   omittedIds: string[];
   /**
-   * Omitted tool chunks whose `toolUseId` (the id after `#`) or an
+   * Omitted tool chunks whose `toolUseId` (`toolUseIdOfChunk`) or an
    * `accesses(input)` key occurs in a later assistant's text or tool_use
    * input: a proxy for "referenced later".
    */
@@ -443,7 +444,7 @@ function likelyNeeded(
   if (later.length === 0) return [];
   const hits: string[] = [];
   for (const id of omittedIds) {
-    const toolUseId = toolUseIdOf(id);
+    const toolUseId = toolUseIdOfChunk(id);
     if (!toolUseId) continue;
     const call = findToolUse(recorded, slice.prefixEnd, toolUseId);
     if (!call) continue;
@@ -504,13 +505,6 @@ function findToolUse(
     }
   }
   return undefined;
-}
-
-function toolUseIdOf(chunkId: string): string | undefined {
-  const mark = chunkId.indexOf("#");
-  if (mark < 0) return undefined;
-  const id = chunkId.slice(mark + 1);
-  return id.length > 0 ? id : undefined;
 }
 
 function prefixStable(previous: CompiledView, next: CompiledView): boolean {

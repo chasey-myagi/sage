@@ -22,7 +22,7 @@ import {
   type LogStore,
   type StoredEntry,
 } from "@sage/core";
-import { OWN_CHUNK_PREFIX } from "./chunks.js";
+import { OWN_CHUNK_PREFIX, parseToolChunkId } from "./chunks.js";
 
 /**
  * Model-visible name of the expand tool. The Log records tool calls by
@@ -113,10 +113,10 @@ function parentPath(
 }
 
 function locate(path: readonly StoredEntry[], id: string): string | undefined {
-  const tool = /^seq:(-?\d+)#([\s\S]+)$/.exec(id);
+  const tool = parseToolChunkId(id);
   if (tool) {
-    const toolUseId = tool[2] ?? "";
-    const message = messageBySeq(path, Number(tool[1]));
+    const { toolUseId } = tool;
+    const message = messageBySeq(path, tool.seq);
     if (!message) return undefined;
     const use = message.content.find(
       (block) => block.type === "tool_use" && block.id === toolUseId,

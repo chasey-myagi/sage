@@ -14,12 +14,13 @@ export {
   systemReminder,
   toolCatalog,
 } from "./claims/index.js";
+export { toolUseIdOfChunk } from "./compiler/chunks.js";
 export type { ClaimProvider } from "./compiler/claim.js";
 export {
   contextCompiler,
   DEFAULT_COMPILER_BUDGET,
 } from "./compiler/compiler.js";
-export { expandTool } from "./compiler/expand.js";
+export { EXPAND_TOOL_NAME, expandTool } from "./compiler/expand.js";
 export {
   costTierPolicy,
   sensitivePolicy,

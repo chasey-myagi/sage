@@ -99,52 +99,20 @@ export function isLoggedMessage(path: SessionPath, message: Message): boolean {
 }
 
 /**
- * Maps each passthrough-projected message to its Log `seq`. A synthetic
- * message the projection inserts to close dangling tool_use blocks gets -1.
- * Callers check that the length matches the projected message count.
+ * Maps each passthrough-projected message to its Log `seq`, in projection
+ * order. Reads the passthrough manifest's `chunks`: a projected message's
+ * chunk id is its source entry's id, and a synthesized tool_result message's
+ * chunk id names no entry, so it gets -1.
  */
-export function projectionSeqs(path: SessionPath): number[] {
-  const seqs: number[] = [];
-  const open: string[] = [];
-  const flush = () => {
-    if (open.length === 0) return;
-    open.length = 0;
-    seqs.push(-1);
-  };
+export function projectedSeqs(
+  path: SessionPath,
+  chunks: readonly { id: string }[],
+): number[] {
+  const seqById = new Map<string, number>();
   for (const entry of path) {
-    if (entry.kind !== "message" || !isMessage(entry.payload)) continue;
-    if (entry.payload.role === "assistant" && open.length > 0) flush();
-    let kept = 0;
-    const opened: string[] = [];
-    for (const block of entry.payload.content) {
-      if (block.type === "tool_result") {
-        const index = open.indexOf(block.toolUseId);
-        if (index === -1) continue;
-        open.splice(index, 1);
-        kept += 1;
-        continue;
-      }
-      kept += 1;
-      if (block.type === "tool_use") opened.push(block.id);
-    }
-    if (kept === 0) continue;
-    seqs.push(entry.seq);
-    open.push(...opened);
+    if (entry.kind === "message") seqById.set(entry.id, entry.seq);
   }
-  if (open.length > 0) flush();
-  return seqs;
-}
-
-/**
- * Throws when the seq map and the passthrough projection disagree in
- * length. That is a kernel defect, not a recoverable input.
- */
-export function assertSeqsMatch(seqCount: number, messageCount: number): void {
-  if (seqCount !== messageCount) {
-    throw new Error(
-      `projected seqs (${seqCount}) do not match passthrough messages (${messageCount})`,
-    );
-  }
+  return chunks.map((chunk) => seqById.get(chunk.id) ?? -1);
 }
 
 /**
