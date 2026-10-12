@@ -11,15 +11,10 @@
  * `(measured − overheadTokens) / estimated`. No usage, or a zero estimate,
  * yields undefined; callers then use ratio 1 and overhead 0. Callers scale
  * block tokens by the raw ratio, including when that ratio is above 1.
- * `expectedFrozenPrefix` reads the previous manifest's own calibration
- * and that manifest's `budget.frozenTokens`:
- * `overheadTokens + ratio × frozenTokens`. No calibration on that manifest
- * uses overhead 0 and ratio 1; a manifest whose calibration lacks
- * `overheadTokens` also uses overhead 0. The product is the frozen-prefix
- * estimate the previous turn emitted, so a later epoch's re-anchored
- * overhead is not applied to the earlier freeze. An overhead below 0 is
- * stored as 0: a negative overhead makes new-view tokens negative and the
- * cost check reopens immediately.
+ * An overhead below 0 is stored as 0: a negative overhead makes new-view
+ * tokens negative and the cost check reopens immediately.
+ * `expectedFrozenPrefix` reads only the previous manifest's own
+ * calibration, never the current epoch's re-anchored overhead.
  *
  * Intentionally not in the Log: these functions. The manifest stores the
  * resulting calibration object.
@@ -86,7 +81,10 @@ export function calibrationFor(
 /**
  * The frozen-prefix read the previous manifest predicted:
  * `overheadTokens + ratio × budget.frozenTokens` from that manifest's own
- * calibration, else overhead 0 and ratio 1. 0 without a previous manifest.
+ * calibration. A manifest without calibration uses overhead 0 and ratio 1;
+ * a calibration without `overheadTokens` uses overhead 0. A later epoch's
+ * re-anchored overhead is not applied to the earlier freeze. 0 without a
+ * previous manifest.
  */
 export function expectedFrozenPrefix(path: readonly StoredEntry[]): number {
   const manifest = previousManifest(path);

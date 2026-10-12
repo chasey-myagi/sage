@@ -88,11 +88,11 @@ system prompt 是固定的几行；system prompt 与工具 schema 不变时，�
 
 ## 路由
 
-默认梯子只有当前型号。多家 key 都在时，阶段重开不会改跑更便宜的型号。要跨型号，显式传 `--ladder provider/model,provider/model`，在这些档里选目录 input 价最低、且这次视图允许的那一档。新视图碰到 `.env` 或 `secrets` 时，非当前 provider 的档会被拿掉。`--help` 里有同一行说明。
+默认梯子只有当前型号。多家 key 都在时，阶段重开不会改跑更便宜的型号。要跨型号，显式传 `--ladder provider/model,provider/model`，在这些档里选目录 input 价最低、且这次视图允许的那一档。新视图碰到 `.env` 或 `secrets` 时，非当前 provider 的档会被拿掉。`--help` 只列出 `--ladder` 的写法，不含这段说明。
 
 ## `--provider`
 
-`--provider <name>` 选用预设。`--base-url` 覆盖该预设的基址，`--api-key-env` 覆盖读哪一个环境变量。没拿到 key 时退出 2，stderr 点名这个变量。不认识的预设退出 1。`--provider typesafe` 被拒绝并退出 1：目录里那一行是给 Jev 打分计价的，不是对话端点。没写 `--provider` 时，按 deepseek、dashscope、moonshot、openai、anthropic 取第一个已经设了 key 的预设；一个都没有时退出 1。显式 `--provider` 盖住这个顺序。不写 `--model` 时用该 provider 目录的第一条：deepseek 是 `deepseek-v4-pro`，`deepseek-flash` 用 `--model` 选。每个已经设了 key 的预设都会装上适配器：OpenAI 兼容的几家是同一个适配器类，基址不同。
+`--provider <name>` 选用预设。`--base-url` 覆盖该预设的基址，`--api-key-env` 覆盖读哪一个环境变量。没拿到 key 时退出 2，stderr 点名这个变量。不认识的预设退出 1。`--provider typesafe` 被拒绝并退出 1：目录里那一行是给 Jev 打分计价的，不是对话端点。没写 `--provider` 时，按 deepseek、dashscope、moonshot、openai、anthropic 取第一个已经设了 key 的预设；一个都没有时退出 1。显式 `--provider` 盖住这个顺序。不写 `--model` 时用该 provider 目录的第一条：deepseek 是 `deepseek-flash`，`deepseek-v4-pro` 用 `--model` 选。每个已经设了 key 的预设都会装上适配器：OpenAI 兼容的几家是同一个适配器类，基址不同。
 
 | provider | base URL | 环境变量 | api |
 | --- | --- | --- | --- |

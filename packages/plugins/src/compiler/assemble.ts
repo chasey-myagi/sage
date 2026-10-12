@@ -78,8 +78,9 @@ export type AssembleInput = {
 };
 
 /**
- * How to assemble: `freezeHead` reuses the epoch's stored head message;
- * `frozen` holds the epoch's frozen chunk decisions, if any.
+ * How to assemble: `freezeHead` reuses the epoch's stored prefix message
+ * (`view_epoch.details.prefixMessage`); `frozen` holds the epoch's frozen
+ * chunk decisions, if any.
  */
 export type AssembleMode = {
   freezeHead: boolean;
@@ -127,7 +128,7 @@ export async function collectClaims(
  * The epoch-head message is rendered once per epoch. With `freezeHead`,
  * later turns reuse `view_epoch.details.prefixMessage` unless that message is
  * itself a logged history message, and ignore the providers' current
- * epoch-head text. Otherwise a non-empty head is rendered and
+ * epoch-head text. Otherwise a non-empty epoch-head message is rendered and
  * `epochStart.reason` is `compiler:first-turn`. Claims get the budget
  * first; chunks share what is left. Tail claims are recomputed every turn
  * and appended to the last message when it is a user message, else as a
