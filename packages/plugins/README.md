@@ -135,7 +135,7 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 一条管道按第一级判，后面的读取类各级只是过滤：`cat a | grep x | head` 是读取类。后面出现运行类时两者合并：`grep -l x | xargs rm` 是混合。bash 工具用 `sh -c` 执行，不开 `pipefail`，管道的退出码是最后一级的：`pnpm test 2>&1 | tail -50` 失败了 `isError` 也是 false。所以第一级是运行类、后面还有级时判为混合；命令里出现 `pipefail`（例如 `set -o pipefail; …`）时仍按运行类。各部分合起来全是读取类（或只剩中性部分）为 `reader`，全是运行类为 `runner`，否则 `mixed`。
 
-判断只看文本，已知的偏差：不认识的命令（包括 `python -c` 读文件）按运行类，跑通时会被摘成桩行，模型要原文得 `expand`；`git tag -l 'v*'` 这类带位置参数的列举按运行类；`[[ a > b ]]`、`(( x > 3 ))` 里引号外的比较符 `>` 会被当成写文件，判成运行类。
+判断只看文本，已知的偏差：不认识的命令（包括 `python -c` 读文件）按运行类，跑通时会被摘成桩行，模型要原文得 `expand`；`git tag -l 'v*'` 这类带位置参数的列举按运行类；`[[ a > b ]]`、`(( x > 3 ))` 里引号外的比较符 `>` 会被当成写文件，判成运行类。包装命令的选项按同一张带值表跳过，`sudo -n`、`sudo -E` 后面的读取命令会被判成运行类。下面几种会多留原文：`$(…)` 和反引号里的运行命令看不到；单个 `&` 不切分；`f() { … }` 按 `f()` 判；`>& file` 一律当描述符复制；`exit` 不算中性；引号里出现的 `<<EOF` 也会被当成 heredoc 开头，后面的行被当正文丢掉。
 
 `modelScorer` 用调用方注入的 adapter 打一次分。请求的 `head`（system 和 tools）以及此前的 messages 与上一轮主请求逐字节相同，`toolChoice` 为 `"none"`，只在末尾多一条 user 消息：固定指令、当前问题、以及候选清单 `[{id, tool, summary, tokens}]`。用不到的 tools 也照带。少一个 tool 或换掉 system，缓存前缀会从第一个 token 断开，辅助调用就变成把整段历史再付一遍。`tool_choice` 不改这些字节。候选超过 60 个时丢掉最旧的。`timeoutMs` 默认 20000。
 

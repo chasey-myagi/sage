@@ -81,6 +81,19 @@ describe("classifyBashCommand", () => {
     expect(classifyBashCommand("pnpm test 2>&1 | tail -50")).toBe("mixed");
   });
 
+  it("treats pipefail only as a set option that comes before the pipeline", () => {
+    expect(classifyBashCommand("pnpm test 'pipefail' | tail -5")).toBe("mixed");
+    expect(classifyBashCommand("pnpm test --grep pipefail | tail -5")).toBe(
+      "mixed",
+    );
+    expect(classifyBashCommand("pnpm test | tail; set -o pipefail")).toBe(
+      "mixed",
+    );
+    expect(classifyBashCommand("set -o pipefail && pnpm test | tail")).toBe(
+      "runner",
+    );
+  });
+
   it("keeps a piped runner a runner when the command sets pipefail", () => {
     expect(
       classifyBashCommand("set -o pipefail; pnpm test 2>&1 | tail -50"),

@@ -227,6 +227,9 @@ const SORT_OUTPUT_FLAG = /^(?:-[A-Za-z]*o|--output)/;
  */
 const PIPEFAIL_OPTION = "pipefail";
 
+/** The builtin that turns `pipefail` on. */
+const SET_COMMAND = "set";
+
 /** A leading `NAME=value` word, skipped before the command name. */
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
@@ -257,13 +260,27 @@ const HEREDOC_START = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/;
  */
 export function classifyBashCommand(command: string): BashKind {
   const parts = splitParts(withoutHeredocBodies(command));
-  const pipefail = parts.some((stages) =>
-    stages.some((words) => words.some((w) => w.text === PIPEFAIL_OPTION)),
-  );
-  const kinds = parts
-    .map((stages) => pipelineKind(stages, pipefail))
-    .filter((kind) => kind !== "neutral");
+  const kinds: BashKind[] = [];
+  let pipefail = false;
+  for (const stages of parts) {
+    const kind = pipelineKind(stages, pipefail);
+    if (kind !== "neutral") kinds.push(kind);
+    pipefail ||= setsPipefail(stages);
+  }
   return combine(kinds);
+}
+
+/**
+ * Whether a part is a `set` that turns on `pipefail` outside quotes. It
+ * only affects the parts after it, so a later `set -o pipefail` or the word
+ * inside an argument does not count.
+ */
+function setsPipefail(stages: readonly Word[][]): boolean {
+  return stages.some(
+    (words) =>
+      words[0]?.text === SET_COMMAND &&
+      words.some((w) => w.bare === PIPEFAIL_OPTION),
+  );
 }
 
 /** `reader` or `runner` when every kind agrees (an empty list reads). */
