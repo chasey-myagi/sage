@@ -16,11 +16,18 @@ import type { Chunk } from "./chunks.js";
 /** Maximum characters of the one-line tool input shown in a stub. */
 const INPUT_LINE_LIMIT = 80;
 
-/** One-line summary of a tool input, at most `INPUT_LINE_LIMIT` characters. */
-export function summarizeInput(input: unknown): string {
+/**
+ * One-line summary of a tool input: a string with whitespace collapsed, or
+ * compact JSON, at most `limit` characters (default `INPUT_LINE_LIMIT`),
+ * cut with `…`.
+ */
+export function summarizeInput(
+  input: unknown,
+  limit = INPUT_LINE_LIMIT,
+): string {
   const line = compact(input);
-  if (line.length <= INPUT_LINE_LIMIT) return line;
-  return `${line.slice(0, INPUT_LINE_LIMIT - 1)}…`;
+  if (line.length <= limit) return line;
+  return `${line.slice(0, limit - 1)}…`;
 }
 
 /**

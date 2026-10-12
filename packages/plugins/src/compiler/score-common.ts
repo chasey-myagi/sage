@@ -27,6 +27,22 @@ export const SCORE_TIERS: ReadonlySet<Tier> = new Set<Tier>([
 /** Maximum characters of a scorer's summary note kept on the chunk. */
 export const SUMMARY_LIMIT = 200;
 
+/** A summary note shorter than this many characters is not locatable. */
+const SUMMARY_MIN_CHARS = 20;
+/** Path, extension, digit, camelCase, or snake_case. */
+const SUMMARY_ANCHOR =
+  /(?:[/\\]|\.[A-Za-z0-9]{1,8}\b|\d|[A-Za-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*|[A-Za-z0-9]+_[A-Za-z0-9_]+)/;
+
+/**
+ * True when a note lets the model find the evidence again: at least
+ * `SUMMARY_MIN_CHARS` characters and one path, extension, digit,
+ * camelCase, or snake_case token. Entry scoring rejects other notes; the
+ * jev scorer builds no summary that fails it.
+ */
+export function isLocatableSummary(summary: string): boolean {
+  return summary.length >= SUMMARY_MIN_CHARS && SUMMARY_ANCHOR.test(summary);
+}
+
 /**
  * Scorer calls to report for one `score` result: 0 when the scorer fell back
  * before sending any request (`requested: false`), otherwise 1. Rebuild,

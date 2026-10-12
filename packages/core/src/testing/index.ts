@@ -1,8 +1,9 @@
 /**
  * Test harness public surface: `@sage/core/testing`, not part of the kernel
  * index. The faux provider, replay, snapshots, the credential strip, the
- * scripted SSE `fetch`, and the `LogFs` double live here so a test can run without an API key or a real
- * disk fault; every package's tests take their doubles from here.
+ * scripted SSE `fetch`, the recording JSON `fetch`, and the `LogFs` double
+ * live here so a test can run without an API key or a real disk fault;
+ * every package's tests take their doubles from here.
  *
  * Guarantees: `setup.ts` is a vitest setupFile only and is not re-exported,
  * so importing this module does not strip the caller's environment.
@@ -24,6 +25,11 @@ export {
   toolScript,
 } from "./faux.js";
 export { expectFile } from "./files.js";
+export {
+  type JsonFetchReply,
+  type JsonFetchRequest,
+  jsonFetch,
+} from "./json-fetch.js";
 export { nodeLogFs } from "./log-fs.js";
 export { renderLlmInput } from "./render.js";
 export { loadCase, replaySession } from "./replay.js";
