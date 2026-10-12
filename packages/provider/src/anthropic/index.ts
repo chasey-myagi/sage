@@ -22,13 +22,14 @@ import type {
   ModelRef,
   Request,
 } from "../contract/message.js";
+import { finiteOr } from "../contract/record.js";
 import type { StreamChunk } from "../contract/stream.js";
 import type { Usage } from "../contract/usage.js";
 import type { Driver, WireStop } from "../drive.js";
 import { blockStart, driveStream } from "../drive.js";
 import { type Client, type ClientOptions, resolveClient } from "../http.js";
 import { normalizeForApi } from "../normalize.js";
-import { asRecord, indexOf, num, parseRecord } from "../record.js";
+import { asRecord, indexOf, parseRecord } from "../record.js";
 import type { SseEvent } from "../sse.js";
 
 const DEFAULT_BASE = "https://api.anthropic.com";
@@ -299,10 +300,10 @@ function wireBlockType(type: string): ContentBlock["type"] | undefined {
 
 function mapUsage(raw: Record<string, unknown>): Usage {
   return {
-    inputOther: num(raw.input_tokens),
-    inputCacheRead: num(raw.cache_read_input_tokens),
-    inputCacheCreation: num(raw.cache_creation_input_tokens),
-    output: num(raw.output_tokens),
+    inputOther: finiteOr(raw.input_tokens, 0),
+    inputCacheRead: finiteOr(raw.cache_read_input_tokens, 0),
+    inputCacheCreation: finiteOr(raw.cache_creation_input_tokens, 0),
+    output: finiteOr(raw.output_tokens, 0),
     raw,
   };
 }

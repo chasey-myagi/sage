@@ -53,7 +53,7 @@ import {
 } from "@sage/provider";
 import { type BashExec, createTools, type ToolSandbox } from "@sage/tools";
 import { BENCH_WORKSPACE_PREFIX } from "./bench/types.js";
-import type { LadderRung, ScorerApply } from "./options.js";
+import type { ScorerApply } from "./options.js";
 
 /** Where a session's Log lives, relative to its cwd. */
 export const SESSION_LOG_SUBDIR = path.join(SAGE_DIR_NAME, "sessions");
@@ -98,7 +98,7 @@ type CodingSessionOptions = {
   scorer?: Scorer;
   shadowScorer?: Scorer;
   scorerApply?: ScorerApply;
-  ladder?: readonly LadderRung[];
+  ladder?: readonly ModelRef[];
   /** Home dir for user-level subtask presets. */
   home?: string;
 };
@@ -176,7 +176,7 @@ export function createCodingSession(opts: CodingSessionOptions): CodingSession {
 export function defaultRoutePolicy(
   providers: readonly string[],
   home: string,
-  ladder?: readonly LadderRung[],
+  ladder?: readonly ModelRef[],
 ): RoutePolicy {
   const unique = [...new Set(providers)];
   const candidates = unique.flatMap((provider) => [...listModels(provider)]);

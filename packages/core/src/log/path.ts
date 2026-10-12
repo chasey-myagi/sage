@@ -10,7 +10,11 @@
  * Intentionally not in the Log: these are reads; nothing here appends.
  */
 
-import { isRecord, type Message } from "@sage/provider/contract";
+import {
+  isFiniteNumber,
+  isRecord,
+  type Message,
+} from "@sage/provider/contract";
 import type { RequestHeaderPayload } from "./kinds.js";
 import type { StoredEntry } from "./types.js";
 
@@ -20,7 +24,7 @@ export function viewEpochs(path: readonly StoredEntry[]): number[] {
   for (const entry of path) {
     if (entry.kind !== "view_epoch" || !isRecord(entry.payload)) continue;
     const epoch = entry.payload.epoch;
-    if (typeof epoch === "number" && Number.isFinite(epoch)) epochs.push(epoch);
+    if (isFiniteNumber(epoch)) epochs.push(epoch);
   }
   return epochs;
 }

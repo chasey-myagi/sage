@@ -9,6 +9,8 @@
  * separate entry kind.
  */
 
+import { finiteOr, isRecord } from "./record.js";
+
 /** The four token counts, without the provider payload or retry details. */
 export type TokenCounts = {
   inputOther: number;
@@ -57,4 +59,19 @@ export function inputTokens(usage: TokenCounts): number {
 /** Input plus output tokens. */
 export function totalTokens(usage: TokenCounts): number {
   return inputTokens(usage) + usage.output;
+}
+
+/**
+ * Reads the four counts of a usage object read back from the Log or another
+ * untrusted source. Returns undefined for a non-object; a missing or
+ * non-finite count reads as 0. `raw` and `details` are dropped.
+ */
+export function readTokenCounts(value: unknown): TokenCounts | undefined {
+  if (!isRecord(value)) return undefined;
+  return {
+    inputOther: finiteOr(value.inputOther, 0),
+    inputCacheRead: finiteOr(value.inputCacheRead, 0),
+    inputCacheCreation: finiteOr(value.inputCacheCreation, 0),
+    output: finiteOr(value.output, 0),
+  };
 }

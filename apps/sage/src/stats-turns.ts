@@ -16,7 +16,9 @@
  */
 
 import {
+  finiteOr,
   type HealthTokens,
+  isFiniteNumber,
   isMessage,
   isRecord,
   isTier,
@@ -28,7 +30,6 @@ import {
   type Tier,
 } from "@sage/core";
 import type { ModelRef } from "@sage/provider/contract";
-import { isFiniteNumber } from "./guards.js";
 
 /** A chunk whose tier changed between two turns of the same epoch. */
 export type TierFlip = { id: string; from: Tier; to: Tier };
@@ -187,9 +188,9 @@ function readManifest(payload: unknown): ManifestView | undefined {
 function readBudget(value: unknown): TurnRow["budget"] {
   if (!isRecord(value)) return null;
   return {
-    used: finiteOrZero(value.used),
-    omitted: finiteOrZero(value.omitted),
-    expands: finiteOrZero(value.expands),
+    used: finiteOr(value.used, 0),
+    omitted: finiteOr(value.omitted, 0),
+    expands: finiteOr(value.expands, 0),
   };
 }
 
@@ -287,8 +288,4 @@ function toolResultIds(entry: StoredEntry): string[] {
       ? [block.toolUseId]
       : [],
   );
-}
-
-function finiteOrZero(value: unknown): number {
-  return isFiniteNumber(value) ? value : 0;
 }

@@ -14,7 +14,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { errorText, type HarnessTool } from "@sage/core";
 import { pathAccess } from "./access.js";
@@ -34,6 +34,7 @@ import {
   SKIPPED_DIR_NAMES,
   workspaceRelative,
 } from "./path-safety.js";
+import { walkWorkspaceFiles } from "./walk.js";
 
 /** Default `max_results` of a grep call. */
 export const GREP_MAX_RESULTS = 200;
@@ -176,42 +177,8 @@ function collectHits(
   glob: RegExp | undefined,
 ): Hit[] {
   const hits: Hit[] = [];
-  let rootStat: ReturnType<typeof statSync>;
-  try {
-    rootStat = statSync(root);
-  } catch {
-    return hits;
-  }
-  if (rootStat.isFile()) {
-    pushFile(hits, cwd, root, regex, glob);
-    return hits;
-  }
-  const stack = [root];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) break;
-    let entries: {
-      name: string;
-      isSymbolicLink(): boolean;
-      isDirectory(): boolean;
-      isFile(): boolean;
-    }[];
-    try {
-      entries = readdirSync(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (SKIPPED_DIR_NAMES.has(entry.name)) continue;
-      const abs = path.join(current, entry.name);
-      if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) {
-        stack.push(abs);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      pushFile(hits, cwd, abs, regex, glob);
-    }
+  for (const abs of walkWorkspaceFiles(root)) {
+    pushFile(hits, cwd, abs, regex, glob);
   }
   hits.sort(compareHits);
   return hits;

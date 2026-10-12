@@ -19,13 +19,14 @@
 import { prepareModel, resolveMaxTokens } from "../catalog.js";
 import type { PreparedCall, ProviderAdapter } from "../contract/adapter.js";
 import type { Message, ModelRef, Request } from "../contract/message.js";
+import { finiteOr } from "../contract/record.js";
 import type { StreamChunk } from "../contract/stream.js";
 import type { Usage } from "../contract/usage.js";
 import type { Driver, WireStop } from "../drive.js";
 import { blockStart, driveStream } from "../drive.js";
 import { type Client, type ClientOptions, resolveClient } from "../http.js";
 import { normalizeForApi } from "../normalize.js";
-import { asRecord, indexOf, num, parseRecord } from "../record.js";
+import { asRecord, indexOf, parseRecord } from "../record.js";
 import type { SseEvent } from "../sse.js";
 
 const DEFAULT_BASE = "https://api.openai.com/v1";
@@ -305,13 +306,13 @@ function firstRecord(value: unknown): Record<string, unknown> | undefined {
  * so `inputCacheCreation` is 0. `raw` is the provider object unchanged.
  */
 function mapUsage(raw: Record<string, unknown>): Usage {
-  const output = num(raw.completion_tokens);
+  const output = finiteOr(raw.completion_tokens, 0);
   if ("prompt_cache_hit_tokens" in raw) {
-    const hit = num(raw.prompt_cache_hit_tokens);
+    const hit = finiteOr(raw.prompt_cache_hit_tokens, 0);
     const miss =
       "prompt_cache_miss_tokens" in raw
-        ? num(raw.prompt_cache_miss_tokens)
-        : num(raw.prompt_tokens) - hit;
+        ? finiteOr(raw.prompt_cache_miss_tokens, 0)
+        : finiteOr(raw.prompt_tokens, 0) - hit;
     return {
       inputOther: miss,
       inputCacheRead: hit,
@@ -322,9 +323,9 @@ function mapUsage(raw: Record<string, unknown>): Usage {
   }
   const details = asRecord(raw.prompt_tokens_details);
   if (details && "cached_tokens" in details) {
-    const cached = num(details.cached_tokens);
+    const cached = finiteOr(details.cached_tokens, 0);
     return {
-      inputOther: num(raw.prompt_tokens) - cached,
+      inputOther: finiteOr(raw.prompt_tokens, 0) - cached,
       inputCacheRead: cached,
       inputCacheCreation: 0,
       output,
@@ -332,7 +333,7 @@ function mapUsage(raw: Record<string, unknown>): Usage {
     };
   }
   return {
-    inputOther: num(raw.prompt_tokens),
+    inputOther: finiteOr(raw.prompt_tokens, 0),
     inputCacheRead: 0,
     inputCacheCreation: 0,
     output,

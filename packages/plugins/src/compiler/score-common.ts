@@ -4,15 +4,15 @@
  *
  * Contract: a scorer may only move a tool chunk to none, summary, or full;
  * any other tier in its reply is ignored. A summary note is cut to
- * `SUMMARY_LIMIT` characters. Usage copied onto the manifest has every
- * field coerced to a finite number.
+ * `SUMMARY_LIMIT` characters. Usage copied onto the manifest goes through
+ * `readTokenCounts`, so every count is a finite number.
  *
  * Intentionally not in the Log: these helpers and the request they build.
  * The scorer's decisions reach the Log only as manifest rows and reports.
  */
 
 import type { CompiledView, ViewContext } from "@sage/core";
-import type { Message, Request, Usage } from "@sage/provider/contract";
+import type { Message, Request } from "@sage/provider/contract";
 import type { ScoreResult } from "../scorer/types.js";
 import type { Tier } from "./claim.js";
 import { latestHeader } from "./log-read.js";
@@ -40,20 +40,6 @@ export function requestCount(result: Pick<ScoreResult, "requested">): number {
 export function clampSummary(summary: string): string {
   if (summary.length <= SUMMARY_LIMIT) return summary;
   return summary.slice(0, SUMMARY_LIMIT);
-}
-
-/** Copies usage with each field coerced to a finite number, else 0. */
-export function finiteUsage(usage: Usage): Usage {
-  return {
-    inputOther: finiteNumber(usage.inputOther),
-    inputCacheRead: finiteNumber(usage.inputCacheRead),
-    inputCacheCreation: finiteNumber(usage.inputCacheCreation),
-    output: finiteNumber(usage.output),
-  };
-}
-
-function finiteNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 /**

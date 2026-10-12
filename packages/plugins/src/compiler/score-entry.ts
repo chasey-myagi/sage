@@ -13,7 +13,7 @@
  * re-tiered rows and `manifest.entryScored` are the record.
  */
 
-import type { EntryScoredReport } from "@sage/core";
+import { type EntryScoredReport, readTokenCounts } from "@sage/core";
 import type { Request, Usage } from "@sage/provider/contract";
 import type { ScoreDecision, ScoreResult, Scorer } from "../scorer/types.js";
 import { applyDecisions } from "./apply.js";
@@ -30,12 +30,7 @@ import {
   stubRow,
   summaryRow,
 } from "./rows.js";
-import {
-  clampSummary,
-  finiteUsage,
-  requestCount,
-  SCORE_TIERS,
-} from "./score-common.js";
+import { clampSummary, requestCount, SCORE_TIERS } from "./score-common.js";
 import type { ScoredView } from "./score-rebuild.js";
 
 /**
@@ -234,12 +229,13 @@ function entryReport(
   usage?: Usage,
   summaryRejected = 0,
 ): EntryScoredReport {
+  const counts = readTokenCounts(usage);
   return {
     calls,
     none,
     summary,
     full,
     summaryRejected,
-    ...(usage ? { usage: finiteUsage(usage) } : {}),
+    ...(counts ? { usage: counts } : {}),
   };
 }

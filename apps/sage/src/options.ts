@@ -15,6 +15,7 @@
  */
 
 import { parseArgs as tokenizeArgv } from "node:util";
+import { type ModelRef, parseModelRef } from "@sage/provider/contract";
 import type { ToolNetwork } from "@sage/tools";
 
 /** Scorers a compiler run can install: rule, model, or TypeSafe Jev. */
@@ -36,9 +37,6 @@ export const BENCH_POLICIES = ["passthrough", "compiler"] as const;
 export type BenchPolicy = (typeof BENCH_POLICIES)[number];
 
 const TOOL_NETWORKS = ["none", "full"] as const satisfies ToolNetwork[];
-
-/** One `provider/model` step of an explicit route ladder. */
-export type LadderRung = { provider: string; model: string };
 
 type OptionSpec = {
   type: "string" | "boolean";
@@ -242,20 +240,17 @@ export function checkChoice<T extends string>(
  * Parses `provider/model` rungs separated by commas. Blank rungs are
  * skipped; returns undefined when none remain or a rung lacks either side.
  */
-export function parseLadder(value: string): LadderRung[] | undefined {
+export function parseLadder(value: string): ModelRef[] | undefined {
   const parts = value
     .split(",")
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
   if (parts.length === 0) return undefined;
-  const ladder: LadderRung[] = [];
+  const ladder: ModelRef[] = [];
   for (const part of parts) {
-    const slash = part.indexOf("/");
-    if (slash <= 0 || slash === part.length - 1) return undefined;
-    ladder.push({
-      provider: part.slice(0, slash),
-      model: part.slice(slash + 1),
-    });
+    const rung = parseModelRef(part);
+    if (!rung) return undefined;
+    ladder.push(rung);
   }
   return ladder;
 }

@@ -18,10 +18,10 @@ import path from "node:path";
 import {
   DEFAULT_MAX_TURNS,
   errorText,
+  isFiniteNumber,
   isRecord,
   type RunHealth,
 } from "@sage/core";
-import { isFiniteNumber } from "../guards.js";
 import { benchUsage } from "./args.js";
 import type {
   BenchIo,

@@ -13,8 +13,8 @@
  * entry records the resolved query, budget, and readOnly.
  */
 
-import { type Access, isRecord } from "@sage/core";
-import type { ModelRef } from "@sage/provider/contract";
+import { type Access, isFiniteNumber, isRecord } from "@sage/core";
+import { isModelRef, type ModelRef } from "@sage/provider/contract";
 import {
   loadPresets,
   type PresetFs,
@@ -102,7 +102,7 @@ export function readTask(input: unknown): TaskInput | undefined {
   if (!hasQuery && !preset) return undefined;
   const task: TaskInput = { query: hasQuery ? String(input.query) : "" };
   if (preset) task.preset = preset;
-  if (typeof input.budget === "number" && Number.isFinite(input.budget)) {
+  if (isFiniteNumber(input.budget)) {
     task.budget = input.budget;
   }
   if (typeof input.readOnly === "boolean") task.readOnly = input.readOnly;
@@ -199,7 +199,7 @@ function readArgs(value: unknown): Record<string, string> | undefined {
   const args: Record<string, string> = {};
   for (const [key, item] of Object.entries(value)) {
     if (typeof item === "string") args[key] = item;
-    else if (typeof item === "number" && Number.isFinite(item)) {
+    else if (isFiniteNumber(item)) {
       args[key] = String(item);
     } else if (typeof item === "boolean") args[key] = String(item);
   }
@@ -207,9 +207,6 @@ function readArgs(value: unknown): Record<string, string> | undefined {
 }
 
 function readModel(value: unknown): ModelRef | undefined {
-  if (!isRecord(value)) return undefined;
-  if (typeof value.provider !== "string" || typeof value.model !== "string") {
-    return undefined;
-  }
+  if (!isModelRef(value)) return undefined;
   return { provider: value.provider, model: value.model };
 }

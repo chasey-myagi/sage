@@ -11,6 +11,7 @@
  * Intentionally not in the Log: argv and the parsed options.
  */
 
+import type { ModelRef } from "@sage/provider/contract";
 import type { ToolNetwork } from "@sage/tools";
 import { benchRunUsage } from "./bench/args.js";
 import { assertNever } from "./guards.js";
@@ -20,7 +21,6 @@ import {
   checkPositiveInt,
   checkToolNetwork,
   type FlagError,
-  type LadderRung,
   type OptionName,
   parseLadder,
   readFlags,
@@ -64,7 +64,7 @@ export type PrintOptions = {
   scorer?: ScorerName;
   shadowScorer?: ScorerName;
   scorerApply?: ScorerApply;
-  ladder?: LadderRung[];
+  ladder?: ModelRef[];
   budget?: number;
   maxTurns?: number;
   /** Last of `--tool-network` / `--tool-sandbox`; absent means `full`. */

@@ -10,7 +10,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { isRecord } from "@sage/core";
+import { isFiniteNumber, isRecord } from "@sage/core";
 import type { BenchTask } from "./types.js";
 
 /**
@@ -27,11 +27,7 @@ export function loadTasks(file: string): BenchTask[] {
 function parseTask(value: unknown, index: number): BenchTask {
   if (!isRecord(value)) throw new Error(`tasks[${index}] is not an object`);
   const timeoutSec = value.timeoutSec;
-  if (
-    typeof timeoutSec !== "number" ||
-    !Number.isFinite(timeoutSec) ||
-    timeoutSec <= 0
-  ) {
+  if (!isFiniteNumber(timeoutSec) || timeoutSec <= 0) {
     throw new Error(`tasks[${index}] timeoutSec must be a positive number`);
   }
   const setupCommand = optionalString(value, "setupCommand", index);

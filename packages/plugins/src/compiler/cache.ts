@@ -9,8 +9,7 @@
  * already on the manifest entries.
  */
 
-import { isRecord, type StoredEntry } from "@sage/core";
-import { finite } from "../guards.js";
+import { finiteOr, isRecord, type StoredEntry } from "@sage/core";
 
 /** One cache-hit row per manifest that recorded both cache numbers. */
 export function cacheHitRatio(
@@ -26,9 +25,9 @@ export function cacheHitRatio(
     if (entry.kind !== "manifest" || !isRecord(entry.payload)) continue;
     const cache = entry.payload.cache;
     if (!isRecord(cache)) continue;
-    const turn = finite(entry.payload.turn);
-    const expected = finite(cache.expectedReadTokens);
-    const measured = finite(cache.measuredReadTokens);
+    const turn = finiteOr(entry.payload.turn, undefined);
+    const expected = finiteOr(cache.expectedReadTokens, undefined);
+    const measured = finiteOr(cache.measuredReadTokens, undefined);
     if (
       turn === undefined ||
       expected === undefined ||

@@ -11,13 +11,16 @@
  * stored on `manifest.shadow`.
  */
 
-import type { CompiledView, ViewContext } from "@sage/core";
+import {
+  type CompiledView,
+  readTokenCounts,
+  type ViewContext,
+} from "@sage/core";
 import type { Message } from "@sage/provider/contract";
 import type { ScoreDecision, ScoreResult, Scorer } from "../scorer/types.js";
 import type { Chunk } from "./chunks.js";
 import { listedChunkIds } from "./log-read.js";
 import {
-  finiteUsage,
   requestCount,
   requestFromCompiled,
   SCORE_TIERS,
@@ -67,7 +70,7 @@ export async function runShadowScorer(input: {
       // entry scoring does.
       return failedShadow(input.scorer, error, 1);
     }
-    const usage = result.usage ? finiteUsage(result.usage) : undefined;
+    const usage = readTokenCounts(result.usage);
     return {
       scorer: input.scorer.name,
       calls: requestCount(result),

@@ -11,7 +11,13 @@
 import "./log/kinds.js";
 
 /** Re-exported so packages that depend only on core share the one definition. */
-export { errorText, isRecord } from "@sage/provider/contract";
+export {
+  errorText,
+  finiteOr,
+  isFiniteNumber,
+  isRecord,
+  readTokenCounts,
+} from "@sage/provider/contract";
 export { type HealthTokens, type RunHealth, runHealth } from "./health.js";
 export {
   InvalidEntryError,

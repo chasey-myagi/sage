@@ -345,6 +345,32 @@ it("retries 529 and stops after three failed retries", async () => {
   expect(exhausted).toEqual({ decisions: [], fallback: "http:429" });
 });
 
+it("hands the caller's signal to the retry wait and does not fetch again once it aborts", async () => {
+  const controller = new AbortController();
+  let attempts = 0;
+  const waits: (AbortSignal | undefined)[] = [];
+  const result = await jevScorer({
+    apiKey: "k",
+    fetchImpl: async () => {
+      attempts += 1;
+      return new Response("busy", { status: 429 });
+    },
+    sleepImpl: async (_ms, signal) => {
+      waits.push(signal);
+      controller.abort();
+    },
+  }).score({
+    candidates: [chunk("a", 1)],
+    prevRequest: undefined,
+    query: "q",
+    signal: controller.signal,
+  });
+  expect(waits).toHaveLength(1);
+  expect(waits[0]?.aborted).toBe(true);
+  expect(attempts).toBe(1);
+  expect(result).toEqual({ decisions: [], fallback: "aborted" });
+});
+
 it("falls back on timeout and does not retry", async () => {
   let attempts = 0;
   const fetchImpl = (_url: string, init?: FetchInit) => {
