@@ -14,9 +14,10 @@
  * chunks are swept against the `--label` later-use label (default
  * `content`); every chunk row carries both labels, and read probes only
  * report their answer. Exit 0 when every request was answered, 2 when
- * cumulative spend passed `--max-usd` mid-run, 1 when a request failed or the rate-limit breaker
- * opened, for a missing key, a bad argument (with the usage), or an
- * unreadable file. Outputs hold ids, counts, and prices, never chunk text.
+ * cumulative spend passed `--max-usd` mid-run, 1 when a request failed or
+ * the rate-limit breaker opened, for a missing key, a bad argument (with
+ * the usage), or an unreadable file. Outputs hold ids, counts, and
+ * prices, never chunk text.
  *
  * Intentionally not in the Log: everything this command reads or writes.
  * The recorded sessions are only read.

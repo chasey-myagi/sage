@@ -216,6 +216,12 @@ export function defaultRoutePolicy(
   };
 }
 
+/**
+ * Starts the root system prompt's last line, followed by the workspace
+ * root. Offline labels read the root back from `request_header.system`.
+ */
+export const WORKSPACE_LINE_PREFIX = "Workspace: ";
+
 /** The root system prompt. Model-visible; changing it changes every request. */
 function systemPrompt(cwd: string): string {
   return [
@@ -223,7 +229,7 @@ function systemPrompt(cwd: string): string {
     "Complete the task in the workspace using the provided tools.",
     "Read before editing. Use edit for a single exact replacement.",
     "Stop when the task is done.",
-    `Workspace: ${cwd}`,
+    `${WORKSPACE_LINE_PREFIX}${cwd}`,
   ].join("\n");
 }
 

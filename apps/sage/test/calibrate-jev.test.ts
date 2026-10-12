@@ -673,7 +673,7 @@ describe("sage calibrate-jev", () => {
       row.content,
     ]);
     // Without expand, touch never marks a grep; content marks grep3, whose
-    // output is where the edited c.txt line first appeared.
+    // output holds the nearest copy of the edited c.txt line.
     expect(labels).toEqual([
       ["read0", true, false],
       ["grep1", false, false],

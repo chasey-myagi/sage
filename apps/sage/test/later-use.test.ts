@@ -51,11 +51,15 @@ function writeWorkspace(): void {
 /**
  * Records a real compiler session that makes `calls` in order, so the
  * Log, tool results, and manifests all come from the production path.
+ * A function gets the workspace root, for calls that name absolute paths.
  */
-async function recordSession(calls: readonly Call[]): Promise<Entry[]> {
+async function recordSession(
+  calls: readonly Call[] | ((root: string) => readonly Call[]),
+): Promise<Entry[]> {
   writeWorkspace();
+  const script = typeof calls === "function" ? calls(dir) : calls;
   const faux = createFaux([
-    ...calls.map((call) =>
+    ...script.map((call) =>
       toolScript(call.id, call.tool, JSON.stringify(call.input)),
     ),
     stopScript("done"),
@@ -143,7 +147,7 @@ async function labelsOf(
 }
 
 describe("later-use labels in sage stats", () => {
-  it("credits an edit's old_string to the re-read that introduced it, not the earlier read of the same path", async () => {
+  it("credits an edit's old_string to the re-read whose new text holds it, not the earlier read of the file before it changed", async () => {
     const entries = await recordSession([
       { id: "read0", tool: "read", input: { path: "a.txt" } },
       {
@@ -192,10 +196,52 @@ describe("later-use labels in sage stats", () => {
     expect(await labelsOf(entries, "run1")).toEqual({ touch: 0, content: 0 });
   });
 
+  it("credits an edit's old_string to the nearest re-read when the file is read twice unchanged", async () => {
+    const entries = await recordSession([
+      { id: "read0", tool: "read", input: { path: "a.txt" } },
+      { id: "read1", tool: "read", input: { path: "a.txt" } },
+      {
+        id: "edit2",
+        tool: "edit",
+        input: {
+          path: "a.txt",
+          old_string: "a line 5\na line 6",
+          new_string: "x",
+        },
+      },
+    ]);
+    expect(await labelsOf(entries, "read0")).toEqual({ touch: 1, content: 0 });
+    expect(await labelsOf(entries, "read1")).toEqual({ touch: 0, content: 1 });
+  });
+
   it("marks a grep used when a path its output named is opened later", async () => {
     const entries = await recordSession([
       { id: "grep0", tool: "grep", input: { pattern: "needle", path: "src" } },
       { id: "read1", tool: "read", input: { path: "src/deep/target.ts" } },
+    ]);
+    expect(await labelsOf(entries, "grep0")).toEqual({ touch: 0, content: 1 });
+  });
+
+  it("matches an absolute read path against the workspace-relative path a grep named", async () => {
+    const entries = await recordSession((root) => [
+      { id: "grep0", tool: "grep", input: { pattern: "needle", path: "src" } },
+      {
+        id: "read1",
+        tool: "read",
+        input: { path: path.join(root, "src", "deep", "target.ts") },
+      },
+    ]);
+    expect(await labelsOf(entries, "grep0")).toEqual({ touch: 0, content: 1 });
+  });
+
+  it("counts a bash cat of a path a grep named as opening it", async () => {
+    const entries = await recordSession((root) => [
+      { id: "grep0", tool: "grep", input: { pattern: "needle", path: "src" } },
+      {
+        id: "cat1",
+        tool: "bash",
+        input: { command: `cd ${root} && cat src/deep/target.ts` },
+      },
     ]);
     expect(await labelsOf(entries, "grep0")).toEqual({ touch: 0, content: 1 });
   });

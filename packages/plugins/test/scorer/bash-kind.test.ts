@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bashFileOperands,
   bashSearchPatterns,
   classifyBashCommand,
   normalizeBashCommand,
@@ -185,9 +186,32 @@ describe("bashSearchPatterns", () => {
     ["cd repo && git log | grep -i fix", ["fix"]],
     ["xargs grep -l marker", ["marker"]],
     ["egrep -- -dash file", ["-dash"]],
+    ["grep -E 'a|b' src", ["a|b"]],
+    ["grep -r needle src", ["needle"]],
+    ["rg -r NEW -E utf8 --color never --sort path needle .", ["needle"]],
+    ["rg --replace NEW --encoding utf8 needle", ["needle"]],
     ["cat a.txt", []],
     ["grep -n", []],
   ])("reads the patterns of %j", (command, patterns) => {
     expect(bashSearchPatterns(command)).toEqual(patterns);
+  });
+});
+
+describe("bashFileOperands", () => {
+  it.each([
+    ["cat src/a.ts", ["src/a.ts"]],
+    ["cd /repo && cat src/a.ts", ["src/a.ts"]],
+    ["sed -n '10,40p' src/a.ts", ["src/a.ts"]],
+    ["sed -e 's/a/b/' -n src/a.ts", ["src/a.ts"]],
+    ["head -n 40 src/a.ts src/b.ts", ["src/a.ts", "src/b.ts"]],
+    ["awk -F, '{print $1}' data.csv", ["data.csv"]],
+    ["wc -l a.ts", ["a.ts"]],
+    ["cat a.ts | grep -n x", ["a.ts"]],
+    ["sed -i 's/a/b/' f.ts", []],
+    ["cat src/*.ts 2>/dev/null", []],
+    ["pnpm test", []],
+    ["grep -n x a.ts", []],
+  ])("reads the files %j opens", (command, files) => {
+    expect(bashFileOperands(command)).toEqual(files);
   });
 });

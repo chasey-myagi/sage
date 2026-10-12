@@ -416,6 +416,11 @@ function pipelineKind(stages: readonly Word[][], pipefail: boolean): PartKind {
   return combine(relevant);
 }
 
+/** Whether one pipeline stage is judged a reader, by the rules above. */
+export function isReaderStage(stage: readonly Word[]): boolean {
+  return stageKind(stage) === "reader";
+}
+
 function stageKind(stage: readonly Word[]): PartKind {
   const words = commandWords(stage);
   if (words === "compound") return "mixed";

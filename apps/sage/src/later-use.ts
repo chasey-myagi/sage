@@ -5,10 +5,11 @@
  * them.
  *
  * Contract: `laterUseIn` is a pure function of the entries; it reads
- * message entries and manifest `turn` only. Two labels come out together:
- * `touch` (the path was touched again) and `content` (text the chunk
- * introduced was used). Both are true for an `expand` of the chunk. The
- * package README defines both and their known biases.
+ * message entries, manifest `turn`, and the `Workspace:` line of
+ * `request_header.system`. Two labels come out together: `touch` (the
+ * path was touched again) and `content` (text the chunk showed was used).
+ * Both are true for an `expand` of the chunk. The package README defines
+ * both and their known biases.
  *
  * Intentionally not in the Log: the labels. They are after-the-fact
  * judgments over what the session already wrote; nothing reads them back.
@@ -16,19 +17,21 @@
 
 import { isFiniteNumber, isRecord, type StoredEntry } from "@sage/core";
 import {
+  bashFileOperands,
   bashSearchPatterns,
   EXPAND_TOOL_NAME,
   normalizeBashCommand,
   toolUseIdOfChunk,
 } from "@sage/plugins";
 import { TOOL_NAMES } from "@sage/tools";
+import { WORKSPACE_LINE_PREFIX } from "./coding-session.js";
 
 /**
  * Whether a chunk was needed after a decision. `touch`: it was expanded,
  * or it is a `read` result whose `path` is read again or edited on a
  * strictly later turn. `content`: it was expanded, a later call used a
- * string its output introduced, or it is a `bash` chunk whose command
- * runs again.
+ * string its output supplied, or it is a `bash` chunk whose command runs
+ * again.
  */
 export type LaterUse = { touch: boolean; content: boolean };
 
@@ -57,13 +60,19 @@ export const LATER_USE_LABELS = [
  * chunk: a one- or two-character pattern or path matches almost any
  * output by chance.
  */
-const MIN_INTRODUCED_CHARS = 3;
+const MIN_CREDITED_CHARS = 3;
 
 /**
- * Joins corpus segments so no match spans two of them. A query that
- * itself contains U+0000 is skipped.
+ * A path suffix used as the last fallback keeps at least this many
+ * segments: `src/a.ts`, never a bare `a.ts`.
  */
-const SEGMENT_SEPARATOR = "\u0000";
+const MIN_SUFFIX_SEGMENTS = 2;
+
+/**
+ * Joins corpus pieces so no match spans two of them. A query that itself
+ * contains U+0000 is skipped.
+ */
+const PIECE_SEPARATOR = "\u0000";
 
 type ToolCall = {
   /** Position of the assistant entry in the Log. */
@@ -74,12 +83,14 @@ type ToolCall = {
   input: unknown;
   /** Corpus offset where the call's assistant message starts. */
   messageStart: number;
+  /** Workspace root of the latest `request_header` before the call. */
+  root: string | undefined;
 };
 
 /**
- * Every message text on the path joined in Log order. A segment whose
- * `toolUseId` is set is that call's tool_result content; other segments
- * are user and assistant text and the string values of tool inputs.
+ * Every message text on the path joined in Log order: user and assistant
+ * text, thinking, the string values of tool inputs, and tool results. A
+ * piece whose `toolUseIds` entry is set is that call's tool_result.
  */
 type Corpus = {
   text: string;
@@ -88,18 +99,27 @@ type Corpus = {
 };
 
 /**
+ * One string a call took from earlier context. `forms` are tried in order
+ * until one has a copy before the call. `copy` picks which copy decides:
+ * `nearest` (the last one before the call) for text copied verbatim,
+ * `first` (where it first appeared) for names.
+ */
+type Query = { forms: string[]; copy: "nearest" | "first" };
+
+/**
  * Builds both labels over `entries` once; each lookup afterwards is a few
  * map reads plus the touch scan over the calls.
  *
- * Content credit, per call made after the chunk: each query string of the
- * call (an `edit`'s `old_string`, a grep tool's `pattern`, the patterns of
- * grep and rg stages in a `bash` command, the `path` of a `read`, `edit`,
- * or `write` with a leading `./` removed) is located at its first
- * occurrence in the corpus. When that occurrence lies in a tool_result
- * before the call's own message, the result's chunk is credited with the
- * call. A string the task, an earlier input, or an earlier output already
- * held is credited to nobody else, so a re-read never takes credit from
- * the read that first showed the text.
+ * Content credit, per call: each query string of the call is located at
+ * one copy before the call's own message. When that copy lies in a
+ * tool_result, the result's chunk is credited with the call; when it lies
+ * in user or assistant text or in a tool input, nobody is. An `edit`'s
+ * `old_string` uses its nearest copy: the text is copied from the latest
+ * view of the file. Names use their first copy, so a later listing or
+ * re-read never takes credit for a name an earlier chunk or the task
+ * already gave: a grep tool's `pattern`, the patterns of grep and rg
+ * stages in `bash`, the `path` of `read`, `edit`, and `write`, and the
+ * file operands of bash reader stages.
  */
 export function laterUseIn(entries: readonly StoredEntry[]): LaterUseOf {
   const { calls, corpus } = scanPath(entries);
@@ -140,16 +160,23 @@ function scanPath(entries: readonly StoredEntry[]): {
     corpus.starts.push(length);
     corpus.toolUseIds.push(toolUseId);
     parts.push(text);
-    length += text.length + SEGMENT_SEPARATOR.length;
+    length += text.length + PIECE_SEPARATOR.length;
   };
   let turn = 0;
+  let root: string | undefined;
   entries.forEach((entry, index) => {
-    if (entry.kind === "manifest" && isRecord(entry.payload)) {
+    if (!isRecord(entry.payload)) return;
+    if (entry.kind === "manifest") {
       if (isFiniteNumber(entry.payload.turn)) turn = entry.payload.turn;
       return;
     }
+    if (entry.kind === "request_header") {
+      const system = entry.payload.system;
+      if (typeof system === "string") root = workspaceRoot(system) ?? root;
+      return;
+    }
     if (entry.kind !== "message" || !isMessage(entry.payload)) return;
-    const messageStart = length;
+    const at = { index, turn, messageStart: length, root };
     for (const block of entry.payload.content) {
       if (!isRecord(block)) continue;
       if (block.type === "tool_result") {
@@ -159,7 +186,7 @@ function scanPath(entries: readonly StoredEntry[]): {
         continue;
       }
       if (block.type === "tool_use") {
-        const call = toolCall(block, { index, turn, messageStart });
+        const call = toolCall(block, at);
         if (call) calls.push(call);
         for (const text of stringLeaves(block.input)) push(text);
         continue;
@@ -167,13 +194,27 @@ function scanPath(entries: readonly StoredEntry[]): {
       if (typeof block.text === "string") push(block.text);
     }
   });
-  corpus.text = parts.join(SEGMENT_SEPARATOR);
+  corpus.text = parts.join(PIECE_SEPARATOR);
   return { calls, corpus };
+}
+
+/**
+ * The path after the last `Workspace: ` line of a system prompt, the
+ * line `systemPrompt` in `coding-session.ts` writes; undefined without
+ * one.
+ */
+function workspaceRoot(system: string): string | undefined {
+  const line = system
+    .split("\n")
+    .filter((text) => text.startsWith(WORKSPACE_LINE_PREFIX))
+    .at(-1);
+  const value = line?.slice(WORKSPACE_LINE_PREFIX.length).trim();
+  return value ? value.replace(/\/+$/, "") : undefined;
 }
 
 function toolCall(
   block: Record<string, unknown>,
-  at: { index: number; turn: number; messageStart: number },
+  at: Omit<ToolCall, "name" | "toolUseId" | "input">,
 ): ToolCall | undefined {
   if (typeof block.name !== "string" || typeof block.id !== "string") {
     return undefined;
@@ -193,29 +234,32 @@ function lastExpands(calls: readonly ToolCall[]): Map<string, number> {
 }
 
 /**
- * The latest crediting call index per tool_use id whose result introduced
- * a string a later call used. One `indexOf` per distinct query string,
- * cached: the first occurrence does not depend on which call asks. An
- * untransformed query is in its own call's input, so its scan stops there
- * at the latest.
+ * The latest crediting call index per tool_use id. A `first` form costs
+ * one `indexOf`, cached per distinct form because the first copy does not
+ * depend on the call. A `nearest` form costs one backward `lastIndexOf`
+ * from the call's message start, which stops at the nearest copy.
  */
 function creditedCalls(
   calls: readonly ToolCall[],
   corpus: Corpus,
 ): Map<string, number> {
-  const first = new Map<string, number>();
   const last = new Map<string, number>();
+  const firstCopy = new Map<string, number>();
+  const locate = (form: string, query: Query, before: number): number => {
+    if (query.copy === "nearest") {
+      const from = before - form.length - PIECE_SEPARATOR.length;
+      return from < 0 ? -1 : corpus.text.lastIndexOf(form, from);
+    }
+    let offset = firstCopy.get(form);
+    if (offset === undefined) {
+      offset = corpus.text.indexOf(form);
+      firstCopy.set(form, offset);
+    }
+    return offset < before ? offset : -1;
+  };
   for (const call of calls) {
-    for (const query of queryStrings(call)) {
-      if (query.length < MIN_INTRODUCED_CHARS) continue;
-      if (query.includes(SEGMENT_SEPARATOR)) continue;
-      let offset = first.get(query);
-      if (offset === undefined) {
-        offset = corpus.text.indexOf(query);
-        first.set(query, offset);
-      }
-      if (offset < 0 || offset >= call.messageStart) continue;
-      const owner = corpus.toolUseIds[segmentAt(corpus.starts, offset)];
+    for (const query of queriesOf(call)) {
+      const owner = sourceOf(query, call.messageStart, corpus, locate);
       if (owner !== undefined) {
         last.set(owner, Math.max(last.get(owner) ?? -1, call.index));
       }
@@ -224,24 +268,51 @@ function creditedCalls(
   return last;
 }
 
-/** The strings a call takes from earlier context, per the label's rules. */
-function queryStrings(call: ToolCall): string[] {
-  const out: string[] = [];
+/**
+ * The tool_use id whose result holds the deciding copy of the first form
+ * of `query` that has a copy before `before`; undefined when that copy is
+ * not in a tool_result or no form has one. `locate` returns the copy's
+ * corpus offset, or -1.
+ */
+function sourceOf(
+  query: Query,
+  before: number,
+  corpus: Corpus,
+  locate: (form: string, query: Query, before: number) => number,
+): string | undefined {
+  for (const form of query.forms) {
+    if (form.length < MIN_CREDITED_CHARS) continue;
+    if (form.includes(PIECE_SEPARATOR)) continue;
+    const offset = locate(form, query, before);
+    if (offset >= 0) return corpus.toolUseIds[pieceAt(corpus.starts, offset)];
+  }
+  return undefined;
+}
+
+/** The strings a call took from earlier context, per the label's rules. */
+function queriesOf(call: ToolCall): Query[] {
+  const out: Query[] = [];
+  const named = (forms: string[]) => out.push({ forms, copy: "first" });
   if (call.name === TOOL_NAMES.edit) {
     const old = nonEmptyString(call.input, "old_string");
-    if (old) out.push(old);
+    if (old) out.push({ forms: [old], copy: "nearest" });
   }
   if (call.name === TOOL_NAMES.grep) {
     const pattern = nonEmptyString(call.input, "pattern");
-    if (pattern) out.push(literalOf(pattern));
-  }
-  if (call.name === TOOL_NAMES.bash) {
-    const command = nonEmptyString(call.input, "command");
-    if (command) out.push(...bashSearchPatterns(command).map(literalOf));
+    if (pattern) named([literalOf(pattern)]);
   }
   if (OPENING_TOOLS.has(call.name)) {
     const file = nonEmptyString(call.input, "path");
-    if (file) out.push(file.replace(/^(?:\.\/)+/, ""));
+    if (file) named(pathForms(file, call.root));
+  }
+  if (call.name === TOOL_NAMES.bash) {
+    const command = nonEmptyString(call.input, "command") ?? "";
+    for (const pattern of bashSearchPatterns(command)) {
+      named([literalOf(pattern)]);
+    }
+    for (const file of bashFileOperands(command)) {
+      named(pathForms(file, call.root));
+    }
   }
   return out;
 }
@@ -254,6 +325,24 @@ const OPENING_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The forms a path is looked up under, in order: relative to the
+ * workspace `root` when it lies inside it (tools print paths relative to
+ * the workspace), as written, then ever shorter suffixes of at least
+ * `MIN_SUFFIX_SEGMENTS` segments. A leading `./` is dropped.
+ */
+function pathForms(raw: string, root: string | undefined): string[] {
+  const written = raw.replace(/^(?:\.\/)+/, "");
+  const inside = root && written.startsWith(`${root}/`);
+  const relative = inside ? written.slice(root.length + 1) : undefined;
+  const forms = relative ? [relative, written] : [written];
+  const segments = (relative ?? written).split("/").filter(Boolean);
+  for (let keep = segments.length - 1; keep >= MIN_SUFFIX_SEGMENTS; keep -= 1) {
+    forms.push(segments.slice(-keep).join("/"));
+  }
+  return forms;
+}
+
+/**
  * A regular expression read as the literal text it most likely came from:
  * a backslash before punctuation (`foo\(`, `a\.b`) is dropped. Other
  * metacharacters are kept, so such a pattern rarely matches.
@@ -262,8 +351,8 @@ function literalOf(pattern: string): string {
   return pattern.replace(/\\([^\w\s])/g, "$1");
 }
 
-/** Index of the segment containing corpus `offset` (binary search). */
-function segmentAt(starts: readonly number[], offset: number): number {
+/** Index of the piece containing corpus `offset` (binary search). */
+function pieceAt(starts: readonly number[], offset: number): number {
   let low = 0;
   let high = starts.length - 1;
   while (low < high) {
@@ -341,6 +430,8 @@ function nonEmptyString(input: unknown, key: string): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function isMessage(value: unknown): value is { content: unknown[] } {
+function isMessage(
+  value: unknown,
+): value is { role: unknown; content: unknown[] } {
   return isRecord(value) && Array.isArray(value.content);
 }

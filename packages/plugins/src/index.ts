@@ -35,6 +35,7 @@ export {
 export type { RoutePolicy } from "./routing/types.js";
 export { type BashKind, classifyBashCommand } from "./scorer/bash-kind.js";
 export {
+  bashFileOperands,
   bashSearchPatterns,
   normalizeBashCommand,
 } from "./scorer/bash-search.js";
