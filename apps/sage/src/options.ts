@@ -1,7 +1,7 @@
 /**
- * The one option table shared by `sage -p`, `sage stats`, and `sage bench
- * run`, the argv tokenizer built on `node:util` parseArgs, and the value
- * checks the commands apply.
+ * The one option table shared by `sage -p`, `sage stats`, `sage bench
+ * run`, and `sage bench report`, the argv tokenizer built on `node:util`
+ * parseArgs, and the value checks the commands apply.
  *
  * Contract: each command names the options it accepts; anything else is a
  * usage error. Tokens come back in argv order so each command can report the
@@ -73,6 +73,7 @@ const OPTIONS = {
   policy: { type: "string", hint: "--policy passthrough|compiler" },
   out: { type: "string", hint: "--out <dir>" },
   turns: { type: "boolean", hint: "--turns" },
+  "exclude-faults": { type: "boolean", hint: "--exclude-faults" },
 } as const satisfies Record<string, OptionSpec>;
 
 /** A key of {@link OPTIONS}: a flag name without the leading dashes. */

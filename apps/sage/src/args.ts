@@ -13,7 +13,7 @@
 
 import type { ModelRef } from "@sage/provider/contract";
 import type { ToolNetwork } from "@sage/tools";
-import { benchRunUsage } from "./bench/args.js";
+import { benchReportUsage, benchRunUsage } from "./bench/args.js";
 import { assertNever } from "./guards.js";
 import {
   type CommandFlags,
@@ -123,7 +123,7 @@ export function usage(): string {
     renderUsage("usage: sage", SAGE_FLAGS),
     `       ${statsUsage()}`,
     `       ${benchRunUsage()}`,
-    "       sage bench report <runA> <runB>",
+    `       ${benchReportUsage()}`,
   ].join("\n");
 }
 
