@@ -20,6 +20,7 @@
  */
 
 import {
+  isFiniteNumber,
   isRecord,
   isTier,
   manifestsInEpoch,
@@ -74,6 +75,39 @@ export function epochOpenReason(
       : undefined;
   }
   return undefined;
+}
+
+/**
+ * How long `epoch` has lasted and the payback it was opened on, both read
+ * from its first manifest. `turnsSinceEpochOpen` is `turn` minus that
+ * manifest's `turn`, floored at 0. `committedPaybackTurns` is that
+ * manifest's `epochDecision.paybackTurns` when its decision rebuilt, else
+ * 0. Both are 0 when the epoch has no manifest yet (this is its first
+ * turn) or the fields are missing.
+ */
+export function epochCommitment(
+  path: readonly StoredEntry[],
+  epoch: number,
+  turn: number,
+): { turnsSinceEpochOpen: number; committedPaybackTurns: number } {
+  const payload = firstManifest(path, epoch)?.entry.payload;
+  if (!isRecord(payload)) {
+    return { turnsSinceEpochOpen: 0, committedPaybackTurns: 0 };
+  }
+  const opened = payload.turn;
+  const decision = payload.epochDecision;
+  const committed =
+    isRecord(decision) &&
+    decision.rebuild === true &&
+    isFiniteNumber(decision.paybackTurns)
+      ? decision.paybackTurns
+      : 0;
+  return {
+    turnsSinceEpochOpen: isFiniteNumber(opened)
+      ? Math.max(0, turn - opened)
+      : 0,
+    committedPaybackTurns: committed,
+  };
 }
 
 function firstManifest(

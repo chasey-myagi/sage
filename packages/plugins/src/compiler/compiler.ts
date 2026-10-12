@@ -39,7 +39,7 @@ import { type FrozenMap, freezeAccounting } from "./chunk-decisions.js";
 import type { Chunk } from "./chunks.js";
 import { indexChunks } from "./chunks.js";
 import type { ClaimProvider } from "./claim.js";
-import { ratesFor } from "./decide.js";
+import { expandEstimateFor, ratesFor } from "./decide.js";
 import {
   appendReason,
   chooseEpoch,
@@ -54,12 +54,14 @@ import {
   viewOverrun,
 } from "./epoch.js";
 import {
+  epochCommitment,
   epochOpenReason,
   frozenDecisions,
   frozenSeqCeiling,
 } from "./freeze.js";
 import {
   countExpands,
+  expandResultTokens,
   latestQuery,
   previousRequest,
   projectedSeqs,
@@ -499,7 +501,11 @@ function withScored(chosen: Assembly, scored: ScoredView): Assembly {
   };
 }
 
-/** Runs the epoch cost check for this turn's two candidate views. */
+/**
+ * Runs the epoch cost check for this turn's two candidate views. Rates come
+ * from this call's pricing; the expand estimate, the epoch's age, and the
+ * payback the epoch committed to are read from the path.
+ */
 function chooseTurnEpoch(
   ctx: ViewContext,
   settings: Settings,
@@ -520,6 +526,11 @@ function chooseTurnEpoch(
     minSavingsRatio: settings.minSavingsRatio,
     contextWindow: ctx.prepared.contextWindow,
     epochOpenReason: epochOpenReason(ctx.path, candidates.epoch),
+    expands: expandEstimateFor(
+      expandResultTokens(ctx.path, settings.count),
+      candidates.epoch + 1,
+    ),
+    ...epochCommitment(ctx.path, candidates.epoch, ctx.turn),
   });
 }
 

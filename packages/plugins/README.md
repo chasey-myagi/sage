@@ -40,23 +40,48 @@ expand 率 = 清单 `budget.expands` / `budget.omitted`。`expands` 是截至本
 
 `head` 盖住 system 和工具 schema。第二个断点落在本阶段第一份清单覆盖到的历史末尾（epoch 头加上当时的 seq 上限）。第三个断点落在当前最后一条消息。阶段内，一个块的档位以它第一次出现在本阶段清单里的那次为准，后面的清单不改它。`superseded` 和预算降档都不作用于已冻结的块；它们可以过时，但不能变。淘汰只决定还没冻结的新块，输入里带上已冻结块作只读参考：新块在历史末尾，不会被更早的块盖掉，所以第一次进清单时是 `recent` 或 `full`。预算先扣掉已冻结且仍保留的 token，只把新块从最旧开始降到 none，降完的档位同样冻结。缓存断点仍停在阶段第一份清单的 seq 上限，新内容写在那个断点之后。阶段重开时若用模型打分，那一次调用是上一轮主请求的前缀延长：头和历史逐字节复用，指令只追加在尾部。请求带 `toolChoice: "none"`，不删 tools，前缀缓存仍能命中。
 
+#### 重开不等式
+
 开不开新阶段由这道不等式批准：
 
 ```text
-(旧视图 − 新视图) × 读价 × 预计剩余轮数  ＞  新视图 × 写价 − 旧视图 × 读价
+(旧视图 − 新视图) × 读价 × 预计剩余轮数  ＞  新视图 × 写价 − 旧视图 × 读价 + 预计取回 × 写价
 ```
 
 口径：
 
 - 每轮节省 = (旧 − 新) × 读价
-- 重建额外成本 = 新 × 写价 − 旧 × 读价。减掉的那一项是因为重建的那一轮本来也要付旧视图的读价，不能重复计
-- 回本轮数 = 额外成本 ÷ 每轮节省，向上取整
-- 额外成本不大于 0 就是立即回本
+- 重建额外成本 = 新 × 写价 − 旧 × 读价 + 重建后代价。减掉的那一项是因为重建的那一轮本来也要付旧视图的读价，不能重复计
+- 回本轮数 = 额外成本 ÷ 每轮节省，向上取整，记在 `epochDecision.paybackTurns`
+- 额外成本不大于 0 就是立即回本（`immediate`），不受下面的承诺限制：那一轮本身就更便宜，挡住它等于为沉没成本买单
 - 剩余轮数 = max(1, `expectedTurns` − 已开始轮数, ceil(`alpha` × 已开始轮数))。已开始轮数是这一轮的 turn 减 1。`expectedTurns` 默认 20，`alpha` 默认 0.5，都是 `contextCompiler` 的选项。清单 `epochDecision.remainingTurns` 记下这一轮实际用的数
+- 省下的比例小于 `minSavingsRatio`（默认 0.2）就不开新阶段
 
 前十几轮里，`expectedTurns` 减去已开始轮数仍然更大，视界和固定 20 相同。再往后，`ceil(alpha × 已开始轮数)` 抬过那条直线：跑得越久，假定后面还有大约一半那么多轮。固定 20 会从 turn 20 起把剩余夹成 1，回本要几十轮的长任务就永远开不了新阶段。不设上限会让任何正节省都立刻重开，冻结前缀每轮作废。这个下界只改「还打算走多少轮」，不改上面的不等式。
 
-读价是 `cacheRead / input`。写价是 `max(cacheWrite, input) / input`。缓存写价为 0 不是免费：新前缀第一次仍按未命中的输入价付一遍（无附加费 ≠ 免费，首次仍付未命中价）。Anthropic 的写价倍率是 1.25，DeepSeek 和 OpenAI 是 1.0。目录没有定价时退回 0.1 与 1.25。清单 `budget.used` 只含申领单和块，不含系统提示、工具 schema 和任务消息这截固定开销。校准记在 `calibration`：`measured` 是上一轮 assistant usage 的输入合计，`estimated` 是那一轮的 `budget.used`。`overheadTokens` 取本阶段第一轮（没有 usage 时取路径上最近一次算得出的轮）的 `measured − budget.used`，小于 0 记 0：负的固定开销会把新视图 token 打成负数，成本式会把它当成立即回本，再开一阶段。之后各轮 `ratio = (measured − overheadTokens) / estimated`，记在清单上，给离线 `policyTokens` 用。缺实测或 `estimated` 为 0 时不写校准，调用方用 `overheadTokens = 0`、`ratio = 1`。旧视图 token 是 `overheadTokens + 冻结视图 used × ratio`。新视图 token 是 `overheadTokens + 全量重编译 used × ratio`。锚点那一轮的 ratio 正好是 1。ratio 大于 1 也照乘，否则估算系统性低于实测，安全阀会漏报。ratio 小于 1 时同样乘回去，把计数器偏高的部分收回来。两边都加同一份固定开销，差值仍只来自块的档位。省下的比例小于 `minSavingsRatio`（默认 0.2）就不开新阶段。`overheadTokens + used × ratio` 超过上下文窗口的 0.9 时强制重开一次；这是安全阀，不是策略。重开后仍然超限就记在 `budget.overrun`，不再为同一道安全阀重复重开。重开那一轮的视图是全量重编译，随后按新阶段重新冻结，固定开销也从新阶段的第一轮重算。
+#### 阶段承诺的回本
+
+按回本批准的重开，等于承诺这个新阶段至少活过它自己的回本轮数，否则那次写永远赚不回来。所以阶段的第一份清单（就是批准重开的那一份）里的 `paybackTurns` 是这个阶段的承诺，下一轮起记在 `epochDecision.committedPaybackTurns`。阶段从第一份清单的 turn 算起已过的轮数记在 `turnsSinceEpochOpen`。已过轮数还没到承诺值时，按回本批准的重开改成不重开，原因 `payback-pending:<已过轮数><<承诺>`。两个数都从 Log 读出，重放得到同样的判断。阶段 0、立即回本开的阶段、安全阀开的阶段没有承诺（记 0）。上下文窗口安全阀与立即回本不受这条限制。
+
+#### 重建后代价
+
+重建后代价 = 预计取回 × 写价，清单记作 `epochDecision.postRebuildCost`。预计取回是这次重建甩掉的 token 里预计会被 `expand` 拿回来的部分，不超过 旧 − 新。本会话已经有成功的 `expand` 时，按「成功次数 ÷ 已有阶段数 × 平均每次结果 token」估；这是上界：阶段 0 因预算省略而触发的 `expand` 也算进去，取回的原文也全按写价计。还没有观测时按先验 `PRIOR_EXPAND_SHARE`（0.1）乘以 旧 − 新，让回本轮数多出 `0.1 × 写价 ÷ 读价` 轮，和视图大小无关。来源记在 `epochDecision.expandEstimate`：`{source: "observed", expandsPerEpoch, tokensPerExpand}` 或 `{source: "prior", share}`。
+
+#### 费率
+
+两个倍率取自这次调用的定价，也就是本轮 `request_header.pricing` 记下的那一份。读价是 `cacheRead / input`。写价是 `max(cacheWrite, input) / input`：写价低于输入价时按输入价算，新前缀第一次总要按未命中价付一遍。内置目录里价格页写明「未命中按输入价、无创建费」的型号（OpenAI、DeepSeek、Kimi 自动缓存、百炼隐式缓存；sage 不发 `cache_control`，百炼走的是隐式缓存），`cacheWritePerMTok` 就写成输入价，写价倍率 1.0；Anthropic 是 1.25。只有定价缺失（或输入价为 0）时才用默认值 0.1 与 1.25，清单 `epochDecision.rateSource` 记 `default`，原因追加 `;pricing:fallback`；否则记 `pricing`。
+
+#### 估算与校准
+
+清单 `budget.used` 只含申领单和块，不含系统提示、工具 schema 和任务消息这截固定开销。校准记在 `calibration`：`measured` 是上一轮 assistant usage 的输入合计，`estimated` 是那一轮的 `budget.used`。`overheadTokens` 取本阶段第一轮（没有 usage 时取路径上最近一次算得出的轮）的 `measured − budget.used`，小于 0 记 0：负的固定开销会把新视图 token 打成负数，成本式会把它当成立即回本，再开一阶段。之后各轮 `ratio = (measured − overheadTokens) / estimated`，记在清单上，给离线 `policyTokens` 用。缺实测或 `estimated` 为 0 时不写校准，调用方用 `overheadTokens = 0`、`ratio = 1`。
+
+旧视图 token 是 `overheadTokens + 冻结视图 used × ratio`。新视图 token 是 `overheadTokens + 全量重编译 used × ratio`。锚点那一轮的 ratio 正好是 1。ratio 大于 1 也照乘，否则估算系统性低于实测，安全阀会漏报。ratio 小于 1 时同样乘回去，把计数器偏高的部分收回来。两边都加同一份固定开销，差值仍只来自块的档位。
+
+#### 上下文窗口安全阀
+
+`overheadTokens + used × ratio` 超过上下文窗口的 0.9 时强制重开一次；这是安全阀，不是策略。重开后仍然超限就记在 `budget.overrun`，不再为同一道安全阀重复重开。重开那一轮的视图是全量重编译，随后按新阶段重新冻结，固定开销也从新阶段的第一轮重算。
+
+#### 命中对账
 
 `cache.expectedReadTokens` 是上一轮实际发出去的冻结前缀估算：用上一轮清单自己的 `calibration.overheadTokens` 与 `calibration.ratio` 去乘那一轮的 `budget.frozenTokens`，即 `overheadTokens + ratio × frozenTokens`。上一轮没有校准时固定开销为 0、ratio 为 1。重开后本轮重新锚上的固定开销不进这个数。`cache.measuredReadTokens` 是那一轮 usage 的 `inputCacheRead`。两者同口径，expected 与 measured 差距大就是前缀被砸了。`cacheHitRatio` 仍是实测读 token 除以 `cache.expectedReadTokens`，口径不改，代码也不把差值抹平。DeepSeek 的前缀缓存以 64 token 为一块，而且只认完全相同的前缀。人工比对估算和实测时，相差不到一块是块对齐，不是没命中。
 

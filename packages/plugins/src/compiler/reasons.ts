@@ -101,10 +101,10 @@ export function modelReason(reason: string, decision: ScoreDecision): string {
 }
 
 /**
- * Appends `;pricing:fallback` to an epoch decision reason when the rates
- * came from the fallback table rather than the model catalog.
+ * Appends `;pricing:fallback` to an epoch decision reason when the call had
+ * no pricing, so both rates are defaults.
  */
 export function tagPricing(reason: string, rates: Rates): string {
-  if (rates.source !== "fallback") return reason;
+  if (rates.source !== "default") return reason;
   return `${reason};pricing:fallback`;
 }

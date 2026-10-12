@@ -4,7 +4,10 @@
  *
  * Contract: an epoch keeps the view prefix byte-identical so the provider's
  * prefix cache keeps hitting. The only rebuild allowed on an epoch's first
- * turn is the context-window guard. The guard fires when the projected
+ * turn is the context-window guard. A payback rebuild also waits until the
+ * epoch has lasted the payback it was opened on, which is read from the
+ * epoch's first manifest; a guard-opened epoch commits to none. The guard
+ * fires when the projected
  * frozen view exceeds `CONTEXT_WINDOW_GUARD_RATIO` of the context window,
  * and does not fire again inside an epoch the guard itself opened.
  *
@@ -25,6 +28,7 @@ import {
   classifyEpoch,
   type EpochDecision,
   type EpochTrigger,
+  type ExpandEstimate,
   type Rates,
 } from "./decide.js";
 import { tagPricing } from "./reasons.js";
@@ -95,8 +99,8 @@ export type EpochChoice = {
 
 /**
  * Runs the cost check on the frozen view (`oldTokens`) against a
- * from-scratch recompile (`newTokens`), both projected. Fallback pricing
- * appends `;pricing:fallback` to the reason. Without a freeze
+ * from-scratch recompile (`newTokens`), both projected. Without pricing
+ * the reason gets `;pricing:fallback`. Without a freeze
  * (`hasFrozen` false) any rebuild other than the guard becomes
  * `savings-too-small`.
  */
@@ -110,6 +114,10 @@ export function chooseEpoch(input: {
   minSavingsRatio: number;
   contextWindow: number;
   epochOpenReason: string | undefined;
+  expands: ExpandEstimate;
+  turnsSinceEpochOpen: number;
+  /** From the epoch's first manifest; ignored in a guard-opened epoch. */
+  committedPaybackTurns: number;
 }): EpochChoice {
   const isGuardOpenedEpoch =
     input.epochOpenReason === CONTEXT_WINDOW_GUARD_REASON;
@@ -125,6 +133,9 @@ export function chooseEpoch(input: {
     minSavingsRatio: input.minSavingsRatio,
     contextWindow: input.contextWindow,
     overContext: isFrozenOverWindow && !isGuardOpenedEpoch,
+    expands: input.expands,
+    turnsSinceEpochOpen: input.turnsSinceEpochOpen,
+    committedPaybackTurns: isGuardOpenedEpoch ? 0 : input.committedPaybackTurns,
   });
   const decision: EpochDecision = {
     ...classified.decision,

@@ -225,8 +225,13 @@ function noRebuildDecision(parentTokens: number, used: number): EpochDecision {
     remainingTurns: 1,
     readRate: 0,
     writeRate: 0,
+    rateSource: "default",
     savingsPerTurn: 0,
     extraCost: 0,
+    postRebuildCost: 0,
+    expandEstimate: { source: "prior", share: 0 },
+    turnsSinceEpochOpen: 0,
+    committedPaybackTurns: 0,
     paybackTurns: null,
     reason: "subtask:no-rebuild",
   };

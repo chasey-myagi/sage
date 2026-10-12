@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   type HarnessTool,
   isRecord,
@@ -7,6 +9,7 @@ import {
 import { FAUX_CONTEXT_WINDOW } from "@sage/core/testing";
 import { expect, it } from "vitest";
 import { caseDir, REPLAY_CASES } from "../../../core/test/replay/cases.ts";
+import { PRIOR_EXPAND_SHARE } from "../../src/compiler/decide.ts";
 import { compareOffline, replayOffline } from "../../src/replay/offline.ts";
 import type { Scorer } from "../../src/scorer/types.ts";
 
@@ -150,6 +153,50 @@ it("replays a model scorer as the rule scorer and labels the report", async () =
   expect(json.notes).toEqual(["scorer:offline-rule"]);
   expect(report.markdown).not.toContain("ping");
   expect(JSON.stringify(report.json)).not.toContain("ping");
+});
+
+it("records every epoch decision field on each manifest of a replayed session", async () => {
+  // A recorded deepseek-flash session. Its request_header pricing has a
+  // zero write price, which still prices a write at the input price.
+  const dir = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "fixtures/issue-63",
+  );
+  const shadow = new MemoryLogStore();
+  await replayOffline(
+    new JsonlLogStore({ dir }),
+    "budget8000-vue10874-36turns",
+    { budget: 8000 },
+    { tools: [], system: "You are sage.", shadow },
+  );
+  const decisions = shadow
+    .path("offline")
+    .filter((entry) => entry.kind === "manifest")
+    .map((entry) =>
+      isRecord(entry.payload) ? entry.payload.epochDecision : undefined,
+    );
+  expect(decisions).toHaveLength(36);
+  for (const decision of decisions) {
+    expect(decision).toEqual({
+      rebuild: expect.any(Boolean),
+      oldTokens: expect.any(Number),
+      newTokens: expect.any(Number),
+      remainingTurns: expect.any(Number),
+      readRate: 0.02,
+      writeRate: 1,
+      rateSource: "pricing",
+      savingsPerTurn: expect.any(Number),
+      extraCost: expect.any(Number),
+      postRebuildCost: expect.any(Number),
+      expandEstimate: { source: "prior", share: PRIOR_EXPAND_SHARE },
+      turnsSinceEpochOpen: expect.any(Number),
+      committedPaybackTurns: 0,
+      paybackTurns: expect.toSatisfy(
+        (value: unknown) => value === null || typeof value === "number",
+      ),
+      reason: expect.any(String),
+    });
+  }
 });
 
 it("scales compiler policy tokens by that turn's calibration ratio", async () => {

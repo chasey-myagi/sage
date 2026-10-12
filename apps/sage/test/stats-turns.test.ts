@@ -53,8 +53,13 @@ function decision(
     remainingTurns,
     readRate: 0.1,
     writeRate: 1.25,
+    rateSource: "pricing",
     savingsPerTurn: 1,
     extraCost: 2,
+    postRebuildCost: 0,
+    expandEstimate: { source: "prior", share: 0 },
+    turnsSinceEpochOpen: 8,
+    committedPaybackTurns: 0,
     paybackTurns: rebuild ? 1 : null,
     reason,
   };

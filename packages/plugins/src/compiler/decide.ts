@@ -1,23 +1,31 @@
 /**
  * Pure cost check for opening a new view epoch.
  *
- * Contract: read = cacheRead/input. write = max(cacheWrite, input) / input.
- * A zero cache-write surcharge is not free: the first fill still pays the
- * miss price. Null pricing falls back to 0.1 and 1.25.
- * savingsPerTurn = (old - new) * read.
- * extraCost = new * write - old * read. paybackTurns is
- * ceil(extraCost / savingsPerTurn), or null when savings are not positive,
- * or 0 when extraCost is not positive. overContext rebuilds with reason
- * `context-window-guard`. A drop smaller than minSavingsRatio * oldTokens
- * does not rebuild (`savings-too-small`). extraCost <= 0 rebuilds with
- * reason `immediate`. Otherwise rebuild when paybackTurns <= remainingTurns.
- * `remainingTurns` is an input. This function does not estimate it.
+ * Contract: rates are relative to the uncached input price. `ratesFor`
+ * reads them from the call's pricing (the object this turn's
+ * request_header records); only a missing pricing uses the defaults. The
+ * rebuild cost is
+ *   extraCost = new * write - old * read + postRebuildCost
+ * where postRebuildCost = expandTokens * write prices the omitted tokens a
+ * rebuild is expected to fetch back with `expand`; expandTokens never
+ * exceeds the drop (old - new). savingsPerTurn = (old - new) * read.
+ * paybackTurns is ceil(extraCost / savingsPerTurn), null when savings are
+ * not positive, 0 when extraCost is not positive. Rules, in order:
+ * overContext rebuilds (`context-window-guard`); a drop below
+ * minSavingsRatio * old does not (`savings-too-small`); extraCost <= 0
+ * rebuilds (`immediate`); otherwise rebuild when paybackTurns <=
+ * remainingTurns, unless the current epoch has not yet lasted the payback
+ * it committed to (`payback-pending:`). This module estimates none of its
+ * inputs.
  *
- * Intentionally not in the Log: this function. The compiler copies the
+ * Intentionally not in the Log: these functions. The compiler copies the
  * decision onto the manifest.
  */
 
-import type { Pricing } from "@sage/provider/contract";
+import { assertNever, type Pricing } from "@sage/provider/contract";
+
+/** Where the cache rates came from: the call's pricing, or the defaults. */
+export type RateSource = "pricing" | "default";
 
 /** Cache price multipliers relative to the uncached input price. */
 export type Rates = {
@@ -25,9 +33,23 @@ export type Rates = {
   read: number;
   /** Cache-write price as a multiple of the input price; never below 1. */
   write: number;
-  /** `fallback` when the model has no catalog pricing. */
-  source: "catalog" | "fallback";
+  source: RateSource;
 };
+
+/**
+ * Expected expand traffic after a rebuild. `observed` divides this
+ * session's successful expands by the epochs so far and averages their
+ * result tokens. `prior`, used before any expand is observed, assumes
+ * `share` of the tokens a rebuild drops come back.
+ */
+export type ExpandEstimate =
+  | {
+      source: "observed";
+      expandsPerEpoch: number;
+      /** Mean estimated tokens of one expand result. */
+      tokensPerExpand: number;
+    }
+  | { source: "prior"; share: number };
 
 /**
  * The cost check for one turn. An epoch is the span of turns during which
@@ -44,9 +66,28 @@ export type EpochDecision = {
   remainingTurns: number;
   readRate: number;
   writeRate: number;
+  rateSource: RateSource;
   savingsPerTurn: number;
+  /** Includes `postRebuildCost`. Input-price-equivalent tokens. */
   extraCost: number;
-  /** Turns until a rebuild pays for its cache write; null without savings. */
+  /**
+   * Expected cost of the expands a rebuild invites, in
+   * input-price-equivalent tokens: expected expand tokens, capped at
+   * `oldTokens - newTokens`, times `writeRate`.
+   */
+  postRebuildCost: number;
+  expandEstimate: ExpandEstimate;
+  /** Turns since the current epoch's first manifest; 0 on that turn. */
+  turnsSinceEpochOpen: number;
+  /**
+   * Payback the current epoch was opened on: its first manifest's
+   * `paybackTurns` when a cost rebuild opened it, else 0. A payback rebuild
+   * waits until `turnsSinceEpochOpen` reaches it. Reaching it counts the
+   * decision turn itself, the same inclusive convention as the horizon rule
+   * `paybackTurns <= remainingTurns`; keep the two symmetric.
+   */
+  committedPaybackTurns: number;
+  /** Turns until a rebuild pays for itself; null without savings. */
   paybackTurns: number | null;
   /** Human-readable rule that decided; Log text, not a branch key. */
   reason: string;
@@ -68,17 +109,65 @@ export type EpochTrigger =
  */
 export const CONTEXT_WINDOW_GUARD_REASON = "context-window-guard";
 
-const FALLBACK: Rates = { read: 0.1, write: 1.25, source: "fallback" };
+/** Read rate when the call has no pricing: the common cache-read discount. */
+export const DEFAULT_READ_RATE = 0.1;
 
-/** Derives cache rates from catalog pricing, or the fallback 0.1 / 1.25. */
+/**
+ * Write rate when the call has no pricing: the highest write multiplier in
+ * the built-in catalog, so an unknown model never looks cheaper to rebuild
+ * than a known one.
+ */
+export const DEFAULT_WRITE_RATE = 1.25;
+
+/**
+ * Share of the tokens a rebuild drops that is assumed to come back through
+ * `expand` before any expand is observed. A share keeps the prior in
+ * proportion to the drop at every view size.
+ */
+export const PRIOR_EXPAND_SHARE = 0.1;
+
+/**
+ * Derives cache rates from the call's pricing. Only a missing pricing, or
+ * a zero input price, uses `DEFAULT_READ_RATE` and `DEFAULT_WRITE_RATE`.
+ * A write price below the input price is raised to it: the first fill
+ * still pays the miss price.
+ */
 export function ratesFor(pricing: Pricing | null): Rates {
-  if (!pricing || pricing.inputPerMTok === 0) return { ...FALLBACK };
+  if (!pricing || pricing.inputPerMTok <= 0) {
+    return {
+      read: DEFAULT_READ_RATE,
+      write: DEFAULT_WRITE_RATE,
+      source: "default",
+    };
+  }
+  const input = pricing.inputPerMTok;
   return {
-    read: pricing.cacheReadPerMTok / pricing.inputPerMTok,
-    write:
-      Math.max(pricing.cacheWritePerMTok, pricing.inputPerMTok) /
-      pricing.inputPerMTok,
-    source: "catalog",
+    read: pricing.cacheReadPerMTok / input,
+    write: Math.max(pricing.cacheWritePerMTok, input) / input,
+    source: "pricing",
+  };
+}
+
+/**
+ * Expand estimate from the result tokens of this session's successful
+ * expands and the number of epochs so far, floored at 1. No observations
+ * yield the prior. The observed figure is an upper bound on what a rebuild
+ * causes: it counts every expand on the path, including those of chunks
+ * that epoch 0's budget omitted, and `epochCosts` prices the tokens at the
+ * write rate although some of them may be read from cache later.
+ */
+export function expandEstimateFor(
+  resultTokens: readonly number[],
+  epochs: number,
+): ExpandEstimate {
+  if (resultTokens.length === 0) {
+    return { source: "prior", share: PRIOR_EXPAND_SHARE };
+  }
+  const total = resultTokens.reduce((sum, tokens) => sum + tokens, 0);
+  return {
+    source: "observed",
+    expandsPerEpoch: resultTokens.length / Math.max(1, epochs),
+    tokensPerExpand: total / resultTokens.length,
   };
 }
 
@@ -91,6 +180,9 @@ type EpochInput = {
   minSavingsRatio: number;
   contextWindow: number;
   overContext: boolean;
+  expands: ExpandEstimate;
+  turnsSinceEpochOpen: number;
+  committedPaybackTurns: number;
 };
 
 /**
@@ -102,7 +194,8 @@ export function decideEpoch(input: EpochInput): EpochDecision {
 }
 
 /**
- * Runs the cost check and also reports which rule decided.
+ * Runs the cost check and also reports which rule decided. A payback
+ * rebuild held by the current epoch's commitment reports `no-rebuild`.
  * Throws when `contextWindow` is not finite.
  */
 export function classifyEpoch(input: EpochInput): {
@@ -132,18 +225,45 @@ export function classifyEpoch(input: EpochInput): {
       trigger: "immediate",
     };
   }
+  return paybackRule(decision, input);
+}
+
+/**
+ * Rebuild when payback fits the horizon and the current epoch has already
+ * lasted the payback it was opened on; ending it sooner discards a cache
+ * write that has not been earned back.
+ */
+function paybackRule(
+  decision: EpochDecision,
+  input: EpochInput,
+): { decision: EpochDecision; trigger: EpochTrigger } {
   const { paybackTurns } = decision;
   if (paybackTurns === null) return { decision, trigger: "no-rebuild" };
-  const rebuild = paybackTurns <= input.remainingTurns;
+  if (paybackTurns > input.remainingTurns) {
+    return {
+      decision: {
+        ...decision,
+        reason: `payback:${paybackTurns}>${input.remainingTurns}`,
+      },
+      trigger: "no-rebuild",
+    };
+  }
+  if (input.turnsSinceEpochOpen < input.committedPaybackTurns) {
+    return {
+      decision: {
+        ...decision,
+        reason: `payback-pending:${input.turnsSinceEpochOpen}<${input.committedPaybackTurns}`,
+      },
+      trigger: "no-rebuild",
+    };
+  }
   return {
     decision: {
       ...decision,
-      rebuild,
-      reason: rebuild
-        ? `payback:${paybackTurns}<=${input.remainingTurns}`
-        : `payback:${paybackTurns}>${input.remainingTurns}`,
+      rebuild: true,
+      reason: `payback:${paybackTurns}<=${input.remainingTurns}`,
     },
-    trigger: rebuild ? "payback" : "no-rebuild",
+    trigger: "payback",
   };
 }
 
@@ -155,10 +275,12 @@ function epochCosts(input: EpochInput): EpochDecision {
   if (!Number.isFinite(input.contextWindow)) {
     throw new Error("contextWindow must be finite");
   }
-  const read = input.rates.read;
-  const write = input.rates.write;
+  const { read, write } = input.rates;
+  const drop = Math.max(0, input.oldTokens - input.newTokens);
+  const postRebuildCost = expandTokens(input.expands, drop) * write;
   const savingsPerTurn = (input.oldTokens - input.newTokens) * read;
-  const extraCost = input.newTokens * write - input.oldTokens * read;
+  const extraCost =
+    input.newTokens * write - input.oldTokens * read + postRebuildCost;
   let paybackTurns: number | null;
   if (savingsPerTurn <= 0) paybackTurns = null;
   else if (extraCost <= 0) paybackTurns = 0;
@@ -170,9 +292,29 @@ function epochCosts(input: EpochInput): EpochDecision {
     remainingTurns: input.remainingTurns,
     readRate: read,
     writeRate: write,
+    rateSource: input.rates.source,
     savingsPerTurn,
     extraCost,
+    postRebuildCost,
+    expandEstimate: { ...input.expands },
+    turnsSinceEpochOpen: input.turnsSinceEpochOpen,
+    committedPaybackTurns: input.committedPaybackTurns,
     paybackTurns,
     reason: "savings-too-small",
   };
+}
+
+/** Tokens a rebuild dropping `drop` tokens is expected to fetch back. */
+function expandTokens(estimate: ExpandEstimate, drop: number): number {
+  switch (estimate.source) {
+    case "prior":
+      return estimate.share * drop;
+    case "observed":
+      return Math.min(
+        estimate.expandsPerEpoch * estimate.tokensPerExpand,
+        drop,
+      );
+    default:
+      return assertNever(estimate);
+  }
 }

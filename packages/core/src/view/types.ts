@@ -103,11 +103,15 @@ type BudgetReport = {
  * Opening an epoch rewrites the frozen prefix: the new view is paid at the
  * cache-write rate once, then every later turn reads fewer tokens.
  * `readRate` and `writeRate` are cache read and write prices relative to
- * the input price. `savingsPerTurn` is `(oldTokens - newTokens) * readRate`;
- * `extraCost` is `newTokens * writeRate - oldTokens * readRate`.
+ * the input price; `rateSource` says whether they came from the call's
+ * pricing or the defaults. `savingsPerTurn` is
+ * `(oldTokens - newTokens) * readRate`; `extraCost` is
+ * `newTokens * writeRate - oldTokens * readRate + postRebuildCost`.
  * `paybackTurns` (payback) is `ceil(extraCost / savingsPerTurn)`: 0 when
  * `extraCost` is not positive, null when there are no savings. `rebuild`
- * is true when payback fits within `remainingTurns`, or for a guard reason.
+ * is true for a guard reason, when `extraCost` is not positive, or when
+ * payback fits within `remainingTurns` and `turnsSinceEpochOpen` has
+ * reached `committedPaybackTurns`.
  */
 type EpochDecisionReport = {
   rebuild: boolean;
@@ -123,8 +127,29 @@ type EpochDecisionReport = {
   remainingTurns: number;
   readRate: number;
   writeRate: number;
+  rateSource: "pricing" | "default";
   savingsPerTurn: number;
   extraCost: number;
+  /**
+   * Expected cost, in input-price-equivalent tokens, of the omitted tokens
+   * a rebuild will fetch back with expand.
+   */
+  postRebuildCost: number;
+  /**
+   * Where that expectation came from: this session's expands
+   * (`expandsPerEpoch`, mean `tokensPerExpand`), or a prior `share` of the
+   * dropped tokens.
+   */
+  expandEstimate:
+    | { source: "observed"; expandsPerEpoch: number; tokensPerExpand: number }
+    | { source: "prior"; share: number };
+  /** Turns since the current epoch's first manifest. */
+  turnsSinceEpochOpen: number;
+  /**
+   * Payback the current epoch was opened on (its first manifest's
+   * `paybackTurns` after a cost rebuild), else 0.
+   */
+  committedPaybackTurns: number;
   paybackTurns: number | null;
   reason: string;
 };
